@@ -16,3 +16,7 @@ Thumbs.db
 # AIOS specific
 models/
 *.gguf
+# Temporary phase tracking files (not for public repo)
+PHASE-*.txt
+ФАЗА-*.txt
+IMPLEMENTATION-SUMMARY.md

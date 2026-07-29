@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/aios-dev/.github/main/assets/aios-banner-dark.svg">
-    <img alt="AIOS — AI-Native Operating System" src="https://raw.githubusercontent.com/aios-dev/.github/main/assets/aios-banner-light.svg" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/uni-aios-dev/.github/main/assets/aios-banner-dark.svg">
+    <img alt="AIOS — AI-Native Operating System" src="https://raw.githubusercontent.com/uni-aios-dev/.github/main/assets/aios-banner-light.svg" width="80%">
   </picture>
 </p>
 
@@ -12,11 +12,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aios-dev/aios-core/actions"><img src="https://img.shields.io/github/actions/workflow/status/aios-dev/aios-core/ci.yml?branch=main&label=build&logo=github" alt="Build Status"></a>
-  <a href="https://github.com/aios-dev/aios-core/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/license-AGPLv3%20%2F%20Commercial-blue.svg" alt="License"></a>
+  <a href="https://github.com/uni-aios-dev/aios-core/actions"><img src="https://img.shields.io/github/actions/workflow/status/uni-aios-dev/aios-core/ci.yml?branch=main&label=build&logo=github" alt="Build Status"></a>
+  <a href="https://github.com/uni-aios-dev/aios-core/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/license-AGPLv3%20%2F%20Commercial-blue.svg" alt="License"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust" alt="Rust Version"></a>
-  <a href="https://github.com/aios-dev/aios-core"><img src="https://img.shields.io/github/stars/aios-dev/aios-core?style=flat&logo=github" alt="Stars"></a>
-  <a href="https://discord.gg/aios"><img src="https://img.shields.io/discord/xxxxxx?label=discord&logo=discord&color=5865F2" alt="Discord"></a>
+  <a href="https://github.com/uni-aios-dev/aios-core"><img src="https://img.shields.io/github/stars/uni-aios-dev/aios-core?style=flat&logo=github" alt="Stars"></a>
+  <a href="https://github.com/uni-aios-dev/aios-core/discussions"><img src="https://img.shields.io/badge/discussions-online-brightgreen" alt="Discussions"></a>
   <br>
   <img src="https://img.shields.io/badge/tests-708/708-passing-brightgreen" alt="Tests 708/708">
   <img src="https://img.shields.io/badge/clippy-0%20warnings-brightgreen" alt="Clippy 0 warnings">
@@ -96,7 +96,7 @@ backed by `redb`. Applications are written in **EasyLang** — a declarative DSL
 
 ```bash
 # Clone
-git clone https://github.com/aios-dev/aios-core.git
+git clone https://github.com/uni-aios-dev/aios-core.git
 cd aios-core
 
 # Build everything
@@ -137,7 +137,7 @@ aiosctl run my-workflow.ez
 ### How It Works
 
 ```
-User ──► aiosctl search "browser" ──► GitHub API ──► aios-dev/aios-official-store
+User ──► aiosctl search "browser" ──► GitHub API ──► uni-aios-dev/aios-official-store
                                               │
                                         index.json ──► block manifest
                                               │
@@ -152,7 +152,7 @@ User ──► aiosctl search "browser" ──► GitHub API ──► aios-dev/
                                         Capability check
 ```
 
-- **Community Store:** Browse at [`github.com/aios-dev/aios-official-store`](https://github.com/aios-dev/aios-official-store)
+- **Community Store:** Browse at [`github.com/uni-aios-dev/aios-official-store`](https://github.com/uni-aios-dev/aios-official-store)
 - **EasyLang:** 10 keywords — `spawn`, `load`, `unload`, `kill`, `timer`, `query`, `compact`, `status`, `pipe`, `wait`
 - **Linux OCI Compatibility:** WASM blocks can be wrapped in OCI containers via `wasmtime serve` for Chrome OS integration
 - **Binary Compatibility:** POSIX / Win32 translation layer (`aios-exec-compat`) heals missing `.dll` / `.so` at runtime
@@ -204,9 +204,9 @@ User ──► aiosctl search "browser" ──► GitHub API ──► aios-dev/
 
 We welcome contributions! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines.
 
-- **Report bugs** — open a [Bug Report](https://github.com/aios-dev/aios-core/issues/new?template=bug_report.md)
-- **Suggest features** — start a [Discussion](https://github.com/aios-dev/aios-core/discussions)
-- **Submit blocks** — open a PR in [`aios-official-store`](https://github.com/aios-dev/aios-official-store)
+- **Report bugs** — open a [Bug Report](https://github.com/uni-aios-dev/aios-core/issues/new?template=bug_report.md)
+- **Suggest features** — start a [Discussion](https://github.com/uni-aios-dev/aios-core/discussions)
+- **Submit blocks** — open a PR in [`aios-official-store`](https://github.com/uni-aios-dev/aios-official-store)
 
 ---
 
@@ -228,9 +228,12 @@ See [`LICENSE.md`](LICENSE.md) for full terms.
 
 ## 💬 Community
 
-- **Discord:** [https://discord.gg/aios](https://discord.gg/aios)
-- **GitHub Discussions:** [github.com/aios-dev/aios-core/discussions](https://github.com/aios-dev/aios-core/discussions)
-- **Twitter / X:** [@aios_os](https://x.com/aios_os)
+- **GitHub Discussions:** [github.com/uni-aios-dev/aios-core/discussions](https://github.com/uni-aios-dev/aios-core/discussions)
+- **GitHub Issues:** [github.com/uni-aios-dev/aios-core/issues](https://github.com/uni-aios-dev/aios-core/issues)
+
+## ❤️ Support
+
+- **USDT (ERC-20):** `0x31f106eef39b1582d9851c984de0cbc60a3deda4`
 
 ---
 
@@ -274,7 +277,7 @@ See [`LICENSE.md`](LICENSE.md) for full terms.
 ### Быстрый старт
 
 ```bash
-git clone https://github.com/aios-dev/aios-core.git
+git clone https://github.com/uni-aios-dev/aios-core.git
 cd aios-core
 cargo build --release --workspace
 cargo test --workspace
@@ -316,9 +319,12 @@ WASM:         Wasmtime 47, WASI preview2
 
 ### Сообщество
 
-- **Discord:** [https://discord.gg/aios](https://discord.gg/aios)
-- **GitHub Discussions:** [github.com/aios-dev/aios-core/discussions](https://github.com/aios-dev/aios-core/discussions)
-- **Twitter / X:** [@aios_os](https://x.com/aios_os)
+- **GitHub Discussions:** [github.com/uni-aios-dev/aios-core/discussions](https://github.com/uni-aios-dev/aios-core/discussions)
+- **GitHub Issues:** [github.com/uni-aios-dev/aios-core/issues](https://github.com/uni-aios-dev/aios-core/issues)
+
+### Поддержать проект
+
+- **USDT (ERC-20):** `0x31f106eef39b1582d9851c984de0cbc60a3deda4`
 
 ---
 

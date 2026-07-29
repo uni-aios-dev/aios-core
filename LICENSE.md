@@ -77,5 +77,5 @@ AIOS uses several open-source libraries under their respective licenses:
 **To purchase a commercial license or ask questions:**
 
 - Email: `license@aios.dev`
-- GitHub Issues: <https://github.com/aios-dev/aios-core/issues>
-- Discussion: <https://github.com/aios-dev/aios-core/discussions/categories/enterprise-commercial>
+- GitHub Issues: <https://github.com/uni-aios-dev/aios-core/issues>
+- Discussion: <https://github.com/uni-aios-dev/aios-core/discussions/categories/enterprise-commercial>

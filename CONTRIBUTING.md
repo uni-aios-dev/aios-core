@@ -37,7 +37,7 @@ Be respectful, inclusive, and constructive. We enforce a **zero-tolerance policy
 
 ## Reporting Bugs
 
-Open a [Bug Report](https://github.com/aios-dev/aios-core/issues/new?template=bug_report.md) using the template.
+Open a [Bug Report](https://github.com/uni-aios-dev/aios-core/issues/new?template=bug_report.md) using the template.
 
 **Required:**
 - Clear steps to reproduce
@@ -50,7 +50,7 @@ Open a [Bug Report](https://github.com/aios-dev/aios-core/issues/new?template=bu
 
 ## Feature Requests
 
-Start a [Discussion](https://github.com/aios-dev/aios-core/discussions/categories/ideas-feature-requests) in the **Ideas & Feature Requests** category.
+Start a [Discussion](https://github.com/uni-aios-dev/aios-core/discussions/categories/ideas-feature-requests) in the **Ideas & Feature Requests** category.
 
 - Describe the problem you're solving, not just the solution
 - Mention if you're willing to implement it yourself
@@ -161,7 +161,7 @@ Before submitting:
 
 ## Adding a Block to the Store
 
-1. Fork [`aios-official-store`](https://github.com/aios-dev/aios-official-store)
+1. Fork [`aios-official-store`](https://github.com/uni-aios-dev/aios-official-store)
 2. Create a directory: `blocks/your-block-name/`
 3. Add:
    - `block.wasm` — compiled WASM binary

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the GitHub organization structure for the **AIOS** project (`github.com/aios-dev`).
+This document defines the GitHub organization structure for the **AIOS** project (`github.com/uni-aios-dev`).
 The organization follows an **Open-Core** model with **Dual Licensing** — public repositories for the core OS,
 EasyLang, and community store; private repositories for enterprise and security-sensitive components.
 
@@ -11,7 +11,7 @@ EasyLang, and community store; private repositories for enterprise and security-
 ## 1. Organization Profile
 
 - **Name:** AIOS
-- **URL:** `https://github.com/aios-dev`
+- **URL:** `https://github.com/uni-aios-dev`
 - **Description:** The Zero-Trust, WASM-First AI Operating System — Rust · WASM · EasyLang
 - **Avatar:** Hexagonal gear + brain icon on dark background
 - **Website:** `https://aios.dev`
@@ -210,7 +210,7 @@ Located in the `.github` repository (applied organization-wide):
 
 | File | Description |
 |------|-------------|
-| `profile/README.md` | Organization profile (shown on `github.com/aios-dev`) |
+| `profile/README.md` | Organization profile (shown on `github.com/uni-aios-dev`) |
 | `ISSUE_TEMPLATE/bug_report.md` | Bug report form with risk assessment |
 | `CONTRIBUTING.md` | Contribution guidelines (core + store) |
 | `SUPPORT.md` | Where to get help (Discord, Discussions, email) |
@@ -228,7 +228,7 @@ Located in the `.github` repository (applied organization-wide):
 - [ ] Set up branch protection (main branch)
 - [ ] Add GitHub Actions secrets (if needed)
 - [ ] Configure repository topics
-- [ ] Add to `aios-dev` GitHub organisation
+- [ ] Add to `uni-aios-dev` GitHub organisation
 - [ ] Set default branch: `main`
 - [ ] Enable "Allow squash merging" only
 - [ ] Add Code Owners file (`.github/CODEOWNERS`)
@@ -237,7 +237,7 @@ Located in the `.github` repository (applied organization-wide):
 
 ## 10. Branding Assets
 
-Location: `github.com/aios-dev/.github/assets/`
+Location: `github.com/uni-aios-dev/.github/assets/`
 
 | Asset | Format | Usage |
 |-------|--------|-------|
@@ -254,7 +254,7 @@ Location: `github.com/aios-dev/.github/assets/`
 | Channel | URL | Purpose |
 |---------|-----|---------|
 | **Discord** | `https://discord.gg/aios` | Real-time chat, support, community |
-| **GitHub Discussions** | `https://github.com/aios-dev/aios-core/discussions` | Long-form discussions, RFCs, Show & Tell |
+| **GitHub Discussions** | `https://github.com/uni-aios-dev/aios-core/discussions` | Long-form discussions, RFCs, Show & Tell |
 | **Twitter / X** | `https://x.com/aios_os` | Announcements, project updates |
 | **Email (Support)** | `support@aios.dev` | Private support requests |
 | **Email (License)** | `license@aios.dev` | Commercial licensing inquiries |
