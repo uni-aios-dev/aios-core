@@ -4,10 +4,14 @@ use crate::intent_engine::{BlockAction, IntentParser, MetricType, ProcessAction,
 
 use aios_block_mgr::registry::BlockRegistry;
 use aios_context::telemetry::TelemetryStore;
+use aios_debug::crash_reporter::CrashKind;
+use aios_debug::{CrashReporter, PanicHandler};
 use aios_llm::{default_config, LlmEngine};
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::ProcessId;
 use aios_security::access_control::AccessControlLayer;
+use aios_store::StoreRegistry;
+use aios_telemetry::{FlightRecorder, MetricCollector, TraceContext};
 use aios_watchdog::watchdog::Watchdog;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -34,6 +38,12 @@ pub struct BridgeContext {
     pub start_time: SystemTime,
     pub request_counter: AtomicU64,
     pub bridge_block_id: u32,
+    pub store_registry: Mutex<StoreRegistry>,
+    pub metric_collector: Mutex<MetricCollector>,
+    pub flight_recorder: Mutex<FlightRecorder>,
+    pub trace_context: Mutex<TraceContext>,
+    pub crash_reporter: Mutex<CrashReporter>,
+    pub _panic_handler: Mutex<PanicHandler>,
 }
 
 impl BridgeContext {
@@ -55,6 +65,12 @@ impl BridgeContext {
             start_time: SystemTime::now(),
             request_counter: AtomicU64::new(0),
             bridge_block_id,
+            store_registry: Mutex::new(StoreRegistry::new()),
+            metric_collector: Mutex::new(MetricCollector::new("aios")),
+            flight_recorder: Mutex::new(FlightRecorder::new(1024, 3600)),
+            trace_context: Mutex::new(TraceContext::new()),
+            crash_reporter: Mutex::new(CrashReporter::new("aios-bridge", "1.0.0")),
+            _panic_handler: Mutex::new(PanicHandler::new("aios-bridge", "1.0.0")),
         }
     }
 
@@ -74,6 +90,11 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/llm/query", post(llm_query_handler))
         .route("/api/v1/browse", post(browse_handler))
         .route("/api/v1/search", post(search_handler))
+        .route("/api/v1/store/index", get(store_index_handler))
+        .route("/api/v1/store/register", post(store_register_handler))
+        .route("/api/v1/metrics", get(metrics_handler))
+        .route("/api/v1/traces", get(traces_handler))
+        .route("/api/v1/crash-report", post(crash_report_handler))
         .route("/ws/telemetry", get(ws_handler))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
@@ -607,4 +628,110 @@ async fn search_handler(
             error: Some(e.to_string()),
         }),
     }
+}
+
+async fn store_index_handler(State(state): State<SharedState>) -> Json<StoreIndexResponse> {
+    let registry = state.store_registry.lock().unwrap();
+    let manifests: Vec<serde_json::Value> = registry
+        .list()
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "name": m.name,
+                "version": m.version,
+                "author": m.author,
+                "description": m.description,
+                "wasm_sha256": m.wasm_sha256,
+                "store_url": m.store_url,
+            })
+        })
+        .collect();
+    let count = manifests.len();
+    Json(StoreIndexResponse {
+        success: true,
+        count,
+        manifests,
+    })
+}
+
+async fn store_register_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<StoreRegisterRequest>,
+) -> Json<StoreRegisterResponse> {
+    let mut registry = state.store_registry.lock().unwrap();
+    let manifest = aios_store::ManifestInfo {
+        name: req.name.clone(),
+        version: req.version.clone(),
+        author: req.author,
+        description: req.description,
+        wasm_sha256: req.checksum_sha256.clone(),
+        capabilities: std::collections::HashSet::new(),
+        wasm_size_bytes: 0,
+        signature: None,
+        store_url: None,
+    };
+    match registry.register(manifest) {
+        Ok(()) => Json(StoreRegisterResponse {
+            success: true,
+            name: req.name,
+            version: req.version,
+        }),
+        Err(_e) => Json(StoreRegisterResponse {
+            success: false,
+            name: req.name,
+            version: req.version,
+        }),
+    }
+}
+
+async fn metrics_handler(State(state): State<SharedState>) -> Json<MetricsResponse> {
+    let collector = state.metric_collector.lock().unwrap();
+    let prometheus = collector.to_prometheus();
+    Json(MetricsResponse {
+        success: true,
+        prometheus,
+    })
+}
+
+async fn traces_handler(State(state): State<SharedState>) -> Json<TracesResponse> {
+    let trace = state.trace_context.lock().unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&trace.to_json()).unwrap_or(serde_json::json!({}));
+    let traces = vec![json];
+    Json(TracesResponse {
+        success: true,
+        traces,
+    })
+}
+
+async fn crash_report_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<CrashReportRequest>,
+) -> Json<CrashReportResponse> {
+    let mut reporter = state.crash_reporter.lock().unwrap();
+    let kind = match req.kind.to_lowercase().as_str() {
+        "panic" => CrashKind::Panic,
+        "watchdog" | "watchdog_timeout" => CrashKind::WatchdogTimeout,
+        "oom" => CrashKind::OOM,
+        "block" | "block_crash" => CrashKind::BlockCrash,
+        _ => CrashKind::Unknown,
+    };
+    let zero_knowledge = req.zero_knowledge.unwrap_or(false);
+    let report = reporter.generate_report(
+        kind,
+        "bridge-handler",
+        &req.message,
+        req.stack_trace.as_deref().unwrap_or(""),
+        "",
+        zero_knowledge,
+    );
+    let total = reporter.report_count();
+    let report_json: serde_json::Value =
+        serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+    Json(CrashReportResponse {
+        success: true,
+        report: Some(report_json),
+        total_reports: total,
+        error: None,
+    })
 }

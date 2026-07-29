@@ -26,6 +26,48 @@
 - `POST /api/v1/browse` — accepts `{ "url": "..." }`, returns title, text content, links
 - `POST /api/v1/search` — accepts `{ "query": "...", "backend": "...", "max_results": N, "enable_summary": bool }`, returns results with optional AI summary
 
+## v1.2.0 — Phase 26+27: Atomic Updates, Store, Telemetry & Debug (2026-07-29)
+
+### aios-updater — New Crate: Atomic Dual-Boot & Hot-Swap
+- New crate `aios-updater` — atomic updates with dual-boot slots, hot-swap engine, and timed rollback
+- `DualBootManager` — A/B slot management with `swap()`, `boot_success()`, `detect_active_slot()`, slot info
+- `HotSwapEngine` — wraps aios-live-update's engine for ID-based block hot-swap tracking with counter
+- `RollbackManager` — snapshot-based rollback with configurable timeout (default 1s auto-rollback), snapshot pruning
+- 12 unit tests: slot creation, swap, boot success, hot-swap, rollback success/timeout/pruning
+
+### aios-store — New Crate: Decentralized WASM Registry
+- New crate `aios-store` — WASM block store with SHA-256 validation, Ed25519 signatures, and store registry
+- `ManifestInfo` — name, version, description, author, capabilities, wasm_sha256, signature, store_url
+- `ManifestValidator` — SHA-256 content validation, Ed25519 signature verification, capability whitelist
+- `StoreRegistry` — name@version keyed map with `register()`, `get()`, `find_all()`, `list()`, `unregister()`
+- `StoreClient` — HTTP client for fetching store index and downloading WASM blocks
+- 9 unit tests: SHA-256 validation (pass/fail), capability validation (valid/invalid), registry CRUD
+
+### aios-telemetry — New Crate: Structured Tracing & Metrics
+- New crate `aios-telemetry` — end-to-end structured tracing, flight recorder, Prometheus-compatible metrics
+- `TraceContext` — span tree with `begin_span()`, `end_span()`, `set_tag()`, `set_status()`, `to_json()` export
+- `FlightRecorder` — ring buffer with kind-based filtering, configurable max events + retention, dump by kind
+- `MetricCollector` — counters, gauges, histograms with `snapshot()`, `to_prometheus()` (Prometheus text format)
+- 17 unit tests: span nesting, error status, JSON export, flight recorder record/dump/clear, all metric types
+
+### aios-debug — New Crate: Crash Reporting & Panic Handler
+- New crate `aios-debug` — zero-knowledge crash reports and custom panic handler
+- `CrashReporter` — generates crash reports with optional zero-knowledge mode (hash redaction, no flight data)
+- `CrashKind` — Panic, WatchdogTimeout, OOM, BlockCrash, Unknown
+- `PanicHandler` — custom panic hook that routes panic info to CrashReporter
+- 6 unit tests: report generation, zero-knowledge mode, JSON export, latest/bulk reports
+
+### aios-bridge: Store, Metrics, Traces & Crash-REST Endpoints
+- `GET /api/v1/store/index` — lists all registered manifests in the store
+- `POST /api/v1/store/register` — registers a new manifest
+- `GET /api/v1/metrics` — returns Prometheus-format metrics from MetricCollector
+- `GET /api/v1/traces` — returns current TraceContext as JSON
+- `POST /api/v1/crash-report` — triggers a crash report (for debugging), returns JSON report
+
+### BridgeContext Enriched
+- Added `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler` to BridgeContext
+- All new instances initialized with sensible defaults in `BridgeContext::new()`
+
 ## v1.0.0 — Phase 23: Multi-Mode AI Engine + Hybrid Intent Router (2026-07-29)
 
 ### aios-llm: Real GGUF Inference (Micro-Local & Full-Local)

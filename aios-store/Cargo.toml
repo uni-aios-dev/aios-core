@@ -1,0 +1,19 @@
+[package]
+name = "aios-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-security = { path = "../aios-security" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

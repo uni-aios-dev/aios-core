@@ -1,0 +1,17 @@
+[package]
+name = "aios-updater"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-live-update = { path = "../aios-live-update" }
+aios-block-mgr = { path = "../aios-block-mgr" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"

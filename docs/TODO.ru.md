@@ -313,15 +313,17 @@
   - [x] Анонимный веб-поиск через DuckDuckGo / SearXNG / Brave Search API (SearchEngine, 3 бэкенда)
   - [x] Синтез TL;DR локальным ИИ через aios-llm (SearchSummarizer)
   - [x] `POST /api/v1/browse` и `POST /api/v1/search` REST-эндпоинты в aios-bridge
-- [ ] **Фаза 26: Атомарные обновления и магазин приложений (`aios-updater` и `aios-store`)**
-  - [ ] Atomic Dual-Boot (Slot A / Slot B) с откатом за 1 секунду
-  - [ ] Горячая замена драйверов и приложений без перезагрузки
-  - [ ] Децентрализованный реестр WASM с подписями Ed25519
-- [ ] **Фаза 27: Система отладки и чёрный ящик (`aios-telemetry` и `aios-debug`)**
-  - [ ] Сквозной `TraceID` structured tracing
-  - [ ] Flight Recorder — кольцевой буфер последних 60 секунд работы ядра
-  - [ ] Zero-Knowledge анонимизированные отчёты об ошибках
-  - [ ] Prometheus-совместимый endpoint `/api/v1/metrics`
+- [x] **Фаза 26: Атомарные обновления и магазин приложений (`aios-updater` и `aios-store`) — ВЫПОЛНЕНО**
+  - [x] Atomic Dual-Boot (Slot A / Slot B) с откатом за 1 секунду
+  - [x] Горячая замена драйверов и приложений без перезагрузки (HotSwapEngine)
+  - [x] Децентрализованный реестр WASM с подписями Ed25519 (ManifestValidator + StoreRegistry)
+  - [x] `GET /api/v1/store/index` и `POST /api/v1/store/register` REST-эндпоинты
+- [x] **Фаза 27: Система отладки и чёрный ящик (`aios-telemetry` и `aios-debug`) — ВЫПОЛНЕНО**
+  - [x] Сквозной `TraceID` structured tracing (TraceContext)
+  - [x] Flight Recorder — кольцевой буфер с фильтрацией по типу и дампом (FlightRecorder)
+  - [x] Zero-Knowledge анонимизированные отчёты об ошибках (CrashReporter + PanicHandler)
+  - [x] Prometheus-совместимый endpoint `/api/v1/metrics`
+  - [x] `GET /api/v1/traces` и `POST /api/v1/crash-report` REST-эндпоинты
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |

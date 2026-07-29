@@ -1,3 +1,45 @@
+## v1.2.0 — Фаза 26+27: Атомарные обновления, магазин, телеметрия и отладка (2026-07-29)
+
+### aios-updater — Новый крейт: Атомарный Dual-Boot и Hot-Swap
+- Новый крейт `aios-updater` — атомарные обновления с dual-boot слотами, движком горячей замены и откатом по таймеру
+- `DualBootManager` — управление слотами A/B с `swap()`, `boot_success()`, `detect_active_slot()`, информацией о слотах
+- `HotSwapEngine` — обёртка над aios-live-update для отслеживания горячей замены блоков по ID со счётчиком
+- `RollbackManager` — откат на основе снимков с настраиваемым таймаутом (по умолчанию 1с автооткат), очистка снимков
+- 12 unit-тестов: создание слотов, переключение, успешная загрузка, горячая замена, откат успех/таймаут/очистка
+
+### aios-store — Новый крейт: Децентрализованный WASM-реестр
+- Новый крейт `aios-store` — WASM-реестр блоков с валидацией SHA-256, подписями Ed25519 и реестром магазина
+- `ManifestInfo` — name, version, description, author, capabilities, wasm_sha256, signature, store_url
+- `ManifestValidator` — валидация содержимого SHA-256, проверка подписей Ed25519, белый список capability
+- `StoreRegistry` — карта ключей name@version с `register()`, `get()`, `find_all()`, `list()`, `unregister()`
+- `StoreClient` — HTTP-клиент для получения индекса магазина и загрузки WASM-блоков
+- 9 unit-тестов: валидация SHA-256 (успех/неудача), валидация capability (верные/неверные), CRUD реестра
+
+### aios-telemetry — Новый крейт: Структурированная трассировка и метрики
+- Новый крейт `aios-telemetry` — сквозная структурированная трассировка, регистратор полёта, метрики Prometheus
+- `TraceContext` — дерево спанов с `begin_span()`, `end_span()`, `set_tag()`, `set_status()`, экспорт `to_json()`
+- `FlightRecorder` — кольцевой буфер с фильтрацией по типу, настраиваемым макс. событий + хранением, дамп по типу
+- `MetricCollector` — счётчики, датчики, гистограммы с `snapshot()`, `to_prometheus()` (формат Prometheus text)
+- 17 unit-тестов: вложенность спанов, статус ошибки, экспорт JSON, запись/дамп/очистка регистратора, все типы метрик
+
+### aios-debug — Новый крейт: Отчёты об авариях и обработчик паник
+- Новый крейт `aios-debug` — отчёты об авариях с нулевым знанием и кастомный обработчик паник
+- `CrashReporter` — генерирует отчёты с опциональным режимом zero-knowledge (хеширование, без данных полёта)
+- `CrashKind` — Panic, WatchdogTimeout, OOM, BlockCrash, Unknown
+- `PanicHandler` — кастомный хук паники, направляющий информацию в CrashReporter
+- 6 unit-тестов: генерация отчёта, режим zero-knowledge, экспорт JSON, последний/все отчёты
+
+### aios-bridge: REST-эндпоинты магазина, метрик, трасс и отчётов об авариях
+- `GET /api/v1/store/index` — список всех зарегистрированных манифестов в магазине
+- `POST /api/v1/store/register` — регистрация нового манифеста
+- `GET /api/v1/metrics` — метрики в формате Prometheus из MetricCollector
+- `GET /api/v1/traces` — текущий TraceContext в формате JSON
+- `POST /api/v1/crash-report` — создание отчёта об аварии (для отладки), возвращает JSON
+
+### BridgeContext расширен
+- Добавлены `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler` в BridgeContext
+- Все новые экземпляры инициализируются с разумными параметрами по умолчанию в `BridgeContext::new()`
+
 ## v1.1.0 — Фаза 25: Безопасный веб-сёрфинг и поиск (2026-07-29)
 
 ### aios-browser — Новый крейт: Веб-браузер на WASM

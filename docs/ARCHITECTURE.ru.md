@@ -953,14 +953,32 @@ User Input (TUI)
   - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
   - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → результаты + AI-краткое содержание
 
-### Фаза 26: Атомарные обновления и магазин приложений (`aios-updater` и `aios-store`)
-- **Atomic Dual-Boot (Slot A / Slot B):** Фоновое обновление ядра с гарантированным откатом за 1 секунду при сбое Watchdog
-- **Горячая замена:** Замена драйверов и приложений без перезагрузки
-- **`aios-store`:** Децентрализованный реестр WASM-блоков с проверкой подписей Ed25519
-- **Каналы обновлений:** stable / beta / nightly с автоматическим откатом при сбое загрузки
-
-### Фаза 27: Система отладки и чёрный ящик (`aios-telemetry` и `aios-debug`)
-- **Структурированный Tracing:** Сквозной `TraceID`: Пользователь → Intent → DAG → IPC → WASM
-- **Flight Recorder (Аварийный чёрный ящик):** Кольцевой буфер в RAM (последние 60 секунд) с авто-сохранением стека при панике
-- **Zero-Knowledge отчёты:** Анонимизированные дампы без раскрытия данных пользователя
-- **Экспорт метрик:** Prometheus-совместимый endpoint `/api/v1/metrics`
+### Фаза 26+27: Атомарные обновления, магазин, телеметрия и отладка (`aios-updater`, `aios-store`, `aios-telemetry`, `aios-debug`) — *ЗАВЕРШЕНО*
+- **Крейт `aios-updater`**:
+  - `DualBootManager`: Управление слотами A/B с `swap()`, `boot_success()`, `detect_active_slot()`, информацией о слотах
+  - `HotSwapEngine`: Отслеживание горячей замены по BlockId со счётчиком; обёртка над aios-live-update
+  - `RollbackManager`: Откат на основе снимков с настраиваемым таймаутом (по умолчанию 1с автооткат), очистка снимков
+  - **12 unit-тестов**: создание слотов, переключение, успешная загрузка, горячая замена, откат
+- **Крейт `aios-store`**:
+  - `ManifestInfo`: name, version, description, author, capabilities (HashSet), wasm_sha256, signature (Ed25519), store_url
+  - `ManifestValidator`: Валидация SHA-256, проверка подписи Ed25519, белый список capability
+  - `StoreRegistry`: HashMap по ключу name@version с `register()`, `get()`, `find_all()`, `list()`, `unregister()`
+  - `StoreClient`: HTTP-клиент с `fetch_index()` и `download_block()` для удалённого магазина
+  - **9 unit-тестов**: валидация SHA-256, валидация capability, CRUD реестра
+- **Крейт `aios-telemetry`**:
+  - `TraceContext`: Дерево спанов с `begin_span()`, `end_span()`, `set_tag()`, `set_status()`, `to_json()` (JSON-экспорт)
+  - `FlightRecorder`: Кольцевой буфер с фильтрацией по типу, настраиваемыми max_events + retention_secs, `dump()` и `dump_by_kind()`
+  - `MetricCollector`: Счётчики, датчики, гистограммы с `snapshot()` (MetricSnapshot) и `to_prometheus()` (формат Prometheus)
+  - **17 unit-тестов**: вложенность спанов, статус ошибки, экспорт JSON, запись/дамп/очистка регистратора, все типы метрик
+- **Крейт `aios-debug`**:
+  - `CrashReporter`: Генерирует отчёты с опциональным zero-knowledge режимом (хеширование, без данных полёта)
+  - `CrashKind`: Panic, WatchdogTimeout, OOM, BlockCrash, Unknown
+  - `PanicHandler`: Кастомный хук паники через std::panic::set_hook, направляет информацию в CrashReporter
+  - **6 unit-тестов**: генерация отчёта, zero-knowledge, экспорт JSON, последний/все отчёты
+- **REST-эндпоинты aios-bridge**:
+  - `GET /api/v1/store/index` — список всех манифестов
+  - `POST /api/v1/store/register` — регистрация манифеста
+  - `GET /api/v1/metrics` — метрики в формате Prometheus
+  - `GET /api/v1/traces` — текущий TraceContext в JSON
+  - `POST /api/v1/crash-report` — создание отчёта об аварии
+- **BridgeContext** расширен: `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`

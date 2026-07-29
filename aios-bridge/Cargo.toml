@@ -22,6 +22,9 @@ futures = "0.3"
 aios-llm = { path = "../aios-llm" }
 aios-browser = { path = "../aios-browser" }
 aios-search = { path = "../aios-search" }
+aios-store = { path = "../aios-store" }
+aios-telemetry = { path = "../aios-telemetry" }
+aios-debug = { path = "../aios-debug" }
 
 [dev-dependencies]
 tempfile = "3"

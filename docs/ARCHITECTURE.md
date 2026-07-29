@@ -959,14 +959,32 @@ Three adaptive AI modes depending on hardware resources:
   - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
   - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → results + AI summary
 
-### Phase 26: Atomic Updates & App Store (`aios-updater` & `aios-store`)
-- **Atomic Dual-Boot (Slot A / Slot B):** Background-slot kernel update with guaranteed 1-second auto-rollback on Watchdog failure
-- **Hot-Swapping:** Live driver/application replacement without system reboot
-- **`aios-store`:** Decentralized WASM block registry with Ed25519 cryptographic signature verification
-- **Update channels:** stable / beta / nightly with automatic rollback on boot failure
-
-### Phase 27: Debug System & Black Box (`aios-telemetry` & `aios-debug`)
-- **Structured Tracing:** End-to-end `TraceID` assignment: User → Intent → DAG → IPC → WASM execution
-- **Flight Recorder (Crash Black Box):** Ring buffer in RAM (last 60 seconds of kernel activity) with auto-stack-dump on panic
-- **Zero-Knowledge Error Reports:** Anonymized crash dumps without user data exposure
-- **Metrics export:** Prometheus-compatible endpoint at `/api/v1/metrics`
+### Phase 26+27: Atomic Updates, Store, Telemetry & Debug (`aios-updater`, `aios-store`, `aios-telemetry`, `aios-debug`) — *COMPLETED*
+- **`aios-updater` crate**:
+  - `DualBootManager`: A/B slot management with `swap()`, `boot_success()`, `detect_active_slot()`, active/inactive slot info
+  - `HotSwapEngine`: Tracks hot-swap operations by `BlockId` with swap counter; wraps aios-live-update
+  - `RollbackManager`: Snapshot-based rollback with configurable timeout (default 1s auto-rollback), snapshot pruning
+  - **12 unit tests**: slot creation, swap, boot success, hot-swap, rollback scenarios
+- **`aios-store` crate**:
+  - `ManifestInfo`: name, version, description, author, capabilities (HashSet), wasm_sha256, signature (Ed25519), store_url
+  - `ManifestValidator`: SHA-256 content validation, Ed25519 signature verification, capability whitelist
+  - `StoreRegistry`: name@version keyed HashMap with `register()`, `get()`, `find_all()`, `list()`, `unregister()`
+  - `StoreClient`: HTTP client with `fetch_index()` and `download_block()` for remote store
+  - **9 unit tests**: SHA-256 validation, capability validation, registry CRUD
+- **`aios-telemetry` crate**:
+  - `TraceContext`: Span tree with `begin_span()`, `end_span()`, `set_tag()`, `set_status()`, `to_json()` (JSON export)
+  - `FlightRecorder`: Ring buffer with kind-based filtering, configurable max_events + retention_secs, `dump()` and `dump_by_kind()`
+  - `MetricCollector`: Counters, gauges, histograms with `snapshot()` (MetricSnapshot) and `to_prometheus()` (Prometheus exposition format)
+  - **17 unit tests**: span nesting, error status, JSON export, flight recorder record/dump/clear, all metric types
+- **`aios-debug` crate**:
+  - `CrashReporter`: Generates crash reports with optional zero-knowledge mode (hash redaction, drops flight data)
+  - `CrashKind`: Panic, WatchdogTimeout, OOM, BlockCrash, Unknown
+  - `PanicHandler`: Custom panic hook routing panic info to CrashReporter; uses std::panic::set_hook
+  - **6 unit tests**: report generation, zero-knowledge mode, JSON export, latest/bulk reports
+- **aios-bridge REST endpoints**:
+  - `GET /api/v1/store/index` — list all registered manifests
+  - `POST /api/v1/store/register` — register a new manifest
+  - `GET /api/v1/metrics` — Prometheus-format metrics
+  - `GET /api/v1/traces` — current TraceContext as JSON
+  - `POST /api/v1/crash-report` — trigger a crash report
+- **BridgeContext** enriched with `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`

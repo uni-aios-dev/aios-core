@@ -315,15 +315,17 @@
   - [x] Anonymous web search via DuckDuckGo / SearXNG / Brave Search APIs (SearchEngine, 3 backends)
   - [x] Local AI TL;DR synthesis via aios-llm (SearchSummarizer)
   - [x] `POST /api/v1/browse` and `POST /api/v1/search` REST endpoints in aios-bridge
-- [ ] **Phase 26: Atomic Updates & App Store (`aios-updater` & `aios-store`)**
-  - [ ] Atomic Dual-Boot (Slot A / Slot B) with 1-second auto-rollback
-  - [ ] Hot-swapping drivers and apps without reboot
-  - [ ] Decentralized WASM registry with Ed25519 signatures
-- [ ] **Phase 27: Debug System & Black Box (`aios-telemetry` & `aios-debug`)**
-  - [ ] End-to-end `TraceID` structured tracing
-  - [ ] Flight Recorder — ring buffer of last 60 seconds of kernel activity
-  - [ ] Zero-Knowledge anonymized crash reports
-  - [ ] Prometheus-compatible `/api/v1/metrics` endpoint
+- [x] **Phase 26: Atomic Updates & App Store (`aios-updater` & `aios-store`) — COMPLETE**
+  - [x] Atomic Dual-Boot (Slot A / Slot B) with 1-second auto-rollback
+  - [x] Hot-swapping drivers and apps without reboot (HotSwapEngine)
+  - [x] Decentralized WASM registry with Ed25519 signatures (ManifestValidator + StoreRegistry)
+  - [x] `GET /api/v1/store/index` and `POST /api/v1/store/register` REST endpoints
+- [x] **Phase 27: Debug System & Black Box (`aios-telemetry` & `aios-debug`) — COMPLETE**
+  - [x] End-to-end `TraceID` structured tracing (TraceContext)
+  - [x] Flight Recorder — ring buffer with kind-based filtering and dump (FlightRecorder)
+  - [x] Zero-Knowledge anonymized crash reports (CrashReporter + PanicHandler)
+  - [x] Prometheus-compatible `/api/v1/metrics` endpoint
+  - [x] `GET /api/v1/traces` and `POST /api/v1/crash-report` REST endpoints
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |

@@ -156,6 +156,57 @@ pub struct SearchRequest {
 }
 
 #[derive(Debug, Serialize)]
+pub struct StoreIndexResponse {
+    pub success: bool,
+    pub count: usize,
+    pub manifests: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StoreRegisterRequest {
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub description: String,
+    pub checksum_sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StoreRegisterResponse {
+    pub success: bool,
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MetricsResponse {
+    pub success: bool,
+    pub prometheus: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TracesResponse {
+    pub success: bool,
+    pub traces: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CrashReportRequest {
+    pub kind: String,
+    pub message: String,
+    pub stack_trace: Option<String>,
+    pub zero_knowledge: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CrashReportResponse {
+    pub success: bool,
+    pub report: Option<serde_json::Value>,
+    pub total_reports: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SearchResponse {
     pub success: bool,
     pub query: String,
