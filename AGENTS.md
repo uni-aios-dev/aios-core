@@ -27,6 +27,15 @@ When making ANY documentation change:
 7. Code blocks, file paths, type names, and command examples remain in English in Russian docs.
 8. Table headers in Russian docs are translated; table content (type names, variants) stays in English.
 
+## Immediate Git Push Rule (MANDATORY)
+
+**Every code change, doc update, or any file modification MUST be committed and pushed to GitHub immediately after completion and verification.**
+
+1. After any change: `git add -A && git commit -m "<description>" && git push`
+2. Commit message must be descriptive (in English), include what changed and why
+3. Pushed to `origin main` on `uni-aios-dev/aios-core`
+4. This rule applies even for single-file changes, typo fixes, and docs-only updates
+
 ## Session Reports (MANDATORY)
 
 **After completing any multi-step task or significant change, write a session report in Russian.**
