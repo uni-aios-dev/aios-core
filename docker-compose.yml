@@ -3,8 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
-    container_name: aios-kernel
+    container_name: aios-docker
     environment:
       - RUST_LOG=info
       - AIOS_DATA_DIR=/app/data
@@ -13,15 +12,12 @@ services:
     volumes:
       - aios-data:/app/data
       - aios-blocks:/app/blocks
-    stdin_open: true
-    tty: true
     restart: unless-stopped
 
   aios-safe-mode:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
     container_name: aios-safe-mode
     environment:
       - RUST_LOG=debug
@@ -29,8 +25,6 @@ services:
       - AIOS_MOCK_PROFILE=legacy
     volumes:
       - aios-data:/app/data
-    stdin_open: true
-    tty: true
     profiles:
       - safe-mode
 

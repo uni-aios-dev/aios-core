@@ -2,32 +2,32 @@
 
 ## Обзор системы
 
-AIOS (AI-Native Operating System) — модульная ОС в стиле микроядра, разработанная для AI-ориентированных нагрузок. Система состоит из 22 Rust-крейтов, образующих слоистую архитектуру: базовые типы внизу, абстракция оборудования и управление процессами в середине, системы безопасности/контекста, а также пользовательский TUI-интерфейс наверху.
+AIOS (AI-Native Operating System) — модульная ОС в стиле микроядра, разработанная для AI-ориентированных нагрузок. Система состоит из 23 Rust-крейтов, образующих слоистую архитектуру: базовые типы внизу, абстракция оборудования и управление процессами в середине, системы безопасности/контекста, и пользовательские интерфейсы (TUI/GUI/Daemon) наверху.
 
-Вся коммуникация между крейтами осуществляется через бинарный IPC-протокол. Блоки (модули ядра) поддерживают горячую замену с автоматическим откатом. AI-оркестратор преобразует намерения на естественном языке в системные операции.
+Вся коммуникация между крейтами осуществляется через бинарный IPC-протокол. Блоки (модули ядра) поддерживают горячую замену с автоматическим откатом. AI-оркестратор преобразует намерения на естественном языке в системные операции. Крейт `aios-daemon` предоставляет headless-сервер для развёртывания в Docker/фоне, не требующий терминала.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                    TUI Layer                     │
-│  intent_engine  │  dashboard  │  main.rs        │
-├─────────────────────────────────────────────────┤
-│              Safety & Security Layer             │
-│  watchdog (heartbeat/safe-mode)                  │
-│  security (capabilities/sandboxing)              │
-│  context (telemetry/workflows/stability)         │
-├─────────────────────────────────────────────────┤
-│                Management Layer                  │
-│  block-mgr (registry/loader/router)             │
-│  process-mgr (scheduler/crash resilience)        │
-│  live-update (hot-swap/rollback)                 │
-├─────────────────────────────────────────────────┤
-│              Abstraction Layer                   │
-│  HAL (hardware detect / tier classification)     │
-│  IPC (bus + channel transports)                  │
-├─────────────────────────────────────────────────┤
-│              Foundation Layer                    │
-│  core (types / protocol / crypto / errors)       │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│              Interface Layer (User-Facing)            │
+│  TUI (ratatui)  │  GUI (egui)  │  Daemon (headless)  │
+├──────────────────────────────────────────────────────┤
+│              Safety & Security Layer                  │
+│  watchdog (heartbeat/safe-mode)                       │
+│  security (capabilities/sandboxing)                   │
+│  context (telemetry/workflows/stability)              │
+├──────────────────────────────────────────────────────┤
+│                Management Layer                       │
+│  block-mgr (registry/loader/router)                  │
+│  process-mgr (scheduler/crash resilience)             │
+│  live-update (hot-swap/rollback)                      │
+├──────────────────────────────────────────────────────┤
+│              Abstraction Layer                        │
+│  HAL (hardware detect / tier classification)          │
+│  IPC (bus + channel transports)                       │
+├──────────────────────────────────────────────────────┤
+│              Foundation Layer                         │
+│  core (types / protocol / crypto / errors)            │
+└──────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -952,6 +952,23 @@ User Input (TUI)
 - **REST-эндпоинты aios-bridge**:
   - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
   - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → результаты + AI-краткое содержание
+
+### Фаза 28: Headless Daemon (`aios-daemon`) — *ЗАВЕРШЕНО*
+- **Крейт `aios-daemon`**:
+  - Бинарник `aiosd`: headless-сервер с той же инициализацией, что и `aios-tui`, без терминала
+  - Загружает встроенные блоки (hal, ipc_bus, scheduler) и дисковые блоки из `AIOS_BLOCKS_DIR`
+  - Открывает persistent store (`redb`) в `AIOS_DATA_DIR/context.redb`
+  - Запускает системные процессы (ai_orchestrator, io_handler, health_monitor)
+  - Запускает поток heartbeat watchdog
+  - Фоновый цикл: heartbeat (процессы, RAM, watchdog) каждые 10с, сохранение телеметрии каждые 60с
+  - Минимальные зависимости: без ratatui, crossterm, egui, wasmtime
+  - Конфигурация через `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+- **Headless-режим `aios-tui`**:
+  - Флаг `--headless` и `AIOS_HEADLESS=1`: пропускает TUI-инициализацию, работает в фоне
+- **Docker**:
+  - Dockerfile собирает только `aios-daemon` (~2мин), CMD — `aiosd`
+  - `docker-compose.yml`: daemon по умолчанию, профиль `interactive` для TUI
+  - Размер образа уменьшен с ~800MB до ~120MB
 
 ### Фаза 26+27: Атомарные обновления, магазин, телеметрия и отладка (`aios-updater`, `aios-store`, `aios-telemetry`, `aios-debug`) — *ЗАВЕРШЕНО*
 - **Крейт `aios-updater`**:

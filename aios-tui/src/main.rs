@@ -28,6 +28,11 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+fn is_headless() -> bool {
+    std::env::var("AIOS_HEADLESS").as_deref() == Ok("1")
+        || std::env::args().any(|a| a == "--headless")
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
@@ -142,6 +147,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut telemetry = TelemetryStore::new();
     let mut safe_shell = SafeModeShell::new(3);
+
+    if is_headless() {
+        log::info!("AIOS: headless mode — running without TUI");
+        log::info!("AIOS: system initialized, entering background loop");
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

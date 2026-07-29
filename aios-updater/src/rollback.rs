@@ -7,6 +7,7 @@ pub struct RollbackManager {
     snapshots: VecDeque<SnapshotEntry>,
     max_snapshots: usize,
     snapshot_dir: PathBuf,
+    next_id: u64,
 }
 
 struct SnapshotEntry {
@@ -24,6 +25,7 @@ impl RollbackManager {
             snapshots: VecDeque::with_capacity(max_snapshots + 1),
             max_snapshots,
             snapshot_dir,
+            next_id: 1,
         }
     }
 
@@ -38,7 +40,8 @@ impl RollbackManager {
             self.snapshots.pop_front();
         }
 
-        let id = self.snapshots.len() as u64 + 1;
+        let id = self.next_id;
+        self.next_id += 1;
         self.snapshots.push_back(SnapshotEntry {
             id,
             label: label.to_string(),
@@ -70,7 +73,7 @@ impl RollbackManager {
             entry.len()
         );
 
-        self.snapshots.truncate(pos + 1);
+        self.snapshots.truncate(pos);
         Ok(entry)
     }
 
@@ -171,5 +174,88 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
         assert!(mgr.rollback_to(999).is_err());
+    }
+
+    #[test]
+    fn test_rollback_crash_recovery_restores_correct_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+
+        mgr.take_snapshot("db", "1.0", vec![1, 2, 3, 4, 5], "checkpoint-a");
+        mgr.take_snapshot("db", "1.1", vec![6, 7, 8], "checkpoint-b");
+        mgr.take_snapshot("db", "1.2", vec![9], "checkpoint-c");
+
+        let restored = mgr.rollback_to(2).unwrap();
+        assert_eq!(restored, vec![6, 7, 8]);
+        assert_eq!(mgr.snapshot_count(), 1);
+
+        let labels = mgr.list_labels();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].1, "checkpoint-a");
+    }
+
+    #[test]
+    fn test_rollback_crash_after_rollback_sequential() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 5);
+
+        mgr.take_snapshot("b", "1.0", vec![10], "s1");
+        mgr.take_snapshot("b", "1.0", vec![20], "s2");
+        mgr.take_snapshot("b", "1.0", vec![30], "s3");
+
+        mgr.rollback_last().unwrap();
+        assert_eq!(mgr.snapshot_count(), 2);
+
+        mgr.take_snapshot("b", "2.0", vec![99], "post-crash");
+        assert_eq!(mgr.snapshot_count(), 3);
+
+        let restored = mgr.rollback_to(4).unwrap();
+        assert_eq!(restored, vec![99]);
+    }
+
+    #[test]
+    fn test_rollback_crash_empty_no_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+
+        let result = mgr.rollback_last();
+        assert!(result.is_err());
+        assert_eq!(mgr.snapshot_count(), 0);
+    }
+
+    #[test]
+    fn test_rollback_crash_auto_rollback_after_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 5);
+
+        mgr.take_snapshot("b", "1.0", vec![1, 2, 3], "pre-crash");
+
+        let result = mgr.auto_rollback_if_needed().unwrap();
+        assert!(result.is_none());
+
+        std::thread::sleep(Duration::from_millis(1100));
+
+        let result = mgr.auto_rollback_if_needed().unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), vec![1, 2, 3]);
+        assert_eq!(mgr.snapshot_count(), 0);
+    }
+
+    #[test]
+    fn test_rollback_crash_max_snapshots_id_unique() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+
+        let ids: Vec<u64> = (0..10)
+            .map(|i| mgr.take_snapshot("b", "1.0", vec![i], &format!("s{i}")))
+            .collect();
+
+        assert_eq!(mgr.snapshot_count(), 3);
+        assert_eq!(ids, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "IDs must be globally unique");
     }
 }

@@ -110,6 +110,7 @@ aios-context/       — Context store: telemetry, workflows, stability scores
 aios-exec-compat/    — Multi-binary compatibility: POSIX/Win32 translation, dependency healing
 aios-wasm/           — WebAssembly runtime: Wasmtime embedding, WASI filtering, sandbox isolation
 aios-tui/           — User interface: intent engine, ratatui dashboard
+aios-daemon/        — Headless server: aiosd binary for Docker/background
 aios-gui/           — Native GUI dashboard: egui/eframe, 6 tabs, dark theme
 tests/              — Integration tests (28 tests covering full lifecycle)
 docs/               — All documentation

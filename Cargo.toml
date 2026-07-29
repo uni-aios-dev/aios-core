@@ -56,6 +56,7 @@ members = [
     "aios-mpk",
     "aios-iommu",
     "aios-tee",
+    "aios-daemon",
     "aios-wasm", "aios-net", "aios-gui", "aios-bridge", "aios-builder", "aios-llm", "aios-browser", "aios-search", "aios-updater", "aios-store", "aios-telemetry", "aios-debug",
 ]
 

@@ -2,32 +2,32 @@
 
 ## System Overview
 
-AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 22 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and a user-facing TUI at the top.
+AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 23 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (TUI/GUI/Daemon) at the top.
 
-All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations.
+All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios-daemon` crate provides a headless server binary for Docker/background deployments with no terminal dependency.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                    TUI Layer                     │
-│  intent_engine  │  dashboard  │  main.rs        │
-├─────────────────────────────────────────────────┤
-│              Safety & Security Layer             │
-│  watchdog (heartbeat/safe-mode)                  │
-│  security (capabilities/sandboxing)              │
-│  context (telemetry/workflows/stability)         │
-├─────────────────────────────────────────────────┤
-│                Management Layer                  │
-│  block-mgr (registry/loader/router)             │
-│  process-mgr (scheduler/crash resilience)        │
-│  live-update (hot-swap/rollback)                 │
-├─────────────────────────────────────────────────┤
-│              Abstraction Layer                   │
-│  HAL (hardware detect / tier classification)     │
-│  IPC (bus + channel transports)                  │
-├─────────────────────────────────────────────────┤
-│              Foundation Layer                    │
-│  core (types / protocol / crypto / errors)       │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│              Interface Layer (User-Facing)            │
+│  TUI (ratatui)  │  GUI (egui)  │  Daemon (headless)  │
+├──────────────────────────────────────────────────────┤
+│              Safety & Security Layer                  │
+│  watchdog (heartbeat/safe-mode)                       │
+│  security (capabilities/sandboxing)                   │
+│  context (telemetry/workflows/stability)              │
+├──────────────────────────────────────────────────────┤
+│                Management Layer                       │
+│  block-mgr (registry/loader/router)                  │
+│  process-mgr (scheduler/crash resilience)             │
+│  live-update (hot-swap/rollback)                      │
+├──────────────────────────────────────────────────────┤
+│              Abstraction Layer                        │
+│  HAL (hardware detect / tier classification)          │
+│  IPC (bus + channel transports)                       │
+├──────────────────────────────────────────────────────┤
+│              Foundation Layer                         │
+│  core (types / protocol / crypto / errors)            │
+└──────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -958,6 +958,23 @@ Three adaptive AI modes depending on hardware resources:
 - **aios-bridge REST endpoints**:
   - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
   - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → results + AI summary
+
+### Phase 28: Headless Daemon (`aios-daemon`) — *COMPLETED*
+- **`aios-daemon` crate**:
+  - `aiosd` binary: headless server performing the same initialization as `aios-tui` without terminal access
+  - Loads built-in blocks (hal, ipc_bus, scheduler) and disk blocks from `AIOS_BLOCKS_DIR`
+  - Opens persistent store (`redb`) at `AIOS_DATA_DIR/context.redb`
+  - Spawns system processes (ai_orchestrator, io_handler, health_monitor)
+  - Starts watchdog heartbeat thread
+  - Background loop: logs heartbeat (processes, RAM, watchdog state) every 10s, persists telemetry every 60s
+  - Minimal dependencies: no ratatui, crossterm, egui, or wasmtime
+  - Environment config via `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+- **`aios-tui` headless mode**:
+  - `--headless` CLI flag and `AIOS_HEADLESS=1` env var: skips TUI initialization, runs background loop
+- **Docker**:
+  - Dockerfile builds only `aios-daemon` (~2min build), uses `aiosd` as default CMD
+  - `docker-compose.yml` has headless daemon by default, `interactive` profile for TUI
+  - Image size reduced from ~800MB to ~120MB
 
 ### Phase 26+27: Atomic Updates, Store, Telemetry & Debug (`aios-updater`, `aios-store`, `aios-telemetry`, `aios-debug`) — *COMPLETED*
 - **`aios-updater` crate**:

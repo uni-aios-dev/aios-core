@@ -7,8 +7,9 @@ AIOS provides three interfaces for system management:
 | Interface | Type | Binary / Path | Use Case |
 |-----------|------|---------------|----------|
 | **Web** | Browser SPA (HTML/CSS/JS) | `aios-studio/` served at `http://<host>:<port>/` | Remote management, visual dashboard, any device |
-| **TUI** | Terminal (ratatui) | `aios-tui` | SSH/headless, low resource, keyboard-driven |
+| **TUI** | Terminal (ratatui) | `aios-tui` | SSH, interactive, keyboard-driven |
 | **GUI** | Native window (egui/eframe) | `aios-gui` | Desktop, visual dashboard, mouse + keyboard |
+| **Daemon** | Headless server | `aiosd` | Docker, background, CI/CD, no terminal required |
 
 Both interfaces display the same data and expose the same operations. The GUI is a graphical equivalent of the TUI.
 
@@ -217,6 +218,39 @@ The SPA is available at the root URL. The bridge port is configurable via the `a
 
 ---
 
+## Daemon (`aiosd`)
+
+### Launch
+
+```bash
+# Default (headless, for Docker)
+aiosd
+
+# With custom directories
+AIOS_DATA_DIR=/mnt/data AIOS_BLOCKS_DIR=/mnt/blocks aiosd
+
+# Using mock profile
+AIOS_MOCK_PROFILE=legacy aiosd
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AIOS_DATA_DIR` | `/app/data` | Persistent database directory |
+| `AIOS_BLOCKS_DIR` | `/app/blocks` | Disk block binaries directory |
+| `AIOS_MOCK_PROFILE` | `modern` | Hardware profile: `modern`, `legacy`, `none` |
+| `RUST_LOG` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+
+The daemon performs the same initialisation as `aios-tui` but runs without a terminal interface:
+1. Loads built-in blocks (hal, ipc_bus, scheduler)
+2. Loads disk blocks from `AIOS_BLOCKS_DIR`
+3. Opens the persistent database at `AIOS_DATA_DIR/context.redb`
+4. Spawns system processes (ai_orchestrator, io_handler, health_monitor)
+5. Starts watchdog heartbeat thread
+6. Logs heartbeat with process count, RAM usage, watchdog state every 10 seconds
+7. Persists telemetry to database every 60 seconds
+
 ## Running All Interfaces
 
-All three interfaces (Web, TUI, GUI) can run simultaneously. The Web SPA connects to `aios-bridge` via HTTP/WebSocket and is purely a remote client. TUI and GUI are in-process interfaces that create their own `Scheduler` and `BlockRegistry` instances locally.
+All four interfaces (Web, TUI, GUI, Daemon) can run simultaneously. The Web SPA connects to `aios-bridge` via HTTP/WebSocket and is purely a remote client. TUI and GUI are in-process interfaces that create their own `Scheduler` and `BlockRegistry` instances locally.

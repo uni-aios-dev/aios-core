@@ -15,7 +15,7 @@ pub struct CrashReport {
     pub redacted: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CrashKind {
     Panic,
     WatchdogTimeout,
@@ -189,5 +189,84 @@ mod tests {
         let json = cr.to_json();
         assert!(json.contains("BlockCrash"));
         assert!(json.contains("block failed"));
+    }
+
+    #[test]
+    fn test_crash_panic_caught_and_reported() {
+        let mut cr = CrashReporter::new("aios-core", "1.0.0");
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            panic!("intentional test panic: index out of bounds");
+        }));
+
+        assert!(result.is_err());
+
+        let report = cr.generate_report(
+            CrashKind::Panic,
+            "test-thread",
+            "intentional test panic: index out of bounds",
+            "stack:0xdeadbeef\nstack:0xcafebabe",
+            "=== flight recorder dump ===",
+            false,
+        );
+
+        assert_eq!(report.kind, CrashKind::Panic);
+        assert!(report.id.starts_with("CRASH-aios-core-"));
+        assert!(report.message.contains("intentional test panic"));
+        assert_eq!(cr.report_count(), 1);
+        assert!(cr.latest_report().is_some());
+    }
+
+    #[test]
+    fn test_crash_oom_redacted_report() {
+        let mut cr = CrashReporter::new("aios-core", "1.0.0");
+
+        let report = cr.generate_report(
+            CrashKind::OOM,
+            "memory-monitor",
+            "OOM in block 'data_processor': allocation failed (requested 4294967296 bytes)",
+            "stack:0xabcd",
+            "fr: oom at 2026-07-29T14:00:00Z",
+            true,
+        );
+
+        assert!(report.redacted);
+        assert_eq!(report.kind, CrashKind::OOM);
+        assert!(!report.message.contains("4294967296"));
+        assert!(report.flight_recorder_snippet.is_empty());
+    }
+
+    #[test]
+    fn test_crash_multiple_reports_order() {
+        let mut cr = CrashReporter::new("aios-core", "1.0.0");
+
+        let r1 = cr.generate_report(CrashKind::Panic, "t1", "first", "s1", "fr1", false);
+        let r2 = cr.generate_report(CrashKind::OOM, "t2", "second", "s2", "fr2", false);
+        let r3 = cr.generate_report(CrashKind::WatchdogTimeout, "t3", "third", "s3", "fr3", false);
+
+        assert_eq!(cr.report_count(), 3);
+        let reports = cr.reports();
+        assert_eq!(reports[0].message, "first");
+        assert_eq!(reports[1].message, "second");
+        assert_eq!(reports[2].message, "third");
+
+        assert!(r1.timestamp_ms <= r2.timestamp_ms);
+        assert!(r2.timestamp_ms <= r3.timestamp_ms);
+    }
+
+    #[test]
+    fn test_crash_unknown_kind_defaults() {
+        let mut cr = CrashReporter::new("aios-core", "1.0.0");
+        let report = cr.generate_report(
+            CrashKind::Unknown,
+            "unknown",
+            "something unexpected happened",
+            "",
+            "",
+            false,
+        );
+        assert_eq!(report.kind, CrashKind::Unknown);
+        assert!(!report.redacted);
+        assert!(report.flight_recorder_snippet.is_empty());
     }
 }

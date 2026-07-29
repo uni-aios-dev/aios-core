@@ -917,6 +917,27 @@
 - Сигнал завершения: `SIGINT` для корректного shutdown через crossterm
 - Переменные окружения: `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
 
+## v1.3.0 — Headless Daemon и исправление Docker (2026-07-29)
+
+### aios-daemon — Новый крейт: фоновый сервер
+- Новый крейт `aios-daemon` — headless AIOS сервер для Docker/фонового запуска
+- Минимальные зависимости: без ratatui, crossterm, egui, wasmtime
+- Бинарник `aiosd` — выполняет ту же инициализацию, что и `aios-tui` (блоки, планировщик, watchdog, БД) без доступа к терминалу
+- Фоновый heartbeat: логи процессов, RAM, статус watchdog каждые 10 секунд
+- Сохранение телеметрии в redb каждые 60 секунд
+- Конфигурация через переменные окружения: `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+
+### aios-tui: Headless-режим
+- Добавлен флаг `--headless` и переменная `AIOS_HEADLESS=1`
+- В headless-режиме пропускает инициализацию TUI (ratatui/crossterm) и работает в фоне
+
+### Docker-инфраструктура
+- Dockerfile упрощён: собирает только `aios-daemon` (быстрая сборка ~2мин)
+- Использует `aiosd` как CMD по умолчанию — TTY не требуется
+- docker-compose.yml: daemon по умолчанию, профиль `interactive` для TUI
+- Убран `stdin_open`/`tty` из сервиса по умолчанию
+- Размер образа: ~120MB (против ~800MB при сборке всего workspace)
+
 ## Заметки об отладке
 - Пороги скоростных тестов требуют двойных значений для debug/release из-за замедления в 10–20 раз в неоптимизированных сборках
 - PATH в Windows должен собираться вручную из переменных среды Machine + User перед командами cargo

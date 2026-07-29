@@ -959,9 +959,30 @@
 - Windows PATH must be manually assembled from Machine + User environment variables before cargo commands
 - `skip_while().next()` lint replaced with `position().nth()` pattern for cleaner iterator logic
 
+## v1.3.0 — Headless Daemon & Docker Fix (2026-07-29)
+
+### aios-daemon — New Crate: Headless Server Binary
+- New crate `aios-daemon` — headless AIOS server for Docker/background deployment
+- Minimal dependencies: no ratatui, no crossterm, no egui, no wasmtime
+- `aiosd` binary — performs same initialization as `aios-tui` (blocks, scheduler, watchdog, DB) without terminal access
+- Background heartbeat loop: logs process count, RAM usage, watchdog state every 10 seconds
+- Periodic telemetry persistence to redb every 60 seconds
+- Environment config: `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+
+### aios-tui: Headless Mode
+- Added `--headless` CLI flag and `AIOS_HEADLESS=1` env var support
+- When headless, skips TUI initialization (ratatui/crossterm) and runs background loop
+
+### Docker Infrastructure
+- Dockerfile simplified: builds only `aios-daemon` (fast build ~2min)
+- Uses `aiosd` binary as default CMD — no TTY required
+- docker-compose.yml cleaned up: headless daemon by default, `aios-interactive` profile for TUI
+- Removed `stdin_open`/`tty` from default service (not needed for headless)
+- Final image size: ~120MB (down from ~800MB with full workspace build)
+
 ## Total Stats (v0.5.0)
-- **11 workspace crates** + integration test crate + stress test file
-- **~10,200 lines of Rust** (excluding tests)
+- **12 workspace crates** + integration test crate + stress test file
+- **~10,800 lines of Rust** (excluding tests)
 - **350 tests** (292 unit + 28 integration + 11 stress + 19 exec-compat)
 - **0 clippy warnings**
 - **90+ public types**, **320+ public methods**

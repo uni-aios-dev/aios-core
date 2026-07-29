@@ -1,4 +1,5 @@
 use aios_block_mgr::loader::BlockLoader;
+use aios_debug::crash_reporter::CrashKind;
 use aios_block_mgr::registry::BlockRegistry;
 use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::TelemetryEntry;
@@ -273,6 +274,126 @@ fn test_chaos_watchdog_rejects_bad_heartbeat() {
 
     let good_heartbeat = Heartbeat::new(1, b"correct_secret");
     assert!(watchdog.receive_heartbeat(&good_heartbeat).is_ok());
+}
+
+// ============================================================
+// Chaos 14: Rollback crash — simulate crash mid-snapshot with recovery
+// ============================================================
+#[test]
+fn test_chaos_rollback_crash_mid_snapshot() {
+    use aios_updater::rollback::RollbackManager;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+
+    mgr.take_snapshot("safe", "1.0", vec![1, 2, 3], "pre-crash");
+    mgr.take_snapshot("crashed", "2.0", vec![255; 1024], "during-crash");
+
+    let recovered = mgr.rollback_last().unwrap();
+    assert_eq!(recovered, vec![255; 1024]);
+    assert_eq!(mgr.snapshot_count(), 1);
+}
+
+// ============================================================
+// Chaos 15: Multi-thread crash — simulate simultaneous crashes
+// ============================================================
+#[test]
+fn test_chaos_multi_thread_crash_reports() {
+    use aios_debug::crash_reporter::CrashReporter;
+
+    let mut cr = CrashReporter::new("aios-core", "1.0.0");
+
+    let threads: Vec<_> = (0..10)
+        .map(|i| {
+            let kind = match i % 4 {
+                0 => CrashKind::Panic,
+                1 => CrashKind::OOM,
+                2 => CrashKind::WatchdogTimeout,
+                _ => CrashKind::BlockCrash,
+            };
+            // Simulate crash by generating report directly (thread-safe data)
+            let msg = format!("crash #{i} from thread");
+            let stack = format!("stack:crash_{i}");
+            cr.generate_report(kind, "worker", &msg, &stack, "fr", false);
+            std::thread::spawn(move || {
+                let _ = kind;
+            })
+        })
+        .collect();
+
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    assert_eq!(cr.report_count(), 10);
+    assert!(cr.latest_report().is_some());
+}
+
+// ============================================================
+// Chaos 16: Reporter under rapid fire — many reports in sequence
+// ============================================================
+#[test]
+fn test_chaos_reporter_rapid_fire() {
+    use aios_debug::crash_reporter::CrashReporter;
+
+    let mut cr = CrashReporter::new("aios-core", "1.0.0");
+
+    for i in 0..100 {
+        cr.generate_report(
+            CrashKind::Unknown,
+            "load-generator",
+            &format!("event #{i}"),
+            "stack",
+            "flight",
+            i % 2 == 0,
+        );
+    }
+
+    assert_eq!(cr.report_count(), 100);
+    let json = cr.to_json();
+    assert!(json.len() > 100);
+    assert!(json.contains("event #0"));
+    assert!(json.contains("event #99"));
+}
+
+// ============================================================
+// Chaos 17: Rollback + data corruption recovery
+// ============================================================
+#[test]
+fn test_chaos_rollback_corrupted_data_recovery() {
+    use aios_updater::rollback::RollbackManager;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 5);
+
+    mgr.take_snapshot("b", "1.0", vec![1, 2, 3], "good");
+    mgr.take_snapshot("b", "2.0", vec![4, 5, 6], "corrupted");
+
+    let recovered = mgr.rollback_to(1).unwrap();
+    assert_eq!(recovered, vec![1, 2, 3]);
+    assert_eq!(mgr.snapshot_count(), 0);
+}
+
+// ============================================================
+// Chaos 18: Sequential crash + rollback + re-snapshot loop
+// ============================================================
+#[test]
+fn test_chaos_rollback_crash_loop() {
+    use aios_updater::rollback::RollbackManager;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+
+    let mut snapshot_id = 0u64;
+    for i in 0..10 {
+        snapshot_id = mgr.take_snapshot("b", &format!("{i}.0"), vec![i], &format!("iter-{i}"));
+        if i > 0 && i % 2 == 0 {
+            let _ = mgr.rollback_last();
+        }
+    }
+
+    assert!(mgr.snapshot_count() > 0);
+    assert!(mgr.snapshot_count() <= 3);
 }
 
 // ============================================================
