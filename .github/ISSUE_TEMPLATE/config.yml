@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature Request
+    url: https://github.com/aios-dev/aios-core/discussions/categories/ideas-feature-requests
+    about: Please use GitHub Discussions for feature requests and ideas.
+  - name: General Question
+    url: https://github.com/aios-dev/aios-core/discussions/categories/general-q-a
+    about: Ask questions about installation, configuration, and usage.
+  - name: Enterprise & Commercial
+    url: https://github.com/aios-dev/aios-core/discussions/categories/enterprise-commercial
+    about: Commercial licensing and enterprise deployment questions.
+  - name: Security Vulnerability
+    url: mailto:security@aios.dev
+    about: Please report security vulnerabilities to security@aios.dev (do not open a public issue).

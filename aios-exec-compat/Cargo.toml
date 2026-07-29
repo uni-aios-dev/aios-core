@@ -1,0 +1,16 @@
+[package]
+name = "aios-exec-compat"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-ipc = { path = "../aios-ipc" }
+aios-security = { path = "../aios-security" }
+aios-process-mgr = { path = "../aios-process-mgr" }
+serde = { workspace = true }
+bincode = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }

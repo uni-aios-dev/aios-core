@@ -1,0 +1,15 @@
+[package]
+name = "aios-hal"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-ipc = { path = "../aios-ipc" }
+serde = { workspace = true }
+bincode = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

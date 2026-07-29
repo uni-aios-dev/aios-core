@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIOS Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <span>AIOS</span>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-tab="security" onclick="switchTab('security')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <span>Security</span>
+      </button>
+      <button class="nav-item" data-tab="builder" onclick="switchTab('builder')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+        <span>Builder</span>
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div id="connection-status" class="status-badge disconnected">
+        <span class="status-dot"></span>
+        <span class="status-label">Disconnected</span>
+      </div>
+    </div>
+  </aside>
+
+  <main id="main-content">
+    <!-- Dashboard Tab -->
+    <section id="tab-dashboard" class="tab-content active">
+      <div class="tab-header">
+        <h1>Dashboard</h1>
+        <div class="header-actions">
+          <button class="btn btn-sm btn-ghost" onclick="refreshStatus()" title="Refresh">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+          </button>
+          <button class="btn btn-sm btn-accent" onclick="openCommandPalette()">
+            <kbd>Ctrl+K</kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="health-cards">
+        <div class="card" id="card-status">
+          <div class="card-label">System</div>
+          <div class="card-value" id="sys-status">—</div>
+          <div class="card-sub" id="sys-uptime">—</div>
+        </div>
+        <div class="card" id="card-watchdog">
+          <div class="card-label">Watchdog</div>
+          <div class="card-value" id="wd-status">—</div>
+          <div class="card-sub" id="wd-uptime">—</div>
+        </div>
+        <div class="card" id="card-processes">
+          <div class="card-label">Processes</div>
+          <div class="card-value" id="proc-count">—</div>
+          <div class="card-sub" id="proc-detail">—</div>
+        </div>
+        <div class="card" id="card-memory">
+          <div class="card-label">Memory</div>
+          <div class="card-value" id="mem-value">—</div>
+          <div class="card-sub" id="mem-detail">—</div>
+        </div>
+      </div>
+
+      <div class="chart-section">
+        <div class="section-header">
+          <h2>RAM Usage</h2>
+          <span class="section-badge" id="ram-badge">0%</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="ram-chart" height="200"></canvas>
+        </div>
+      </div>
+
+      <div class="table-section">
+        <div class="section-header">
+          <h2>Processes</h2>
+          <span class="section-badge" id="proc-badge">0</span>
+        </div>
+        <div class="table-wrapper">
+          <table id="process-table">
+            <thead>
+              <tr><th>PID</th><th>Name</th><th>Memory</th><th>CPU</th><th>Status</th></tr>
+            </thead>
+            <tbody id="process-tbody">
+              <tr><td colspan="5" class="empty-state">No data</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Security Tab -->
+    <section id="tab-security" class="tab-content">
+      <div class="tab-header">
+        <h1>Security Center</h1>
+        <button class="btn btn-sm btn-accent" onclick="openCommandPalette()">
+          <kbd>Ctrl+K</kbd>
+        </button>
+      </div>
+
+      <div class="section-header">
+        <h2>Active Blocks</h2>
+        <span class="section-badge" id="block-badge">0</span>
+      </div>
+      <div class="table-wrapper">
+        <table id="blocks-table">
+          <thead>
+            <tr><th>ID</th><th>Name</th><th>Version</th><th>State</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="blocks-tbody">
+            <tr><td colspan="5" class="empty-state">No blocks loaded</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-header" style="margin-top:24px">
+        <h2>Capability Tokens</h2>
+      </div>
+      <div class="caps-grid" id="caps-grid">
+        <div class="cap-card">
+          <div class="cap-name">CAP_PROCESS_KILL</div>
+          <div class="cap-desc">Terminate system processes</div>
+        </div>
+        <div class="cap-card">
+          <div class="cap-name">CAP_PROCESS_SPAWN</div>
+          <div class="cap-desc">Create new processes</div>
+        </div>
+        <div class="cap-card">
+          <div class="cap-name">CAP_BLOCK_LOAD</div>
+          <div class="cap-desc">Load WASM blocks</div>
+        </div>
+        <div class="cap-card">
+          <div class="cap-name">CAP_BLOCK_UNLOAD</div>
+          <div class="cap-desc">Unload WASM blocks</div>
+        </div>
+        <div class="cap-card">
+          <div class="cap-name">CAP_SCHED_MODIFY</div>
+          <div class="cap-desc">Modify scheduling priorities</div>
+        </div>
+        <div class="cap-card">
+          <div class="cap-name">CAP_MEM_ALLOC</div>
+          <div class="cap-desc">Memory compaction & allocation</div>
+        </div>
+      </div>
+
+      <div class="quick-actions" style="margin-top:24px">
+        <h2>Quick Actions</h2>
+        <div class="action-row">
+          <button class="btn btn-outline" onclick="sendIntent('compact memory')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+            </svg>
+            Compact Memory
+          </button>
+          <button class="btn btn-outline" onclick="sendIntent('show blocks')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+            </svg>
+            List Blocks
+          </button>
+          <button class="btn btn-outline" onclick="sendIntent('show processes')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+            </svg>
+            List Processes
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Builder Tab -->
+    <section id="tab-builder" class="tab-content hidden">
+      <div class="tab-header">
+        <h1>Easy Builder</h1>
+        <button class="btn btn-sm btn-accent" onclick="openCommandPalette()">
+          <kbd>Ctrl+K</kbd>
+        </button>
+      </div>
+
+      <p class="builder-intro">Build automation workflows by chaining actions. Add steps from the palette, configure prompts, then run.</p>
+
+      <div class="builder-toolbar">
+        <div class="workflow-name-group">
+          <input type="text" id="workflow-name" class="builder-input" placeholder="Workflow name…" value="Untitled Workflow">
+          <button class="btn btn-sm btn-outline" onclick="saveWorkflow()" title="Save workflow">💾 Save</button>
+          <div class="load-group">
+            <button class="btn btn-sm btn-outline" onclick="showLoadWorkflow()" title="Load workflow">📂 Load</button>
+            <div id="load-dropdown" class="load-dropdown hidden"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="builder-layout">
+        <div class="builder-palette">
+          <div class="palette-group">
+            <h3>Triggers</h3>
+            <button class="palette-item" data-action="on_timer" onclick="addStep('on_timer')">
+              <span class="p-icon">⏱</span> Timer
+            </button>
+            <button class="palette-item" data-action="on_event" onclick="addStep('on_event')">
+              <span class="p-icon">📡</span> Event
+            </button>
+          </div>
+          <div class="palette-group">
+            <h3>Actions</h3>
+            <button class="palette-item" data-action="spawn" onclick="addStep('spawn')">
+              <span class="p-icon">🚀</span> Spawn Process
+            </button>
+            <button class="palette-item" data-action="kill" onclick="addStep('kill')">
+              <span class="p-icon">🛑</span> Kill Process
+            </button>
+            <button class="palette-item" data-action="load_block" onclick="addStep('load_block')">
+              <span class="p-icon">📦</span> Load Block
+            </button>
+            <button class="palette-item" data-action="unload_block" onclick="addStep('unload_block')">
+              <span class="p-icon">🗑</span> Unload Block
+            </button>
+            <button class="palette-item" data-action="compact" onclick="addStep('compact')">
+              <span class="p-icon">💾</span> Compact Memory
+            </button>
+            <button class="palette-item" data-action="query" onclick="addStep('query')">
+              <span class="p-icon">📊</span> System Query
+            </button>
+          </div>
+        </div>
+
+        <div class="builder-workspace">
+          <div class="workspace-header">
+            <span>Workflow Steps</span>
+            <span id="step-count">0 steps</span>
+          </div>
+          <div id="step-list" class="step-list">
+            <div class="empty-state">Add steps from the palette to build your workflow</div>
+          </div>
+          <div class="workspace-footer">
+            <button class="btn btn-accent" id="run-workflow" onclick="runWorkflow()" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+              Run Workflow
+            </button>
+            <button class="btn btn-ghost" onclick="clearWorkflow()">Clear All</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="workflow-result" class="hidden" style="margin-top:16px">
+        <div class="section-header"><h2>Result</h2></div>
+        <div class="card" id="workflow-output"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Command Palette Overlay -->
+  <div id="command-overlay" class="overlay hidden" onclick="closeCommandPalette(event)">
+    <div class="command-palette" onclick="event.stopPropagation()">
+      <div class="palette-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input type="text" id="command-input" placeholder="Type a command… (e.g. 'show processes', 'kill 2', 'status')" autofocus>
+      </div>
+      <div id="command-result" class="palette-result hidden"></div>
+      <div class="palette-hint">
+        <span>Enter to execute</span>
+        <span>Esc to close</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

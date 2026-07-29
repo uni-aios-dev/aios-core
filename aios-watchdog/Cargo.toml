@@ -1,0 +1,14 @@
+[package]
+name = "aios-watchdog"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-ipc = { path = "../aios-ipc" }
+aios-process-mgr = { path = "../aios-process-mgr" }
+aios-block-mgr = { path = "../aios-block-mgr" }
+serde = { workspace = true }
+log = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

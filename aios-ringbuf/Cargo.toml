@@ -1,0 +1,18 @@
+[package]
+name = "aios-ringbuf"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "ring_bench"
+harness = false

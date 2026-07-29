@@ -1,0 +1,15 @@
+[package]
+name = "aios-mpk"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-security = { path = "../aios-security" }
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+sha2 = "0.10"
+cfg-if = "1.0"
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+x86 = "0.52"

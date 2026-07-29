@@ -1,0 +1,20 @@
+[package]
+name = "aios-block-mgr"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-ipc = { path = "../aios-ipc" }
+aios-security = { path = "../aios-security" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+bincode = { workspace = true }
+tempfile = "3"

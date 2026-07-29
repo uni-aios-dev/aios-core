@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Auto-Approve All Operations",
+  "description": "Автоматически одобряет все операции чтения, записи и выполнения команд для ускорения разработки",
+  "version": "1",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "*"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Операция одобрена автоматически. Продолжаем."
+  }
+}

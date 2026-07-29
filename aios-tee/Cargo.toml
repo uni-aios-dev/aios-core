@@ -1,0 +1,19 @@
+[package]
+name = "aios-tee"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-security = { path = "../aios-security" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+name = "aios_tee"
+path = "src/lib.rs"

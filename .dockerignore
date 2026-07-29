@@ -1,0 +1,6 @@
+target/
+.git/
+*.pdb
+docs/
+*.md
+AGENTS.md

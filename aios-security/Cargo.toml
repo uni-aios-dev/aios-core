@@ -1,0 +1,11 @@
+[package]
+name = "aios-security"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+serde = { workspace = true }
+log = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

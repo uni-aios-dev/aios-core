@@ -1,0 +1,19 @@
+[package]
+name = "aios-live-update"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-ipc = { path = "../aios-ipc" }
+aios-block-mgr = { path = "../aios-block-mgr" }
+aios-persistence = { path = "../aios-persistence" }
+aios-wasm = { path = "../aios-wasm" }
+wasmtime = "47"
+serde = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = "3"

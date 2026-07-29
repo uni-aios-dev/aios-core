@@ -1,0 +1,18 @@
+[package]
+name = "aios-net"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-security = { path = "../aios-security" }
+serde = { workspace = true }
+bincode = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+serde_json = { workspace = true }

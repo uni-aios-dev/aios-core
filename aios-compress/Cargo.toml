@@ -1,0 +1,19 @@
+[package]
+name = "aios-compress"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+zstd = "0.13"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+thiserror = "2"
+
+[dev-dependencies]
+criterion = { workspace = true }
+rand = "0.8"
+
+[[bench]]
+name = "compress_bench"
+harness = false

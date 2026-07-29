@@ -1,0 +1,73 @@
+[package]
+name = "aios-integration-tests"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+aios-core = { path = "aios-core" }
+aios-ipc = { path = "aios-ipc" }
+aios-hal = { path = "aios-hal" }
+aios-block-mgr = { path = "aios-block-mgr" }
+aios-live-update = { path = "aios-live-update" }
+aios-process-mgr = { path = "aios-process-mgr" }
+aios-watchdog = { path = "aios-watchdog" }
+aios-security = { path = "aios-security" }
+aios-context = { path = "aios-context" }
+aios-exec-compat = { path = "aios-exec-compat" }
+aios-optim = { path = "aios-optim" }
+aios-ringbuf = { path = "aios-ringbuf" }
+aios-compress = { path = "aios-compress" }
+aios-persistence = { path = "aios-persistence" }
+aios-mpk = { path = "aios-mpk" }
+aios-iommu = { path = "aios-iommu" }
+aios-tee = { path = "aios-tee" }
+aios-bridge = { path = "aios-bridge" }
+aios-wasm = { path = "aios-wasm" }
+aios-net = { path = "aios-net" }
+bincode = "1"
+tempfile = "3"
+wasmtime = "47"
+
+[workspace]
+resolver = "2"
+members = [
+    "aios-core",
+    "aios-ipc",
+    "aios-hal",
+    "aios-block-mgr",
+    "aios-live-update",
+    "aios-process-mgr",
+    "aios-tui",
+    "aios-watchdog",
+    "aios-security",
+    "aios-context",
+    "aios-exec-compat",
+    "aios-optim",
+    "aios-ringbuf",
+    "aios-compress",
+    "aios-persistence",
+    "aios-mpk",
+    "aios-iommu",
+    "aios-tee",
+    "aios-wasm", "aios-net", "aios-gui", "aios-bridge", "aios-builder", "aios-llm",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+sha2 = "0.10"
+hex = "0.4"
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+rand = "0.8"
+ratatui = "0.29"
+crossterm = "0.28"
+zstd = "0.13"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+egui = "0.31"
+eframe = "0.31"

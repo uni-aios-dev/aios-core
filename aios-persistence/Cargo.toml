@@ -1,0 +1,20 @@
+[package]
+name = "aios-persistence"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+thiserror = "2"
+chrono = "0.4"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { workspace = true }
+
+[[bench]]
+name = "persist_bench"
+harness = false

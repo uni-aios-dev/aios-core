@@ -1,0 +1,862 @@
+## v1.0.0 — Фаза 23: Многорежимный AI-движок + Гибридный маршрутизатор намерений (2026-07-29)
+
+### aios-llm: Реальный GGUF-инференс (Micro-Local и Full-Local)
+- `LocalEngine` переписан: реальный GGUF-инференс через `candle-core` 0.11 + `candle-transformers` 0.11
+- Поддержка Qwen2.5 GGUF: `quantized_qwen2::ModelWeights::from_gguf()`, пошаговая генерация через `LogitsProcessor`
+- Micro-Local: Qwen2.5-0.5B-Instruct-GGUF (~300 МБ RAM, INT4)
+- Full-Local: Qwen2.5-7B-Instruct-GGUF (~4-8 ГБ RAM, INT4)
+- Интеграция `hf-hub` 1.0: `HFClientSync` (blocking) для автоматической загрузки моделей с Hugging Face Hub
+- Варианты бэкенда `LocalModelKind::Micro` / `LocalModelKind::Full`
+- `detect_local_models()` сканирует `AIOS_MODELS_DIR` или `models/` на наличие `.gguf` файлов
+- `download_default_model()` загружает Qwen2.5 GGUF + tokenizer.json через HF Hub
+- `LlmEngine::from_config()` теперь диспетчеризирует в `MicroLocal`/`FullLocal` движки
+- `factory.rs` обновлён: `BackendKind::MicroLocal` и `BackendKind::FullLocal`
+
+### aios-bridge: LLM Fallback в маршрутизаторе намерений
+- `IntentParser::parse_with_llm_fallback()` — когда rule-based парсер возвращает `UserIntent::Unknown`, вызывает LLM для классификации
+- LLM получает структурированный system prompt с доступными типами намерений (ProcessControl, BlockManagement, SystemQuery, MemoryCompaction)
+- Ответ парсится из JSON обратно в `UserIntent` через `parse_llm_response()`
+- `intent_handler` и `workflow_handler` обновлены для использования LLM fallback
+- 8 unit-тестов: конфиг по умолчанию, serde round-trip, провайдеры по умолчанию, диспетчеризация, 3x from_config, detect_local_models
+
+### aios-builder: Новый крейт — EasyLang Engine и Auto-Manifest Generator
+- Новый крейт `aios-builder` — EasyLang компилятор, движок workflow и авто-генератор манифестов
+- Тип `Workflow` — JSON-сериализуемый workflow с именованными шагами, валидацией и serde round-trip
+- `AutoManifestGenerator` — анализ WASM-бинарников через `wasmparser`: определение capability из имён экспортов/импортов; ключевой анализ интентов workflow для вывода capability; генерация sidecar `BlockManifestJson` (`name`, `version`, `capabilities`)
+- `WorkflowCompiler` — пайплайн компиляции Workflow→WASM: генерация WAT-текста, компиляция WAT→WASM через `wat`
+- 8 unit-тестов: обнаружение capability из экспортов/импортов WASM, генерация JSON-манифеста, анализ интентов workflow, компиляция пустого/с шагами, WAT-вывод
+
+#### EasyLang Parser — текстовый DSL → Workflow
+- `EasyLangParser` — построчный декларативный DSL: `spawn "browser"`, `timer 5000`, `load "network"`, `query "memory"`, `compact`, `status`
+- Автоматическая генерация label из текста команды; опциональный префикс `label:` для кастомных имён
+- Комментарии: строки `//` и `#`; пустые строки игнорируются
+- 10 unit-тестов: парсинг пустого/комментариев, одна/много команд, кастомные label, ошибка пробела в label, unicode-метки, JSON round-trip
+
+### aios-llm: Новый крейт — Multi-Mode AI Engine
+- Новый крейт `aios-llm` — унифицированный LLM-интерфейс с бэкендами Cloud, Micro-Local, Full-Local
+- `LlmConfig` — сериализуемая конфигурация: тип бэкенда, модель, API ключ/URL, max tokens, temperature
+- `CloudEngine` — HTTP/JSON бэкенд для Groq, OpenRouter, Google AI Studio (OpenAI-совместимый API)
+- `LocalEngine` — заглушка для будущего GGUF/ONNX локального инференса (Micro-Local / Full-Local)
+- `LlmEngine` enum с `from_config()` фабрикой и `async query()` диспетчеризацией
+- 7 unit-тестов: конфиг по умолчанию, serde round-trip, провайдеры по умолчанию, диспетчеризация, локальная недоступность
+
+### aios-bridge: Эндпоинт выполнения workflow
+- `POST /api/v1/workflow` — новый эндпоинт, принимающий `{prompts: [string, ...]}` для пакетного выполнения интентов
+- Последовательный парсинг и выполнение каждого prompt, возврат результатов по каждому шагу
+- Проверка capability для каждого шага индивидуально
+- `runWorkflow()` в Builder переведён на единый batch-запрос вместо N отдельных запросов
+
+### aios-studio: Вкладка Easy Builder
+- Новая вкладка "Builder" в боковой панели с визуальным step-редактором workflow
+- Палитра блоков (Триггеры: Timer, Event; Действия: Spawn, Kill, Load, Unload, Compact, Query)
+- Добавление/удаление/перестановка шагов; редактирование prompt для каждого шага (inline input)
+- Сохранение/загрузка именованных workflow через localStorage с выпадающим списком и удалением
+- Кнопка "Run Workflow" отправляет каждый шаг через `POST /api/v1/intent` и отображает результаты
+- Toast-уведомления об операциях сохранения/загрузки/удаления
+
+### aios-studio: SPA Веб-Дашборд
+- Новая директория `aios-studio/` — самодостаточное HTML/CSS/JS SPA-приложение
+- Дашборд телеметрии в реальном времени: график RAM на Canvas, таблица процессов, карточки здоровья
+- Smart Command Palette (Ctrl+K) — отправка намерений на естественном языке через `POST /api/v1/intent`
+- Вкладка Security Center — список блоков, матрица capability-токенов, кнопки быстрых действий
+- Автопереподключение WebSocket с экспоненциальной задержкой и визуальным индикатором
+- Тёмная тема, минимальные зависимости (ноль npm-пакетов), работает в любом современном браузере
+
+### aios-bridge: Раздача Статики
+- `tower-http` расширен фичей `fs` для `ServeDir`
+- Fallback-роутер на `aios-studio/` — SPA по `/`, CSS по `/style.css`, JS по `/app.js`
+- API-маршруты (`/api/v1/*`, `/ws/*`) имеют приоритет; все остальные пути уходят в статику
+
+## v1.0.0 — Bridge & Intent Engine (2026-07-28)
+
+### aios-bridge: HTTP/WebSocket API Gateway
+- Новый крейт `aios-bridge` — внешний API-шлюз для GUI/Web-клиентов
+- `GET /api/v1/health` — проверка работоспособности с версией и аптаймом
+- `GET /api/v1/system/status` — полный снимок системы (процессы, блоки, watchdog, RAM)
+- `POST /api/v1/intent` — обработка намерений на естественном языке с проверкой capabilities
+- `GET /ws/telemetry` — WebSocket-эндпоинт с потоковой передачей метрик (100ms интервал)
+- CorsLayer permissive для кросс-доменных Web-клиентов
+- Асинхронный сервер на Axum 0.7 с tokio runtime
+
+### aios-bridge/intent_engine: Правила-ориентированный парсер намерений
+- `IntentParser` с двуязычным (RU/EN) сопоставлением правил
+- `UserIntent` enum: ProcessControl, BlockManagement, SystemQuery, MemoryCompaction, WorkflowExecution
+- Действия процессов: List, Kill, Spawn, AdjustPriority
+- Действия блоков: List, Load, Unload, HotSwap
+- `ExecutionPlan` DAG с маппингом требований `CapabilityToken`
+- 25 unit-тестов, покрывающих все типы намерений на двух языках
+- Graceful `Unknown` fallback с подсказками
+
+### aios-bridge/security: Контроль прав доступа
+- Каждое исполнение намерения проверяет `AccessControlLayer` перед системными вызовами
+- Недостающая capability возвращает HTTP 403 Forbidden с описанием
+- Bridge работает со своим `bridge_block_id` для идентификации в ACL
+
+# Журнал разработки AIOS
+
+## v1.0.0 — Автообнаружение, парсинг манифестов, enforcement capabilities (2026-07-28)
+
+### Block Registry: автообнаружение
+- `BlockRegistry::boot_discover(root)` — рекурсивный обход директории, обнаруживает все `.wasm` и `.bin` файлы во вложенных поддиректориях и регистрирует их
+- Создаёт корневую директорию блоков, если она не существует
+- Исправлен баг, когда `walk_recursive` создавал внутренний реестр вместо регистрации в `self`
+- 3 новых теста: создание директории, обход поддиректорий, пропуск не-блочных файлов
+
+### Block Loader: парсинг sidecar JSON-манифестов
+- `BlockLoader::load_from_directory()` теперь ищет sidecar `.json` файлы рядом с `.wasm`/`.bin` файлами (например, `mynet_1.0.0.json` для `mynet_1.0.0.wasm`)
+- Структура `BlockManifestJson`: парсит `name`, `version`, `capabilities`, `ttl_ms` из JSON
+- Capabilities парсятся из строковых имён (`CAP_NET_BIND`, `CAP_NET_CONNECT` и т.д.) в `CapabilityToken`
+- Если файл манифеста существует, его значения переопределяют дефолты из имени файла и автоматически назначают `CapabilityToken` записи блока
+- Обратная совместимость: при отсутствии `.json` sidecar используется парсинг из имени файла
+- `BlockLoader::load_from_binary_with_capabilities()` — новый метод загрузки с опциональным назначением capabilities
+- 5 новых тестов: парсинг capabilities, пустые caps, from_file, с sidecar, без sidecar (fallback)
+
+### RealTcpBlock: enforcement capability-токенов
+- `RealTcpBlock` теперь хранит опциональный `CapabilityToken` через `set_capability()`
+- `start_listening()` проверяет `CAP_NET_BIND` перед привязкой
+- `connect()` проверяет `CAP_NET_CONNECT` перед исходящим соединением
+- Без токена — разрешено всё (обратная совместимость)
+- Просроченные токены отклоняются
+- `Capability::All` предоставляет все capabilities
+- Добавлена зависимость `aios-security` в крейт `aios-net`
+- 7 новых тестов: нет токена — разрешено всё, grant/deny bind, grant/deny connect, отказ при истечении, All предоставляет всё
+- 605 юнит-тестов проходят, ноль clippy-предупреждений, fmt чист
+
+## v1.0.0 — Релиз: полная интеграция и продакшен-качество (2026-07-27)
+
+### Документация интерфейса
+- Добавлены `docs/INTERFACE.md` + `docs/INTERFACE.ru.md` — полное руководство по использованию GUI/TUI
+- Включает: схемы компоновки, горячие клавиши, действия мышью, все 6 вкладок GUI, тему
+- Раздел TUI: 5 вкладок, 11 горячих клавиш, совместимость с терминалами
+- Раздел GUI: 6 вкладок (Обзор, Процессы, Блоки, Маркетплейс, Метрики, Зависимости), навигация F1-F6, мышь, справочник цветов тёмной темы
+- Обновлён `AGENTS.md`: новое правило #5 — INTERFACE.md обязана обновляться при любом изменении пользовательского интерфейса
+
+### Переход runtime: Mock → Real (65% → 75%)
+- **Загрузка BlockRegistry с диска**: `load_from_path(dir)` сканирует директорию на `.wasm` и `.bin` файлы, парсит версию из имени файла, регистрирует и активирует все обнаруженные блоки
+- **BlockExecutor загрузка+выполнение**: `load_from_path_and_execute()` выполняет одноразовую загрузку + компиляцию WASM + инстанцирование + `init`/`start` из директории
+- **BlockLoader поддержка .wasm**: `load_from_directory()` теперь обрабатывает `.wasm` файлы наряду с `.bin`
+- **Активное восстановление Watchdog**: ступенчатая эскалация — действия `KillProcess(pid)`, `DumpState(path)`, `SafeModeShell` с упорядочиванием по серьёзности
+- **Escalation WatchdogRunner**: `escalate()` вызывает контекстно-зависимые действия восстановления на основе текущего состояния
+- **RealUdpBlock**: реальный `std::net::UdpSocket` с `bind()`, `send_to()`, неблокирующим `receive_from()`, broadcast и метриками per-socket
+- **Чеклист перехода runtime в TODO**: полный 6-секционный чеклист с целевыми показателями готовности по вехам
+- 766 тестов всего, ноль clippy-предупреждений
+
+### Интеграционные тесты: реальный I/O (75% → 85%)
+- Добавлены 6 новых файлов интеграционных тестов с **реальным** аппаратным I/O, заменяющих mock-данные:
+  - `tests/real_file_io.rs` — 10 тестов: SnapshotManager, CopyOnWriteStorage, RecoveryLog, загрузка BlockRegistry с диска, большие полезные нагрузки
+  - `tests/real_network.rs` — 11 тестов: RealTcpBlock loopback (accept/send/receive, двунаправленный, мультиклиент, close+reopen), RealUdpBlock loopback (send/receive, несколько датаграмм, broadcast, метрики)
+  - `tests/real_wasm.rs` — 9 тестов: end-to-end WASM compile→instantiate→call, изоляция мультиблочной загрузки, загрузка+выполнение с диска, пакетное выполнение, невалидный бинарник, метаданные
+  - `tests/real_threads.rs` — 10 тестов: реальное выполнение ОС-потоков, сигнал завершения, приостановка/возобновление, параллельность (8 потоков), обнаружение завершения, контроль RAM, приоритетное планирование, race-free атомарный счётчик, смешанные real+logical
+  - `tests/real_hot_swap.rs` — 8 тестов: WASM deploy+call, горячая замена версии (v1→v2 с другой логикой), откат, health check pass/fail, история замен, независимая замена мультиблоков
+  - `tests/full_lifecycle.rs` — 7 тестов: полная система (HAL+IPC+scheduler+telemetry+ACL), WASM жизненный цикл (deploy→swap→rollback), watchdog+scheduler+IPC, crypto+bus, планировщик+real threads, disk→WASM fibonacci, stability+ACL
+- **RealUdpBlock**: добавлен метод `port()` для доступа к фактическому привязанному порту в интеграционных тестах
+- **WatchdogRunner**: исправлена нестабильность теста `test_runner_pop_actions` (тайминг)
+- 821 тестов всего, ноль clippy-предупреждений
+
+### Привязка к CPU в планировщике (85% → 90%)
+- **`aios-process-mgr/src/cpu_affinity.rs`**: платформенная привязка к CPU через сырой FFI
+  - Windows: `SetThreadAffinityMask` / `GetCurrentThread`
+  - Linux: `sched_setaffinity` с `cpu_set_t`
+  - Fallback: no-op на неподдерживаемых платформах
+- **`Scheduler::set_cpu_affinity(pid, cores)`**: привязывает реальный ОС-поток к указанным ядрам CPU
+- **`Scheduler::get_cpu_affinity(pid)`**: запрос текущей привязки к CPU для потока
+- **`Scheduler::available_cpu_cores()`**: возвращает количество доступных ядер CPU
+- 4 юнит-теста в модуле `cpu_affinity`, 3 теста на уровне планировщика
+- 828 тестов всего, ноль clippy-предупреждений
+
+### WASM-движок live-обновлений — реальная замена модулей и миграция состояния
+- `WasmLiveUpdateEngine` в `aios-live-update/src/wasm_engine.rs` — связывает `LiveUpdateEngine` с `WasmSandbox` для реальной замены WASM-модулей при горячей замене
+- `deploy_block()` — компилирует, инстанцирует и автоматически вызывает функции `init`/`start` на WASM-блоках
+- `swap_block()` — выполняет атомарную замену через `LiveUpdateEngine.perform_swap()`, затем компилирует и инстанцирует новый WASM-модуль, мигрирует состояние linear memory из старого экземпляра, готов к использованию
+- `rollback_block()` — удаляет активный WASM-экземпляр и восстанавливает предыдущую версию через `LiveUpdateEngine.rollback()`
+- `call_block_func()` — вызывает экспортированные WASM-функции на активных (развёрнутых/заменённых) блоках
+- **Миграция linear memory**: `extract_linear_memory()` считывает WASM linear memory перед заменой, `restore_linear_memory()` записывает его в новый экземпляр после замены — состояние сохраняется при горячей замене
+- Структура `SwapParams` — инкапсулирует конфигурацию замены (new_binary, new_version, health_check, isolation)
+- `SwapResult` включает `memory_migrated: bool` для указания, была ли перенесена linear memory
+- 7 тестов WASM-памяти (4 на уровне sandbox, 2 live-update, 1 интеграционный), 834 теста всего
+
+### Атомарное перенаправление IPC-каналов (90% → 100%)
+- **`IpcBus::reroute(old_target, new_target)`** — атомарно перезаписывает `target_block` во всех ожидающих пакетах, совпадающих с `old_target`, на `new_target`
+- **`StateTransferManager::reroute_snapshot()`** — перенаправляет пакеты внутри замороженного снапшота перед восстановлением шины
+- **`WasmLiveUpdateEngine::reroute_pending()`** — freeze→reroute→unfreeze в одной атомарной операции
+- 4 новых теста (2 bus, 1 state_transfer, 1 wasm_engine), **838 тестов всего**, ноль clippy-предупреждений
+
+### TCP-опции сокетов — реальная конфигурация сокетов на уровне ОС (100%)
+- **`set_keepalive()`** — платформенный сырой FFI для `SO_KEEPALIVE` на TCP-сокетах
+  - Windows: Winsock `setsockopt` с константами `SOL_SOCKET`/`SO_KEEPALIVE`
+  - Unix: `libc::setsockopt` с `libc::SO_KEEPALIVE`
+- **`SO_REUSEADDR`** — сырой FFI в `RealTcpBlock::start_listening()` позволяет быстрое повторное использование порта после остановки
+  - `TcpConfig.reuse_addr: bool` (по умолчанию: `true`)
+- **`SO_KEEPALIVE`** — применяется на принимаемых и подключаемых TCP-сокетах
+  - `TcpConfig.keepalive: bool` (по умолчанию: `true`)
+- **`TCP_NODELAY`** — устанавливается через `stream.set_nodelay()` на всех новых соединениях
+  - `TcpConfig.nodelay: bool` (по умолчанию: `true`)
+- **`get_keepalive()`** — тестовая вспомогательная функция через сырой `getsockopt` FFI для проверки состояния keepalive
+- 4 новых теста: быстрое переназначение через `SO_REUSEADDR`, проверка keepalive, проверка nodelay, отключённое reuse_addr
+- **842 тестов всего**, ноль clippy-предупреждений
+
+### Ступенчатая эскалация Watchdog (100%)
+- **`WatchdogState::Warned`** — новое промежуточное состояние между Monitoring и Suspended для ступенчатого реагирования
+- **`WatchdogConfig.warn_threshold: u32`** — настраиваемый порог для состояния предупреждения (по умолчанию: 2)
+- **Ступенчатый поток `check_timeout()`**: Monitoring → Warned → Suspended → Recovering → SafeMode
+  - Пропуск `warn_threshold` heartbeat'ов → действие `WarnOrchestrator`, состояние → `Warned`
+  - Пропуск `max_missed_heartbeats` → действие `SuspendOrchestrator`, состояние → `Suspended`
+  - Следующая проверка после Suspended → действие `KillProcess(0)`, состояние → `Recovering`
+  - Тайм-аут восстановления → действие `SafeModeShell`, состояние → `SafeMode`
+- **`WatchdogAction::WarnOrchestrator`** — новое действие с серьёзностью 1 (предупреждение перед приостановкой)
+- **`escalate_actions()`** — теперь включает состояние `Warned` с действием `DumpState`
+- **`receive_heartbeat()`** — восстанавливает из состояния `Warned` обратно в `Monitoring` (сбрасывает missed_count)
+- **Пересортировка серьёзности**: None(0) < WarnOrchestrator(1) < WaitForRecovery(2) < SuspendOrchestrator(3) < AttemptRecovery(4) < KillProcess(5) < DumpState(6) < EnterSafeMode(7) < SafeModeShell(8) < InSafeMode(9)
+- **Интеграция с TUI** — `WatchdogState::Warned` отображается как "WARNING" жёлтым цветом
+- 5 новых тестов (ступенчатая эскалация, восстановление из warned, escalate в warned, полный warn→safe, серьёзность), **845 тестов всего**
+
+### Постоянный реестр ProcessId → JoinHandle
+- **`RealThreadState`** — структура запроса состояния реальных ОС-потоков (pid, finished, suspended, terminated)
+- **`Scheduler::get_real_thread_state(pid)`** — запрашивает текущее состояние реального потока по ProcessId
+- **`Scheduler::list_real_threads()`** — возвращает все ProcessId с реальными потоками
+- HashMap `real_threads" служит постоянным реестром ProcessId → JoinHandle с публичными аксессорами
+- 2 новых теста: `list_real_threads`, `get_real_thread_state`
+
+### Потоко-локальное хранилище метрик per-process
+- **Модуль `process_metrics`** — атомарные метрики per-process с потоко-локальной привязкой для записи без contention
+- **`ProcessMetricsInner`** — атомарные счётчики: `messages_sent`, `messages_received`, `bytes_sent`, `bytes_received`, `errors`, `syscall_count`, `wakeups`
+- **`ProcessMetricsStore`** — глобальный `HashMap<ProcessId, Arc<ProcessMetricsInner>>` с `OnceLock`-синглтоном
+- **Потоко-локальная привязка**: `bind_current_thread(pid)` / `current_pid()` — ассоциирует текущий поток с PID
+- **Функции便利**: `record_sent(bytes)`, `record_received(bytes)`, `record_error()`, `record_syscall()`, `record_wakeup()` — авто-определение PID через потоко-локальное хранилище
+- **`snapshot(pid)`** / **`snapshot_all()`** — атомарное чтение всех счётчиков без блокировок
+- `register(pid)`, `unregister(pid)`, `clear()`, `count()` — управление жизненным циклом
+- 7 юнит-тестов: register/snapshot, unregister, snapshot_all, привязка+запись через поток, clear, независимость атомарных операций, noop без привязки
+- **854 тестов всего**, ноль clippy-предупреждений
+- `DeployResult`, `SwapResult`, `RollbackResult` — типизированные структуры возврата
+- 6 модульных тестов: развёртывание, вызов функции, реальная WASM-замена (add→multiply), откат, падение проверки здоровья, история
+- **Примечание**: закрывает разрыв, обозначенный в TODO — Live Update теперь **РЕАЛЬНЫЙ** (не mock)
+
+### Планировщик — реальное управление ОС-потоками
+- `TerminateFlag(Arc<AtomicBool>)` и `SuspendFlag(Arc<AtomicBool>)` для кооперативного управления потоками
+- Структура `RealThread` — оборачивает ОС-поток с `Thread` + `JoinHandle` + флагами завершения/приостановки
+- `spawn_real_process<F>()` — порождает реальные ОС-потоки с поддержкой кооперативного завершения
+- `kill_process()` — устанавливает флаг завершения, разблокирует поток, присоединяет handle
+- `suspend_process()` / `resume_process()` — приостанавливает/возобновляет реальные потоки через `AtomicBool` + `thread::park()`
+- `check_real_threads()` — обнаруживает завершённые потоки через `is_finished()`, присоединяет их, обновляет состояние
+- `is_real_process()`, `real_thread_count()` — вспомогательные функции запросов
+- 6 новых модульных тестов жизненного цикла реальных потоков
+
+### BlockExecutor — мост выполнения WASM-блоков
+- `BlockExecutor` в `aios-wasm/src/executor.rs` — связывает `BlockRegistry` с `WasmSandbox`
+- `execute_block()` — компилирует бинарник из реестра как WASM, инстанцирует, автоматически вызывает `init`/`start`
+- `call_block_func()` — вызывает экспортированные функции на уже выполненных блоках
+- `execute_all()` — пакетное выполнение всех блоков из реестра
+- 6 модульных тестов: init+start, вызовы функций, выполнение всех, несуществующие блоки
+
+### WatchdogRunner — реальный фоновый поток
+- `WatchdogRunner` в `aios-watchdog/src/runner.rs` — реальный фоновый `std::thread::spawn` с `AtomicBool` флагом остановки
+- Автоматическая проверка тайм-аутов через настраиваемые интервалы, сбор действий через `Arc<Mutex<Vec<WatchdogAction>>>`
+- `start()`, `stop()`, `receive_heartbeat()`, `pop_actions()`, `force_safe_mode()`, `reset()`
+- Реализация `Drop` обеспечивает очистку потока на всех путях кода
+- 8 модульных тестов: старт/стоп, heartbeat, пропуск обнаружения, аварийный режим, сброс, извлечение действий, drop, восстановление
+
+### RealTcpBlock — реальные OS-сокеты
+- `RealTcpBlock` в `aios-net/src/real_tcp.rs` — реальные `std::net::TcpListener`/`TcpStream` с неблокирующим accept
+- `start_listening()`, `accept_pending()`, `connect()`, `send()`, `receive()`, `close_connection()`, `stop()`
+- `max_connections` проверяется в `accept_pending()`
+- 6 модульных тестов: listen/stop, connect+send, двусторонний, close, макс. соединения, нет ожидающих данных
+
+### Новый крейт: `aios-optim` — движок оптимизации во время выполнения
+- **12-й крейт рабочего пространства** — профилирование производительности, обнаружение горячих путей, оптимизация раскладки памяти и авторегулировка
+- **Профилировщик** (`profiler.rs`): замер wall-clock со скользящими средними, гистограммы, перцентили (p50/p95/p99), отслеживание пропускной способности
+- **Детектор горячих путей** (`hotpath.rs`): отслеживание мест вызова с подсчётом попаданий, накопление длительности, вывод flamegraph, динамические пороги
+- **Оптимизатор раскладки памяти** (`layout.rs`): перестановка полей структур для выравнивания по кеш-линии, анализ размера, рекомендации по выравниванию
+- **Авторегулировщик** (`tuning.rs`): поиск параметров со стратегиями сетки/случайного/бинарного поиска, отслеживание лучших результатов, сбор метрик, детекция сходимости
+- 29 модульных тестов для всех модулей оптегизации
+
+### Интеграция кольцевого буфера и IPC-шины
+- `RingTransport` в `aios-ipc/src/ring_transport.rs` связывает кольцевые буферы с IPC-шиной
+- Автоматическая маршрутизация тяжёлых полезных нагрузок (>4KB) через разделяемую память для zero-copy производительности
+- Fallback на стандартную VecDeque-шину для малых сообщений
+- `RingMetrics`: отслеживание отправок/получений через кольцо, байтов отправлено/получено
+- 10 модульных тестов
+
+### Интеграция сжатия и контекстного хранилища
+- `CompressedTelemetryStore` в `aios-context/src/compressed_telemetry.rs`
+- Автоматическое сжатие холодных записей телеметрии (>1 часа) через ZSTD из `aios-compress`
+- Прозрачная распаковка при чтении — вызывающие коды видят обычные `TelemetryEntry`
+- Настраиваемые пороги сжатия и возраст холодных записей
+- 6 модульных тестов
+
+### Интеграция CoW-персистентности и live-update
+- `CowLiveUpdateEngine` в `aios-live-update/src/cow_live_update.rs`
+- Сохранение записей отката (бинарник, состояние, версия) в CoW-хранилище для восстановления после сбоев
+- При запуске восстанавливает ожидающие откаты с диска
+- 4 модульных теста
+
+### Мост безопасности оборудования
+- `HardwareSecurityBridge` в `aios-security/src/hardware_bridge.rs`
+- Единый интерфейс для слоёв защиты MPK, TEE и IOMMU
+- `protect_block()`, `unprotect_block()`, `check_access()` — единый API для всего аппаратного обеспечения безопасности
+- `ProtectionReport` со статусом по каждому слою
+- Graceful fallback при недоступности аппаратных слоёв
+- 10 модульных тестов
+
+### Исправление ошибок
+- **BUG-012**: Исправлена функция `get_pending_entries()` в журнале восстановления — завершённые записи не фильтровались, так как функция только пропускала строки-маркеры `COMPLETED:` без использования их для исключения соответствующих ID записей
+- Исправлена ошибка Windows в `atomic_write` — `sync_all()` завершается с ошибкой "Access Denied" при использовании `File::open()`; заменено на `OpenOptions::new().write(true)`
+
+### Бенчмарк-сюита
+- **5 файлов бенчмарков** на `criterion` 0.5: IPC, кольцевой буфер, шина, сжатие, персистентность
+- `aios-core/benches/ipc_bench.rs`: сериализация/десериализация IPC при 1КБ/64КБ
+- `aios-ringbuf/benches/ring_bench.rs`: запись/чтение/zero-copy кольцевого буфера
+- `aios-ipc/benches/bus_bench.rs`: отправка/получение/приоритет шины
+- `aios-compress/benches/compress_bench.rs`: сжатие/распаковка/коэффициент
+- `aios-persistence/benches/persist_bench.rs`: атомарная запись/чтение/полный цикл
+
+### Тестирование на свойства (proptest)
+- `aios-core/tests/proptest_ipc.rs`: 8 тестов — roundtrip сериализации, валидность контрольной суммы, уникальные ID, roundtrip ответа, сохранение payloads, непустая сериализация
+- `aios-ringbuf/tests/proptest_ring.rs`: 5 тестов — roundtrip записи/чтения, границы ёмкости, available_read, последовательные записи, zero-copy
+
+### Хаос-тестирование
+- `tests/chaos_test.rs`: 13 тестов — повреждение IPC, переполнение шины, исчерпание памяти планировщика, resilience при циклических сбоях, тайм-аут watchdog→safe mode, быстрые команды safe mode, отсутствие токена/неправильная capability, подделка HMAC heartbeat, исчерпание context store→compact, дубликаты загрузчика блоков, конкурентный drain шины, консистентность kill-after-schedule
+
+### Авто-компакт Context Store
+- `EmbeddedContextStore::with_compact_threshold(max_entries, threshold_ratio)` — настраиваемый авто-компакт
+- `should_compact()` — проверка превышения порога
+- `compact()` — очистка старых телеметрий, дедупликация workflow, возвращает `CompactReport`
+- 4 модульных теста для проверки порога, очистки и сохранения минимальных данных
+
+### Интеграция безопасности в BlockManager
+- `BlockEntry` теперь хранит опциональный `CapabilityToken` для каждого блока
+- `assign_capabilities(id, token)` — привязка токена к загруженному блоку
+- `check_capability(id, cap)` — проверка наличия требуемой capability у блока (с проверкой срока действия)
+- Блоки без назначенных токенов отклоняются при всех проверках capabilities
+- 2 новых теста: назначение/проверка, none по умолчанию
+
+### Дополнительные бенчмарки
+- Бенчмарки коэффициента сжатия по паттернам данных (повторяющиеся, случайные, телеметрия) в `aios-compress`
+- Бенчмарки времени создания снимка CoW, задержки отката и накладных расходов диска в `aios-persistence`
+
+### VM-развёртывание
+- **Dockerfile обновлён** — все 20 крейтов workspace, `debian:bookworm-slim` runtime
+- **main.rs полный рефакторинг** — авто-компакт, загрузка блоков с диска, восстановление из persistence, корректное завершение
+- **`BlockLoader::load_from_directory(dir)`** — загрузка `.bin` блоков из `AIOS_BLOCKS_DIR` при старте (формат name_version.bin)
+- **Интеграция `PersistentStore`** — сохранение телеметрии при завершении, восстановление при запуске из `AIOS_DATA_DIR`
+- **Переменные окружения**: `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE` (modern/legacy/none)
+- **Linux HAL** — чтение `/proc/cpuinfo` и `/proc/meminfo` для определения оборудования
+
+### Интерактивное управление блоками в TUI
+- **Горячие клавиши на вкладке блоков**: `U` = выгрузить блок, `L` = загрузить с диска (диалог ввода имени+версии), `H` = горячая замена бинарника (выгрузка + перезагрузка)
+- **Двухшаговый диалог загрузки блока**: ввод имени → ввод версии → подтверждение
+- **Панель деталей блока** — отображает информацию о выбранном блоке, результаты операций и доступные действия
+- **Подвал** обновлён с горячими клавишами U/L/H
+- `DashboardState` расширен: `BlockInputMode`, `block_input_buffer`, `block_operation_result`
+- `selected_block_name_version()` — возвращает имя+версию выбранного блока
+
+### Визуализация графа зависимостей блоков в TUI
+- **5-я вкладка: Deps** — интерактивная таблица графа зависимостей блоков
+- Отображает зависимости и зависимых для каждого блока
+- **Панель порядка загрузки** — топологическая сортировка последовательности загрузки блоков
+- `BlockRegistry::dependency_graph()` — построение `DependencyGraph` из зарегистрированных блоков
+- `BlockRegistry::set_block_dependencies(name, deps)` — объявление межблочных зависимостей
+- Структура `DependencySnapshot` для рендеринга TUI: blocks, load_order, edges
+- 1 новый тест для метода `dependency_graph()`
+
+### CI/CD
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): check, fmt, clippy, test, coverage
+- **Отчёт покрытия** через `cargo-tarpaulin` (LLVM engine, XML output)
+- **Интеграция Codecov** для загрузки покрытия
+- **Автоматизация релизов** (`.github/workflows/release.yml`): мультиплатформенные сборки по тегу
+- Цели: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`
+- Автогенерация GitHub-релизов с changelog и бинарными архивами
+
+### Инфраструктура измерения задержки
+- `LatencyTracker` в `aios-optim/src/latency.rs` — отслеживание задержки по операциям с алертами по порогам
+- `LatencyGuard` — RAII-гард для автоматического тайминга (`tracker.guard("op")` → `guard.stop()`)
+- `LatencyStats` — агрегированная статистика: min, max, avg, p50, p95, p99, количество нарушений
+- `LatencyThreshold` — настраиваемые пороги warn/critical для каждой операции
+- `LatencyLevel` — классификация Normal/Warning/Critical
+- FIFO-вытеснение по операционным бакетам
+- 11 модульных тестов
+
+### Протокол наследования приоритетов
+- `PriorityInheritance` в `aios-process-mgr/src/priority_inheritance.rs`
+- `acquire_lock()` — захват блокировки с наследованием приоритета для высокоприоритетных ожидающих
+- `release_lock()` — освобождение с восстановлением приоритета и цепочкой пробуждения
+- `request_resource()` — запрос ресурса с наследованием приоритета
+- `apply_pending_boosts()` — извлечение накопленных рекомендаций по повышению приоритета
+- `release_all()` — освобождение всех блокировок процесса (для очистки при сбоях)
+- 12 модульных тестов
+
+### Расширение обнаружения аппаратуры
+- **Обнаружение NPU Intel Meteor Lake** через PCI vendor/device ID (8086:7D0B) на Linux и Windows
+- **Обнаружение NPU Qualcomm X Elite** через PCI vendor/device ID (17CB:1100) и имя процессора
+- Профили `mock_intel_meteor_lake()` и `mock_qualcomm_x_elite()` с NPU, GPU и интерфейсами
+- **Перечисление USB-устройств** через `lsusb` (Linux) и WMI (Windows) с классификацией скорости
+- **Перечисление Thunderbolt-устройств** через sysfs (Linux) и WMI (Windows) с Tb1–Tb5
+- 11 новых тестов для NPU-профилей, типов USB/TB и сериализации
+
+### Интеграция WebAssembly рантайма (aios-wasm)
+- Новый крейт `aios-wasm` v1.0.0 — встраивание Wasmtime v47 для песочницы блоков
+- `WasmSandbox` — создание движка с потреблением топлива и эпохальным прерыванием
+- `WasmBlock` — жизненный цикл WASM-блока: компиляция, инстанцирование, вызов функций
+- `SandboxConfig` — лимиты страниц памяти, топлива, максимальные экземпляры, тайм-аут
+- `WasiFilter` — фильтрация WASI-системных вызовов с политиками Allow/Deny/Log
+- `IsolationConfig` — изоляция «без общего контента»: уровни None/Process/Memory/Network/Full
+- `ResourceLimits` — лимиты памяти, CPU-времени, хранилища, сети и файлов на блок
+- `IsolationBoundary` — реестр изоляции по блокам с управлением межблочной коммуникацией
+- 39 тестов: жизненный цикл песочницы, компиляция WASM, вызовы функций, фильтрация WASI, границы изоляции
+
+### Маркетплейс блоков
+- `BlockMarketplace` в `aios-block-mgr/src/marketplace.rs` — реестр блоков с управлением репозиториями
+- `BlockMetadata` — имя, версия, описание, автор, sha256, теги, количество загрузок
+- `RepositoryEntry` — метаданные, статус, локальный путь
+- `BlockStatus`: Available, Installed, UpdateAvailable, Deprecated
+- Публикация, поиск, установка, удаление, проверка обновлений
+- Поддержка нескольких репозиториев с кросс-поиском
+- 18 модульных тестов для жизненного цикла маркетплейса
+
+### Сетевой стек (aios-net)
+- Новый крейт `aios-net` v1.0.0 — TCP/UDP блоки для сетевого взаимодействия
+- `TcpBlock` — TCP клиент/сервер с управлением соединениями
+- `UdpBlock` — UDP сокет с привязкой, отправкой, широковещанием
+- 27 тестов для TCP и UDP
+
+### Абстракция файловой системы
+- `FileSystem` в `aios-core/src/filesystem.rs` — единый слой доступа к файлам
+- Виртуальная, локальная, наложенная (overlay) файловая система
+- `FilePermissions` — чтение/запись/выполнение
+- 20 модульных тестов
+
+### Графический дашборд (aios-gui)
+- Новый крейт `aios-gui` v1.0.0 — нативный графический дашборд на egui/eframe
+- **6 вкладок**: Обзор, Процессы, Блоки, Маркетплейс, Метрики, Зависимости
+- **Обзор**: карточки статистики, системная информация, графики RAM, журнал активности
+- **Процессы**: таблица с PID, именем, приоритетом, состоянием; Kill/Suspend/Resume
+- **Блоки**: таблица блоков, диалог загрузки, выгрузка, горячая замена
+- **Маркетплейс**: поиск, установка/обновление/удаление блоков
+- **Метрики**: прогресс-бар RAM, распределение приоритетов, статистика блоков
+- **Зависимости**: граф зависимостей, порядок загрузки
+- `AiosTheme` — тёмная тема с настраиваемыми цветами
+- 7 тестов для приложения
+
+### Качество кода
+- Исправлены все предупреждения clippy (ноль предупреждений)
+- Удалены `#[cfg(unix)]` из тестов persistence — все тесты работают на Windows
+- Все 708 тестов проходят в 20 крейтах рабочего пространства
+
+### Повышение версии
+- Все крейты повышены до 1.0.0
+
+## v0.6.0 (Планирование) — Продвинутая оптимизация и надёжность оборудования (2026-07-27)
+
+### Фаза 15: Zero-Copy IPC Ring Buffers ✅ РЕАЛИЗОВАНО
+- ✅ Lock-free кольцевые буферы для single-producer/single-consumer (`aios-ringbuf` крейт)
+- ✅ O(1) эффективность передачи данных (без копий в ядре)
+- ✅ Zero-copy указатели чтения/записи для прямого доступа к памяти
+- ✅ Обработка переноса с гарантиями атомарности
+- ✅ 8 unit-тестов, охватывающих все операции
+- Интеграция с существующим `IpcBus` транспортом (запланирована)
+
+### Фаза 17: AI KV-Cache & State Compression ✅ РЕАЛИЗОВАНО
+- ✅ FP8 квантизация (32 бита → 8 бит) для AI буферов
+- ✅ INT4 квантизация (32 бита → 4 бита) для памятеёмких состояний
+- ✅ ZSTD сжатие для таблиц состояния системы
+- ✅ LRU кэш распаковки с настраиваемым размером
+- ✅ 16 unit-тестов для квантизации, сжатия и кэширования
+- Автоматические пороги сжатия на основе нехватки памяти (запланировано)
+
+### Фаза 18: Atomic Copy-on-Write Persistence ✅ РЕАЛИЗОВАНО
+- ✅ CoW движок хранилища с атомарным протоколом записи
+- ✅ Снимки состояния с проверкой целостности SHA-256
+- ✅ Журнал восстановления для защиты от сбоев при передаче состояния
+- ✅ Атомарное переименование для безопасности при потере питания (write → fsync → rename)
+- ✅ 6 unit-тестов (Unix) для операций хранилища
+- Поддержка отката при неудачных live-updates (готово)
+
+### Фаза 16: Hardware-Enforced Memory Protection ✅ РЕАЛИЗОВАНО
+- ✅ Поддержка Intel MPK (Memory Protection Keys) с детектированием через CPUID из крейта `x86`
+- ✅ ARM Memory Domains (fallback) с управлением DACR регистром
+- ✅ Распределение PKEY per-block (макс. 16 ключей на Intel, 4 домена на ARM)
+- ✅ MpkSecurityBridge для интеграции с системой capability `aios-security`
+- ✅ Детектирование оборудования через `HwMemoryProtection::detect()`
+- ✅ 27 comprehensive unit-тестов, охватывающих все операции
+- Поддержка cross-architecture с graceful деградацией на неподдерживаемом оборудовании
+- Интеграция с политиками блоков и control доступа готова для Фазы 2
+
+## v0.5.0 — RT-планировщик, стресс-тесты и расширение оборудования (2026-07-26)
+
+### Улучшение TUI дашборда — полноценный интерактивный 4-вкладочный дашборд
+- Полная перезапись `dashboard.rs` со статичной 3-зонной компоновки на 4-вкладочный интерактивный дашборд
+- **Вкладка 1 (Обзор)**: панель информации об оборудовании (CPU, GPU, хранилище, система) + журнал активности
+- **Вкладка 2 (Процессы)**: полная таблица процессов (PID, имя, приоритет, состояние, RAM, CPU, сбои) с выбором строки и панелью деталей
+- **Вкладка 3 (Блоки)**: таблица реестра блоков (ID, имя, версия, состояние, размер) со статистикой
+- **Вкладка 4 (Метрики)**: индикатор использования RAM, гистограмма распределения приоритетов, временной ряд RAM
+- `DashboardState` расширен: `processes: Vec<ProcessSnapshot>`, `blocks: Vec<BlockSnapshot>`, `selected_row`, `ram_history`, `process_kill_result`
+- Снимки процессов/блоков берутся каждый кадр для согласованного рендеринга
+- Структуры `ProcessSnapshot`/`BlockSnapshot` для отвязки рендеринга от блокировок scheduler/registry
+- Цветовые стили приоритетов (Critical=Red, High=Yellow, Normal=Green, Low=Blue, Bg=DarkGray)
+- Цветовые стили состояний (Running=Green, Crashed=Red, Terminated=DarkGray)
+- Индикатор RAM с пороговой окраской (>85% Red, >60% Yellow, иначе Green)
+- Отображение `BlockState` со стилями Active=Green, Error=Red
+- 6 новых unit-тестов
+
+### Интерактивные горячие клавиши TUI
+- `j`/`Down` — перемещение выбора вниз в таблицах процессов/блоков
+- `k`/`Up` — перемещение выбора вверх
+- `K` — убийство выбранного процесса (с отображением подтверждения)
+- `1`/`2`/`3`/`4` — переключение вкладок (Обзор/Процессы/Блоки/Метрики)
+- Выбор сбрасывается при переключении вкладок
+- Панель деталей процесса показывает информацию или результат убийства
+- `r` — обновление, `s` — запись телеметрии, `x` — статус системы
+
+### Архитектурные изменения TUI
+- `update_from_scheduler()` теперь принимает `&Scheduler` и `&BlockRegistry` (был только `&Scheduler`)
+- Выбор вкладки: `selected_tab` (0-3), выбор строки: `selected_row`
+- Кольцевой буфер истории RAM (60 записей, по одной на кадр)
+- Отображение результата убийства процесса (`Option<String>`)
+
+### Менеджер процессов: планировщик реального времени
+- Перечисление `SchedulingMode`: `Normal` (взвешенный round-robin) и `RealTime` (на основе дедлайнов)
+- Структура `JitterEntry`: `pid`, `expected_ms`, `actual_ms`, `timestamp` — отслеживание джиттера планирования
+- `set_scheduling_mode()`, `scheduling_mode()` — переключение между Normal и RT
+- `set_rt_deadline(pid, deadline_ms)` — назначение абсолютного дедлайна процессу
+- `clear_rt_deadline(pid)` — удаление дедлайна у процесса
+- RT-планирование: выбор процесса с ранним дедлайном (наименьшее оставшееся время)
+- Отслеживание джиттера: запись при превышении ожидаемого time slice или пропуске дедлайна
+- `jitter_log()` и `clear_jitter_log()` для аудита джиттера
+- 9 новых unit-тестов: режим по умолчанию, смена режима, управление дедлайнами, ранний дедлайн, пропуск не-gotовых, запись джиттера, очистка джиттера, нет кандидатов, смена режима
+
+### Стресс-тесты и бенчмарки
+- 11 стресс-тестов в `tests/stress_test.rs`:
+  - `test_stress_mass_spawn_1000` — создание 1000 процессов + цикл планирования
+  - `test_stress_ipc_bus_throughput` — отправка/получение 10k IPC-пакетов
+  - `test_stress_rt_scheduler_500` — планирование 500 RT-задач с дедлайнами
+  - `test_stress_block_registry_500` — регистрация/запрос 500 блоков
+  - `test_stress_context_store_1000` — 1000 записей телеметрии
+  - `test_stress_hardware_mock_serialize` — 10k сериализаций HW-профиля
+  - `test_stress_heartbeat_1000` — 1000 HMAC heartbeat циклов
+  - `test_stress_storage_profiles` — проверка мок-профилей NVMe/SATA
+  - `test_stress_message_router_500` — 500 диспатчей маршрутизатора
+  - `test_stress_live_update_20` — 20 параллельных горячих замен
+  - `test_stress_persistent_store_batch` — 500 записей телеметрии в redb
+
+### HAL: Определение устройств хранения
+- Структура `StorageDevice`: `name`, `interface`, `capacity_gb`, `model`
+- Перечисление `StorageInterface`: `NVMe`, `SATA`, `USB`, `Unknown`
+- `detect_storage()` — Windows: `wmic diskdrive` / Linux: `/sys/block`
+- `HardwareProfile::storage_devices: Vec<StorageDevice>` — во всех 4 мок-профилях
+
+### HAL: Определение AMD GPU
+- `detect_gpu_amd()` — Linux: парсинг вывода `rocm-smi --showproductname --showmeminfo vram`
+
+### HAL: Unit-тесты для хранения
+- 7 новых тестов: проверка NVMe/SATA профилей, сериализация StorageDevice, сериализация полного профиля
+
+### Новый крейт: `aios-exec-compat` — мультибинарная совместимость
+- **11-й крейт рабочего пространства** — интерцептор выполнения и транслятор syscall дляforeign-бинарников
+- Неинвазивная архитектура: подключается к IPC Message Bus как модуль системы
+- Zero-trust sandboxing: foreign-исполняемые файлы работают с ограниченными `CapabilityTokens`
+
+#### Парсер заголовков (`format.rs`)
+- `ExecutableType`: `AiosNative`, `LinuxElf`, `WindowsPe`, `Unknown`
+- `HeaderFormat::from_bytes(data: &[u8])` — magic bytes: `MZ` для PE, `\x7fELF` для Linux, `AIOS` для нативных
+- `ExecutableType::from_extension(path)` — определение типа по имени файла (.exe/.dll → PE, .so/.elf → ELF, .aib → AIOS)
+- `BinaryHeader::parse(data)` — полный парсинг заголовка: entry_point_offset, is_64bit, machine_arch, subsystem
+- ELF64/ELF32: e_entry со смещения 24, определение класса по байту
+- PE32/PE32+: MZ→PE смещение, machine arch (0x8664/0x014C), magic optional header
+- `CompatCapability` (9 вариантов): FilesystemRead/Write, ProcessCreate, NetworkAccess, RegistryAccess, WinApiCompat, PosixCompat, MemoryMap, ThreadCreate
+- Скоростной тест: <5us на определение заголовка
+
+#### POSIX подсистема (`posix.rs`)
+- `PosixSyscall` (18 вариантов): SysOpen, SysRead, SysWrite, SysClose, SysLseek, SysFork, SysExec, SysExit, SysMmap, SysMunmap, SysSocket, SysConnect, SysSend, SysRecv, SysGetpid, SysGetuid, SysStat, SysFstat
+- `PosixTranslator`: трансляция syscall Linux → IPC-пакеты AIOS
+- `DefaultPosixTranslator` — реальная реализация трансляции
+- Скоростной тест: <5us на трансляцию
+
+#### Win32 подсистема (`win32.rs`)
+- `Win32Api` (16 вариантов): CreateFileW, ReadFile, WriteFile, CloseHandle, GetProcAddress, LoadLibraryW, VirtualAlloc, VirtualFree, CreateThread, ExitProcess, GetLastError и др.
+- Диспатч по Win32 ordinal (стандартные SSN Windows)
+- `Win32Translator` с поддержкой регистрации DLL
+
+#### Исцелитель зависимостей (`dependency_healer.rs`)
+- Автоматическое обнаружение недостающих .dll/.so библиотек
+- Пайплайн: `scan_dependencies()` → `resolve_missing()` → `heal_dependencies()`
+- Настраиваемые пути поиска, кэш резолюции, автозагрузка в sandbox
+
+#### Совместимость песочницы (`sandbox_compat.rs`)
+- `CompatSandboxConfig` — лимиты по типу: память, файлы, потоки, capabilities
+- `CompatProcess` — проверка capabilities, ограничения ресурсов, блокировка syscall
+- `CompatSandboxManager` — управление жизненным циклом с лимитом процессов
+
+#### Интеграционные тесты
+- Парсинг заголовков (ELF/PE/AIOS), POSIX трансляция, Win32 трансляция, исцеление зависимостей, изоляция песочницы, кросс-подсистемный жизненный цикл
+
+### Статистика
+- **11 крейтов** рабочего пространства + crate интеграционных тестов + стресс-тесты
+- **~9,500 строк** Rust (без тестов)
+- **344 теста** (286 unit + 28 интеграционных + 11 стресс + 19 exec-compat)
+- **0 предупреждений** clippy
+- **90+ публичных типов**, **320+ публичных методов**
+
+### Документация
+- Двуязычная документация для всех новых функций (EN + RU)
+
+### HAL: Определение NVIDIA GPU через nvidia-smi
+- `GpuInfo` расширен полями `driver_version: String`, `cuda_cores: u32`, `compute_capability: String`
+- `detect_gpu_nvidia()` — Windows: запускает `nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv,noheader,nounits`
+- `estimate_cuda_cores(gpu_name)` — отображение имён GPU на количество CUDA-ядер (RTX 4090→16384, A100→6912, H100→16896)
+- `detect_gpu_wmic()` — наследуемый fallback через Windows WMI
+- 8 новых модульных тестов: поля GpuInfo, мок-профили, оценка CUDA-ядер, цикл сериализации
+
+### Менеджер блоков: горячая перезагрузка из файловой системы
+- Структура `HotReloader` в `hot_reload.rs` — мониторинг директории на наличие файлов `.bin`/`.aib`
+- `scan_and_reload(registry)` — обнаружение новых, обновлённых и удалённых файлов блоков
+- `HotReloadConfig`: `watch_dir`, `poll_interval_ms`, `auto_activate`
+- `TrackedFile` — отслеживание `path`, `modified`, `sha256`, `loaded_id` для каждого файла
+- `ReloadEvent` enum: `NewBlock`, `UpdatedBlock`, `RemovedBlock`, `Error`, `NoChange`
+- Обнаружение изменений по SHA-256 — перезагрузка только при реальном изменении содержимого
+- Автосоздание директории при отсутствии; журнал событий для аудита
+- 9 модульных тестов
+
+### Менеджер процессов: группы и сессии
+- Структура `ProcessGroup`: `id`, `name`, `priority`, `member_pids`, `created_at_ms`, `session_id`
+- Структура `Process` расширена полем `group_id: Option<u64>` и билдером `with_group()`
+- Управление группами планировщика: `create_group()`, `create_session()`, `add_to_group()`, `remove_from_group()`
+- Операции с группами: `kill_group()`, `suspend_group()`, `resume_group()`, `set_group_priority()`
+- `group_members()`, `all_groups()`, `group_count()`, `get_group()`
+- 10 новых модульных тестов: создание групп, сессий, добавление/удаление участников, kill/suspend/resume, смена приоритета, ошибки
+
+### Документация
+- Двуязычная документация: все 4 файла (ARCHITECTURE, CHANGELOG, BUGS, TODO) ведутся на английском и русском
+- AGENTS.md обновлён правилом двуязычной документации и структурой документации
+
+## v0.4.0 — Укрепление системы и приоритет 2 (2026-07-26)
+
+### Улучшения IPC Bus
+- **Политики обратного давления**: `BackpressurePolicy::Reject` (по умолчанию) и `BackpressurePolicy::DropOldest`
+- Метод-билдер `IpcBus::with_backpressure()` для `IpcBus` и `SharedIpcBus`
+- Drop-oldest извлекает из начала очереди и удаляет из набора дедупликации
+- **Дедупликация сообщений**: `IpcBus::with_dedup()` включает дедупликацию по `packet_id` через `HashSet<u64>`
+- Дублирующие отправки молча отбрасываются, счётчик хранится в `metrics.total_deduplicated`
+- **Метрики шины**: структура `BusMetrics` с отслеживанием `total_sent`, `total_received`, `total_dropped`, `total_deduplicated`, `peak_queue_depth`, `avg_send_latency_us`
+- Методы `metrics()` и `reset_metrics()` у `IpcBus`
+- 7 модульных тестов: обратное давление (reject + drop-oldest), дедупликация, метрики, сброс, приоритет с drop-oldest
+
+### Улучшения планировщика
+- **Взвешенный round-robin**: `priority_weight()` отображает Background=1, Low=2, Normal=3, High=4, Critical=5
+- Квант времени = `default_time_slice_ms * priority_weight` (пропорционально приоритету)
+- `round_robin_positions: HashMap<Priority, usize>` отслеживает позицию внутри каждой очереди приоритетов
+- Исправлен баг с ранним `break` при предотвращении голода: внутренний цикл теперь оценивает все процессы в очереди (старение может поднять позже поступившие процессы выше ранее поступивших)
+- **Обнаружение нехватки памяти**: `memory_pressure_threshold` (по умолчанию: 0.8)
+- Перечисление `MemoryPressure`: `Normal(usage)`, `Warning(usage)`, `Critical(usage)`
+- Структура `MemoryPressureEvent` с уровнем, использованием, занято/всего МБ, именами колбэков
+- Методы `register_memory_pressure_callback()` и `check_memory_pressure()`
+- 5 новых модульных тестов: вес приоритета, взвешенный квант времени (внутри и кросс-приоритет), нехватка памяти (normal, warning, critical)
+
+### Улучшения менеджера блоков
+- **Граф зависимостей** (`dependency.rs`): `DependencyGraph` с рёбрами `HashMap<String, Vec<String>>`
+- `add_block()`, `add_dependency()` с обнаружением циклов через DFS
+- `load_order()` — топологическая сортировка (алгоритм Кана) для корректного порядка инициализации
+- `unload_order()` — обратная топологическая сортировка для безопасного завершения
+- `dependencies_of()`, `dependents_of()`, `remove_block()`, `blocks()`, `has_block()`
+- **Семантическое версионирование** (`version.rs`): структура `SemanticVersion` (major, minor, patch)
+- `parse()` с необязательным префиксом `v`, форматирование `Display`
+- Реализация `Ord` для сравнения версий
+- `is_compatible_with()` (одинаковый major, >= minor), `is_newer_than()`
+- `bump_major/minor/patch()` для увеличения версий
+- 9 тестов зависимостей + 7 тестов версий
+
+### Исправление ошибок
+- **BUG-010**: Исправлен ранний `break` в `schedule_next()` во внутреннем цикле очереди приоритетов — старение могло поднять позже поступивший процесс выше ранее поступившего в рамках одной очереди, но `break` не давал оценить все процессы. Удалён `break`, теперь все процессы в состоянии Ready в очереди оцениваются.
+- **BUG-011**: Исправлен нестабильный `test_unload_order_reversed` — порядок топологической сортировки недетерминирован для независимых узлов (итерация HashMap). Тесты теперь проверяют ограничения зависимостей, а не абсолютные позиции.
+
+### Дополнительные интеграционные тесты (21–28)
+- `test_ipc_bus_backpressure_dedup_metrics` — политика DropOldest + дедупликация + сброс метрик
+- `test_scheduler_weighted_round_robin` — round-robin внутри одного уровня приоритета
+- `test_scheduler_memory_pressure_detection` — уровни предупреждения и критической нехватки памяти с колбэками
+- `test_block_dependency_graph_ordering` — граф зависимостей из 6 блоков, проверка порядка загрузки/выгрузки
+- `test_semantic_version_with_block_registry` — сравнение версий + интеграция с реестром
+- `test_ipc_bus_priority_cross_crates` — упорядочивание очереди приоритетов через send_priority
+- `test_dependency_graph_complex_cycle` — обнаружение циклов + удаление узлов + повторная проверка
+- `test_cross_subsystem_scheduler_security_ipc` — кросс-крейт тест планировщика + безопасности + IPC шины
+
+## v0.3.0 — Интеграция системы и улучшения планирования (2026-07-26)
+
+### Старение процессов в планировщике (предотвращение голода)
+- Добавлены `aging_threshold_ms` и `last_scheduled_ms` в `Scheduler` для отслеживания времени ожидания
+- `schedule_next()` теперь вычисляет эффективный приоритет = базовый приоритет + время ожидания / порог (ограничено повышением до +4)
+- Все процессы оцениваются глобально (без раннего выхода по уровню очереди) для корректного поведения старения
+- `ProcessTimer::force_expire()` для детерминированного тестирования
+- Публичное API: `force_preempt()`, `set_last_scheduled()`, `is_scheduled()`, `with_aging_threshold()`
+- Модульный тест: `test_aging_boosts_low_priority`
+
+### Интеграция Watchdog и TUI
+- Добавлены зависимости `aios-watchdog` и `aios-context` в `aios-tui`
+- Поток heartbeat watchdog работает в фоне во время сессии TUI
+- Заголовок панели отображает текущее состояние watchdog: OK (зелёный), SUSPENDED (красный), RECOVERING (жёлтый), SAFE MODE (пурпурный)
+- `DashboardState::update_watchdog()` для синхронизации состояния
+- Новые привязки клавиш: `s` — запись телеметрии, `x` — статус системы
+- `SafeModeShell` интегрирован в основной цикл для выполнения команд в безопасном режиме
+
+### Связка Context Store и планировщика
+- `EmbeddedContextStore` и `TelemetryStore` инициализируются в основном цикле
+- Запись телеметрии по клавише `s`: записывает количество процессов и метрики ОЗУ
+- API `TelemetryEntry`: паттерн билдера `with_block()`, `with_process()`
+- Интеграционный тест: `test_context_store_wired_to_scheduler` проверяет регулировку приоритета на основе телеметрии
+
+### Очередь приоритетов IPC шины
+- Метод `IpcBus::send_priority()` для упорядочивания извлечения по приоритету
+- Пакеты с более высоким приоритетом извлекаются первыми, FIFO в пределах одного уровня приоритета
+- 2 модульных теста: `test_priority_queue_ordering`, `test_priority_fifo_within_same_level`
+
+### Дополнительные интеграционные тесты (11–20)
+- `test_watchdog_heartbeat_lifecycle` — координация watchdog и IPC шины
+- `test_safe_mode_shell_lifecycle` — разбор и выполнение команд безопасного режима
+- `test_security_sandbox_enforcement` — кросс-модульное принуждение capability и песочницы
+- `test_context_store_cross_collection` — API запросов телеметрии, рабочих процессов и стабильности
+- `test_watchdog_scheduler_crash_coordination` — watchdog запускает обработку аварийного завершения планировщика
+- `test_security_ipc_packet_capability_check` — проверка capability для IPC пакетов
+- `test_live_update_with_security_revocation` — координация горячей замены и отзыва токенов
+- `test_telemetry_driven_priority_adjustment` — запросы телеметрии управляют изменением приоритета планировщика
+- `test_scheduler_aging_starvation_prevention` — старение повышает планирование низкоприоритетных процессов
+- `test_context_store_wired_to_scheduler` — телеметрия контекстного хранилища питает решения планировщика
+
+### Документация
+- Созданы: AGENTS.md, README.md, docs/ARCHITECTURE.md, docs/CHANGELOG.md, docs/BUGS.md, docs/TODO.md
+
+## v0.2.0 — Системы безопасности, защиты и контекста (2026-07-25)
+
+### Фаза 8: AI Watchdog и движок аварийного восстановления (`aios-watchdog`)
+- Структура `Heartbeat` с аутентификацией SHA-256 HMAC
+- `Watchdog` с 4-состоянием конечным автоматом: Monitoring → Suspended → Recovering → SafeMode
+- Настраиваемые интервал heartbeat, порог пропусков и тайм-аут восстановления
+- `WatchdogConfig` с разумными значениями по умолчанию (интервал 1с, 3 пропуска, восстановление 10с)
+- Перечисление `WatchdogAction` для решений ядра
+- Журнал аудита `WatchdogEvent` для всех переходов состояний
+- `SafeModeShell` с детерминированными CLI-командами (ps, blocks, kill, unload, status, logs, restart)
+- Ограничение перезапусков для предотвращения бесконечных циклов
+- 19 модульных тестов, покрывающих аутентификацию heartbeat, конечный автомат watchdog, циклы восстановления, безопасный режим
+
+### Фаза 9: Capability-based безопасность и песочница (`aios-security`)
+- Перечисление `Capability` с 15 конкретными разрешениями (сеть, файловая система, оборудование, память, система)
+- `CapabilityToken` с HMAC-подписями и ограниченным по времени сроком действия
+- `AccessControlLayer` для выдачи, проверки, отзыва токенов и отслеживания нарушений
+- `Sandbox` — изоляция для каждого блока с проверкой системных вызовов, ограничениями памяти и лимитами количества системных вызовов
+- Журнал аудита `Violation` для попыток несанкционированного доступа
+- 20 модульных тестов, покрывающих жизненный цикл токенов, контроль доступа, принуждение песочницы
+
+### Фаза 10: Постоянное контекстное хранилище системы (`aios-context`)
+- `EmbeddedContextStore`, объединяющий телеметрию, рабочие процессы и коллекции стабильности
+- `TelemetryStore` с переполнением FIFO (10k записей), запросами метрик, запросами по временному диапазону, запросами для каждого блока
+- `WorkflowStore` для изученных профилей приоритетов с отслеживанием использования
+- `StabilityStore` для оценки надёжности блоков с отслеживанием аварий/аптайма
+- 18 модульных тестов, покрывающих все операции хранилищ
+
+## v0.1.0 — Начальная система (2026-07-25)
+
+### Фаза 1: Рабочее пространство + IPC протокол
+- Создано плоское рабочее пространство с 7 крейтами (aios-core, aios-ipc, aios-hal, aios-block-mgr, aios-live-update, aios-process-mgr, aios-tui)
+- Реализован бинарный IPC протокол с сериализацией bincode
+- Структура `Header` с packet_id, source/target блоками, command_id, приоритетом, payload_len, SHA-256 контрольной суммой
+- Перечисление `Payload` с 15 вариантами, покрывающими все операции ОС
+- Перечисление `Response` (Success/Failure/Timeout)
+- `IpcPacket` с автоматически генерируемым packet_id (AtomicU64) и проверкой целостности SHA-256
+- Перечисление `CommandId` (u16) с 13 типами команд, организованными по доменам (block=0x0001–0x0003, process=0x0010–0x0012, system=0x0020–0x0050)
+- Скоростные тесты с двойными порогами (debug: 50мкс, release: 1мкс)
+
+### Фаза 2: Уровень абстракции оборудования (HAL)
+- `HardwareProfile` с обнаружением CPU, GPU, NPU, Memory, PCI
+- Реальное обнаружение через `wmic` (Windows) и `/proc/cpuinfo` + `/proc/meminfo` (Linux)
+- `CpuInfo` с флагами AVX-512, AVX2, SSE4.2, NEON
+- Структуры `GpuInfo`, `NpuInfo`, `PciDevice`, `MemoryInfo`
+- Классификация `AiTier`: Tier1 (локальный LLM), Tier2 (edge-инференс), Tier3 (только лёгкие задачи)
+- 4 мок-профиля: legacy, modern, legacy_2012, custom
+- `HalBlock`, реализующий трейт `StatefulBlock` (извлечение/восстановление состояния профиля)
+- 8 модульных тестов для логики классификации уровней
+
+### Фаза 3: Менеджер блоков
+- `BlockRegistry` с регистрацией/выгрузкой/активацией, проверкой подписи SHA-256
+- `BlockEntry` хранит манифест + состояние + бинарный файл
+- `BlockLoader` для валидации бинарного файла и одноразовой загрузки + активации
+- `MessageRouter` с диспетчеризацией обработчиков и перенаправлением маршрутов
+- `BlockHandler` = `Box<dyn FnMut(&IpcPacket) -> Result<Option<IpcPacket>>>`
+- 15 модульных тестов по реестру, загрузчику и маршрутизатору
+
+### Фаза 4: Менеджер процессов
+- `ProcessId`, `Priority` (5 уровней: Background/Critical), `ProcessState` (5 состояний)
+- Структура `Process` с crash_count, max_restarts, parent_pid
+- `ProcessTimer` для временных квантов с отслеживанием квоты
+- `Scheduler` с очередями приоритетов на основе BTreeMap, контроль квоты ОЗУ
+- Планирование по приоритету с round-robin внутри одного приоритета
+- Устойчивость к авариям: автоматический перезапуск до max_restarts, логирование CrashEvent
+- `handle_process_command()` для управления spawn/kill/adjust_priority через IPC
+- 10 модульных тестов, включая тесты аварий и дочерних процессов
+
+### Фаза 5: Движок live-update
+- `StateTransferManager` для заморозки/извлечения/восстановления состояния IPC шины
+- Структура `Snapshot` с фиксацией ожидающих пакетов + байтов состояния
+- `LiveUpdateEngine` с атомарной горячей заменой (5-шаговый процесс):
+  1. Заморозка IPC шины + извлечение состояния
+  2. Валидация SHA-256 нового бинарного файла
+  3. Проверка работоспособности (опциональное замыкание)
+  4. Сохранение записи для отката
+  5. Восстановление IPC шины
+- `HotSwapEntry` для данных отката (старый бинарный файл, состояние, версия)
+- Журнал аудита `SwapRecord` для всех операций замены
+- Откат с настраиваемым предупреждением о тайм-ауте
+- 9 модульных тестов, покрывающих сценарии успеха, сбоя и отката
+
+### Фаза 6: AI-оркестратор + TUI
+- `IntentEngine`, преобразующий естественный язык в `IpcPacket`
+- 8 категорий намерений: memory, video, block_update, kill, spawn, priority, health_check, topology
+- `IntentContext`, предоставляющий состояние системы для преобразования намерений
+- `TranslatedCommand` с пояснением, описанием намерения и IPC-пакетом
+- Панель Ratatui с 3-зонной компоновкой: заголовок (уровень + метрики), основная часть (системная информация + лог), нижний колонтитул (привязки клавиш)
+- `DashboardState` с буфером лога на 100 записей и синхронизацией с планировщиком
+- Цветовая кодировка: цвета уровней (зелёный/жёлтый/красный), цвета серьёзности логов
+- Точка входа main.rs: обнаружение оборудования → классификация уровня → загрузка блоков → запуск процессов → цикл обработки событий терминала
+- 10 модульных тестов для преобразования намерений и состояния панели
+
+### Фаза 7: Интеграционные тесты
+- 10 интеграционных тестов, покрывающих:
+  1. Полный жизненный цикл системы (HAL → уровень → реестр → планировщик → топология)
+  2. Скорость сериализации IPC (50k раундов)
+  3. 100 параллельных запусков процессов с отслеживанием ОЗУ
+  4. Live-update с 50 сообщениями IPC в полёте
+  5. Устойчивость к авариям (3 аварии, принуждение политики перезапуска)
+  6. Интеграция маршрутизатора сообщений (прямая + перенаправленная диспетчеризация)
+  7. Жизненный цикл управления процессами через IPC (spawn → PID → настройка → kill)
+  8. Классификация AI-уровней для всех профилей
+  9. Раунд-трип для stateful блока (извлечение/восстановление)
+  10. Полный жизненный цикл горячей замены с сохранением шины и откатом
+
+## v1.0.0 — Интеграция TEE (Trusted Execution Environment) (2026-07-28)
+
+### Phase 20: TEE (Trusted Execution Environment) Integration ✅ РЕАЛИЗОВАНО
+- ✅ Обнаружение платформы TEE (Intel SGX, ARM TrustZone, AMD SEV) с корректным fallback
+- ✅ Запечатывание и распечатывание данных с привязкой к платформе (`SealingKey`, `SealedData`)
+- ✅ Фреймворк удалённой аттестации с поддержкой PCR (Platform Configuration Register)
+- ✅ Управление жизненным циклом анклавов (Created → Initialized → Running → Suspended → Exited/Failed)
+- ✅ Конфигурация анклавов с управлением памятью и потоками
+- ✅ Сохранение и сериализация состояния для всех типов TEE
+- ✅ Кросс-платформенная поддержка: Windows (x86-64), Linux, ARM64
+- ✅ 28 модульных тестов, покрывающих все операции TEE
+- ✅ Интеграция с системой capabilities `aios-security` для контроля доступа
+- ✅ Полная поддержка сериализации через `bincode` для IPC-транспорта
+
+### Docker: Multi-stage production сборка для VM
+- Полностью переработан `Dockerfile`: multi-stage сборка (builder → runtime)
+- **builder** (rust:1.97-bookworm): компиляция `--release` + прогон `--lib` тестов
+- **runtime** (debian:bookworm-slim): минимальный образ ~80MB с бинарником `aios-tui`
+- `docker-compose.yml` обновлён: использует `target: runtime`, добавлены `stdin_open`/`tty` для TUI
+- Сигнал завершения: `SIGINT` для корректного shutdown через crossterm
+- Переменные окружения: `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+
+## Заметки об отладке
+- Пороги скоростных тестов требуют двойных значений для debug/release из-за замедления в 10–20 раз в неоптимизированных сборках
+- PATH в Windows должен собираться вручную из переменных среды Machine + User перед командами cargo
+- Линт `skip_while().next()` заменён паттерном `position().nth()` для более чистой логики итераторов
+
+## Общая статистика (v0.5.0)
+- **11 крейтов** рабочего пространства + crate интеграционных тестов + стресс-тесты
+- **~10,200 строк** Rust (без тестов)
+- **350 тестов** (292 unit + 28 интеграционных + 11 стресс + 19 exec-compat)
+- **0 предупреждений** clippy
+- **90+ публичных типов**, **320+ публичных методов**
