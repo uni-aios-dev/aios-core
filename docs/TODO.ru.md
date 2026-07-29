@@ -308,10 +308,11 @@
   - [x] Auto-Manifest Generator: анализ WASM-бинарников + ключевой анализ интентов workflow
   - [x] Визуальный редактор workflow (step-редактор) в `aios-studio` — палитра, добавление/удаление/перестановка шагов, inline редактирование prompt, последовательный запуск
   - [x] Персистентность workflow — именованные сохранение/загрузка/удаление через localStorage с выпадающим списком
-- [ ] **Фаза 25: Безопасный веб-сёрфинг и поиск (`aios-browser` и `aios-search`)**
-  - [ ] WASM-векторный HTML/CSS рендерер с изолированным сетевым стеком
-  - [ ] Анонимный веб-поиск через DuckDuckGo / SearXNG / Brave Search API
-  - [ ] Синтез TL;DR локальным ИИ перед выводом
+- [x] **Фаза 25: Безопасный веб-сёрфинг и поиск (`aios-browser` и `aios-search`) — ЗАВЕРШЕНА**
+  - [x] WASM-векторный HTML/CSS рендерер с изолированным сетевым стеком (HtmlParser, Renderer, BrowserEngine)
+  - [x] Анонимный веб-поиск через DuckDuckGo / SearXNG / Brave Search API (SearchEngine, 3 бэкенда)
+  - [x] Синтез TL;DR локальным ИИ через aios-llm (SearchSummarizer)
+  - [x] `POST /api/v1/browse` и `POST /api/v1/search` REST-эндпоинты в aios-bridge
 - [ ] **Фаза 26: Атомарные обновления и магазин приложений (`aios-updater` и `aios-store`)**
   - [ ] Atomic Dual-Boot (Slot A / Slot B) с откатом за 1 секунду
   - [ ] Горячая замена драйверов и приложений без перезагрузки

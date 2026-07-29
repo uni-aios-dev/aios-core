@@ -132,3 +132,36 @@ pub struct LlmQueryResponse {
     pub duration_ms: u64,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct BrowseRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BrowseResponse {
+    pub success: bool,
+    pub title: String,
+    pub text_content: String,
+    pub links: Vec<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchRequest {
+    pub query: String,
+    pub backend: Option<String>,
+    pub max_results: Option<usize>,
+    pub enable_summary: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResponse {
+    pub success: bool,
+    pub query: String,
+    pub results: Vec<serde_json::Value>,
+    pub total_results: usize,
+    pub summary: Option<String>,
+    pub duration_ms: u64,
+    pub error: Option<String>,
+}

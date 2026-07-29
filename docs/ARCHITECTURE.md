@@ -2,7 +2,7 @@
 
 ## System Overview
 
-AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 20 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and a user-facing TUI at the top.
+AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 22 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and a user-facing TUI at the top.
 
 All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations.
 
@@ -901,9 +901,10 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ## Development Roadmap (Phases 22–27)
 
-### Phase 24: EasyLang Engine & No-Code App Builder (`aios-builder`) — *IN PROGRESS*
+### Phase 24: EasyLang Engine & No-Code App Builder (`aios-builder`) — *COMPLETED*
 - **`aios-builder` crate**: Workflow type (JSON serializable), AutoManifestGenerator (WASM binary analysis + workflow intent keyword matching for capability inference), WorkflowCompiler (WAT text generation → `wat` crate compilation to WASM)
-- **8 unit tests** covering WASM parsing, capability detection, JSON manifest generation, workflow compilation
+- **EasyLangParser**: line-oriented DSL (`spawn`, `timer`, `load`, `unload`, `kill`, `query`, `compact`, `status`)
+- **18 unit tests** covering WASM parsing, capability detection, JSON manifest generation, workflow compilation, DSL parsing
 
 ### Phase 24 sub-item: Backend Workflow Execution
 - **`POST /api/v1/workflow`**: Batch intent execution endpoint — accepts `{prompts: [...]}`, parses and executes each step sequentially, returns per-step results with capability checking
@@ -939,13 +940,24 @@ Three adaptive AI modes depending on hardware resources:
 - **Auto-Manifest Generator:** Automatic capability requirement analysis and `CapabilityToken` manifest generation
 - **Visual Workflow Editor:** Embedded in `aios-studio` — "When event X → Execute action Y" drag-and-drop
 
-### Phase 25: Secure Web Surfing & Search (`aios-browser` & `aios-search`)
-- **`aios-browser`:** WASM-based vector HTML/CSS renderer with sandboxed network stack
-- **`aios-search`:** Anonymous web search via DuckDuckGo / SearXNG / Brave Search APIs
-  - Geo-marker and personal ID stripping
-  - Direct RSS/HTML parsing via temporary spider blocks
-  - Local AI TL;DR synthesis before screen output
-- **Capability tokens:** `CAP_NET_CONNECT`, `CAP_FS_WRITE`, `CAP_BROWSER_RENDER`
+### Phase 25: Secure Web Surfing & Search (`aios-browser` & `aios-search`) — *COMPLETED*
+- **`aios-browser` crate**: `BrowserEngine` with `navigate(url)` → fetches HTML via `reqwest`, parses via `HtmlParser`, renders to text via `Renderer`
+  - `HtmlParser`: extracts text content, links, title; strips `<script>`, `<style>`, HTML comments
+  - `NetworkClient`: configurable user-agent, timeout, redirect limit; capability-based sandboxed network
+  - `Renderer`: DOM → markdown-like text output (headings `#`, links `[text](url)`, lists `•`)
+  - `Page` type: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
+  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
+  - **10 unit tests**: text extraction, link parsing, title extraction, URL resolution, comment stripping
+- **`aios-search` crate**: `SearchEngine` with multi-backend anonymous search + AI summarization
+  - `DuckDuckGoBackend`: POST to `html.duckduckgo.com/html/`, HTML response parsing
+  - `SearXngBackend`: GET with `format=json`, JSON response parsing
+  - `BraveBackend`: GET to `api.search.brave.com`, API key via `X-Subscription-Token`, JSON parsing
+  - `SearchSummarizer`: integrates with `aios-llm` for TL;DR (2-3 sentence LLM summary of top 5 results)
+  - `SearchConfig`: `backend`, `api_key`, `api_url`, `max_results`, `enable_summary`
+  - **3 unit tests**: config defaults, engine creation, backend URLs
+- **aios-bridge REST endpoints**:
+  - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
+  - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → results + AI summary
 
 ### Phase 26: Atomic Updates & App Store (`aios-updater` & `aios-store`)
 - **Atomic Dual-Boot (Slot A / Slot B):** Background-slot kernel update with guaranteed 1-second auto-rollback on Watchdog failure

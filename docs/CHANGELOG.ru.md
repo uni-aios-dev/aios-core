@@ -1,3 +1,29 @@
+## v1.1.0 — Фаза 25: Безопасный веб-сёрфинг и поиск (2026-07-29)
+
+### aios-browser — Новый крейт: Веб-браузер на WASM
+- Новый крейт `aios-browser` — изолированный веб-браузер с HTML-парсером, текстовым рендерером и сетевым доступом через capability-токены
+- `BrowserEngine` — основной struct с методом `navigate(url)` для загрузки и рендеринга веб-страниц
+- `HtmlParser` — извлекает текст, ссылки, заголовки из HTML; удаляет скрипты, стили, комментарии
+- `NetworkClient` — HTTP-клиент через `reqwest` с настраиваемым таймаутом, user-agent, лимитом редиректов
+- `Renderer` — конвертирует DOM в markdown-подобный текст с заголовками, ссылками, списками
+- `Page` — `url`, `title`, `text_content`, `html`, `links` для структурированных данных страницы
+- `BrowserConfig` — `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
+- 10 unit-тестов: извлечение текста, парсинг ссылок, заголовков, URL-резолвинг, удаление комментариев
+
+### aios-search — Новый крейт: Анонимный веб-поиск
+- Новый крейт `aios-search` — мульти-бэкендный анонимный поиск с AI-суммаризацией (TL;DR)
+- `SearchEngine` — направляет запросы в настраиваемые бэкенды: DuckDuckGo, SearXNG, Brave
+- `DuckDuckGoBackend` — POST через `html.duckduckgo.com/html/`, парсит HTML-ответ
+- `SearXngBackend` — GET с `format=json`, парсит JSON-ответ
+- `BraveBackend` — GET через `api.search.brave.com`, требует API-ключ в заголовке `X-Subscription-Token`
+- `SearchSummarizer` — интеграция с `aios-llm` для AI-суммаризации результатов поиска
+- `SearchConfig` — `backend`, `api_key`, `api_url`, `max_results`, `enable_summary`
+- 3 unit-теста: конфиг по умолчанию, создание движка, URL бэкендов
+
+### aios-bridge: REST-эндпоинты браузера и поиска
+- `POST /api/v1/browse` — принимает `{ "url": "..." }`, возвращает title, text_content, links
+- `POST /api/v1/search` — принимает `{ "query": "...", "backend": "...", "max_results": N, "enable_summary": bool }`, возвращает результаты с опциональным AI-кратким содержанием
+
 ## v1.0.0 — Фаза 23: Многорежимный AI-движок + Гибридный маршрутизатор намерений (2026-07-29)
 
 ### aios-llm: Реальный GGUF-инференс (Micro-Local и Full-Local)

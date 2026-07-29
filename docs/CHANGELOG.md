@@ -1,5 +1,31 @@
 # AIOS Development Log
 
+## v1.1.0 — Phase 25: Secure Web Surfing & Search (2026-07-29)
+
+### aios-browser — New Crate: WASM-Based Web Browser
+- New crate `aios-browser` — sandboxed web browser with HTML parser, text renderer, and capability-based network
+- `BrowserEngine` — main struct with `navigate(url)` method for fetching and rendering web pages
+- `HtmlParser` — extracts text content, links, title from HTML; strips scripts, styles, comments
+- `NetworkClient` — HTTP client via `reqwest` with configurable timeout, user-agent, redirect limits
+- `Renderer` — converts DOM to markdown-like text output with headings, links, lists
+- `Page` type — `url`, `title`, `text_content`, `html`, `links` for structured page data
+- `BrowserConfig` — `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
+- 10 unit tests: text extraction, link parsing, title extraction, URL resolution, strip comments
+
+### aios-search — New Crate: Anonymous Web Search
+- New crate `aios-search` — multi-backend anonymous search engine with AI TL;DR summarization
+- `SearchEngine` — dispatches queries to configurable backends: DuckDuckGo, SearXNG, Brave
+- `DuckDuckGoBackend` — POST via `html.duckduckgo.com/html/`, parses HTML response
+- `SearXngBackend` — GET with `format=json`, parses JSON response
+- `BraveBackend` — GET via `api.search.brave.com`, requires API key in `X-Subscription-Token` header
+- `SearchSummarizer` — integrates with `aios-llm` to generate AI TL;DR summaries of search results
+- `SearchConfig` — `backend`, `api_key`, `api_url`, `max_results`, `enable_summary`
+- 3 unit tests: config defaults, engine creation, backend URLs
+
+### aios-bridge: Browser & Search REST Endpoints
+- `POST /api/v1/browse` — accepts `{ "url": "..." }`, returns title, text content, links
+- `POST /api/v1/search` — accepts `{ "query": "...", "backend": "...", "max_results": N, "enable_summary": bool }`, returns results with optional AI summary
+
 ## v1.0.0 — Phase 23: Multi-Mode AI Engine + Hybrid Intent Router (2026-07-29)
 
 ### aios-llm: Real GGUF Inference (Micro-Local & Full-Local)

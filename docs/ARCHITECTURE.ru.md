@@ -2,7 +2,7 @@
 
 ## Обзор системы
 
-AIOS (AI-Native Operating System) — модульная ОС в стиле микроядра, разработанная для AI-ориентированных нагрузок. Система состоит из 20 Rust-крейтов, образующих слоистую архитектуру: базовые типы внизу, абстракция оборудования и управление процессами в середине, системы безопасности/контекста, а также пользовательский TUI-интерфейс наверху.
+AIOS (AI-Native Operating System) — модульная ОС в стиле микроядра, разработанная для AI-ориентированных нагрузок. Система состоит из 22 Rust-крейтов, образующих слоистую архитектуру: базовые типы внизу, абстракция оборудования и управление процессами в середине, системы безопасности/контекста, а также пользовательский TUI-интерфейс наверху.
 
 Вся коммуникация между крейтами осуществляется через бинарный IPC-протокол. Блоки (модули ядра) поддерживают горячую замену с автоматическим откатом. AI-оркестратор преобразует намерения на естественном языке в системные операции.
 
@@ -895,9 +895,10 @@ User Input (TUI)
 
 ## Дорожная карта разработки (Фазы 22–27)
 
-### Фаза 24: EasyLang Engine и No-Code App Builder (`aios-builder`) — *В РАЗРАБОТКЕ*
+### Фаза 24: EasyLang Engine и No-Code App Builder (`aios-builder`) — *ЗАВЕРШЕНО*
 - **Крейт `aios-builder`**: тип Workflow (JSON-сериализуемый), AutoManifestGenerator (анализ WASM-бинарников + ключевой анализ интентов workflow для вывода capability), WorkflowCompiler (генерация WAT-текста → компиляция в WASM через `wat`)
-- **8 unit-тестов**: парсинг WASM, обнаружение capability, генерация JSON-манифеста, компиляция workflow
+- **EasyLangParser**: построчный DSL (`spawn`, `timer`, `load`, `unload`, `kill`, `query`, `compact`, `status`)
+- **18 unit-тестов**: парсинг WASM, обнаружение capability, генерация JSON-манифеста, компиляция workflow, парсинг DSL
 
 ### Подпункт Фазы 24: Backend выполнение workflow
 - **`POST /api/v1/workflow`**: Эндпоинт пакетного выполнения интентов — принимает `{prompts: [...]}`, парсит и выполняет каждый шаг последовательно, возвращает результаты с проверкой capability
@@ -933,12 +934,24 @@ User Input (TUI)
 - **Auto-Manifest Generator:** Автоматический анализ и генерация минимальных `CapabilityToken`
 - **Визуальный редактор workflow:** Встроен в `aios-studio` — «Когда событие X → Выполни действие Y» drag-and-drop
 
-### Фаза 25: Безопасный веб-сёрфинг и поиск (`aios-browser` и `aios-search`)
-- **`aios-browser`:** WASM-векторный HTML/CSS рендерер с изолированным сетевым стеком
-- **`aios-search`:** Анонимный веб-поиск через DuckDuckGo / SearXNG / Brave Search API
-  - Вырезка geo-маркеров и персональных ID
-  - Прямой парсинг RSS/HTML через временные спайдер-блоки
-  - Синтез TL;DR локальным ИИ перед выводом
+### Фаза 25: Безопасный веб-сёрфинг и поиск (`aios-browser` и `aios-search`) — *ЗАВЕРШЕНО*
+- **Крейт `aios-browser`**: `BrowserEngine` с `navigate(url)` → HTTP-запрос через `reqwest`, парсинг HTML через `HtmlParser`, рендеринг в текст через `Renderer`
+  - `HtmlParser`: извлекает текст, ссылки, заголовки; удаляет `<script>`, `<style>`, HTML-комментарии
+  - `NetworkClient`: настраиваемые user-agent, таймаут, лимит редиректов; изолированный сетевой доступ
+  - `Renderer`: DOM → markdown-подобный текст (заголовки `#`, ссылки `[text](url)`, списки `•`)
+  - `Page`: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
+  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
+  - **10 unit-тестов**: извлечение текста, парсинг ссылок, заголовков, URL-резолвинг, удаление комментариев
+- **Крейт `aios-search`**: `SearchEngine` с мульти-бэкендным анонимным поиском + AI-суммаризация
+  - `DuckDuckGoBackend`: POST на `html.duckduckgo.com/html/`, парсинг HTML-ответа
+  - `SearXngBackend`: GET с `format=json`, парсинг JSON-ответа
+  - `BraveBackend`: GET на `api.search.brave.com`, API-ключ в `X-Subscription-Token`, парсинг JSON
+  - `SearchSummarizer`: интеграция с `aios-llm` для TL;DR (2-3 предложения по топ-5 результатам)
+  - `SearchConfig`: `backend`, `api_key`, `api_url`, `max_results`, `enable_summary`
+  - **3 unit-теста**: конфиг по умолчанию, создание движка, URL бэкендов
+- **REST-эндпоинты aios-bridge**:
+  - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
+  - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → результаты + AI-краткое содержание
 
 ### Фаза 26: Атомарные обновления и магазин приложений (`aios-updater` и `aios-store`)
 - **Atomic Dual-Boot (Slot A / Slot B):** Фоновое обновление ядра с гарантированным откатом за 1 секунду при сбое Watchdog

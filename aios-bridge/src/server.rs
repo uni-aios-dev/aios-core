@@ -72,6 +72,8 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/intent", post(intent_handler))
         .route("/api/v1/workflow", post(workflow_handler))
         .route("/api/v1/llm/query", post(llm_query_handler))
+        .route("/api/v1/browse", post(browse_handler))
+        .route("/api/v1/search", post(search_handler))
         .route("/ws/telemetry", get(ws_handler))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
@@ -517,5 +519,92 @@ impl From<BridgeError> for IntentApiError {
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self { status, error: e }
+    }
+}
+
+async fn browse_handler(
+    Json(req): Json<BrowseRequest>,
+) -> Json<BrowseResponse> {
+    let config = aios_browser::types::BrowserConfig::default();
+    let engine = aios_browser::BrowserEngine::new(config);
+
+    match engine.navigate(&req.url).await {
+        Ok(page) => {
+            let links: Vec<serde_json::Value> = page
+                .links
+                .iter()
+                .map(|l| {
+                    serde_json::json!({ "href": l.href, "text": l.text })
+                })
+                .collect();
+
+            Json(BrowseResponse {
+                success: true,
+                title: page.title,
+                text_content: page.text_content,
+                links,
+                error: None,
+            })
+        }
+        Err(e) => Json(BrowseResponse {
+            success: false,
+            title: String::new(),
+            text_content: String::new(),
+            links: Vec::new(),
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+async fn search_handler(
+    Json(req): Json<SearchRequest>,
+) -> Json<SearchResponse> {
+    let config = aios_search::SearchConfig {
+        backend: match req.backend.as_deref() {
+            Some("searxng") => aios_search::SearchBackend::SearXNG,
+            Some("brave") => aios_search::SearchBackend::Brave,
+            _ => aios_search::SearchBackend::DuckDuckGo,
+        },
+        max_results: req.max_results.unwrap_or(10),
+        enable_summary: req.enable_summary.unwrap_or(true),
+        ..Default::default()
+    };
+
+    let engine = aios_search::SearchEngine::new(config);
+
+    match engine.search(&req.query).await {
+        Ok(summary) => {
+            let results: Vec<serde_json::Value> = summary
+                .results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "title": r.title,
+                        "url": r.url,
+                        "snippet": r.snippet,
+                        "source": r.source,
+                    })
+                })
+                .collect();
+
+            Json(SearchResponse {
+                success: true,
+                query: summary.query,
+                results,
+                total_results: summary.total_results,
+                summary: summary.summary,
+                duration_ms: summary.duration_ms,
+                error: None,
+            })
+        }
+        Err(e) => Json(SearchResponse {
+            success: false,
+            query: req.query,
+            results: Vec::new(),
+            total_results: 0,
+            summary: None,
+            duration_ms: 0,
+            error: Some(e.to_string()),
+        }),
     }
 }

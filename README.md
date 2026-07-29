@@ -194,7 +194,7 @@ User ──► aiosctl search "browser" ──► GitHub API ──► uni-aios-
 |-------|---------|--------|
 | 23 | Multi‑Mode AI Engine + Local GGUF Inference | ✅ Done |
 | 24 | EasyLang Engine & No‑Code App Builder | ✅ Done |
-| 25 | Secure Web Surfing & Search (`aios-browser`) | 🔜 Next |
+| 25 | Secure Web Surfing & Search (`aios-browser`) | ✅ Done |
 | 26 | Atomic Updates & Decentralized App Store | 📋 Planned |
 | 27 | Debug System & Black Box Telemetry | 📋 Planned |
 

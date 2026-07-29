@@ -36,7 +36,7 @@
 - [x] Docker: Multi-stage production build — builder + runtime (debian:bookworm-slim), entrypoint aios-tui
 - [x] Phase 21: aios-bridge — HTTP/WS API gateway + Intent engine (RU/EN) + Capability enforcement
 
-## Readiness Assessment (2026-07-28, updated)
+## Readiness Assessment (2026-07-29, updated)
 
 **Overall: ~100% ready for real (non-mock) testing.** (up from 90%)
 
@@ -54,6 +54,8 @@
 | UDP Network | **REAL** | Real std::net::UdpSocket with broadcast |
 | Live Update | **REAL** | WasmLiveUpdateEngine — deploy, swap WASM modules, rollback, memory migration, IPC reroute |
 | BlockExecutor | **REAL** | Bridges BlockRegistry + WasmSandbox for full block execution |
+| Web Browser | **REAL** | Real HTTP fetch via reqwest, HTML parse, text render, link extraction |
+| Web Search | **REAL** | Real HTTP requests to DuckDuckGo/SearXNG/Brave, JSON/HTML parsing, AI summarization via aios-llm |
 | Integration Tests | **REAL** | 61 tests with real file I/O, real network loopback, real WASM execution, real OS threads, hot-swap with state |
 
 ### All milestone targets achieved ✅
@@ -308,10 +310,11 @@
   - [x] Auto-Manifest Generator: WASM binary analysis + workflow intent keyword matching
   - [x] Visual Workflow Step Editor in `aios-studio` — palette, add/remove/reorder steps, per-step inline prompt editing, sequential run
   - [x] Workflow persistence — named save/load/delete via localStorage with dropdown selector
-- [ ] **Phase 25: Secure Web Surfing & Search (`aios-browser` & `aios-search`)**
-  - [ ] WASM-based vector HTML/CSS renderer with sandboxed network
-  - [ ] Anonymous web search via DuckDuckGo / SearXNG / Brave Search APIs
-  - [ ] Local AI TL;DR synthesis before screen output
+- [x] **Phase 25: Secure Web Surfing & Search (`aios-browser` & `aios-search`) — COMPLETE**
+  - [x] WASM-based vector HTML/CSS renderer with sandboxed network (HtmlParser, Renderer, BrowserEngine)
+  - [x] Anonymous web search via DuckDuckGo / SearXNG / Brave Search APIs (SearchEngine, 3 backends)
+  - [x] Local AI TL;DR synthesis via aios-llm (SearchSummarizer)
+  - [x] `POST /api/v1/browse` and `POST /api/v1/search` REST endpoints in aios-bridge
 - [ ] **Phase 26: Atomic Updates & App Store (`aios-updater` & `aios-store`)**
   - [ ] Atomic Dual-Boot (Slot A / Slot B) with 1-second auto-rollback
   - [ ] Hot-swapping drivers and apps without reboot
