@@ -92,43 +92,68 @@ backed by `redb`. Applications are written in **EasyLang** — a declarative DSL
 - Rust toolchain **1.75+** (`rustup default stable`)
 - Windows 10+ / Linux (kernel 5.10+) / macOS 12+
 
-### Build & Run
+### Build
 
 ```bash
 # Clone
 git clone https://github.com/uni-aios-dev/aios-core.git
 cd aios-core
 
-# Build everything
-cargo build --release --workspace
+# Build unified binary
+cargo build --release --bin aios
 
 # Run tests (708+)
 cargo test --workspace
-
-# Launch TUI dashboard
-cargo run --release -p aios-tui
-
-# Launch Native GUI
-cargo run --release -p aios-gui
 ```
 
-### First Steps
+### Run
 
 ```bash
-# Check system status
-aiosctl status
+# Interactive TUI dashboard (4 tabs: System & HW, Blocks & Services, AI Console, Studio GUI Bridge)
+./target/release/aios
 
-# List running processes
-aiosctl ps
+# Headless server mode (logs to stdout, Bridge HTTP on :8080)
+./target/release/aios --daemon
 
-# Install a block from the store
-aiosctl install block-name
-
-# Run EasyLang workflow
-aiosctl run my-workflow.ez
+# Help
+./target/release/aios --help
 ```
 
-> **Windows users:** Add `C:\aios\bin` to `PATH` after installation. The TUI and GUI dashboards work without admin rights.
+### Quick Install
+
+Linux/macOS:
+```bash
+curl -sSf https://raw.githubusercontent.com/uni-aios-dev/aios-core/main/scripts/install.sh | bash
+```
+
+Windows PowerShell (admin):
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/uni-aios-dev/aios-core/main/scripts/install.ps1'))
+```
+
+The installers automatically: detect platform, install Rust if missing, build release binary, copy to PATH, create `~/.aios/{models,blocks,logs}`, and download a default Qwen2.5‑0.5B GGUF model.
+
+### First Steps (TUI Hotkeys)
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `1`–`4` | Switch tab |
+| `F1` | Toggle help overlay |
+| `g` | Generate AI response (AI Console tab) |
+| `r` | Refresh current tab |
+| `Space` | Start/stop log streaming |
+| `i` | Focus AI input box |
+| `Enter` | Submit AI query |
+| `q` / `Ctrl+C` | Quit |
+
+### Docker
+
+```bash
+docker compose build
+docker compose up -d          # aios --daemon on :8080
+docker compose logs -f
+```
 
 ---
 
@@ -177,10 +202,11 @@ User ──► aiosctl search "browser" ──► GitHub API ──► uni-aios-
 ```
 ┌──────────────────────────────────────────────┐
 │  Crates      40+                              │
-│  Tests       708+ (all passing)               │
+│  Tests       730+ (all passing)               │
 │  Clippy      0 warnings                       │
 │  Rust        Edition 2021                     │
 │  WASM        Wasmtime 47, WASI preview2       │
+│  Binary      67 MB (debug) / 18 MB (release)  │
 │  License     AGPLv3 / Commercial              │
 │  Status      Active development               │
 └──────────────────────────────────────────────┘
@@ -197,6 +223,9 @@ User ──► aiosctl search "browser" ──► GitHub API ──► uni-aios-
 | 25 | Secure Web Surfing & Search (`aios-browser`) | ✅ Done |
 | 26 | Atomic Updates & Decentralized App Store | 📋 Planned |
 | 27 | Debug System & Black Box Telemetry | 📋 Planned |
+| 28–30 | Headless Daemon + Web/Shell/Bridge Tabs | ✅ Done |
+| 31 | Unified `aios` Binary (TUI + Daemon) | ✅ Done |
+| 32 | E2E Tests, Stress Tests, Cross‑Platform Installers | ✅ Done |
 
 ---
 
