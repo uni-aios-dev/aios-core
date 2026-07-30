@@ -303,26 +303,16 @@ fn test_chaos_multi_thread_crash_reports() {
 
     let mut cr = CrashReporter::new("aios-core", "1.0.0");
 
-    let threads: Vec<_> = (0..10)
-        .map(|i| {
-            let kind = match i % 4 {
-                0 => CrashKind::Panic,
-                1 => CrashKind::OOM,
-                2 => CrashKind::WatchdogTimeout,
-                _ => CrashKind::BlockCrash,
-            };
-            // Simulate crash by generating report directly (thread-safe data)
-            let msg = format!("crash #{i} from thread");
-            let stack = format!("stack:crash_{i}");
-            cr.generate_report(kind, "worker", &msg, &stack, "fr", false);
-            std::thread::spawn(move || {
-                let _ = kind;
-            })
-        })
-        .collect();
-
-    for t in threads {
-        t.join().unwrap();
+    for i in 0..10 {
+        let kind = match i % 4 {
+            0 => CrashKind::Panic,
+            1 => CrashKind::OOM,
+            2 => CrashKind::WatchdogTimeout,
+            _ => CrashKind::BlockCrash,
+        };
+        let msg = format!("crash #{i} from thread");
+        let stack = format!("stack:crash_{i}");
+        cr.generate_report(kind, "worker", &msg, &stack, "fr", false);
     }
 
     assert_eq!(cr.report_count(), 10);

@@ -31,9 +31,15 @@ aios-updater = { path = "aios-updater" }
 aios-store = { path = "aios-store" }
 aios-telemetry = { path = "aios-telemetry" }
 aios-debug = { path = "aios-debug" }
+aios-llm = { path = "aios-llm" }
+aios-builder = { path = "aios-builder" }
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+serde_json = { workspace = true }
 bincode = "1"
 tempfile = "3"
 wasmtime = "47"
+portpicker = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
 
 [workspace]
 resolver = "2"

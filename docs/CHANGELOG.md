@@ -1,5 +1,29 @@
 # AIOS Development Log
 
+## v2.1.0 — Phase 32: E2E Tests, Stress Tests, Installers (2026-07-30)
+
+### End-to-End Pipeline Integration Tests (`tests/e2e_pipeline_test.rs`)
+- HW & Core Probe: mock_modern profile validation (CPU model, cores, RAM, AI tier, serialization)
+- LLM & Intent Routing: IntentParser tests for show/kill/list/check commands (EN/RU)
+- EasyLang & WASM Pipeline: EasyLangParser → WorkflowCompiler → wasm → BlockLoader → BlockExecutor chain
+- IPC & Context Store: IpcBus send/receive, EmbeddedContextStore telemetry, RingBuffer zero-copy, Crypto hash, PersistentStore redb
+- Bridge HTTP Gateway: axum server on ephemeral port, /api/v1/health, /status, /workflow, /metrics, /intent endpoints
+
+### Stress & Fault Tolerance Tests (`tests/stress_fault_tolerance.rs`)
+- 50 parallel WASM blocks: registration, execution, identity function verification, IPC data transfer
+- IPC throughput: 500 packets across 50 blocks with timing thresholds (<2s send, <2s receive)
+- Block panic isolation: crash reporter generates BlockCrash report, remaining 9 blocks stay operational
+- Scheduler crash survival: 20 processes → kill victim → 19 survivors + replacement scheduling
+- Back-to-back crashes: 10 processes, kill 5, scheduler continues scheduling
+
+### Cross-Platform Install Scripts (`scripts/`)
+- `scripts/install.sh` (Linux/macOS): dependency check (git, curl, cargo), rustup auto-install, `cargo build --release`, binary to /usr/local/bin or ~/.local/bin, `~/.aios/{models,blocks,logs}` directory setup, Qwen2.5-0.5B GGUF model download
+- `scripts/install.ps1` (Windows): same logic for PowerShell, PATH user env var update, Windows-specific directory layout
+
+### Maintenance
+- Fixed pre-existing compilation errors in `chaos_test.rs` (moved-value bug) and `browser_search_tests.rs` (raw string delimiter, wrong import path for BrowserEngine)
+- Added `aios-llm`, `aios-builder`, `tokio`, `serde_json`, `portpicker`, `reqwest` to integration test dev-dependencies
+
 ## v2.0.0 — Phase 31: Unified `aios` Binary (2026-07-30)
 
 ### New crate: `aios` — Unified system binary

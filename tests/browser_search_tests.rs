@@ -1,5 +1,6 @@
 use aios_browser::html_parser::HtmlParser;
-use aios_browser::types::{BrowserConfig, BrowserEngine};
+use aios_browser::types::BrowserConfig;
+use aios_browser::BrowserEngine;
 
 #[test]
 fn test_html_parser_extract_text() {
@@ -50,12 +51,12 @@ use aios_search::backends::DuckDuckGoBackend;
 
 #[test]
 fn test_duckduckgo_parse_results() {
-    let html = r#"
+    let html = r##"
     <div class="result">
         <a class="result__a" href="https://example.com">Example</a>
         <a class="result__snippet" href="#">Test snippet content</a>
     </div>
-    "#;
+    "##;
     let results = DuckDuckGoBackend::parse_html_response(html);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].url, "https://example.com");

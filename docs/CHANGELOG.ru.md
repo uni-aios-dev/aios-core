@@ -1,5 +1,29 @@
 # Журнал разработки AIOS
 
+## v2.1.0 — Фаза 32: E2E-тесты, стресс-тесты, установщики (2026-07-30)
+
+### Сквозные интеграционные тесты (`tests/e2e_pipeline_test.rs`)
+- HW & Core Probe: проверка профиля mock_modern (модель CPU, ядра, RAM, AI tier, сериализация)
+- LLM & Intent Routing: тесты IntentParser для команд show/kill/list/check (EN/RU)
+- EasyLang & WASM Pipeline: цепочка EasyLangParser → WorkflowCompiler → wasm → BlockLoader → BlockExecutor
+- IPC & Context Store: IpcBus send/receive, EmbeddedContextStore telemetry, RingBuffer zero-copy, Crypto hash, PersistentStore redb
+- Bridge HTTP Gateway: axum-сервер на эфемерном порту, endpoints /api/v1/health, /status, /workflow, /metrics, /intent
+
+### Стресс-тесты и устойчивость к сбоям (`tests/stress_fault_tolerance.rs`)
+- 50 параллельных WASM-блоков: регистрация, выполнение, проверка identity-функции, IPC-обмен
+- IPC пропускная способность: 500 пакетов через 50 блоков с таймингами (<2s отправка, <2s получение)
+- Изоляция паники блока: CrashReporter генерирует BlockCrash-отчёт, остальные 9 блоков продолжают работу
+- Выживаемость планировщика: 20 процессов → убийство одного → 19 выживших + замена
+- Серийные сбои: 10 процессов, убито 5, планировщик продолжает планирование
+
+### Кроссплатформенные скрипты установки (`scripts/`)
+- `scripts/install.sh` (Linux/macOS): проверка зависимостей (git, curl, cargo), автоустановка rustup, `cargo build --release`, копирование в /usr/local/bin или ~/.local/bin, создание `~/.aios/{models,blocks,logs}`, загрузка модели Qwen2.5-0.5B GGUF
+- `scripts/install.ps1` (Windows): аналогичная логика для PowerShell, обновление PATH пользователя, структура каталогов Windows
+
+### Сопровождение
+- Исправлены ошибки компиляции в `chaos_test.rs` (use of moved value) и `browser_search_tests.rs` (разделитель raw string, неверный путь импорта BrowserEngine)
+- Добавлены `aios-llm`, `aios-builder`, `tokio`, `serde_json`, `portpicker`, `reqwest` в dev-зависимости интеграционных тестов
+
 ## v2.0.0 — Фаза 31: Единый бинарник `aios` (2026-07-30)
 
 ### Новый крейт: `aios` — единый системный бинарник

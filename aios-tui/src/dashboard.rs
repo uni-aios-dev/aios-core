@@ -31,7 +31,9 @@ pub struct ShellState {
 }
 
 impl Default for ShellState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ShellState {
