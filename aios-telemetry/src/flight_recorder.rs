@@ -128,16 +128,17 @@ impl FlightRecorder {
         let mut output = String::from("=== Flight Recorder Dump ===\n");
         for event in &self.buffer {
             let ts = event.timestamp_ms;
-            output.push_str(&format!(
-                "[{ts:16}] [{:5}] {}",
-                event.kind, event.message
-            ));
+            output.push_str(&format!("[{ts:16}] [{:5}] {}", event.kind, event.message));
             if let Some(data) = &event.data {
                 output.push_str(&format!(" | data={data}"));
             }
             output.push('\n');
         }
-        output.push_str(&format!("=== Total: {} events, {} overwritten ===\n", self.buffer.len(), self.total_overwritten));
+        output.push_str(&format!(
+            "=== Total: {} events, {} overwritten ===\n",
+            self.buffer.len(),
+            self.total_overwritten
+        ));
         output
     }
 

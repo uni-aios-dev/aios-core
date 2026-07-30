@@ -78,7 +78,9 @@ mod tests {
 
     #[test]
     fn test_search_backend_urls() {
-        assert!(SearchBackend::DuckDuckGo.default_url().contains("duckduckgo"));
+        assert!(SearchBackend::DuckDuckGo
+            .default_url()
+            .contains("duckduckgo"));
         assert!(SearchBackend::SearXNG.default_url().contains("localhost"));
         assert!(SearchBackend::Brave.default_url().contains("brave.com"));
     }

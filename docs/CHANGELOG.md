@@ -1,5 +1,18 @@
 # AIOS Development Log
 
+## v1.3.0 — Phase 29: Web Browser Tab in TUI (2026-07-30)
+
+### aios-tui: Web Browser Tab (Tab 6)
+- New Web tab (tab 6, key '6') in TUI dashboard for keyboard-driven web browsing
+- `g` — Focus URL bar, type URL and press `Enter` to navigate
+- `o` — Open selected link
+- `j/k` — Move link selection up/down
+- `Esc` — Unfocus URL bar
+- Background fetching via reqwest blocking + HtmlParser from aios-browser
+- WebState struct with url_input, current_url, page (PageContent), loading, error, input_focused, scroll
+- PageContent struct with url, title, text, links Vec<(String,String)>
+- Bilingual documentation updates (CHANGELOG, INTERFACE, ARCHITECTURE)
+
 ## v1.1.0 — Phase 25: Secure Web Surfing & Search (2026-07-29)
 
 ### aios-browser — New Crate: WASM-Based Web Browser

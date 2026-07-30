@@ -34,10 +34,7 @@ impl StoreClient {
         Ok(index)
     }
 
-    pub async fn download_block(
-        &self,
-        manifest: &ManifestInfo,
-    ) -> Result<Vec<u8>, String> {
+    pub async fn download_block(&self, manifest: &ManifestInfo) -> Result<Vec<u8>, String> {
         let url = format!("{}/blocks/{}.wasm", self.store_url, manifest.name);
         let response = self
             .client

@@ -199,7 +199,10 @@ async fn intent_handler(
     let prompt = req.prompt;
 
     let llm = state.llm.lock().await;
-    let intent = state.intent_parser.parse_with_llm_fallback(&prompt, &llm).await;
+    let intent = state
+        .intent_parser
+        .parse_with_llm_fallback(&prompt, &llm)
+        .await;
     drop(llm);
 
     let plan = state.intent_parser.create_execution_plan(&intent);
@@ -268,7 +271,10 @@ async fn workflow_handler(
 
     let llm = state.llm.lock().await;
     for (i, prompt) in req.prompts.iter().enumerate() {
-        let intent = state.intent_parser.parse_with_llm_fallback(prompt, &llm).await;
+        let intent = state
+            .intent_parser
+            .parse_with_llm_fallback(prompt, &llm)
+            .await;
         let plan = state.intent_parser.create_execution_plan(&intent);
 
         {
@@ -543,9 +549,7 @@ impl From<BridgeError> for IntentApiError {
     }
 }
 
-async fn browse_handler(
-    Json(req): Json<BrowseRequest>,
-) -> Json<BrowseResponse> {
+async fn browse_handler(Json(req): Json<BrowseRequest>) -> Json<BrowseResponse> {
     let config = aios_browser::types::BrowserConfig::default();
     let engine = aios_browser::BrowserEngine::new(config);
 
@@ -554,9 +558,7 @@ async fn browse_handler(
             let links: Vec<serde_json::Value> = page
                 .links
                 .iter()
-                .map(|l| {
-                    serde_json::json!({ "href": l.href, "text": l.text })
-                })
+                .map(|l| serde_json::json!({ "href": l.href, "text": l.text }))
                 .collect();
 
             Json(BrowseResponse {
@@ -577,9 +579,7 @@ async fn browse_handler(
     }
 }
 
-async fn search_handler(
-    Json(req): Json<SearchRequest>,
-) -> Json<SearchResponse> {
+async fn search_handler(Json(req): Json<SearchRequest>) -> Json<SearchResponse> {
     let config = aios_search::SearchConfig {
         backend: match req.backend.as_deref() {
             Some("searxng") => aios_search::SearchBackend::SearXNG,

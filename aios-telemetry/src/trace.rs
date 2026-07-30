@@ -72,7 +72,12 @@ impl TraceContext {
 
     pub fn end_span(&mut self, status: SpanStatus) {
         let now = now_ms();
-        if let Some(span) = self.spans.iter_mut().rev().find(|s| s.end_time_ms.is_none()) {
+        if let Some(span) = self
+            .spans
+            .iter_mut()
+            .rev()
+            .find(|s| s.end_time_ms.is_none())
+        {
             span.end_time_ms = Some(now);
             span.status = status;
             self.current_span_id = span.parent_span_id.clone();
@@ -80,7 +85,12 @@ impl TraceContext {
     }
 
     pub fn add_tag(&mut self, key: &str, value: &str) {
-        if let Some(span) = self.spans.iter_mut().rev().find(|s| s.end_time_ms.is_none()) {
+        if let Some(span) = self
+            .spans
+            .iter_mut()
+            .rev()
+            .find(|s| s.end_time_ms.is_none())
+        {
             span.tags.insert(key.to_string(), value.to_string());
         }
     }
@@ -94,11 +104,7 @@ impl TraceContext {
     }
 
     pub fn duration_ms(&self) -> u128 {
-        let start = self
-            .spans
-            .first()
-            .map(|s| s.start_time_ms)
-            .unwrap_or(0);
+        let start = self.spans.first().map(|s| s.start_time_ms).unwrap_or(0);
         let end = self
             .spans
             .last()

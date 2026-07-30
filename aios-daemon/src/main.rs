@@ -25,7 +25,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let blocks_dir = PathBuf::from(env_or("AIOS_BLOCKS_DIR", "/app/blocks"));
     let mock_profile = env_or("AIOS_MOCK_PROFILE", "modern");
 
-    log::info!("AIOS daemon: data_dir={:?}, blocks_dir={:?}", data_dir, blocks_dir);
+    log::info!(
+        "AIOS daemon: data_dir={:?}, blocks_dir={:?}",
+        data_dir,
+        blocks_dir
+    );
 
     let _ = std::fs::create_dir_all(&data_dir);
     let _ = std::fs::create_dir_all(&blocks_dir);
@@ -45,14 +49,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut registry = BlockRegistry::new();
 
-    let _ = BlockLoader::load_from_binary(&mut registry, "hal", "1.0.0", b"hal-native-module".to_vec());
+    let _ =
+        BlockLoader::load_from_binary(&mut registry, "hal", "1.0.0", b"hal-native-module".to_vec());
     let _ = BlockLoader::load_from_binary(&mut registry, "ipc_bus", "1.0.0", b"ipc_bus".to_vec());
-    let _ = BlockLoader::load_from_binary(&mut registry, "scheduler", "1.0.0", b"scheduler".to_vec());
+    let _ =
+        BlockLoader::load_from_binary(&mut registry, "scheduler", "1.0.0", b"scheduler".to_vec());
 
     let disk_results = BlockLoader::load_from_directory(&mut registry, &blocks_dir);
     let disk_loaded = disk_results.iter().filter(|r| r.is_ok()).count();
     let disk_failed = disk_results.iter().filter(|r| r.is_err()).count();
-    log::info!("AIOS daemon: disk blocks loaded={}, failed={}", disk_loaded, disk_failed);
+    log::info!(
+        "AIOS daemon: disk blocks loaded={}, failed={}",
+        disk_loaded,
+        disk_failed
+    );
 
     registry.set_block_dependencies("ipc_bus", vec!["hal".into()]);
     registry.set_block_dependencies("scheduler", vec!["ipc_bus".into()]);
@@ -73,7 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             log::info!("AIOS daemon: recovered DB version={}", version);
         }
         if let Ok(telemetry) = persistent.load_telemetry() {
-            log::info!("AIOS daemon: recovered {} telemetry entries", telemetry.len());
+            log::info!(
+                "AIOS daemon: recovered {} telemetry entries",
+                telemetry.len()
+            );
             for entry in telemetry {
                 context_store.telemetry_mut().record(entry);
             }

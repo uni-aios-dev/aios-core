@@ -55,11 +55,7 @@ impl CrashReporter {
         flight_recorder_dump: &str,
         zero_knowledge: bool,
     ) -> CrashReport {
-        let id = format!(
-            "CRASH-{}-{:016x}",
-            self.app_name,
-            rand_seed()
-        );
+        let id = format!("CRASH-{}-{:016x}", self.app_name, rand_seed());
 
         let module_info = vec![ModuleInfo {
             name: self.app_name.clone(),
@@ -73,7 +69,11 @@ impl CrashReporter {
             timestamp_ms: now_ms(),
             kind,
             thread_name: thread_name.to_string(),
-            message: if zero_knowledge { hash_string(message) } else { message.to_string() },
+            message: if zero_knowledge {
+                hash_string(message)
+            } else {
+                message.to_string()
+            },
             stack_hash: compute_hash_prefix(stack_trace),
             module_info,
             flight_recorder_snippet: if zero_knowledge {
@@ -185,7 +185,14 @@ mod tests {
     #[test]
     fn test_to_json() {
         let mut cr = CrashReporter::new("aios-core", "1.0.0");
-        cr.generate_report(CrashKind::BlockCrash, "b1", "block failed", "st", "fr", false);
+        cr.generate_report(
+            CrashKind::BlockCrash,
+            "b1",
+            "block failed",
+            "st",
+            "fr",
+            false,
+        );
         let json = cr.to_json();
         assert!(json.contains("BlockCrash"));
         assert!(json.contains("block failed"));
@@ -242,7 +249,14 @@ mod tests {
 
         let r1 = cr.generate_report(CrashKind::Panic, "t1", "first", "s1", "fr1", false);
         let r2 = cr.generate_report(CrashKind::OOM, "t2", "second", "s2", "fr2", false);
-        let r3 = cr.generate_report(CrashKind::WatchdogTimeout, "t3", "third", "s3", "fr3", false);
+        let r3 = cr.generate_report(
+            CrashKind::WatchdogTimeout,
+            "t3",
+            "third",
+            "s3",
+            "fr3",
+            false,
+        );
 
         assert_eq!(cr.report_count(), 3);
         let reports = cr.reports();

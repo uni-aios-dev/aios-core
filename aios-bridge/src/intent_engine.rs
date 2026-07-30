@@ -264,11 +264,7 @@ impl IntentParser {
         }
     }
 
-    pub async fn parse_with_llm_fallback(
-        &self,
-        prompt: &str,
-        llm: &LlmEngine,
-    ) -> UserIntent {
+    pub async fn parse_with_llm_fallback(&self, prompt: &str, llm: &LlmEngine) -> UserIntent {
         let rule_result = self.parse(prompt);
 
         match &rule_result {
@@ -334,9 +330,7 @@ Return ONLY valid JSON, no other text.";
 
         match intent_type {
             "ProcessControl" => {
-                let action_str = parsed["action"]
-                    .as_str()
-                    .unwrap_or("List");
+                let action_str = parsed["action"].as_str().unwrap_or("List");
                 let action = match action_str {
                     "Kill" => ProcessAction::Kill,
                     "Spawn" => ProcessAction::Spawn,
@@ -347,9 +341,7 @@ Return ONLY valid JSON, no other text.";
                 Ok(Some(UserIntent::ProcessControl { action, target }))
             }
             "BlockManagement" => {
-                let action_str = parsed["action"]
-                    .as_str()
-                    .unwrap_or("List");
+                let action_str = parsed["action"].as_str().unwrap_or("List");
                 let action = match action_str {
                     "Load" => BlockAction::Load,
                     "Unload" => BlockAction::Unload,
@@ -364,9 +356,7 @@ Return ONLY valid JSON, no other text.";
                 }))
             }
             "SystemQuery" => {
-                let metric_str = parsed["metric"]
-                    .as_str()
-                    .unwrap_or("All");
+                let metric_str = parsed["metric"].as_str().unwrap_or("All");
                 let metric = match metric_str {
                     "Cpu" => MetricType::Cpu,
                     "Memory" => MetricType::Memory,

@@ -516,7 +516,7 @@ Ready → Running → Terminated
 
 ### Dashboard (`dashboard.rs`)
 
-Ratatui-based TUI with 5-tab interactive layout:
+Ratatui-based TUI with 6-tab interactive layout:
 
 **Header zone**:
 - Project title "AIOS v1.0.0"
@@ -524,7 +524,7 @@ Ratatui-based TUI with 5-tab interactive layout:
 - Watchdog state: OK (Green), SUSPENDED (Red), RECOVERING (Yellow), SAFE MODE (Magenta)
 - CPU cores, RAM usage, block count, process count
 
-**Tabs zone**: 5 selectable tabs — Overview | Processes | Blocks | Metrics | Deps
+**Tabs zone**: 6 selectable tabs — Overview | Processes | Blocks | Metrics | Deps | Web
 
 **Tab 1 — Overview** (45/55 horizontal split):
 - Left: System info panel (CPU model, cores/threads, AVX flags, GPU name/VRAM, storage devices, system counts)
@@ -550,7 +550,16 @@ Ratatui-based TUI with 5-tab interactive layout:
 - Row selection with `>>` indicator, color-coded dependency relationships
 - Bottom: Load order & stats panel (topological sort, edge count, block count)
 
-**Footer zone**: Keybind hints (q=Quit, 1-5=Tab, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, s=Telemetry, x=Status, r=Refresh)
+**Tab 6 — Web** (vertical split):
+- URL input bar with focus indicator
+- Page text content display area
+- Scrollable links list with selection (`>>` indicator)
+- Background fetching via reqwest blocking + HtmlParser from aios-browser
+- `WebState`: url_input, current_url, page (PageContent), loading, error, input_focused, scroll
+- `PageContent` struct: url, title, text, links Vec<(String,String)>
+- Keys: `g`=focus URL, `Enter`=navigate, `o`=open link, `j/k`=nav, `Esc`=unfocus
+
+**Footer zone**: Keybind hints (q=Quit, 1-6=Tab, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, g=URL focus, o=Open link, s=Telemetry, x=Status, r=Refresh)
 
 `DashboardState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)
@@ -561,6 +570,7 @@ Ratatui-based TUI with 5-tab interactive layout:
 - Dependency snapshot (`DependencySnapshot`) for Deps tab
 - Log buffer (capped at 100 entries)
 - Scheduler + Registry synchronization
+- Web state: url_input, current_url, page, loading, error, input_focused, scroll
 
 ### Entry Point (`main.rs`)
 
@@ -577,7 +587,7 @@ Startup sequence:
 10. Event loop: poll key events, redraw dashboard, sync watchdog state
 11. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-4`=Tab, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status
+Keybindings: `q`=Quit, `1-6`=Tab, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, Web tab: `g`=URL focus, `o`=Open link, `Esc`=unfocus
 
 ---
 

@@ -35,7 +35,8 @@ impl HtmlParser {
 
     pub fn extract_links(html: &str, base_url: &str) -> Vec<Link> {
         let mut links = Vec::new();
-        let re = regex_lite::Regex::new(r#"(?is)<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>(.*?)</a>"#).unwrap();
+        let re =
+            regex_lite::Regex::new(r#"(?is)<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>(.*?)</a>"#).unwrap();
 
         for cap in re.captures_iter(html) {
             let href = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
@@ -114,7 +115,11 @@ impl HtmlParser {
         } else if href.starts_with('#') {
             String::new()
         } else {
-            format!("{}/{}", base_url.trim_end_matches('/'), href.trim_start_matches('/'))
+            format!(
+                "{}/{}",
+                base_url.trim_end_matches('/'),
+                href.trim_start_matches('/')
+            )
         }
     }
 }

@@ -95,7 +95,10 @@ impl DualBootManager {
     }
 
     pub fn should_rollback(&self) -> bool {
-        let path = self.active_slot.path(&self.base_path).join("boot_info.json");
+        let path = self
+            .active_slot
+            .path(&self.base_path)
+            .join("boot_info.json");
         if let Ok(info) = Self::read_boot_info(&path) {
             if let Some(last) = &info.last_success {
                 if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(last) {

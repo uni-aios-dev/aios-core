@@ -19,7 +19,11 @@ impl SearchBackendImpl {
         }
     }
 
-    pub async fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+    pub async fn search(
+        &self,
+        query: &str,
+        config: &SearchConfig,
+    ) -> Result<Vec<SearchResult>, SearchError> {
         match self {
             Self::DuckDuckGo(b) => b.search(query, config).await,
             Self::SearXNG(b) => b.search(query, config).await,
@@ -29,8 +33,15 @@ impl SearchBackendImpl {
 }
 
 impl DuckDuckGoBackend {
-    pub async fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
-        let url = config.api_url.as_deref().unwrap_or(SearchBackend::DuckDuckGo.default_url());
+    pub async fn search(
+        &self,
+        query: &str,
+        config: &SearchConfig,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        let url = config
+            .api_url
+            .as_deref()
+            .unwrap_or(SearchBackend::DuckDuckGo.default_url());
         let client = reqwest::Client::new();
         let params = [("q", query)];
 
@@ -52,19 +63,32 @@ impl DuckDuckGoBackend {
 
         while let Some(start) = body[pos..].find(r#"class="result__a"#) {
             let abs_start = pos + start;
-            let href_start = body[abs_start..].find(r#"href=""#).map(|i| abs_start + i + 7);
+            let href_start = body[abs_start..]
+                .find(r#"href=""#)
+                .map(|i| abs_start + i + 7);
             let href_end = href_start.and_then(|s| body[s..].find('"').map(|e| s + e));
-            let href = href_end.map(|e| &body[href_start.unwrap()..e]).unwrap_or("");
+            let href = href_end
+                .map(|e| &body[href_start.unwrap()..e])
+                .unwrap_or("");
 
-            let title_start = body[abs_start..].find(r#"class="result__a"#).map(|i| abs_start + i);
+            let title_start = body[abs_start..]
+                .find(r#"class="result__a"#)
+                .map(|i| abs_start + i);
             let title_begin = title_start.and_then(|s| body[s..].find(r#">"#).map(|i| s + i + 1));
             let title_end = title_begin.and_then(|s| body[s..].find("</a>").map(|e| s + e));
-            let title = title_end.map(|e| &body[title_begin.unwrap()..e]).unwrap_or("");
+            let title = title_end
+                .map(|e| &body[title_begin.unwrap()..e])
+                .unwrap_or("");
 
-            let snippet_start = body[abs_start..].find(r#"class="result__snippet"#).map(|i| abs_start + i);
-            let snippet_begin = snippet_start.and_then(|s| body[s..].find(r#">"#).map(|i| s + i + 1));
+            let snippet_start = body[abs_start..]
+                .find(r#"class="result__snippet"#)
+                .map(|i| abs_start + i);
+            let snippet_begin =
+                snippet_start.and_then(|s| body[s..].find(r#">"#).map(|i| s + i + 1));
             let snippet_end = snippet_begin.and_then(|s| body[s..].find("</a>").map(|e| s + e));
-            let snippet = snippet_end.map(|e| &body[snippet_begin.unwrap()..e]).unwrap_or("");
+            let snippet = snippet_end
+                .map(|e| &body[snippet_begin.unwrap()..e])
+                .unwrap_or("");
 
             if !href.is_empty() {
                 results.push(SearchResult {
@@ -91,8 +115,15 @@ impl DuckDuckGoBackend {
 }
 
 impl SearXngBackend {
-    pub async fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
-        let url = config.api_url.as_deref().unwrap_or(SearchBackend::SearXNG.default_url());
+    pub async fn search(
+        &self,
+        query: &str,
+        config: &SearchConfig,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        let url = config
+            .api_url
+            .as_deref()
+            .unwrap_or(SearchBackend::SearXNG.default_url());
         let client = reqwest::Client::new();
 
         let response = client
@@ -133,9 +164,19 @@ impl SearXngBackend {
 }
 
 impl BraveBackend {
-    pub async fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
-        let api_key = config.api_key.as_deref().ok_or_else(|| SearchError::BackendUnavailable("Brave requires API key".into()))?;
-        let url = config.api_url.as_deref().unwrap_or(SearchBackend::Brave.default_url());
+    pub async fn search(
+        &self,
+        query: &str,
+        config: &SearchConfig,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        let api_key = config
+            .api_key
+            .as_deref()
+            .ok_or_else(|| SearchError::BackendUnavailable("Brave requires API key".into()))?;
+        let url = config
+            .api_url
+            .as_deref()
+            .unwrap_or(SearchBackend::Brave.default_url());
         let client = reqwest::Client::new();
 
         let response = client
@@ -161,7 +202,10 @@ impl BraveBackend {
                 for item in results_arr {
                     let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
                     let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                    let description = item.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                    let description = item
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("");
 
                     if !url.is_empty() {
                         results.push(SearchResult {

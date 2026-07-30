@@ -69,21 +69,11 @@ impl MetricCollector {
         for (name, stats) in self.compute_histogram_stats() {
             output.push_str(&format!("# HELP {prefix}_{name} Histogram\n"));
             output.push_str(&format!("# TYPE {prefix}_{name} histogram\n"));
-            output.push_str(&format!(
-                "{prefix}_{name}_count {}\n", stats.count
-            ));
-            output.push_str(&format!(
-                "{prefix}_{name}_sum {}\n", stats.sum
-            ));
-            output.push_str(&format!(
-                "{prefix}_{name}_min {}\n", stats.min
-            ));
-            output.push_str(&format!(
-                "{prefix}_{name}_max {}\n", stats.max
-            ));
-            output.push_str(&format!(
-                "{prefix}_{name}_avg {}\n", stats.avg
-            ));
+            output.push_str(&format!("{prefix}_{name}_count {}\n", stats.count));
+            output.push_str(&format!("{prefix}_{name}_sum {}\n", stats.sum));
+            output.push_str(&format!("{prefix}_{name}_min {}\n", stats.min));
+            output.push_str(&format!("{prefix}_{name}_max {}\n", stats.max));
+            output.push_str(&format!("{prefix}_{name}_avg {}\n", stats.avg));
         }
 
         output

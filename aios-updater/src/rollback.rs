@@ -78,13 +78,9 @@ impl RollbackManager {
     }
 
     pub fn rollback_last(&mut self) -> Result<Vec<u8>> {
-        let id = self
-            .snapshots
-            .back()
-            .map(|s| s.id)
-            .ok_or_else(|| {
-                aios_core::error::AIOSException::Generic("No snapshots available".into())
-            })?;
+        let id = self.snapshots.back().map(|s| s.id).ok_or_else(|| {
+            aios_core::error::AIOSException::Generic("No snapshots available".into())
+        })?;
         self.rollback_to(id)
     }
 

@@ -43,9 +43,10 @@ impl LocalEngine {
                 "Model not loaded. Call load_model() or set AIOS_MODEL_PATH.".into(),
             )
         })?;
-        let tokenizer_lock = self.tokenizer.as_ref().ok_or_else(|| {
-            LlmError::NotAvailable("Tokenizer not loaded".into())
-        })?;
+        let tokenizer_lock = self
+            .tokenizer
+            .as_ref()
+            .ok_or_else(|| LlmError::NotAvailable("Tokenizer not loaded".into()))?;
 
         let start = std::time::Instant::now();
         let formatted = format!(
@@ -53,7 +54,9 @@ impl LocalEngine {
             request.system_prompt, request.user_prompt
         );
 
-        let tokenizer = tokenizer_lock.lock().map_err(|e| LlmError::ApiError(e.to_string()))?;
+        let tokenizer = tokenizer_lock
+            .lock()
+            .map_err(|e| LlmError::ApiError(e.to_string()))?;
         let encoding = tokenizer
             .encode(formatted, true)
             .map_err(|e| LlmError::ApiError(format!("Tokenization failed: {e}")))?;
@@ -70,7 +73,9 @@ impl LocalEngine {
         let sampling = if temperature <= 0.0 {
             Sampling::ArgMax
         } else {
-            Sampling::All { temperature: temperature as f64 }
+            Sampling::All {
+                temperature: temperature as f64,
+            }
         };
         let mut logits_processor = LogitsProcessor::from_sampling(rand::random::<u64>(), sampling);
 
@@ -94,7 +99,8 @@ impl LocalEngine {
                 .unsqueeze(0)
                 .map_err(|e| LlmError::ApiError(format!("Unsqueeze: {e}")))?;
 
-            next_token = self.sample_next(model, &next, prompt_len + index, &mut logits_processor)?;
+            next_token =
+                self.sample_next(model, &next, prompt_len + index, &mut logits_processor)?;
             all_tokens.push(next_token);
 
             if let Ok(decoded) = self.decode_token(tokenizer_lock, next_token) {
@@ -134,7 +140,11 @@ impl LocalEngine {
         }
     }
 
-    fn decode_token(&self, tlock: &Mutex<tokenizers::Tokenizer>, token: u32) -> Result<String, String> {
+    fn decode_token(
+        &self,
+        tlock: &Mutex<tokenizers::Tokenizer>,
+        token: u32,
+    ) -> Result<String, String> {
         let tok = tlock.lock().map_err(|e| e.to_string())?;
         tok.decode(&[token], true).map_err(|e| e.to_string())
     }
@@ -144,8 +154,8 @@ impl LocalEngine {
     }
 
     fn load_gguf(&mut self, path: &Path) -> LlmResult<()> {
-        let mut file =
-            std::fs::File::open(path).map_err(|e| LlmError::ApiError(format!("Cannot open {path:?}: {e}")))?;
+        let mut file = std::fs::File::open(path)
+            .map_err(|e| LlmError::ApiError(format!("Cannot open {path:?}: {e}")))?;
 
         let content = gguf_file::Content::read(&mut file)
             .map_err(|e| LlmError::ApiError(format!("GGUF parse: {e}")))?;
@@ -159,11 +169,12 @@ impl LocalEngine {
 
         let model = match model_type.as_str() {
             "qwen2" | "qwen3" | "" => {
-                let m =
-                    candle_transformers::models::quantized_qwen2::ModelWeights::from_gguf(
-                        content, &mut file, &self.device,
-                    )
-                    .map_err(|e| LlmError::ApiError(format!("Model build: {e}")))?;
+                let m = candle_transformers::models::quantized_qwen2::ModelWeights::from_gguf(
+                    content,
+                    &mut file,
+                    &self.device,
+                )
+                .map_err(|e| LlmError::ApiError(format!("Model build: {e}")))?;
                 LoadedModel::Qwen2(Mutex::new(m))
             }
             "llama" => {
@@ -193,7 +204,11 @@ impl LocalEngine {
     fn find_tokenizer(model_path: &Path) -> Option<PathBuf> {
         let dir = model_path.parent()?;
         let p = dir.join("tokenizer.json");
-        if p.exists() { Some(p) } else { None }
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
     }
 
     pub fn is_available(&self) -> bool {
@@ -240,9 +255,8 @@ pub fn download_default_model(kind: LocalModelKind) -> LlmResult<PathBuf> {
         ),
     };
 
-    let client = HFClientSync::new().map_err(|e| {
-        LlmError::ApiError(format!("HF Hub init: {e}"))
-    })?;
+    let client =
+        HFClientSync::new().map_err(|e| LlmError::ApiError(format!("HF Hub init: {e}")))?;
     let (org, name) = repo_id.split_once('/').unwrap_or(("Qwen", &repo_id));
     let model = client.model(org, name);
     let path = model
@@ -251,9 +265,6 @@ pub fn download_default_model(kind: LocalModelKind) -> LlmResult<PathBuf> {
         .send()
         .map_err(|e| LlmError::ApiError(format!("Download {filename}: {e}")))?;
 
-    let _ = model
-        .download_file()
-        .filename("tokenizer.json")
-        .send();
+    let _ = model.download_file().filename("tokenizer.json").send();
     Ok(path)
 }

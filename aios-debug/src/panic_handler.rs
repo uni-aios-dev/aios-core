@@ -52,20 +52,17 @@ impl PanicHandler {
                 .map(|f| f())
                 .unwrap_or_default();
 
-            reporter
-                .lock()
-                .unwrap()
-                .generate_report(
-                    CrashKind::Panic,
-                    &std::thread::current()
-                        .name()
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    &message,
-                    "panic stack not captured",
-                    &fr_dump,
-                    false,
-                );
+            reporter.lock().unwrap().generate_report(
+                CrashKind::Panic,
+                &std::thread::current()
+                    .name()
+                    .unwrap_or("unknown")
+                    .to_string(),
+                &message,
+                "panic stack not captured",
+                &fr_dump,
+                false,
+            );
 
             eprintln!("\nAIOS Panic: {message}");
             eprintln!("   Report saved. Check crash_reporter logs.\n");

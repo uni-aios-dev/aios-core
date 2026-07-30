@@ -29,13 +29,13 @@ cargo run --bin aios-tui
 ┌──────────────────────────────────────────────────────┐
 │ AIOS v1.0.0 | Tier1 | WD: OK | CPU: 16 | RAM: ...  │  ← Header
 ├──────────────────────────────────────────────────────┤
-│ Overview │ Processes │ Blocks │ Metrics │ Deps       │  ← Tabs
+│ Overview │ Processes │ Blocks │ Metrics │ Deps │ Web  │  ← Tabs
 ├──────────────────────────────────────────────────────┤
 │                                                      │
 │              Main content area                       │
 │                                                      │
 ├──────────────────────────────────────────────────────┤
-│ q=Quit 1-4=Tab j/k=Nav K=Kill U=Unload L=Load H=HS │  ← Footer
+│ q=Quit 1-6=Tab j/k=Nav K=Kill U=Unload L=Load H=HS g=URL o=Open Esc=Unfoc │  ← Footer
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -43,7 +43,7 @@ cargo run --bin aios-tui
 
 | Key | Action |
 |-----|--------|
-| `1`-`5` | Switch tab (Overview / Processes / Blocks / Metrics / Deps) |
+| `1`-`6` | Switch tab (Overview / Processes / Blocks / Metrics / Deps / Web) |
 | `j` / `k` | Navigate down / up in current list |
 | `K` | Kill selected process |
 | `U` | Unload selected block |
@@ -61,6 +61,17 @@ cargo run --bin aios-tui
 - **Blocks**: Table with ID, Name, Version, State, Size + load/unload/hot-swap operations
 - **Metrics**: RAM gauge, priority distribution, RAM history chart
 - **Deps**: Dependency graph table + load order chain
+- **Web**: URL bar, page text content, scrollable links list
+
+### Web Tab Keys (when Web tab is active)
+
+| Key | Action |
+|-----|--------|
+| `g` | Focus URL bar |
+| `Enter` | Navigate to URL (when URL bar focused) |
+| `o` | Open selected link |
+| `j` / `k` | Move link selection down / up |
+| `Esc` | Unfocus URL bar |
 
 ---
 

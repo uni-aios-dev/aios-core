@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use aios_block_mgr::registry::BlockRegistry;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
@@ -10,6 +12,25 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Tabs},
     Frame,
 };
+
+#[derive(Clone, Debug)]
+pub struct PageContent {
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    pub links: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WebState {
+    pub url_input: String,
+    pub current_url: String,
+    pub page: Option<PageContent>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub input_focused: bool,
+    pub scroll: usize,
+}
 
 pub struct ProcessSnapshot {
     pub pid: u64,
@@ -57,6 +78,8 @@ pub struct DashboardState {
     pub block_input_mode: BlockInputMode,
     pub block_input_buffer: String,
     pub dep_snapshot: DependencySnapshot,
+    pub web_state: WebState,
+    pub page_cache: Arc<Mutex<Option<PageContent>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +122,16 @@ impl DashboardState {
             block_input_mode: BlockInputMode::None,
             block_input_buffer: String::new(),
             dep_snapshot: Self::snapshot_dependencies(registry),
+            web_state: WebState {
+                url_input: String::new(),
+                current_url: String::new(),
+                page: None,
+                loading: false,
+                error: None,
+                input_focused: false,
+                scroll: 0,
+            },
+            page_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -138,10 +171,30 @@ impl DashboardState {
             1 => self.processes.len(),
             2 => self.blocks.len(),
             4 => self.dep_snapshot.blocks.len(),
+            5 => {
+                if let Some(ref page) = self.web_state.page {
+                    page.links.len()
+                } else {
+                    0
+                }
+            }
             _ => 0,
         };
         if max > 0 && self.selected_row < max - 1 {
             self.selected_row += 1;
+        }
+    }
+
+    pub fn check_page_cache(&mut self) {
+        let content = self.page_cache.lock().ok().and_then(|mut c| c.take());
+        if let Some(page) = content {
+            let url = page.url.clone();
+            self.web_state.page = Some(page);
+            self.web_state.current_url = url.clone();
+            self.web_state.loading = false;
+            self.web_state.error = None;
+            self.web_state.scroll = 0;
+            self.add_log(format!("Web: loaded {}", url));
         }
     }
 
@@ -344,13 +397,7 @@ fn draw_tabs(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         " Blocks ",
         " Metrics ",
         " Deps ",
-    ];
-    let tab_colors = [
-        Color::Cyan,
-        Color::Green,
-        Color::Yellow,
-        Color::Magenta,
-        Color::Blue,
+        " Web ",
     ];
 
     let tabs = Tabs::new(titles)
@@ -370,8 +417,6 @@ fn draw_tabs(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .split(area);
 
     f.render_widget(tabs, tabs_area[0]);
-
-    let _ = tab_colors;
 }
 
 fn draw_main(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -381,6 +426,7 @@ fn draw_main(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         2 => draw_blocks(f, area, state),
         3 => draw_metrics(f, area, state),
         4 => draw_dependencies(f, area, state),
+        5 => draw_web(f, area, state),
         _ => draw_overview(f, area, state),
     }
 }
@@ -1142,6 +1188,145 @@ fn draw_dependencies(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     f.render_widget(summary, chunks[1]);
 }
 
+fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let ws = &state.web_state;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(8),
+        ])
+        .split(area);
+
+    let url_style = if ws.input_focused {
+        Style::default().fg(Color::Black).bg(Color::White)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let url_display = if ws.url_input.is_empty() && !ws.input_focused {
+        if !ws.current_url.is_empty() {
+            ws.current_url.clone()
+        } else {
+            "https://example.com".into()
+        }
+    } else {
+        format!(
+            "{}{}",
+            ws.url_input,
+            if ws.input_focused { "█" } else { "" }
+        )
+    };
+    let url_bar = Paragraph::new(Line::from(Span::styled(
+        format!("  {}  ", url_display),
+        url_style,
+    )))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" URL — g:focus Enter:go "),
+    );
+    f.render_widget(url_bar, chunks[0]);
+
+    if let Some(ref err) = ws.error {
+        let err_para = Paragraph::new(Line::from(Span::styled(
+            format!("  Error: {err}"),
+            Style::default().fg(Color::Red),
+        )))
+        .block(Block::default().borders(Borders::ALL).title(" Error "));
+        f.render_widget(err_para, chunks[1]);
+    } else if ws.loading {
+        let loading = Paragraph::new(Line::from(Span::styled(
+            "  Loading...",
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(Block::default().borders(Borders::ALL).title(" Loading "));
+        f.render_widget(loading, chunks[1]);
+    } else if let Some(ref page) = ws.page {
+        let lines: Vec<Line> = page
+            .text
+            .lines()
+            .skip(ws.scroll)
+            .take(20)
+            .map(|l| {
+                Line::from(Span::styled(
+                    format!("  {l}"),
+                    Style::default().fg(Color::White),
+                ))
+            })
+            .collect();
+        let content =
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(format!(
+                " {} — {} links ",
+                page.title,
+                page.links.len()
+            )));
+        f.render_widget(content, chunks[1]);
+    } else {
+        let placeholder = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "  Enter a URL and press Enter",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                "  Examples:",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                "    https://example.com",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                "    https://duckduckgo.com",
+                Style::default().fg(Color::White),
+            )),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Web Browser "),
+        );
+        f.render_widget(placeholder, chunks[1]);
+    }
+
+    let link_items: Vec<ListItem> = ws
+        .page
+        .as_ref()
+        .map(|page| {
+            page.links
+                .iter()
+                .enumerate()
+                .map(|(i, (text, href))| {
+                    let style = if i == state.selected_row {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Blue)
+                    };
+                    let display = if text.is_empty() { href } else { text };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(
+                            format!("{:>3} ", i + 1),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::styled(display.to_string(), style),
+                        Span::styled(format!("  → {href}"), Style::default().fg(Color::DarkGray)),
+                    ]))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let link_list = List::new(link_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Links — o: open selected j/k: navigate "),
+    );
+    f.render_widget(link_list, chunks[2]);
+}
+
 fn draw_footer(f: &mut Frame<'_>, area: Rect) {
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -1152,7 +1337,7 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect) {
         ),
         Span::raw("=Quit  "),
         Span::styled(
-            "1-4",
+            "1-6",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -1171,45 +1356,19 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect) {
         ),
         Span::raw("=Kill  "),
         Span::styled(
-            "s",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Telemetry  "),
-        Span::styled(
-            "x",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Status  "),
-        Span::styled(
-            "r",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Refresh  "),
-        Span::styled(
-            "U",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Unload  "),
-        Span::styled(
-            "L",
+            "g",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("=Load  "),
+        Span::raw("=URL  "),
         Span::styled(
-            "H",
+            "o",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("=Hot-swap"),
+        Span::raw("=Open"),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, area);

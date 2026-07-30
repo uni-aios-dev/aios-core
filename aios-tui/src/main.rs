@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
+use aios_browser::html_parser::HtmlParser;
 use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
@@ -19,7 +20,7 @@ use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::Priority;
-use aios_tui::dashboard::{self, DashboardState};
+use aios_tui::dashboard::{self, DashboardState, PageContent};
 use aios_watchdog::heartbeat::Heartbeat;
 use aios_watchdog::safe_mode::SafeModeShell;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig, WatchdogState};
@@ -31,6 +32,23 @@ fn env_or(key: &str, default: &str) -> String {
 fn is_headless() -> bool {
     std::env::var("AIOS_HEADLESS").as_deref() == Ok("1")
         || std::env::args().any(|a| a == "--headless")
+}
+
+fn fetch_url(url: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
+    let resp = reqwest::blocking::get(url)?;
+    let html = resp.text()?;
+    let title = HtmlParser::extract_title(&html);
+    let text = HtmlParser::extract_text(&html);
+    let links = HtmlParser::extract_links(&html, url)
+        .into_iter()
+        .map(|l| (l.text, l.href))
+        .collect();
+    Ok(PageContent {
+        url: url.to_string(),
+        title,
+        text,
+        links,
+    })
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -181,6 +199,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    if state.selected_tab == 5 && state.web_state.input_focused {
+                        match key.code {
+                            KeyCode::Esc => {
+                                state.web_state.input_focused = false;
+                            }
+                            KeyCode::Enter => {
+                                let url = state.web_state.url_input.clone();
+                                if !url.is_empty() {
+                                    state.web_state.loading = true;
+                                    state.web_state.page = None;
+                                    state.web_state.error = None;
+                                    state.add_log(format!("Navigating to: {url}"));
+                                    match fetch_url(&url) {
+                                        Ok(page) => {
+                                            state.web_state.current_url = url;
+                                            state.web_state.page = Some(page);
+                                            state.add_log("Loaded".to_string());
+                                        }
+                                        Err(e) => {
+                                            state.web_state.error = Some(e.to_string());
+                                            state.add_log("Fetch failed".to_string());
+                                        }
+                                    }
+                                    state.web_state.loading = false;
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                state.web_state.url_input.push(c);
+                            }
+                            KeyCode::Backspace => {
+                                state.web_state.url_input.pop();
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     if state.block_input_mode != dashboard::BlockInputMode::None {
                         match key.code {
                             KeyCode::Esc => {
@@ -294,6 +349,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             state.selected_row = 0;
                             state.process_kill_result = None;
                             state.block_operation_result = None;
+                        }
+                        KeyCode::Char('6') => {
+                            state.selected_tab = 5;
+                            state.selected_row = 0;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             state.move_selection_down();
@@ -415,6 +474,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         ));
                                         state.block_operation_result =
                                             Some(format!("Binary not found: {}", path.display()));
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('g') => {
+                            if state.selected_tab == 5 {
+                                state.web_state.input_focused = true;
+                                state.add_log("URL bar focused — type URL, Enter to go".into());
+                            }
+                        }
+                        KeyCode::Char('o') => {
+                            if state.selected_tab == 5 {
+                                if let Some(ref page) = state.web_state.page {
+                                    if let Some((_text, href)) = page.links.get(state.selected_row)
+                                    {
+                                        let href = href.clone();
+                                        state.web_state.url_input = href.clone();
+                                        state.web_state.loading = true;
+                                        state.web_state.page = None;
+                                        state.web_state.error = None;
+                                        state.add_log(format!("Opening: {href}"));
+                                        match fetch_url(&href) {
+                                            Ok(p) => {
+                                                state.web_state.current_url = href;
+                                                state.web_state.page = Some(p);
+                                                state.add_log("Loaded".to_string());
+                                            }
+                                            Err(e) => {
+                                                state.web_state.error = Some(e.to_string());
+                                                state.add_log("Fetch failed".to_string());
+                                            }
+                                        }
+                                        state.web_state.loading = false;
                                     }
                                 }
                             }

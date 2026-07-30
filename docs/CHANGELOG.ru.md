@@ -1,3 +1,16 @@
+## v1.3.0 — Фаза 29: Вкладка веб-браузера в TUI (2026-07-30)
+
+### aios-tui: Вкладка веб-браузера (Вкладка 6)
+- Новая вкладка Web (вкладка 6, клавиша '6') в TUI-дашборде для веб-сёрфинга с клавиатуры
+- `g` — Фокус на строку URL, ввод URL и нажатие `Enter` для навигации
+- `o` — Открыть выбранную ссылку
+- `j/k` — Перемещение выбора ссылок вверх/вниз
+- `Esc` — Снять фокус со строки URL
+- Фоновая загрузка через reqwest blocking + HtmlParser из aios-browser
+- WebState: url_input, current_url, page (PageContent), loading, error, input_focused, scroll
+- PageContent: url, title, text, links Vec<(String,String)>
+- Двуязычные обновления документации (CHANGELOG, INTERFACE, ARCHITECTURE)
+
 ## v1.2.0 — Фаза 26+27: Атомарные обновления, магазин, телеметрия и отладка (2026-07-29)
 
 ### aios-updater — Новый крейт: Атомарный Dual-Boot и Hot-Swap
