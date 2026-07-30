@@ -2,14 +2,14 @@
 
 ## System Overview
 
-AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 23 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (TUI/GUI/Daemon) at the top.
+AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 24 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (TUI/GUI/Integrated binary) at the top.
 
-All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios-daemon` crate provides a headless server binary for Docker/background deployments with no terminal dependency.
+All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios` crate provides a unified system binary with both interactive TUI mode and headless daemon mode, replacing the separate `aios-tui` and `aios-daemon` entry points.
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │              Interface Layer (User-Facing)            │
-│  TUI (ratatui)  │  GUI (egui)  │  Daemon (headless)  │
+│  TUI (ratatui)  │  GUI (egui)  │  Unified `aios` bin │
 ├──────────────────────────────────────────────────────┤
 │              Safety & Security Layer                  │
 │  watchdog (heartbeat/safe-mode)                       │
@@ -1030,3 +1030,45 @@ Three adaptive AI modes depending on hardware resources:
   - `GET /api/v1/traces` — current TraceContext as JSON
   - `POST /api/v1/crash-report` — trigger a crash report
 - **BridgeContext** enriched with `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`
+
+---
+
+## Layer 6: Integrated Binary (`aios/`)
+
+### Overview
+The `aios` crate is a unified system binary that merges all 17+ workspace crates into a single executable. It provides:
+- Interactive TUI dashboard (ratatui-based) for system monitoring and control
+- Headless daemon mode for Docker/background deployments
+- Real hardware probing on startup
+- Centralized orchestration of all subsystems
+
+### Modules
+- `hw_probe.rs` — Real hardware detection using sysinfo + platform-specific APIs
+- `orchestrator.rs` — Async initialization of IPC, Scheduler, BlockRegistry, AccessControl, Watchdog, LLM, WASM, Bridge
+- `tui/` — Ratatui interactive dashboard with 4 tabs and event log
+
+### Binary Modes
+- `aios` — Interactive TUI mode (default)
+- `aios --daemon` — Headless daemon mode (background server)
+
+### TUI Hotkeys
+| Key | Action |
+|-----|--------|
+| Tab / F1 | Next tab |
+| 1-4 | Direct tab select |
+| q | Quit |
+| g | Open bridge URL in browser |
+| r | Reprobe hardware |
+| Space | Pause/resume log scroll |
+
+### Startup Sequence
+1. Hardware probe (CPU, RAM, GPU, OS)
+2. Initialize IPC bus (SharedIpcBus)
+3. Create Scheduler with RAM-aware config
+4. Initialize BlockRegistry
+5. Setup AccessControl + Watchdog
+6. Initialize LLM Engine (cloud backend by default)
+7. Initialize WASM Executor (BlockExecutor)
+8. Create BridgeContext with all subsystems
+9. Spawn Bridge HTTP server (axum, port 8080)
+10. Start TUI event loop (or enter daemon loop)

@@ -1,0 +1,40 @@
+[package]
+name = "aios"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-hal = { path = "../aios-hal" }
+aios-ipc = { path = "../aios-ipc" }
+aios-process-mgr = { path = "../aios-process-mgr" }
+aios-block-mgr = { path = "../aios-block-mgr" }
+aios-bridge = { path = "../aios-bridge" }
+aios-llm = { path = "../aios-llm" }
+aios-wasm = { path = "../aios-wasm" }
+aios-telemetry = { path = "../aios-telemetry" }
+aios-watchdog = { path = "../aios-watchdog" }
+aios-security = { path = "../aios-security" }
+aios-store = { path = "../aios-store" }
+aios-net = { path = "../aios-net" }
+aios-search = { path = "../aios-search" }
+aios-browser = { path = "../aios-browser" }
+aios-context = { path = "../aios-context" }
+aios-debug = { path = "../aios-debug" }
+
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+sysinfo = "0.33"
+
+clap = { version = "4", features = ["derive"] }
+
+tokio = { workspace = true }
+
+log = { workspace = true }
+env_logger = { workspace = true }
+
+open = "5"
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,5 +1,39 @@
 # AIOS Development Log
 
+## v2.0.0 — Phase 31: Unified `aios` Binary (2026-07-30)
+
+### New crate: `aios` — Unified system binary
+- New `aios` crate merges all 17+ workspace crates into a single executable
+- `aios` (interactive TUI) and `aios --daemon` (headless server) modes
+- Workspace member in root Cargo.toml
+
+### Hardware Detection (`hw_probe.rs`)
+- Real CPU detection: brand name, physical/logical cores, x86_64/ARM64 arch, instruction flags (AVX2, AVX-512, SSE4.2, AES-NI, NEON)
+- Real RAM detection: total/used/free in bytes and GB via sysinfo
+- Real GPU detection: model + VRAM via nvidia-smi (Linux), wmic (Windows), system_profiler (macOS)
+- AI tier classification: Tier1 (AVX-512/AVX2+16GB+GPU) / Tier2 (AVX2+4GB) / Tier3 (fallback)
+
+### Async Orchestrator (`orchestrator.rs`)
+- Async initialization of all subsystems: IPC bus, Scheduler, BlockRegistry, AccessControl, Watchdog, LLM Engine, WASM Executor, Telemetry (TraceContext/FlightRecorder/MetricCollector)
+- Bridge HTTP server (axum) spawns on port 8080 with graceful shutdown support
+- Log pipeline via Arc<Mutex<Vec<String>>> shared with TUI
+
+### Interactive TUI Dashboard (`src/tui/`)
+- Header: version, status, uptime, CPU, RAM
+- 4 navigation tabs via Tab/F1/1-4
+- Tab 1: System & HW — CPU, RAM gauge, GPU, OS, AI tier, subsystem status
+- Tab 2: Blocks & Processes — BlockRegistry contents, Scheduler process list
+- Tab 3: AI Console — interactive LLM query console with real output
+- Tab 4: Studio GUI Bridge — bridge URL, API endpoints, status
+- Footer: event log stream (3 visible lines) with color coding (ERROR=red, WARN=yellow, Bridge=cyan)
+- Hotkeys: q=quit, g=open browser, r=reprobe HW, Space=pause logs, Tab/F1=next tab, 1-4=goto tab
+
+### Dependencies
+- Clap for CLI parsing
+- ratatui + crossterm for TUI
+- sysinfo for hardware detection
+- open for browser launch
+
 ## v1.3.0 — Phase 30: Shell Tab & F1 Help System (2026-07-30)
 
 ### aios-tui: Shell Tab (Tab 7) & F1 Help Overlay
