@@ -1,5 +1,16 @@
 # AIOS Development Log
 
+## v1.3.0 — Phase 30: Shell Tab & F1 Help System (2026-07-30)
+
+### aios-tui: Shell Tab (Tab 7) & F1 Help Overlay
+- New Shell tab (tab 7, key '7') with interactive command line
+- Type commands at prompt, Enter to execute, ↑/↓ for command history
+- F1 help overlay toggled with F1 or '?', dismissed with F1/Esc/'?'
+- New shell commands: `fetch <url>` download & load block from URL, `search <query>` web search via DuckDuckGo, `open <url>` navigate web tab to URL, `clear` clear output
+- ShellState: input_buffer, output (Vec<String>), command_history, history_pos
+- New functions: draw_shell(), draw_help(), execute_shell_cmd()
+- Footer updated: 1-7, F1=Help, :=Cmd (removed g/o since they are in help)
+
 ## v1.3.0 — Phase 29: Web Browser Tab in TUI (2026-07-30)
 
 ### aios-tui: Web Browser Tab (Tab 6)

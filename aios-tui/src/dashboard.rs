@@ -22,6 +22,43 @@ pub struct PageContent {
 }
 
 #[derive(Clone, Debug)]
+pub struct ShellState {
+    pub input_buffer: String,
+    pub output: Vec<String>,
+    pub command_history: Vec<String>,
+    pub history_pos: usize,
+    pub show_bar: bool,
+}
+
+impl Default for ShellState {
+    fn default() -> Self { Self::new() }
+}
+
+impl ShellState {
+    pub fn new() -> Self {
+        Self {
+            input_buffer: String::new(),
+            output: vec!["AIOS Shell — type 'help' for commands".into()],
+            command_history: Vec::new(),
+            history_pos: 0,
+            show_bar: false,
+        }
+    }
+
+    pub fn add_output(&mut self, line: String) {
+        self.output.push(line);
+        if self.output.len() > 500 {
+            self.output.remove(0);
+        }
+    }
+
+    pub fn push_history(&mut self, cmd: String) {
+        self.command_history.push(cmd);
+        self.history_pos = self.command_history.len();
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct WebState {
     pub url_input: String,
     pub current_url: String,
@@ -80,6 +117,8 @@ pub struct DashboardState {
     pub dep_snapshot: DependencySnapshot,
     pub web_state: WebState,
     pub page_cache: Arc<Mutex<Option<PageContent>>>,
+    pub shell_state: ShellState,
+    pub show_help: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +171,8 @@ impl DashboardState {
                 scroll: 0,
             },
             page_cache: Arc::new(Mutex::new(None)),
+            shell_state: ShellState::default(),
+            show_help: false,
         }
     }
 
@@ -178,6 +219,7 @@ impl DashboardState {
                     0
                 }
             }
+            6 => self.shell_state.output.len(),
             _ => 0,
         };
         if max > 0 && self.selected_row < max - 1 {
@@ -322,6 +364,10 @@ pub fn draw_dashboard(f: &mut Frame<'_>, state: &DashboardState) {
     draw_tabs(f, chunks[1], state);
     draw_main(f, chunks[2], state);
     draw_footer(f, chunks[3]);
+
+    if state.show_help {
+        draw_help(f, f.area());
+    }
 }
 
 fn draw_header(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -398,6 +444,7 @@ fn draw_tabs(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         " Metrics ",
         " Deps ",
         " Web ",
+        " Shell ",
     ];
 
     let tabs = Tabs::new(titles)
@@ -427,6 +474,7 @@ fn draw_main(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         3 => draw_metrics(f, area, state),
         4 => draw_dependencies(f, area, state),
         5 => draw_web(f, area, state),
+        6 => draw_shell(f, area, state),
         _ => draw_overview(f, area, state),
     }
 }
@@ -1327,6 +1375,129 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     f.render_widget(link_list, chunks[2]);
 }
 
+fn draw_shell(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(area);
+
+    let output_lines: Vec<Line> = state
+        .shell_state
+        .output
+        .iter()
+        .rev()
+        .take(area.height.saturating_sub(4) as usize)
+        .rev()
+        .map(|l| Line::from(Span::raw(format!("  {l}"))))
+        .collect();
+
+    let output = Paragraph::new(output_lines).block(Block::default().borders(Borders::ALL).title(
+        format!(" Shell — {} lines ", state.shell_state.output.len()),
+    ));
+    f.render_widget(output, chunks[0]);
+
+    let input_display = format!("  $ {}{}", state.shell_state.input_buffer, "█");
+    let input = Paragraph::new(Line::from(Span::styled(
+        input_display,
+        Style::default().fg(Color::Yellow),
+    )))
+    .block(Block::default().borders(Borders::ALL).title(" Input "));
+    f.render_widget(input, chunks[1]);
+}
+
+fn draw_help(f: &mut Frame<'_>, area: Rect) {
+    let help_text = vec![
+        Line::from(Span::styled(
+            " AIOS TUI Help — press F1 or Esc to close ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Keyboard Shortcuts:",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("  F1 / ?     — Toggle this help screen")),
+        Line::from(Span::raw("  q / Esc    — Quit AIOS")),
+        Line::from(Span::raw(
+            "  1-7        — Switch tabs (Overview/Processes/Blocks/Metrics/Deps/Web/Shell)",
+        )),
+        Line::from(Span::raw("  j / Down   — Move selection down")),
+        Line::from(Span::raw("  k / Up     — Move selection up")),
+        Line::from(Span::raw("  r          — Refresh")),
+        Line::from(Span::raw("  s          — Record telemetry snapshot")),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Process Tab (1):",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("  K          — Kill selected process")),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Blocks Tab (2):",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(
+            "  L          — Load block (enter name, then version)",
+        )),
+        Line::from(Span::raw("  H          — Hot-swap block from disk")),
+        Line::from(Span::raw("  U          — Unload selected block")),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Web Tab (6):",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("  g          — Focus URL bar")),
+        Line::from(Span::raw("  Enter      — Navigate to URL")),
+        Line::from(Span::raw("  o          — Open selected link")),
+        Line::from(Span::raw("  j/k        — Navigate links")),
+        Line::from(Span::raw("  Esc        — Unfocus URL bar")),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Shell Tab (7):",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("  Type command and press Enter")),
+        Line::from(Span::raw("  ↑/↓       — Command history navigation")),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Shell Commands:",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("  ps           — List processes")),
+        Line::from(Span::raw("  blocks       — List loaded blocks")),
+        Line::from(Span::raw("  spawn <n> [p] [m] — Spawn process")),
+        Line::from(Span::raw("  kill <pid>   — Kill process")),
+        Line::from(Span::raw("  load <name> [ver]  — Load block")),
+        Line::from(Span::raw("  unload <id>  — Unload block")),
+        Line::from(Span::raw("  status       — System status")),
+        Line::from(Span::raw("  fetch <url>  — Download & load block from URL")),
+        Line::from(Span::raw("  search <q>   — Web search (via DuckDuckGo)")),
+        Line::from(Span::raw("  logs         — View safe mode logs")),
+        Line::from(Span::raw("  restart      — Restart orchestrator")),
+        Line::from(Span::raw("  help         — Show shell commands")),
+        Line::from(Span::raw("  clear        — Clear output")),
+    ];
+
+    let help_para = Paragraph::new(help_text)
+        .block(Block::default().borders(Borders::ALL).title(" Help "))
+        .style(Style::default().bg(Color::Black).fg(Color::White));
+    f.render_widget(help_para, area);
+}
+
 fn draw_footer(f: &mut Frame<'_>, area: Rect) {
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -1337,7 +1508,7 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect) {
         ),
         Span::raw("=Quit  "),
         Span::styled(
-            "1-6",
+            "1-7",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -1351,24 +1522,24 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect) {
         ),
         Span::raw("=Nav  "),
         Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("=Help  "),
+        Span::styled(
             "K",
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw("=Kill  "),
         Span::styled(
-            "g",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=URL  "),
-        Span::styled(
-            "o",
+            ":",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("=Open"),
+        Span::raw("=Cmd"),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, area);

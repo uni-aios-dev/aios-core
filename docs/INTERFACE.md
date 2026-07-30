@@ -29,13 +29,13 @@ cargo run --bin aios-tui
 ┌──────────────────────────────────────────────────────┐
 │ AIOS v1.0.0 | Tier1 | WD: OK | CPU: 16 | RAM: ...  │  ← Header
 ├──────────────────────────────────────────────────────┤
-│ Overview │ Processes │ Blocks │ Metrics │ Deps │ Web  │  ← Tabs
+│ Overview │ Processes │ Blocks │ Metrics │ Deps │ Web │ Shell │  ← Tabs
 ├──────────────────────────────────────────────────────┤
 │                                                      │
 │              Main content area                       │
 │                                                      │
 ├──────────────────────────────────────────────────────┤
-│ q=Quit 1-6=Tab j/k=Nav K=Kill U=Unload L=Load H=HS g=URL o=Open Esc=Unfoc │  ← Footer
+│ q=Quit 1-7=Tab j/k=Nav K=Kill U=Unload L=Load H=HS F1=Help :=Cmd │  ← Footer
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -43,7 +43,7 @@ cargo run --bin aios-tui
 
 | Key | Action |
 |-----|--------|
-| `1`-`6` | Switch tab (Overview / Processes / Blocks / Metrics / Deps / Web) |
+| `1`-`7` | Switch tab (Overview / Processes / Blocks / Metrics / Deps / Web / Shell) |
 | `j` / `k` | Navigate down / up in current list |
 | `K` | Kill selected process |
 | `U` | Unload selected block |
@@ -53,6 +53,10 @@ cargo run --bin aios-tui
 | `s` | Show telemetry |
 | `x` | Show status |
 | `q` | Quit |
+| `F1` or `?` | Toggle help overlay |
+| `:` | Enter command mode in Shell tab |
+| `Enter` | Execute command in Shell tab |
+| `↑` / `↓` | Navigate command history in Shell tab |
 
 ### Tabs
 
@@ -62,6 +66,7 @@ cargo run --bin aios-tui
 - **Metrics**: RAM gauge, priority distribution, RAM history chart
 - **Deps**: Dependency graph table + load order chain
 - **Web**: URL bar, page text content, scrollable links list
+- **Shell**: Interactive command line with command history, fetch, search, open, clear commands
 
 ### Web Tab Keys (when Web tab is active)
 
@@ -72,6 +77,33 @@ cargo run --bin aios-tui
 | `o` | Open selected link |
 | `j` / `k` | Move link selection down / up |
 | `Esc` | Unfocus URL bar |
+
+### Shell Tab Keys (when Shell tab is active)
+
+| Key | Action |
+|-----|--------|
+| `:` | Enter command mode |
+| `Enter` | Execute command |
+| `↑` / `↓` | Navigate command history |
+| `Esc` | Exit command mode |
+
+### Shell Commands
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `fetch` | `<url>` | Download and load a block from a URL |
+| `search` | `<query>` | Web search via DuckDuckGo |
+| `open` | `<url>` | Navigate the Web tab to a URL |
+| `clear` | — | Clear shell output |
+
+### F1 Help Overlay
+
+The F1 help overlay shows all keyboard shortcuts and shell commands in a popup window.
+
+| Key | Action |
+|-----|--------|
+| `F1` or `?` | Toggle help overlay |
+| `F1`, `Esc`, or `?` | Dismiss help overlay |
 
 ---
 

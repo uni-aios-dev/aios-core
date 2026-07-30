@@ -516,7 +516,7 @@ Ready → Running → Terminated
 
 ### Dashboard (`dashboard.rs`)
 
-Ratatui-based TUI with 6-tab interactive layout:
+Ratatui-based TUI with 7-tab interactive layout:
 
 **Header zone**:
 - Project title "AIOS v1.0.0"
@@ -524,7 +524,7 @@ Ratatui-based TUI with 6-tab interactive layout:
 - Watchdog state: OK (Green), SUSPENDED (Red), RECOVERING (Yellow), SAFE MODE (Magenta)
 - CPU cores, RAM usage, block count, process count
 
-**Tabs zone**: 6 selectable tabs — Overview | Processes | Blocks | Metrics | Deps | Web
+**Tabs zone**: 7 selectable tabs — Overview | Processes | Blocks | Metrics | Deps | Web | Shell
 
 **Tab 1 — Overview** (45/55 horizontal split):
 - Left: System info panel (CPU model, cores/threads, AVX flags, GPU name/VRAM, storage devices, system counts)
@@ -559,7 +559,20 @@ Ratatui-based TUI with 6-tab interactive layout:
 - `PageContent` struct: url, title, text, links Vec<(String,String)>
 - Keys: `g`=focus URL, `Enter`=navigate, `o`=open link, `j/k`=nav, `Esc`=unfocus
 
-**Footer zone**: Keybind hints (q=Quit, 1-6=Tab, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, g=URL focus, o=Open link, s=Telemetry, x=Status, r=Refresh)
+**Tab 7 — Shell** (vertical split):
+- Command input line with prompt indicator
+- Output display area (scrollable command output)
+- Command history navigation with ↑/↓
+- `ShellState`: input_buffer, output (Vec<String>), command_history, history_pos
+- Available commands: `fetch <url>` (download block from URL), `search <query>` (DuckDuckGo web search), `open <url>` (navigate Web tab to URL), `clear` (clear output)
+- Execution flow: TUI → execute_shell_cmd() → SafeModeShell / fetch / search / open
+
+**F1 Help Overlay**:
+- Toggled with F1 or '?', dismissed with F1/Esc/'?'
+- Shows all keyboard shortcuts and shell commands in a popup window
+- Overlay rendered via draw_help() function on top of current tab content
+
+**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, F1=Help, :=Cmd, s=Telemetry, x=Status, r=Refresh)
 
 `DashboardState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)
@@ -571,6 +584,8 @@ Ratatui-based TUI with 6-tab interactive layout:
 - Log buffer (capped at 100 entries)
 - Scheduler + Registry synchronization
 - Web state: url_input, current_url, page, loading, error, input_focused, scroll
+- Help overlay visibility (shown/hidden)
+- Shell state: input_buffer, output (Vec<String>), command_history, history_pos
 
 ### Entry Point (`main.rs`)
 
@@ -587,7 +602,7 @@ Startup sequence:
 10. Event loop: poll key events, redraw dashboard, sync watchdog state
 11. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-6`=Tab, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, Web tab: `g`=URL focus, `o`=Open link, `Esc`=unfocus
+Keybindings: `q`=Quit, `1-7`=Tab, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=URL focus, `o`=Open link, `Esc`=unfocus
 
 ---
 

@@ -51,6 +51,130 @@ fn fetch_url(url: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
     })
 }
 
+fn execute_shell_cmd(
+    state: &mut DashboardState,
+    cmd: &str,
+    scheduler: &mut Scheduler,
+    registry: &mut BlockRegistry,
+    safe_shell: &mut SafeModeShell,
+) {
+    let lower = cmd.trim().to_lowercase();
+    let parts: Vec<&str> = lower.split_whitespace().collect();
+    let command = match parts.first().copied() {
+        Some("clear") | Some("cls") => {
+            state.shell_state.output.clear();
+            return;
+        }
+        Some("fetch") => {
+            let url = *parts.get(1).unwrap_or(&"");
+            if url.is_empty() {
+                state.shell_state.add_output("Usage: fetch <url>".into());
+                return;
+            }
+            state
+                .shell_state
+                .add_output(format!("Fetching block from: {url}..."));
+            match reqwest::blocking::get(url) {
+                Ok(resp) => match resp.bytes() {
+                    Ok(binary) => {
+                        let name = url.split('/').next_back().unwrap_or("block");
+                        match BlockLoader::load_from_binary(
+                            registry,
+                            name,
+                            "1.0.0",
+                            binary.to_vec(),
+                        ) {
+                            Ok(m) => state
+                                .shell_state
+                                .add_output(format!("Loaded block '{}' ID {}", m.name, m.id)),
+                            Err(e) => state.shell_state.add_output(format!("Load failed: {e}")),
+                        }
+                    }
+                    Err(e) => state.shell_state.add_output(format!("Read failed: {e}")),
+                },
+                Err(e) => state.shell_state.add_output(format!("Fetch failed: {e}")),
+            }
+            return;
+        }
+        Some("search") => {
+            let query = parts.get(1..).map(|p| p.join(" ")).unwrap_or_default();
+            if query.is_empty() {
+                state.shell_state.add_output("Usage: search <query>".into());
+                return;
+            }
+            state
+                .shell_state
+                .add_output(format!("Searching for: {query}..."));
+            let url = format!(
+                "https://html.duckduckgo.com/html/?q={}",
+                urlencoding(&query)
+            );
+            match reqwest::blocking::get(&url) {
+                Ok(resp) => {
+                    if let Ok(html) = resp.text() {
+                        let links = HtmlParser::extract_links(&html, &url);
+                        state
+                            .shell_state
+                            .add_output(format!("Found {} results:", links.len()));
+                        for (i, link) in links.iter().take(20).enumerate() {
+                            let text = if link.text.is_empty() {
+                                &link.href
+                            } else {
+                                &link.text
+                            };
+                            state.shell_state.add_output(format!(
+                                "  {}. {} — {}",
+                                i + 1,
+                                text,
+                                link.href
+                            ));
+                        }
+                    }
+                }
+                Err(e) => state.shell_state.add_output(format!("Search failed: {e}")),
+            }
+            return;
+        }
+        Some("open") => {
+            let url = (*parts.get(1).unwrap_or(&"")).to_string();
+            if url.is_empty() {
+                state.shell_state.add_output("Usage: open <url>".into());
+                return;
+            }
+            state.selected_tab = 5;
+            state.web_state.url_input = url.clone();
+            state.web_state.loading = true;
+            state.web_state.page = None;
+            state.web_state.error = None;
+            state.add_log(format!("Navigating to: {url}"));
+            match fetch_url(&url) {
+                Ok(page) => {
+                    state.web_state.current_url = url;
+                    state.web_state.page = Some(page);
+                }
+                Err(e) => state.web_state.error = Some(e.to_string()),
+            }
+            state.web_state.loading = false;
+            return;
+        }
+        _ => aios_watchdog::safe_mode::ShellCommand::Unknown(cmd.to_string()),
+    };
+    let resp = safe_shell.execute(command, scheduler, registry);
+    if resp.success {
+        for line in resp.output.lines() {
+            state.shell_state.add_output(line.to_string());
+        }
+    } else {
+        state
+            .shell_state
+            .add_output(format!("Error: {}", resp.output));
+    }
+}
+
+fn urlencoding(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
@@ -199,6 +323,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    if state.show_help {
+                        match key.code {
+                            KeyCode::F(1) | KeyCode::Char('?') | KeyCode::Esc => {
+                                state.show_help = false;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     if state.selected_tab == 5 && state.web_state.input_focused {
                         match key.code {
                             KeyCode::Esc => {
@@ -322,8 +456,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         continue;
                     }
+
+                    if state.selected_tab == 6 {
+                        match key.code {
+                            KeyCode::Enter => {
+                                let cmd = state.shell_state.input_buffer.trim().to_string();
+                                if !cmd.is_empty() {
+                                    state.shell_state.add_output(format!("$ {cmd}"));
+                                    state.shell_state.push_history(cmd.clone());
+                                    execute_shell_cmd(
+                                        &mut state,
+                                        &cmd,
+                                        &mut scheduler,
+                                        &mut registry,
+                                        &mut safe_shell,
+                                    );
+                                    state.shell_state.input_buffer.clear();
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                state.shell_state.input_buffer.pop();
+                            }
+                            KeyCode::Up => {
+                                if state.shell_state.history_pos > 0 {
+                                    state.shell_state.history_pos -= 1;
+                                    state.shell_state.input_buffer = state
+                                        .shell_state
+                                        .command_history[state.shell_state.history_pos]
+                                        .clone();
+                                }
+                            }
+                            KeyCode::Down => {
+                                let len = state.shell_state.command_history.len();
+                                if state.shell_state.history_pos < len {
+                                    state.shell_state.history_pos += 1;
+                                    state.shell_state.input_buffer =
+                                        if state.shell_state.history_pos < len {
+                                            state.shell_state.command_history
+                                                [state.shell_state.history_pos]
+                                                .clone()
+                                        } else {
+                                            String::new()
+                                        };
+                                }
+                            }
+                            KeyCode::Esc => {
+                                state.shell_state.input_buffer.clear();
+                            }
+                            KeyCode::Char(c) => {
+                                state.shell_state.input_buffer.push(c);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::F(1) | KeyCode::Char('?') => {
+                            state.show_help = true;
+                        }
+                        KeyCode::Char('q') => break,
+                        KeyCode::Esc => {
+                            if state.show_help {
+                                state.show_help = false;
+                            } else {
+                                break;
+                            }
+                        }
                         KeyCode::Char('1') => {
                             state.selected_tab = 0;
                             state.selected_row = 0;
@@ -352,6 +551,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         KeyCode::Char('6') => {
                             state.selected_tab = 5;
+                            state.selected_row = 0;
+                        }
+                        KeyCode::Char('7') => {
+                            state.selected_tab = 6;
                             state.selected_row = 0;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
