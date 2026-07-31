@@ -1,5 +1,20 @@
 # AIOS Development Log
 
+## v2.2.3 — Web omnibox & opaque F1 help (2026-07-31)
+
+### `aios-tui`: Web Tab Omnibox
+- The URL bar is now an **omnibox**: type a full URL (`https://...`), a bare host (`example.com`, auto-prefixed with `https://`), or a plain search query (`how does AIOS work`, searched via DuckDuckGo and rendered as a page)
+- After `Enter` the omnibox **auto-unfocuses**, so the input no longer "gets stuck active" — you can immediately navigate the results with `j`/`k` and open a link
+- `Enter` now opens the selected link (like `o`) when the omnibox is not focused
+- New `search_query` field in `WebState`; the bar shows `search: <query>` for search pages
+- New unit tests for `is_url_input` URL-vs-query detection (4 tests)
+
+### `aios-tui`: F1 Help Overlay
+- Help is now a **full-screen opaque panel**: a `Clear` is rendered first and the content is padded to fill the screen, so the dashboard background no longer bleeds into the help text (previously stale cells below the help content remained visible, blending everything together)
+
+### Kernel `aios`: Browser Hotkey (`b`)
+- `dispatch_open_url` now normalizes the input: bare hosts become `https://` URLs and plain queries become DuckDuckGo search links, opened in the OS default browser; the input prompt reads `URL/query:`
+
 ## v2.2.2 — Safe-Mode Shell fixed in aios-tui (2026-07-31)
 
 ### `aios-tui` & `aios-watchdog`

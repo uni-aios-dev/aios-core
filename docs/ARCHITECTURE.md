@@ -551,13 +551,13 @@ Ratatui-based TUI with 7-tab interactive layout:
 - Bottom: Load order & stats panel (topological sort, edge count, block count)
 
 **Tab 6 — Web** (vertical split):
-- URL input bar with focus indicator
+- Omnibox input bar (accepts a full URL, a bare host, or a plain search query — queries run through DuckDuckGo) with focus indicator
 - Page text content display area
 - Scrollable links list with selection (`>>` indicator)
-- Background fetching via reqwest blocking + HtmlParser from aios-browser
-- `WebState`: url_input, current_url, page (PageContent), loading, error, input_focused, scroll
+- Background fetching via reqwest blocking + HtmlParser from aios-browser; DuckDuckGo search results are rendered as a page
+- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll
 - `PageContent` struct: url, title, text, links Vec<(String,String)>
-- Keys: `g`=focus URL, `Enter`=navigate, `o`=open link, `j/k`=nav, `Esc`=unfocus
+- Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `Esc`=unfocus
 
 **Tab 7 — Shell** (vertical split):
 - Command input line with prompt indicator
@@ -602,7 +602,7 @@ Startup sequence:
 10. Event loop: poll key events, redraw dashboard, sync watchdog state
 11. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=URL focus, `o`=Open link, `Esc`=unfocus
+Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=omnibox focus, `o`/`Enter`=Open link, `Esc`=unfocus
 
 ---
 

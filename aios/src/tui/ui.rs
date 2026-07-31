@@ -391,17 +391,17 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let browser_line = if app.browser_mode {
         Line::from(vec![
             Span::styled(
-                " URL: ",
+                " URL/query: ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(app.browser_url.clone(), Style::default().fg(Color::Green)),
-            Span::raw("  [Enter] open in browser  [Esc] cancel"),
+            Span::raw("  [Enter] open/search  [Esc] cancel"),
         ])
     } else {
         Line::from(Span::raw(
-            " [b] Open a URL in the native browser (e.g. https://example.com) ",
+            " [b] Open a URL or search in the native browser (e.g. rust scheduler) ",
         ))
     };
     let browser_style = if app.browser_mode {

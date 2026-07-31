@@ -66,18 +66,20 @@ cargo run --bin aios-tui
 - **Blocks**: Table with ID, Name, Version, State, Size + load/unload/hot-swap operations
 - **Metrics**: RAM gauge, priority distribution, RAM history chart
 - **Deps**: Dependency graph table + load order chain
-- **Web**: URL bar, page text content, scrollable links list
+- **Web**: Omnibox (search query or URL), page text content, scrollable links list
 - **Shell**: Interactive command line with command history, fetch, search, open, clear commands
 
 ### Web Tab Keys (when Web tab is active)
 
+The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain search query (`how does AIOS work`) — queries are searched via DuckDuckGo automatically. After you press `Enter` the omnibox loses focus, so you can immediately navigate the results with `j`/`k` and open a link.
+
 | Key | Action |
 |-----|--------|
-| `g` | Focus URL bar |
-| `Enter` | Navigate to URL (when URL bar focused) |
-| `o` | Open selected link |
+| `g` | Focus omnibox |
+| `Enter` | Search / navigate (when omnibox focused); the omnibox auto-unfocuses after `Enter` |
+| `o` / `Enter` | Open selected link (when omnibox not focused) |
 | `j` / `k` | Move link selection down / up |
-| `Esc` | Unfocus URL bar |
+| `Esc` | Unfocus omnibox |
 
 ### Shell Tab Keys (when Shell tab is active)
 
@@ -94,7 +96,7 @@ cargo run --bin aios-tui
 |---------|-----------|-------------|
 | `fetch` | `<url>` | Download and load a block from a URL |
 | `search` | `<query>` | Web search via DuckDuckGo |
-| `open` | `<url>` | Navigate the Web tab to a URL |
+| `open` | `<query or url>` | Open/search on the Web tab |
 | `clear` | — | Clear shell output |
 | `ps` / `list` | — | List running processes |
 | `blocks` / `ls` | — | List loaded blocks |
@@ -110,7 +112,7 @@ cargo run --bin aios-tui
 
 ### F1 Help Overlay
 
-The F1 help overlay shows all keyboard shortcuts and shell commands in a popup window.
+The F1 help overlay shows all keyboard shortcuts and shell commands as a full-screen opaque panel (it replaces the dashboard background, so nothing blends into the help text).
 
 | Key | Action |
 |-----|--------|
@@ -137,14 +139,14 @@ cargo run --bin aios
 | `1`-`4` | Direct tab select |
 | `Alt`+`1`-`4` | Direct tab select even while the browser URL prompt or the AI query line is active |
 | `g` | Open bridge dashboard URL (`http://localhost:8080`) in the browser |
-| `b` | Open a URL in the native browser (URL input mode) |
+| `b` | Open a URL or search query in the native browser (input mode) |
 | `r` | Reprobe hardware |
 | `Space` | Pause/resume event log |
 | `q` | Quit |
 
 ### Browser Hotkey (`b`)
 
-The browser block is registered at boot — no configuration, installed browser, or network required. Press `b`, type a full URL (e.g. `https://example.com`), press `Enter`: the URL is dispatched to the browser block over IPC (`open_native` command via `MessageRouter`) and opens in your OS default browser. The result is shown in the Events pane.
+The browser block is registered at boot — no configuration, installed browser, or network required. Press `b`, type a full URL (e.g. `https://example.com`), a bare host (`example.com`), or a plain search query (`rust scheduler`), press `Enter`: the input is dispatched to the browser block over IPC (`open_native` command via `MessageRouter`). Queries and bare hosts are converted to a DuckDuckGo search / `https://` URL and opened in your OS default browser. The result is shown in the Events pane.
 
 ---
 

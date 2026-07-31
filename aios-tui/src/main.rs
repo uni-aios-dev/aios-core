@@ -51,6 +51,101 @@ fn fetch_url(url: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
     })
 }
 
+fn search_web(query: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
+    let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
+    let resp = reqwest::blocking::get(&url)?;
+    let html = resp.text()?;
+    let title = format!("Search results: {query}");
+    let text = HtmlParser::extract_text(&html);
+    let links = HtmlParser::extract_links(&html, &url)
+        .into_iter()
+        .map(|l| (l.text, l.href))
+        .collect();
+    Ok(PageContent {
+        url,
+        title,
+        text,
+        links,
+    })
+}
+
+fn is_url_input(s: &str) -> bool {
+    let s = s.trim();
+    s.starts_with("http://")
+        || s.starts_with("https://")
+        || (s.contains('.') && !s.contains(|c: char| c.is_whitespace()))
+}
+
+fn load_url(state: &mut DashboardState, url: &str) {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return;
+    }
+    state.web_state.loading = true;
+    state.web_state.page = None;
+    state.web_state.error = None;
+    state.add_log(format!("Navigating to: {url}"));
+    match fetch_url(&url) {
+        Ok(page) => {
+            state.web_state.current_url = url;
+            state.web_state.url_input.clear();
+            state.web_state.search_query.clear();
+            state.web_state.page = Some(page);
+            state.add_log("Loaded".to_string());
+        }
+        Err(e) => {
+            state.web_state.error = Some(e.to_string());
+            state.add_log("Fetch failed".to_string());
+        }
+    }
+    state.web_state.loading = false;
+}
+
+fn navigate_web(state: &mut DashboardState, raw: &str) {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return;
+    }
+    if is_url_input(raw) {
+        let url = if raw.starts_with("http://") || raw.starts_with("https://") {
+            raw.to_string()
+        } else {
+            format!("https://{raw}")
+        };
+        load_url(state, &url);
+    } else {
+        state.web_state.loading = true;
+        state.web_state.page = None;
+        state.web_state.error = None;
+        state.add_log(format!("Searching for: {raw}"));
+        match search_web(raw) {
+            Ok(page) => {
+                state.web_state.url_input.clear();
+                state.web_state.current_url = page.url.clone();
+                state.web_state.search_query = raw.to_string();
+                state.web_state.page = Some(page);
+                state.add_log("Search done".to_string());
+            }
+            Err(e) => {
+                state.web_state.error = Some(e.to_string());
+                state.add_log("Search failed".to_string());
+            }
+        }
+        state.web_state.loading = false;
+    }
+}
+
+fn open_selected_link(state: &mut DashboardState) {
+    let href = state.web_state.page.as_ref().and_then(|page| {
+        page.links
+            .get(state.selected_row)
+            .map(|(_text, href)| href.clone())
+    });
+    if let Some(href) = href {
+        load_url(state, &href);
+    }
+}
+
 fn execute_shell_cmd(
     state: &mut DashboardState,
     cmd: &str,
@@ -142,19 +237,8 @@ fn execute_shell_cmd(
                 return;
             }
             state.selected_tab = 5;
-            state.web_state.url_input = url.clone();
-            state.web_state.loading = true;
-            state.web_state.page = None;
-            state.web_state.error = None;
-            state.add_log(format!("Navigating to: {url}"));
-            match fetch_url(&url) {
-                Ok(page) => {
-                    state.web_state.current_url = url;
-                    state.web_state.page = Some(page);
-                }
-                Err(e) => state.web_state.error = Some(e.to_string()),
-            }
-            state.web_state.loading = false;
+            state.selected_row = 0;
+            navigate_web(state, &url);
             return;
         }
         Some("help") | Some("?") => {
@@ -165,7 +249,7 @@ fn execute_shell_cmd(
             );
             state.shell_state.add_output(resp.output);
             state.shell_state.add_output(
-                "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <url>      — navigate the Web tab to a URL\n  clear           — clear shell output"
+                "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <query|url> — open/search on the Web tab\n  clear           — clear shell output"
                     .into(),
             );
             return;
@@ -376,24 +460,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 state.web_state.input_focused = false;
                             }
                             KeyCode::Enter => {
-                                let url = state.web_state.url_input.clone();
-                                if !url.is_empty() {
-                                    state.web_state.loading = true;
-                                    state.web_state.page = None;
-                                    state.web_state.error = None;
-                                    state.add_log(format!("Navigating to: {url}"));
-                                    match fetch_url(&url) {
-                                        Ok(page) => {
-                                            state.web_state.current_url = url;
-                                            state.web_state.page = Some(page);
-                                            state.add_log("Loaded".to_string());
-                                        }
-                                        Err(e) => {
-                                            state.web_state.error = Some(e.to_string());
-                                            state.add_log("Fetch failed".to_string());
-                                        }
-                                    }
-                                    state.web_state.loading = false;
+                                let input = state.web_state.url_input.clone();
+                                state.web_state.input_focused = false;
+                                if !input.trim().is_empty() {
+                                    navigate_web(&mut state, &input);
                                 }
                             }
                             KeyCode::Char(c) => {
@@ -694,34 +764,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('g') => {
                             if state.selected_tab == 5 {
                                 state.web_state.input_focused = true;
-                                state.add_log("URL bar focused — type URL, Enter to go".into());
+                                state.add_log(
+                                    "Omnibox focused — type a search query or URL, Enter to go"
+                                        .into(),
+                                );
                             }
                         }
-                        KeyCode::Char('o') => {
+                        KeyCode::Char('o') | KeyCode::Enter => {
                             if state.selected_tab == 5 {
-                                if let Some(ref page) = state.web_state.page {
-                                    if let Some((_text, href)) = page.links.get(state.selected_row)
-                                    {
-                                        let href = href.clone();
-                                        state.web_state.url_input = href.clone();
-                                        state.web_state.loading = true;
-                                        state.web_state.page = None;
-                                        state.web_state.error = None;
-                                        state.add_log(format!("Opening: {href}"));
-                                        match fetch_url(&href) {
-                                            Ok(p) => {
-                                                state.web_state.current_url = href;
-                                                state.web_state.page = Some(p);
-                                                state.add_log("Loaded".to_string());
-                                            }
-                                            Err(e) => {
-                                                state.web_state.error = Some(e.to_string());
-                                                state.add_log("Fetch failed".to_string());
-                                            }
-                                        }
-                                        state.web_state.loading = false;
-                                    }
-                                }
+                                open_selected_link(&mut state);
                             }
                         }
                         KeyCode::Char('r') => {
@@ -781,4 +832,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("AIOS: shutdown complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_url_input;
+
+    #[test]
+    fn test_is_url_input_scheme_urls() {
+        assert!(is_url_input("https://example.com"));
+        assert!(is_url_input("http://localhost:8080"));
+    }
+
+    #[test]
+    fn test_is_url_input_bare_host() {
+        assert!(is_url_input("example.com"));
+        assert!(is_url_input("duckduckgo.com"));
+    }
+
+    #[test]
+    fn test_is_url_input_plain_query() {
+        assert!(!is_url_input("how does AIOS work"));
+        assert!(!is_url_input("  rust scheduler tutorial "));
+        assert!(!is_url_input(""));
+    }
+
+    #[test]
+    fn test_is_url_input_whitespace_padded_host() {
+        assert!(is_url_input("  example.com  "));
+    }
 }

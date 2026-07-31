@@ -54,13 +54,24 @@ fn run(
 }
 
 fn dispatch_open_url(app: &mut TuiApp, url: &str) {
+    let raw = url.trim();
+    let target = if raw.starts_with("http://") || raw.starts_with("https://") {
+        raw.to_string()
+    } else if raw.contains('.') && !raw.contains(|c: char| c.is_whitespace()) {
+        format!("https://{raw}")
+    } else {
+        format!(
+            "https://html.duckduckgo.com/html/?q={}",
+            url::form_urlencoded::byte_serialize(raw.as_bytes()).collect::<String>()
+        )
+    };
     let result = {
         let mut state = app.state.lock().unwrap();
         let packet = IpcPacket::new(
             0,
             state.browser_block_id.0,
             CommandId::Custom,
-            Payload::Custom("open_native".into(), url.as_bytes().to_vec()),
+            Payload::Custom("open_native".into(), target.as_bytes().to_vec()),
         );
         state.router.dispatch(&packet)
     };

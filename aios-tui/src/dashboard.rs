@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs},
     Frame,
 };
 
@@ -64,6 +64,8 @@ impl ShellState {
 pub struct WebState {
     pub url_input: String,
     pub current_url: String,
+    /// Last plain-text search query; shown in the omnibox as `search: <query>`.
+    pub search_query: String,
     pub page: Option<PageContent>,
     pub loading: bool,
     pub error: Option<String>,
@@ -166,6 +168,7 @@ impl DashboardState {
             web_state: WebState {
                 url_input: String::new(),
                 current_url: String::new(),
+                search_query: String::new(),
                 page: None,
                 loading: false,
                 error: None,
@@ -1254,18 +1257,16 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     } else {
         Style::default().fg(Color::White)
     };
-    let url_display = if ws.url_input.is_empty() && !ws.input_focused {
-        if !ws.current_url.is_empty() {
-            ws.current_url.clone()
-        } else {
-            "https://example.com".into()
-        }
+    let url_display = if ws.input_focused {
+        format!("{}{}", ws.url_input, "█")
+    } else if !ws.url_input.is_empty() {
+        ws.url_input.clone()
+    } else if !ws.search_query.is_empty() {
+        format!("search: {}", ws.search_query)
+    } else if !ws.current_url.is_empty() {
+        ws.current_url.clone()
     } else {
-        format!(
-            "{}{}",
-            ws.url_input,
-            if ws.input_focused { "█" } else { "" }
-        )
+        "type a search query or a URL".into()
     };
     let url_bar = Paragraph::new(Line::from(Span::styled(
         format!("  {}  ", url_display),
@@ -1274,7 +1275,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" URL — g:focus Enter:go "),
+            .title(" Omnibox — g:focus Enter:go "),
     );
     f.render_widget(url_bar, chunks[0]);
 
@@ -1315,7 +1316,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     } else {
         let placeholder = Paragraph::new(vec![
             Line::from(Span::styled(
-                "  Enter a URL and press Enter",
+                "  Press g or type a search query / URL and press Enter",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(
@@ -1323,7 +1324,11 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(
-                "    https://example.com",
+                "    how does AIOS work",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                "    example.com",
                 Style::default().fg(Color::White),
             )),
             Line::from(Span::styled(
@@ -1372,7 +1377,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let link_list = List::new(link_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Links — o: open selected j/k: navigate "),
+            .title(" Links — o/Enter: open selected j/k: navigate "),
     );
     f.render_widget(link_list, chunks[2]);
 }
@@ -1408,7 +1413,9 @@ fn draw_shell(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn draw_help(f: &mut Frame<'_>, area: Rect) {
-    let help_text = vec![
+    f.render_widget(Clear, area);
+
+    let mut help_text = vec![
         Line::from(Span::styled(
             " AIOS TUI Help — press F1 or Esc to close ",
             Style::default()
@@ -1458,11 +1465,13 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::raw("  g          — Focus URL bar")),
-        Line::from(Span::raw("  Enter      — Navigate to URL")),
-        Line::from(Span::raw("  o          — Open selected link")),
+        Line::from(Span::raw(
+            "  g          — Focus omnibox (search query or URL)",
+        )),
+        Line::from(Span::raw("  Enter      — Search / navigate in omnibox")),
+        Line::from(Span::raw("  o / Enter  — Open selected link")),
         Line::from(Span::raw("  j/k        — Navigate links")),
-        Line::from(Span::raw("  Esc        — Unfocus URL bar")),
+        Line::from(Span::raw("  Esc        — Unfocus omnibox")),
         Line::from(Span::raw("")),
         Line::from(Span::styled(
             " Shell Tab (7):",
@@ -1493,10 +1502,18 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
         Line::from(Span::raw("  help         — Show shell commands")),
         Line::from(Span::raw("  clear        — Clear output")),
     ];
+    while (help_text.len() as u16) < area.height.saturating_sub(2) {
+        help_text.push(Line::from(""));
+    }
 
     let help_para = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::ALL).title(" Help "))
-        .style(Style::default().bg(Color::Black).fg(Color::White));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(" Help "),
+        )
+        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
     f.render_widget(help_para, area);
 }
 
