@@ -572,7 +572,7 @@ Ratatui-based TUI with 7-tab interactive layout:
 - Shows all keyboard shortcuts and shell commands in a popup window
 - Overlay rendered via draw_help() function on top of current tab content
 
-**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, F1=Help, :=Cmd, s=Telemetry, x=Status, r=Refresh)
+**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, Alt+1-7=Tab everywhere, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, F1=Help, :=Cmd, s=Telemetry, x=Status, r=Refresh)
 
 `DashboardState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)
@@ -602,7 +602,7 @@ Startup sequence:
 10. Event loop: poll key events, redraw dashboard, sync watchdog state
 11. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-7`=Tab, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=URL focus, `o`=Open link, `Esc`=unfocus
+Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=URL focus, `o`=Open link, `Esc`=unfocus
 
 ---
 
@@ -1060,6 +1060,7 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 |-----|--------|
 | Tab / F1 | Next tab |
 | 1-4 | Direct tab select |
+| Alt+1-4 | Direct tab select even while the browser URL prompt or AI query line is active |
 | q | Quit |
 | g | Open bridge URL in browser |
 | b | Open a URL in the native browser (URL input mode, dispatched to browser block via MessageRouter) |

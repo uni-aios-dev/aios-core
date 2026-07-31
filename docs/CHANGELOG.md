@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.2.1 — Alt+digit tab switching (2026-07-31)
+
+### `aios-tui` & kernel `aios`
+- New `Alt+1`-`Alt+7` hotkeys switch tabs in `aios-tui` even while the Shell command line, the Web URL bar, the block-load prompts, or the F1 help overlay is active — previously digit keys were consumed by the active input field, making tab switching impossible from the Shell tab
+- Kernel `aios` gains `Alt+1`-`Alt+4` tab switching, which also works while the browser URL prompt (`b`) or the AI query line is active; switching exits `browser_mode`/`ai_mode`
+- Plain digit tab switching in kernel `aios` no longer steals digits typed into the AI query line
+- Refactored the seven digit-key branches in `aios-tui` into a shared `switch_tab` helper
+
 ## v2.2.0 — Phase 33: Browser Block Out of the Box (2026-07-31)
 
 ### `aios-browser`: First-Class Kernel Block (`BrowserBlock`)

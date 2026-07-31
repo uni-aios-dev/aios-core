@@ -6,7 +6,7 @@ pub use ui::draw;
 
 use crate::orchestrator::{push_log, OrchestratorState};
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -78,6 +78,19 @@ fn dispatch_open_url(app: &mut TuiApp, url: &str) {
 }
 
 fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        if let KeyCode::Char(d) = key.code {
+            if let Some(d) = d.to_digit(10) {
+                if (1..=4).contains(&d) {
+                    app.current_tab = (d - 1) as usize;
+                    app.ai_mode = false;
+                    app.browser_mode = false;
+                    return;
+                }
+            }
+        }
+    }
+
     if app.browser_mode {
         match key.code {
             KeyCode::Esc => app.browser_mode = false,
@@ -116,7 +129,7 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Tab | KeyCode::F(1) => {
             app.current_tab = (app.current_tab + 1) % 4;
         }
-        KeyCode::Char(ch) if ch.is_ascii_digit() && ('1'..='4').contains(&ch) => {
+        KeyCode::Char(ch) if ch.is_ascii_digit() && ('1'..='4').contains(&ch) && !app.ai_mode => {
             app.current_tab = (ch as u8 - b'1') as usize;
         }
         KeyCode::Char(c) if app.current_tab == 2 && app.ai_mode => {

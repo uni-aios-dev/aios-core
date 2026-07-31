@@ -35,7 +35,7 @@ cargo run --bin aios-tui
 │              Main content area                       │
 │                                                      │
 ├──────────────────────────────────────────────────────┤
-│ q=Quit 1-7=Tab j/k=Nav K=Kill U=Unload L=Load H=HS F1=Help :=Cmd │  ← Footer
+│ q=Quit Alt+1-7=Tab j/k=Nav K=Kill U=Unload L=Load H=HS F1=Help :=Cmd │  ← Footer
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -44,6 +44,7 @@ cargo run --bin aios-tui
 | Key | Action |
 |-----|--------|
 | `1`-`7` | Switch tab (Overview / Processes / Blocks / Metrics / Deps / Web / Shell) |
+| `Alt`+`1`-`7` | Switch tab even while typing in the Shell command line or the Web URL bar |
 | `j` / `k` | Navigate down / up in current list |
 | `K` | Kill selected process |
 | `U` | Unload selected block |
@@ -123,6 +124,7 @@ cargo run --bin aios
 |-----|--------|
 | `Tab` / `F1` | Next tab |
 | `1`-`4` | Direct tab select |
+| `Alt`+`1`-`4` | Direct tab select even while the browser URL prompt or the AI query line is active |
 | `g` | Open bridge dashboard URL (`http://localhost:8080`) in the browser |
 | `b` | Open a URL in the native browser (URL input mode) |
 | `r` | Reprobe hardware |

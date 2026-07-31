@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -175,6 +175,13 @@ fn urlencoding(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
+fn switch_tab(state: &mut DashboardState, tab: usize) {
+    state.selected_tab = tab;
+    state.selected_row = 0;
+    state.process_kill_result = None;
+    state.block_operation_result = None;
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
@@ -329,6 +336,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        if let KeyCode::Char(d) = key.code {
+                            if let Some(d) = d.to_digit(10) {
+                                if (1..=7).contains(&d) {
+                                    switch_tab(&mut state, (d - 1) as usize);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     if state.show_help {
                         match key.code {
                             KeyCode::F(1) | KeyCode::Char('?') | KeyCode::Esc => {
@@ -529,40 +547,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 break;
                             }
                         }
-                        KeyCode::Char('1') => {
-                            state.selected_tab = 0;
-                            state.selected_row = 0;
-                            state.process_kill_result = None;
-                        }
-                        KeyCode::Char('2') => {
-                            state.selected_tab = 1;
-                            state.selected_row = 0;
-                            state.process_kill_result = None;
-                        }
-                        KeyCode::Char('3') => {
-                            state.selected_tab = 2;
-                            state.selected_row = 0;
-                            state.process_kill_result = None;
-                        }
-                        KeyCode::Char('4') => {
-                            state.selected_tab = 3;
-                            state.selected_row = 0;
-                            state.process_kill_result = None;
-                        }
-                        KeyCode::Char('5') => {
-                            state.selected_tab = 4;
-                            state.selected_row = 0;
-                            state.process_kill_result = None;
-                            state.block_operation_result = None;
-                        }
-                        KeyCode::Char('6') => {
-                            state.selected_tab = 5;
-                            state.selected_row = 0;
-                        }
-                        KeyCode::Char('7') => {
-                            state.selected_tab = 6;
-                            state.selected_row = 0;
-                        }
+                        KeyCode::Char('1') => switch_tab(&mut state, 0),
+                        KeyCode::Char('2') => switch_tab(&mut state, 1),
+                        KeyCode::Char('3') => switch_tab(&mut state, 2),
+                        KeyCode::Char('4') => switch_tab(&mut state, 3),
+                        KeyCode::Char('5') => switch_tab(&mut state, 4),
+                        KeyCode::Char('6') => switch_tab(&mut state, 5),
+                        KeyCode::Char('7') => switch_tab(&mut state, 6),
                         KeyCode::Char('j') | KeyCode::Down => {
                             state.move_selection_down();
                             state.process_kill_result = None;
