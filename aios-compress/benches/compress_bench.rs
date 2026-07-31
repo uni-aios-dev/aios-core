@@ -51,7 +51,7 @@ fn bench_compress_ratio(c: &mut Criterion) {
 }
 
 fn repetitive_data(size: usize) -> Vec<u8> {
-    std::iter::repeat(0xABu8).take(size).collect()
+    std::iter::repeat_n(0xABu8, size).collect()
 }
 
 fn random_data(size: usize) -> Vec<u8> {

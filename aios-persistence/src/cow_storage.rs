@@ -183,8 +183,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let storage = CopyOnWriteStorage::new(temp_dir.path().to_path_buf()).unwrap();
 
-        storage.atomic_write("file1", &vec![0u8; 100]).unwrap();
-        storage.atomic_write("file2", &vec![0u8; 200]).unwrap();
+        storage.atomic_write("file1", &[0u8; 100]).unwrap();
+        storage.atomic_write("file2", &[0u8; 200]).unwrap();
 
         let total = storage.total_size().unwrap();
         assert_eq!(total, 300);

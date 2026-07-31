@@ -124,7 +124,7 @@ impl FlightRecorder {
         self.total_overwritten
     }
 
-    pub fn to_string(&self) -> String {
+    fn format_dump(&self) -> String {
         let mut output = String::from("=== Flight Recorder Dump ===\n");
         for event in &self.buffer {
             let ts = event.timestamp_ms;
@@ -141,7 +141,15 @@ impl FlightRecorder {
         ));
         output
     }
+}
 
+impl fmt::Display for FlightRecorder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.format_dump())
+    }
+}
+
+impl FlightRecorder {
     fn evict_old(&mut self, now: u128) {
         let cutoff = now - (self.retention_secs as u128 * 1000);
         while let Some(front) = self.buffer.front() {

@@ -70,7 +70,7 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Tab | KeyCode::F(1) => {
             app.current_tab = (app.current_tab + 1) % 4;
         }
-        KeyCode::Char(ch) if ch.is_ascii_digit() && ch >= '1' && ch <= '4' => {
+        KeyCode::Char(ch) if ch.is_ascii_digit() && ('1'..='4').contains(&ch) => {
             app.current_tab = (ch as u8 - b'1') as usize;
         }
         KeyCode::Char(c) if app.current_tab == 2 && app.ai_mode => {

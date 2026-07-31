@@ -170,7 +170,7 @@ fn test_e2e_ipc_context_ringbuf() {
     let dir = std::env::temp_dir().join("aios_e2e_persist");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let persist = PersistentStore::new(&dir.join("e2e.redb"));
+    let persist = PersistentStore::new(dir.join("e2e.redb"));
     let entries = vec![
         TelemetryEntry::new("e2e.persist", 42.0, 128),
         TelemetryEntry::new("e2e.persist", 43.0, 256),

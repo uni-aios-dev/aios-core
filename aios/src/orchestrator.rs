@@ -1,12 +1,10 @@
 use crate::hw_probe::{self, HwProfile};
 use aios_block_mgr::registry::BlockRegistry;
 use aios_bridge::server::{start_server, BridgeContext};
-use aios_ipc::bus::SharedIpcBus;
 use aios_llm::{default_config, LlmEngine};
+use aios_wasm::executor::BlockExecutor;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_security::access_control::AccessControlLayer;
-use aios_telemetry::{FlightRecorder, MetricCollector, TraceContext};
-use aios_wasm::executor::BlockExecutor;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,11 +14,6 @@ use std::time::Instant;
 pub struct OrchestratorState {
     pub hw_profile: HwProfile,
     pub bridge: Arc<BridgeContext>,
-    pub ipc_bus: SharedIpcBus,
-    pub executor: Mutex<BlockExecutor>,
-    pub trace_context: Mutex<TraceContext>,
-    pub flight_recorder: Mutex<FlightRecorder>,
-    pub metric_collector: Mutex<MetricCollector>,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
     pub logs: Arc<Mutex<Vec<String>>>,
@@ -28,17 +21,11 @@ pub struct OrchestratorState {
 
 pub struct AppConfig {
     pub bridge_port: u16,
-    pub data_dir: String,
-    pub blocks_dir: String,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self {
-            bridge_port: 8080,
-            data_dir: "/app/data".into(),
-            blocks_dir: "/app/blocks".into(),
-        }
+        Self { bridge_port: 8080 }
     }
 }
 
@@ -75,11 +62,8 @@ pub async fn initialize(
     }
     push_log(&logs, format!("AIOS: AI tier: {}", hw_profile.ai_tier));
 
-    push_log(&logs, "AIOS: initializing IPC bus...".into());
-    let ipc_bus = SharedIpcBus::new(1024);
-
     push_log(&logs, "AIOS: initializing scheduler...".into());
-    let total_ram_mb = (hw_profile.memory.total_bytes / 1_048_576) as u64;
+    let total_ram_mb = hw_profile.memory.total_bytes / 1_048_576;
     let scheduler = Scheduler::new(total_ram_mb)
         .with_aging_threshold(5000)
         .with_time_slice(100)
@@ -98,7 +82,7 @@ pub async fn initialize(
     let _llm = LlmEngine::from_config(default_config());
 
     push_log(&logs, "AIOS: initializing WASM executor...".into());
-    let executor = match BlockExecutor::with_default_config() {
+    let _executor = match BlockExecutor::with_default_config() {
         Ok(exec) => exec,
         Err(e) => {
             push_log(&logs, format!("AIOS WARN: WASM executor init failed: {e}"));
@@ -131,20 +115,11 @@ pub async fn initialize(
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let trace_context = Mutex::new(TraceContext::new());
-    let flight_recorder = Mutex::new(FlightRecorder::new(1024, 3600));
-    let metric_collector = Mutex::new(MetricCollector::new("aios"));
-
     push_log(&logs, "AIOS: all subsystems initialized.".into());
 
     Ok(OrchestratorState {
         hw_profile,
         bridge,
-        ipc_bus,
-        executor: Mutex::new(executor),
-        trace_context,
-        flight_recorder,
-        metric_collector,
         start_time: Instant::now(),
         bridge_running,
         logs,

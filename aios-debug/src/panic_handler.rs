@@ -2,6 +2,7 @@ use crate::crash_reporter::{CrashKind, CrashReporter};
 use std::panic;
 use std::sync::{Arc, Mutex};
 
+#[allow(clippy::type_complexity)]
 pub struct PanicHandler {
     reporter: Arc<Mutex<CrashReporter>>,
     flight_recorder_getter: Arc<Mutex<Option<Box<dyn Fn() -> String + Send>>>>,
@@ -54,10 +55,9 @@ impl PanicHandler {
 
             reporter.lock().unwrap().generate_report(
                 CrashKind::Panic,
-                &std::thread::current()
+                std::thread::current()
                     .name()
-                    .unwrap_or("unknown")
-                    .to_string(),
+                    .unwrap_or("unknown"),
                 &message,
                 "panic stack not captured",
                 &fr_dump,

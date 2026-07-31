@@ -287,7 +287,7 @@ mod tests {
             db_path: "/nonexistent".into(),
         };
         assert!(!store.is_available());
-        assert!(store.save_telemetry(&vec![]).is_err());
+        assert!(store.save_telemetry(&[]).is_err());
         assert!(store.load_telemetry().is_err());
     }
 

@@ -118,6 +118,12 @@ impl TraceContext {
     }
 }
 
+impl Default for TraceContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

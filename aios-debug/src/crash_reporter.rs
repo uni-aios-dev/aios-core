@@ -63,7 +63,7 @@ impl CrashReporter {
             sha256_prefix: compute_hash_prefix(message),
         }];
 
-        let kind_debug = format!("{:?}", &kind);
+        let kind_debug = format!("{:?}", kind);
         let report = CrashReport {
             id: id.clone(),
             timestamp_ms: now_ms(),

@@ -1,5 +1,5 @@
 use aios_process_mgr::scheduler::Scheduler;
-use aios_process_mgr::task::{Priority, ProcessState};
+use aios_process_mgr::task::Priority;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

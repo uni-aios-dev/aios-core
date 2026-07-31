@@ -582,7 +582,7 @@ fn test_security_sandbox_enforcement() {
     assert_eq!(sandbox.state(), SandboxState::Violated);
 
     // ACL recorded violation
-    assert!(acl.try_check_permission(1, &Capability::NetBind) == false);
+    assert!(!acl.try_check_permission(1, &Capability::NetBind));
     assert_eq!(acl.violation_count(), 1);
 }
 

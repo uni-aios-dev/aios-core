@@ -130,7 +130,6 @@ fn chrono_now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_slot_other() {

@@ -1,12 +1,10 @@
 use aios_core::error::Result;
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub struct RollbackManager {
     snapshots: VecDeque<SnapshotEntry>,
     max_snapshots: usize,
-    snapshot_dir: PathBuf,
     next_id: u64,
 }
 
@@ -20,11 +18,10 @@ struct SnapshotEntry {
 }
 
 impl RollbackManager {
-    pub fn new(snapshot_dir: PathBuf, max_snapshots: usize) -> Self {
+    pub fn new(max_snapshots: usize) -> Self {
         Self {
             snapshots: VecDeque::with_capacity(max_snapshots + 1),
             max_snapshots,
-            snapshot_dir,
             next_id: 1,
         }
     }
@@ -66,15 +63,15 @@ impl RollbackManager {
                 ))
             })?;
 
-        let entry = self.snapshots[pos].data.clone();
+        let entry = &self.snapshots[pos];
         log::info!(
-            "Rollback to snapshot #{snapshot_id} ({}): {} bytes restored",
-            self.snapshots[pos].label,
-            entry.len()
+            "Rollback to snapshot #{snapshot_id} ({}): block={}, version={}, {} bytes restored",
+            entry.label, entry.block_name, entry.version, entry.data.len()
         );
 
+        let data = entry.data.clone();
         self.snapshots.truncate(pos);
-        Ok(entry)
+        Ok(data)
     }
 
     pub fn rollback_last(&mut self) -> Result<Vec<u8>> {
@@ -109,19 +106,16 @@ impl RollbackManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_rollback_manager_create() {
-        let dir = tempfile::tempdir().unwrap();
-        let mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+        let mgr = RollbackManager::new(10);
         assert_eq!(mgr.snapshot_count(), 0);
     }
 
     #[test]
     fn test_take_and_rollback() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+        let mut mgr = RollbackManager::new(10);
 
         let id = mgr.take_snapshot("test-block", "1.0", vec![1, 2, 3], "initial");
         assert_eq!(id, 1);
@@ -133,8 +127,7 @@ mod tests {
 
     #[test]
     fn test_rollback_last() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+        let mut mgr = RollbackManager::new(10);
 
         mgr.take_snapshot("b1", "1.0", vec![10, 20], "first");
         mgr.take_snapshot("b2", "2.0", vec![30, 40], "second");
@@ -146,8 +139,7 @@ mod tests {
 
     #[test]
     fn test_auto_rollback_not_needed_fresh() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+        let mut mgr = RollbackManager::new(10);
         mgr.take_snapshot("b1", "1.0", vec![1], "fresh");
         let result = mgr.auto_rollback_if_needed().unwrap();
         assert!(result.is_none());
@@ -155,8 +147,7 @@ mod tests {
 
     #[test]
     fn test_max_snapshots() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+        let mut mgr = RollbackManager::new(3);
         for i in 0..5 {
             mgr.take_snapshot("b", "1.0", vec![i], &format!("snap-{i}"));
         }
@@ -167,15 +158,13 @@ mod tests {
 
     #[test]
     fn test_rollback_invalid_id() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+        let mut mgr = RollbackManager::new(10);
         assert!(mgr.rollback_to(999).is_err());
     }
 
     #[test]
     fn test_rollback_crash_recovery_restores_correct_data() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+        let mut mgr = RollbackManager::new(10);
 
         mgr.take_snapshot("db", "1.0", vec![1, 2, 3, 4, 5], "checkpoint-a");
         mgr.take_snapshot("db", "1.1", vec![6, 7, 8], "checkpoint-b");
@@ -192,8 +181,7 @@ mod tests {
 
     #[test]
     fn test_rollback_crash_after_rollback_sequential() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 5);
+        let mut mgr = RollbackManager::new(5);
 
         mgr.take_snapshot("b", "1.0", vec![10], "s1");
         mgr.take_snapshot("b", "1.0", vec![20], "s2");
@@ -211,8 +199,7 @@ mod tests {
 
     #[test]
     fn test_rollback_crash_empty_no_panic() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+        let mut mgr = RollbackManager::new(3);
 
         let result = mgr.rollback_last();
         assert!(result.is_err());
@@ -221,8 +208,7 @@ mod tests {
 
     #[test]
     fn test_rollback_crash_auto_rollback_after_timeout() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 5);
+        let mut mgr = RollbackManager::new(5);
 
         mgr.take_snapshot("b", "1.0", vec![1, 2, 3], "pre-crash");
 
@@ -239,8 +225,7 @@ mod tests {
 
     #[test]
     fn test_rollback_crash_max_snapshots_id_unique() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+        let mut mgr = RollbackManager::new(3);
 
         let ids: Vec<u64> = (0..10)
             .map(|i| mgr.take_snapshot("b", "1.0", vec![i], &format!("s{i}")))

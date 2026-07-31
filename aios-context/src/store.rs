@@ -120,6 +120,13 @@ pub struct CompactReport {
     pub stability_pruned: usize,
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,11 +208,4 @@ mod tests {
         assert_eq!(report.telemetry_pruned, 0);
         assert_eq!(store.telemetry().entries.len(), 5);
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }

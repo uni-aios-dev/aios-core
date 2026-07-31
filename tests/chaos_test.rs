@@ -63,11 +63,8 @@ fn test_chaos_scheduler_memory_exhaustion() {
     let mut scheduler = Scheduler::new(128);
 
     let mut spawned = 0u64;
-    loop {
-        match scheduler.spawn_process("filler", Priority::Low, 8) {
-            Ok(_) => spawned += 1,
-            Err(_) => break,
-        }
+    while scheduler.spawn_process("filler", Priority::Low, 8).is_ok() {
+        spawned += 1;
         if spawned > 500 {
             break;
         }
@@ -283,8 +280,7 @@ fn test_chaos_watchdog_rejects_bad_heartbeat() {
 fn test_chaos_rollback_crash_mid_snapshot() {
     use aios_updater::rollback::RollbackManager;
 
-    let dir = tempfile::tempdir().unwrap();
-    let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 10);
+    let mut mgr = RollbackManager::new(10);
 
     mgr.take_snapshot("safe", "1.0", vec![1, 2, 3], "pre-crash");
     mgr.take_snapshot("crashed", "2.0", vec![255; 1024], "during-crash");
@@ -353,8 +349,7 @@ fn test_chaos_reporter_rapid_fire() {
 fn test_chaos_rollback_corrupted_data_recovery() {
     use aios_updater::rollback::RollbackManager;
 
-    let dir = tempfile::tempdir().unwrap();
-    let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 5);
+    let mut mgr = RollbackManager::new(5);
 
     mgr.take_snapshot("b", "1.0", vec![1, 2, 3], "good");
     mgr.take_snapshot("b", "2.0", vec![4, 5, 6], "corrupted");
@@ -371,12 +366,10 @@ fn test_chaos_rollback_corrupted_data_recovery() {
 fn test_chaos_rollback_crash_loop() {
     use aios_updater::rollback::RollbackManager;
 
-    let dir = tempfile::tempdir().unwrap();
-    let mut mgr = RollbackManager::new(dir.path().to_path_buf(), 3);
+    let mut mgr = RollbackManager::new(3);
 
-    let mut snapshot_id = 0u64;
     for i in 0..10 {
-        snapshot_id = mgr.take_snapshot("b", &format!("{i}.0"), vec![i], &format!("iter-{i}"));
+        let _ = mgr.take_snapshot("b", &format!("{i}.0"), vec![i], &format!("iter-{i}"));
         if i > 0 && i % 2 == 0 {
             let _ = mgr.rollback_last();
         }

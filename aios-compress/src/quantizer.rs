@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(dequantized.len(), original.len());
         // FP8 has ~0.5% relative precision loss on average
         // Just verify roundtrip preserves structure
-        assert!(dequantized.iter().all(|&x| x >= 0.0 && x <= 1.0));
+        assert!(dequantized.iter().all(|&x| (0.0..=1.0).contains(&x)));
     }
 
     #[test]

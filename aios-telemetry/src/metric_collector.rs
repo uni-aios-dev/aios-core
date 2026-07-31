@@ -167,12 +167,12 @@ mod tests {
     fn test_prometheus_output() {
         let mut mc = MetricCollector::new("aios");
         mc.increment_counter("test_counter", 42);
-        mc.set_gauge("test_gauge", 3.14);
+        mc.set_gauge("test_gauge", 42.5);
         let output = mc.to_prometheus();
         assert!(output.contains("aios_test_counter"));
         assert!(output.contains("42"));
         assert!(output.contains("aios_test_gauge"));
-        assert!(output.contains("3.14"));
+        assert!(output.contains("42.5"));
     }
 
     #[test]

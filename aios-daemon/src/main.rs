@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entry = TelemetryEntry::new("process_count", proc_count as f64, ram.0);
         context_store.telemetry_mut().record(entry);
 
-        if seq_num() % 6 == 0 {
+        if seq_num().is_multiple_of(6) {
             let telemetry_entries: Vec<TelemetryEntry> = context_store.telemetry().entries.to_vec();
             if !telemetry_entries.is_empty() {
                 let _ = persistent.save_telemetry(&telemetry_entries);

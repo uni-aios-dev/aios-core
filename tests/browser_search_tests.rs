@@ -1,6 +1,5 @@
 use aios_browser::html_parser::HtmlParser;
 use aios_browser::types::BrowserConfig;
-use aios_browser::BrowserEngine;
 
 #[test]
 fn test_html_parser_extract_text() {

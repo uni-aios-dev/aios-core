@@ -6,7 +6,7 @@ use aios_context::telemetry::TelemetryEntry;
 use aios_core::crypto;
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 use aios_hal::ai_tier::AiTier;
-use aios_hal::hardware::{HalBlock, HardwareProfile};
+use aios_hal::hardware::HardwareProfile;
 use aios_ipc::bus::IpcBus;
 use aios_live_update::wasm_engine::{SwapParams, WasmLiveUpdateEngine};
 use aios_process_mgr::scheduler::Scheduler;
@@ -52,7 +52,7 @@ fn test_full_system_real_components() {
     std::thread::sleep(Duration::from_millis(50));
     assert!(counter.load(Ordering::SeqCst) >= 1);
 
-    let mut score = StabilityScore::new("hal", "1.0.0");
+    let score = StabilityScore::new("hal", "1.0.0");
     assert!(score.is_healthy());
 
     let mut ctx_store = EmbeddedContextStore::new(1000);

@@ -164,7 +164,7 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
     frame.render_widget(os_para, chunks[1]);
 
     if hw.memory.total_gb > 0.0 {
-        let ram_ratio = (hw.memory.used_gb / hw.memory.total_gb) as f64;
+        let ram_ratio = hw.memory.used_gb / hw.memory.total_gb;
         let gauge = Gauge::default()
             .block(Block::default().title(" RAM Usage "))
             .gauge_style(Style::default().fg(if ram_ratio > 0.8 {
@@ -353,7 +353,7 @@ fn draw_bridge_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
 fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let count = app.displayed_logs.len();
-    let start = if count > 3 { count - 3 } else { 0 };
+    let start = count.saturating_sub(3);
     let recent: Vec<String> = app.displayed_logs.iter().skip(start).cloned().collect();
 
     let log_lines: Vec<ListItem> = recent

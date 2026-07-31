@@ -329,7 +329,7 @@ mod tests {
     fn test_required_capabilities_elf() {
         let caps = ExecutableType::LinuxElf.required_capabilities();
         assert!(
-            caps.contains(&CompatCapability::PosixCompat) == false
+            !caps.contains(&CompatCapability::PosixCompat)
                 || caps.contains(&CompatCapability::ProcessCreate)
         );
         assert!(caps.contains(&CompatCapability::ProcessCreate));

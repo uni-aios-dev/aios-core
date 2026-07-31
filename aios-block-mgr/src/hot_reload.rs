@@ -433,7 +433,7 @@ mod tests {
         let _ = std::fs::write(&bin_file, b"block 1");
         reloader.scan_and_reload(&mut registry);
 
-        assert!(reloader.event_log().len() >= 1);
+        assert!(!reloader.event_log().is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

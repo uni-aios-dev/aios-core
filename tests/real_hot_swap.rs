@@ -41,7 +41,6 @@ fn test_deploy_and_call_wasm_block() {
         BlockLoader::load_from_binary(&mut registry, "deploy_test", "1.0.0", v1_wasm()).unwrap();
 
     let mut engine = WasmLiveUpdateEngine::with_defaults().unwrap();
-    let mut queue = IpcBus::new(1024);
 
     let deploy = engine
         .deploy_block(&registry, manifest.id, IsolationConfig::default())
