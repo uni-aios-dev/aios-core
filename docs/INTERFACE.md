@@ -96,6 +96,17 @@ cargo run --bin aios-tui
 | `search` | `<query>` | Web search via DuckDuckGo |
 | `open` | `<url>` | Navigate the Web tab to a URL |
 | `clear` | — | Clear shell output |
+| `ps` / `list` | — | List running processes |
+| `blocks` / `ls` | — | List loaded blocks |
+| `kill` | `<pid>` | Kill a process |
+| `spawn` | `<name> [prio] [ram_mb]` | Spawn a process (prio: 0-4) |
+| `load` | `<name> [version]` | Load a block |
+| `unload` | `<id>` | Unload a block |
+| `status` / `info` | — | System status |
+| `logs` | — | View safe-mode event log |
+| `restart` | — | Restart the orchestrator |
+| `help` / `?` | — | Show all available commands |
+| `exit` | — | Exit the safe-mode shell |
 
 ### F1 Help Overlay
 

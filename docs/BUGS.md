@@ -154,3 +154,10 @@ As of v1.0.0, all 708 tests pass and clippy reports zero warnings.
 - **Root Cause:** The scheduler continues the current process until its time-slice quota expires (time-slicing, no preemption), but the test scheduled once, then expected the newly spawned High process to run immediately while the current quantum was still active
 - **Fix:** The test now spawns the replacement before the final `schedule_next()`, matching the scheduler contract verified by `test_priority_scheduling`
 - **Affected file:** `tests/stress_fault_tolerance.rs:266-275`
+
+### BUG-020: Safe-Mode Shell commands always returned "Unknown command"
+- **Status:** FIXED (v2.2.2)
+- **Symptom:** On the `aios-tui` Shell tab every SafeModeShell command (`ps`, `kill`, `spawn`, `status`, `logs`, `restart`, `help`, `blocks`, `load`, `unload`) printed `Error: Unknown command`; only `fetch`/`search`/`open`/`clear` worked
+- **Root Cause:** `execute_shell_cmd` in `aios-tui/src/main.rs:160` mapped every unrecognized command to `ShellCommand::Unknown(cmd.to_string())`, bypassing `SafeModeShell::parse_command` — only the TUI's own four commands reached the SafeModeShell, so the entire safe-mode command set was unreachable
+- **Fix:** Commands now route through `SafeModeShell::parse_command`; `help`/`?` additionally list the TUI-specific commands; `blocks` output now prints the block state cleanly (`Active`, not `Some(Active)`) via `registry.topology_with_state()`
+- **Affected files:** `aios-tui/src/main.rs:160-177`, `aios-watchdog/src/safe_mode.rs`

@@ -564,8 +564,8 @@ Ratatui-based TUI with 7-tab interactive layout:
 - Output display area (scrollable command output)
 - Command history navigation with ↑/↓
 - `ShellState`: input_buffer, output (Vec<String>), command_history, history_pos
-- Available commands: `fetch <url>` (download block from URL), `search <query>` (DuckDuckGo web search), `open <url>` (navigate Web tab to URL), `clear` (clear output)
-- Execution flow: TUI → execute_shell_cmd() → SafeModeShell / fetch / search / open
+- Available commands: `ps`/`list`, `blocks`/`ls`, `kill <pid>`, `spawn <name> [prio] [ram_mb]`, `load <name> [version]`, `unload <id>`, `status`/`info`, `logs`, `restart`, `help`/`?`, `exit` (SafeModeShell) plus TUI extras `fetch <url>`, `search <query>`, `open <url>`, `clear`
+- Execution flow: TUI → execute_shell_cmd() → `SafeModeShell::parse_command` / fetch / search / open
 
 **F1 Help Overlay**:
 - Toggled with F1 or '?', dismissed with F1/Esc/'?'

@@ -1,5 +1,13 @@
 # Журнал разработки AIOS
 
+## v2.2.2 — Исправлена оболочка безопасного режима в aios-tui (2026-07-31)
+
+### `aios-tui` и `aios-watchdog`
+- **BUG-020 исправлен:** все команды SafeModeShell (`ps`, `blocks`, `kill`, `spawn`, `load`, `unload`, `status`, `logs`, `restart`, `help`, `exit`) раньше возвращали `Error: Unknown command` на вкладке Shell — `execute_shell_cmd` отправлял всё, кроме `fetch`/`search`/`open`/`clear`, в `ShellCommand::Unknown`, минуя `SafeModeShell::parse_command`
+- Команды теперь идут через единый парсер `SafeModeShell::parse_command`, полностью восстанавливая набор команд безопасного режима в TUI
+- `help`/`?` теперь дополнительно перечисляют TUI-специфичные команды (`fetch`, `search`, `open`, `clear`)
+- Вывод `blocks` приведён в порядок: состояние блока печатается как `Active` вместо `Some(Active)` через `registry.topology_with_state()`
+
 ## v2.2.1 — Переключение вкладок Alt+цифра (2026-07-31)
 
 ### `aios-tui` и ядро `aios`

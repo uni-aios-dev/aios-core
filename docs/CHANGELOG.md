@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.2.2 — Safe-Mode Shell fixed in aios-tui (2026-07-31)
+
+### `aios-tui` & `aios-watchdog`
+- **BUG-020 fixed:** all SafeModeShell commands (`ps`, `blocks`, `kill`, `spawn`, `load`, `unload`, `status`, `logs`, `restart`, `help`, `exit`) previously returned `Error: Unknown command` on the Shell tab — `execute_shell_cmd` routed everything but `fetch`/`search`/`open`/`clear` into `ShellCommand::Unknown`, bypassing `SafeModeShell::parse_command`
+- Commands now route through the single `SafeModeShell::parse_command` parser, restoring the full safe-mode command set in the TUI
+- `help`/`?` now also list the TUI-specific commands (`fetch`, `search`, `open`, `clear`)
+- `blocks` output cleaned: block state printed as `Active` instead of `Some(Active)` via `registry.topology_with_state()`
+
 ## v2.2.1 — Alt+digit tab switching (2026-07-31)
 
 ### `aios-tui` & kernel `aios`

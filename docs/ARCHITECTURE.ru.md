@@ -564,8 +564,8 @@ TUI на базе Ratatui с 7-вкладочной интерактивной �
 - Область вывода (прокручиваемый вывод команд)
 - Навигация по истории команд через ↑/↓
 - `ShellState`: input_buffer, output (Vec<String>), command_history, history_pos
-- Команды: `fetch <url>` (загрузка блока по URL), `search <query>` (веб-поиск DuckDuckGo), `open <url>` (навигация на URL на вкладке Web), `clear` (очистка вывода)
-- Поток выполнения: TUI → execute_shell_cmd() → SafeModeShell / fetch / search / open
+- Команды: `ps`/`list`, `blocks`/`ls`, `kill <pid>`, `spawn <name> [prio] [ram_mb]`, `load <name> [version]`, `unload <id>`, `status`/`info`, `logs`, `restart`, `help`/`?`, `exit` (SafeModeShell) плюс TUI-команды `fetch <url>`, `search <query>`, `open <url>`, `clear`
+- Поток выполнения: TUI → execute_shell_cmd() → `SafeModeShell::parse_command` / fetch / search / open
 
 **Справка F1**:
 - Включение по F1 или '?', закрытие по F1/Esc/'?'

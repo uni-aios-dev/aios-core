@@ -120,13 +120,13 @@ impl SafeModeShell {
                 ShellResponse { success: true, output: out }
             }
             ShellCommand::ListBlocks => {
-                let blocks = registry.topology();
+                let blocks = registry.topology_with_state();
                 if blocks.is_empty() {
                     return ShellResponse { success: true, output: "No blocks loaded".into() };
                 }
                 let mut out = String::from("ID   NAME         VERSION  STATE\n");
-                for b in &blocks {
-                    out.push_str(&format!("{:<5} {:<13} {:<9} {:?}\n", b.id, b.name, b.version, registry.get(b.id).map(|e| e.state)));
+                for (m, state) in &blocks {
+                    out.push_str(&format!("{:<5} {:<13} {:<9} {:?}\n", m.id, m.name, m.version, state));
                 }
                 out.push_str(&format!("\nTotal: {} blocks", blocks.len()));
                 ShellResponse { success: true, output: out }

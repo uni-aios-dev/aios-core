@@ -157,7 +157,20 @@ fn execute_shell_cmd(
             state.web_state.loading = false;
             return;
         }
-        _ => aios_watchdog::safe_mode::ShellCommand::Unknown(cmd.to_string()),
+        Some("help") | Some("?") => {
+            let resp = safe_shell.execute(
+                aios_watchdog::safe_mode::ShellCommand::Help,
+                scheduler,
+                registry,
+            );
+            state.shell_state.add_output(resp.output);
+            state.shell_state.add_output(
+                "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <url>      — navigate the Web tab to a URL\n  clear           — clear shell output"
+                    .into(),
+            );
+            return;
+        }
+        _ => aios_watchdog::safe_mode::SafeModeShell::parse_command(cmd),
     };
     let resp = safe_shell.execute(command, scheduler, registry);
     if resp.success {

@@ -154,3 +154,10 @@
 - **Причина:** Шедулер продолжает текущий процесс до истечения его кванта (time-slicing, без вытеснения), но тест планировал один раз и ожидал, что новый High-процесс запустится сразу, пока текущий квант активен
 - **Исправление:** Тест теперь спавнит replacement перед финальным `schedule_next()`, в соответствии с контрактом шедулера из `test_priority_scheduling`
 - **Затронутый файл:** `tests/stress_fault_tolerance.rs:266-275`
+
+### BUG-020: Команды оболочки безопасного режима всегда возвращали "Unknown command"
+- **Статус:** ИСПРАВЛЕНО (v2.2.2)
+- **Симптом:** На вкладке Shell в `aios-tui` каждая команда SafeModeShell (`ps`, `kill`, `spawn`, `status`, `logs`, `restart`, `help`, `blocks`, `load`, `unload`) выводила `Error: Unknown command`; работали только `fetch`/`search`/`open`/`clear`
+- **Причина:** `execute_shell_cmd` в `aios-tui/src/main.rs:160` отображал каждую нераспознанную команду в `ShellCommand::Unknown(cmd.to_string())`, минуя `SafeModeShell::parse_command` — до SafeModeShell доходили только четыре собственные команды TUI, поэтому весь набор команд безопасного режима был недоступен
+- **Исправление:** Команды теперь идут через `SafeModeShell::parse_command`; `help`/`?` дополнительно перечисляют TUI-специфичные команды; вывод `blocks` теперь печатает состояние блока чисто (`Active`, а не `Some(Active)`) через `registry.topology_with_state()`
+- **Затронутые файлы:** `aios-tui/src/main.rs:160-177`, `aios-watchdog/src/safe_mode.rs`
