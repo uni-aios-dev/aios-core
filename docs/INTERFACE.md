@@ -107,6 +107,34 @@ The F1 help overlay shows all keyboard shortcuts and shell commands in a popup w
 
 ---
 
+## Kernel TUI (`aios`)
+
+### Launch
+
+```bash
+cargo run --bin aios
+# or from the compiled binary:
+./target/release/aios.exe
+```
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `F1` | Next tab |
+| `1`-`4` | Direct tab select |
+| `g` | Open bridge dashboard URL (`http://localhost:8080`) in the browser |
+| `b` | Open a URL in the native browser (URL input mode) |
+| `r` | Reprobe hardware |
+| `Space` | Pause/resume event log |
+| `q` | Quit |
+
+### Browser Hotkey (`b`)
+
+The browser block is registered at boot — no configuration, installed browser, or network required. Press `b`, type a full URL (e.g. `https://example.com`), press `Enter`: the URL is dispatched to the browser block over IPC (`open_native` command via `MessageRouter`) and opens in your OS default browser. The result is shown in the Events pane.
+
+---
+
 ## GUI (`aios-gui`)
 
 ### Launch

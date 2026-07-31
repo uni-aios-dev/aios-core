@@ -22,11 +22,13 @@ impl HtmlParser {
     pub fn extract_text(html: &str) -> String {
         let re_script = regex_lite::Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
         let re_style = regex_lite::Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
+        let re_head = regex_lite::Regex::new(r"(?is)<head[^>]*>.*?</head>").unwrap();
         let re_tags = regex_lite::Regex::new(r"<[^>]*>").unwrap();
         let re_whitespace = regex_lite::Regex::new(r"\s+").unwrap();
 
         let text = re_script.replace_all(html, "");
         let text = re_style.replace_all(&text, "");
+        let text = re_head.replace_all(&text, "");
         let text = re_tags.replace_all(&text, " ");
         let text = re_whitespace.replace_all(&text, " ");
 
@@ -140,6 +142,13 @@ mod tests {
         let html = "<html><script>alert('x')</script><body><p>Hello</p></body></html>";
         let text = HtmlParser::extract_text(html);
         assert_eq!(text, "Hello");
+    }
+
+    #[test]
+    fn test_extract_text_strips_head() {
+        let html = "<html><head><title>Test</title></head><body><p>Hello world</p></body></html>";
+        let text = HtmlParser::extract_text(html);
+        assert_eq!(text, "Hello world");
     }
 
     #[test]

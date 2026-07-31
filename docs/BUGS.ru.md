@@ -105,3 +105,52 @@
 - **Причина:** Функция пропускала строки-маркеры `COMPLETED:`, но никогда не собирала ID из этих маркеров для исключения соответствующих записей. Все записи со статусом `pending` возвращались независимо от того, были ли они помечены как завершённые.
 - **Исправление:** Сначала собираются ID завершённых записей из строк `COMPLETED:`, затем записи фильтруются по исключению тех, чей ID находится в наборе завершённых.
 - **Затронутый файл:** `aios-persistence/src/recovery.rs:108-140`
+
+### BUG-013: Ядро (`aios`) запускалось с пустым реестром блоков — без браузера
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** На новом компьютере ядро стартовало с нулём зарегистрированных блоков; `aios-browser` был обычной библиотекой (без реализации `StatefulBlock`), поэтому браузер при загрузке отсутствовал и системный браузер не запускался автоматически.
+- **Причина:** `aios/src/orchestrator.rs:73` создавал пустой `BlockRegistry`; последовательность загрузки 3 блоков существовала только в `aios-tui`/`aiosd`; `BrowserEngine` никогда не реализовывал `handle_message`.
+- **Исправление:** Добавлен `BrowserBlock` (`StatefulBlock`) в `aios-browser/src/block.rs`; ядро теперь регистрирует hal/ipc_bus/scheduler/browser при загрузке, делает boot-обнаружение `AIOS_BLOCKS_DIR`, подключает браузерный обработчик к `MessageRouter`, а клавиша `b` в TUI открывает URL в системном браузере через блок.
+- **Затронутые файлы:** `aios-browser/src/block.rs`, `aios/src/orchestrator.rs`, `aios/src/tui/mod.rs`, `aios/src/tui/ui.rs`, `aios/src/tui/app_state.rs`, `aios-tui/src/main.rs`, `aios-daemon/src/main.rs`
+
+### BUG-014: Поиск DuckDuckGo терял первую букву URL результатов
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** `test_duckduckgo_parse_results` падал — каждый URL результата терял начальную `h` (например, `ttps://example.com`)
+- **Причина:** `DuckDuckGoBackend::parse_html_response` продвигался мимо `href="` (6 символов) на 7
+- **Исправление:** Смещение исправлено с `+7` на `+6`
+- **Затронутый файл:** `aios-search/src/backends.rs:68`
+
+### BUG-015: HtmlParser::extract_text включал текст `<head>`/`<title>`
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** `test_html_parser_extract_text` падал — текст страницы был `"Test Hello world"` вместо `"Hello world"`
+- **Причина:** `extract_text` вырезал только `<script>`/`<style>` и теги, оставляя текст `<head>`/`<title>` в тексте страницы
+- **Исправление:** `extract_text` теперь вырезает `<head>...</head>` перед удалением тегов; добавлен `test_extract_text_strips_head`
+- **Затронутый файл:** `aios-browser/src/html_parser.rs:22-36`
+
+### BUG-016: Chaos-тест быстрой генерации ассертил плейнтекст заред актированного отчёта
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** `test_chaos_reporter_rapid_fire` падал — `json.contains("event #0")` было false
+- **Причина:** События с чётными индексами имели `zero_knowledge=true`, поэтому `event #0` был захеширован SHA-256 и не попадал в JSON
+- **Исправление:** Ассерты теперь проверяют семантику редактирования: `event #0` отсутствует, `event #1`/`event #99` присутствуют, `"redacted":true` присутствует
+- **Затронутый файл:** `tests/chaos_test.rs:341-344`
+
+### BUG-017: WorkflowCompiler генерил init/start с возвращаемым значением
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** `test_e2e_easylang_wasm_pipeline` падал — `result.functions_called` никогда не содержал `init`/`start`
+- **Причина:** `WorkflowCompiler::generate_wat` экспортировал `init`/`start` с `(result i32)`, а `BlockExecutor::execute_block` вызывает их с пустым буфером результатов; вызовы падали (логировались как warnings) и функции не записывались
+- **Исправление:** `init`/`start` теперь экспортируются без результата, в соответствии с контрактом исполнителя и его unit-фикстурами
+- **Затронутый файл:** `aios-builder/src/compiler.rs:60-62`
+
+### BUG-018: Метрики моста /api/v1/metrics не заполнялись
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** `test_e2e_bridge_http_endpoints` падал — Prometheus-текст не содержал `HELP`
+- **Причина:** `BridgeContext::metric_collector` создавался, но ни один хендлер не записывал метрики, поэтому `to_prometheus()` всегда возвращал пустую строку
+- **Исправление:** Добавлен axum-middleware `record_metrics`, записывающий `http_requests_total` (counter), `http_last_latency_ms` (gauge) и `http_request_latency_ms` (histogram) для каждого запроса
+- **Затронутый файл:** `aios-bridge/src/server.rs`
+
+### BUG-019: Тест отказоустойчивости ассертил вытеснение на середине кванта
+- **Статус:** ИСПРАВЛЕНО (v2.2.0)
+- **Симптом:** `test_fault_tolerance_scheduler_survives_crash` падал — "Replacement (high priority) should be next"
+- **Причина:** Шедулер продолжает текущий процесс до истечения его кванта (time-slicing, без вытеснения), но тест планировал один раз и ожидал, что новый High-процесс запустится сразу, пока текущий квант активен
+- **Исправление:** Тест теперь спавнит replacement перед финальным `schedule_next()`, в соответствии с контрактом шедулера из `test_priority_scheduling`
+- **Затронутый файл:** `tests/stress_fault_tolerance.rs:266-275`

@@ -54,6 +54,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = BlockLoader::load_from_binary(&mut registry, "ipc_bus", "1.0.0", b"ipc_bus".to_vec());
     let _ =
         BlockLoader::load_from_binary(&mut registry, "scheduler", "1.0.0", b"scheduler".to_vec());
+    let _ = BlockLoader::load_from_binary(
+        &mut registry,
+        "browser",
+        "0.1.0",
+        b"browser-native".to_vec(),
+    );
 
     let disk_results = BlockLoader::load_from_directory(&mut registry, &blocks_dir);
     let disk_loaded = disk_results.iter().filter(|r| r.is_ok()).count();

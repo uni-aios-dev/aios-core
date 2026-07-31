@@ -11,6 +11,8 @@ pub struct TuiApp {
     pub displayed_logs: VecDeque<String>,
     pub ai_input: String,
     pub ai_mode: bool,
+    pub browser_url: String,
+    pub browser_mode: bool,
     pub ai_output: Arc<Mutex<VecDeque<String>>>,
     pub bridge_port: u16,
 }
@@ -31,6 +33,8 @@ impl TuiApp {
             displayed_logs: VecDeque::new(),
             ai_input: String::new(),
             ai_mode: false,
+            browser_url: String::new(),
+            browser_mode: false,
             ai_output: Arc::new(Mutex::new(VecDeque::new())),
             bridge_port,
         }

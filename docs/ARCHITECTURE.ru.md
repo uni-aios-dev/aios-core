@@ -593,7 +593,7 @@ TUI на базе Ratatui с 7-вкладочной интерактивной �
 1. Инициализация `env_logger`
 2. `HardwareProfile::detect()` — обнаружение реального оборудования
 3. `AiTier::from_profile()` — классификация AI-возможностей
-4. Создание `BlockRegistry` — загрузка 3 блоков (hal, ipc_bus, scheduler)
+4. Создание `BlockRegistry` — регистрация 4 базовых блоков (hal, ipc_bus, scheduler, browser), boot-обнаружение блоков на диске из `AIOS_BLOCKS_DIR`, подключение браузерного блока к `MessageRouter`
 5. Создание `Scheduler` — запуск 3 процессов (ai_orchestrator, io_handler, health_monitor)
 6. Создание `Watchdog` — запуск потока heartbeat в фоне
 7. Создание `EmbeddedContextStore` + `TelemetryStore` — для системной телеметрии
@@ -966,7 +966,11 @@ User Input (TUI)
   - `Renderer`: DOM → markdown-подобный текст (заголовки `#`, ссылки `[text](url)`, списки `•`)
   - `Page`: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
   - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
-  - **10 unit-тестов**: извлечение текста, парсинг ссылок, заголовков, URL-резолвинг, удаление комментариев
+  - **11 unit-тестов**: извлечение текста, парсинг ссылок, заголовков, URL-резолвинг, удаление head/комментариев
+- **`BrowserBlock` (интеграция блока в ядро)**: `BrowserBlock` реализует `StatefulBlock` в `aios-browser/src/block.rs` и регистрируется при загрузке во всех бинарниках (`aios`, `aios-tui`, `aiosd`)
+  - IPC-команды: `browse` (загрузка и парсинг страницы, возвращает bincode-сериализованный `Page`), `open_native` (открыть URL в системном браузере через крейт `open`), `browser_status` (конфиг + состояние в JSON); поддерживается `HealthCheck`
+  - Не хранит постоянный рантайм — каждая навигация выполняется на выделенном однониточном Tokio-рантайме, безопасно и из sync-, и из async-контекста (без паники вложенного рантайма)
+  - Извлечение/восстановление состояния через bincode (`BrowserConfig` + `BlockState`)
 - **Крейт `aios-search`**: `SearchEngine` с мульти-бэкендным анонимным поиском + AI-суммаризация
   - `DuckDuckGoBackend`: POST на `html.duckduckgo.com/html/`, парсинг HTML-ответа
   - `SearXngBackend`: GET с `format=json`, парсинг JSON-ответа
@@ -1052,6 +1056,7 @@ User Input (TUI)
 | 1-4 | Прямой выбор вкладки |
 | q | Выход |
 | g | Открыть URL моста в браузере |
+| b | Открыть URL в системном браузере (режим ввода URL, команда уходит в браузерный блок через MessageRouter) |
 | r | Переопределить оборудование |
 | Space | Пауза/возобновление прокрутки логов |
 
@@ -1059,10 +1064,12 @@ User Input (TUI)
 1. Определение оборудования (CPU, RAM, GPU, ОС)
 2. Инициализация IPC-шины (SharedIpcBus)
 3. Создание Scheduler с RAM-ориентированной конфигурацией
-4. Инициализация BlockRegistry
+4. Инициализация BlockRegistry — регистрация базовых блоков (hal, ipc_bus, scheduler, browser), boot-обнаружение `AIOS_BLOCKS_DIR` (по умолчанию `./blocks`), регистрация IPC-обработчика браузерного блока в `MessageRouter`
 5. Настройка AccessControl + Watchdog
 6. Инициализация LLM Engine (облачный бэкенд по умолчанию)
 7. Инициализация WASM Executor (BlockExecutor)
 8. Создание BridgeContext со всеми подсистемами
 9. Запуск Bridge HTTP-сервера (axum, порт 8080)
 10. Запуск цикла событий TUI (или цикла демона)
+
+Браузер работает «из коробки» на новом компьютере: для запуска не нужны ни конфиг-файлы, ни установленный браузер, ни сеть — блок активен в топологии, доступен по IPC, а клавиша `b` открывает любой URL в системном браузере.

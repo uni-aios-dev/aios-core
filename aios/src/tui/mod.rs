@@ -4,7 +4,8 @@ mod ui;
 pub use app_state::TuiApp;
 pub use ui::draw;
 
-use crate::orchestrator::OrchestratorState;
+use crate::orchestrator::{push_log, OrchestratorState};
+use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -52,7 +53,48 @@ fn run(
     Ok(())
 }
 
+fn dispatch_open_url(app: &mut TuiApp, url: &str) {
+    let result = {
+        let mut state = app.state.lock().unwrap();
+        let packet = IpcPacket::new(
+            0,
+            state.browser_block_id.0,
+            CommandId::Custom,
+            Payload::Custom("open_native".into(), url.as_bytes().to_vec()),
+        );
+        state.router.dispatch(&packet)
+    };
+    match result {
+        Ok(Some(resp)) => {
+            let msg = match resp.payload {
+                Payload::Text(text) => text,
+                _ => "browser block: OK".to_string(),
+            };
+            push_log(&app.logs, format!("AIOS: browser: {msg}"));
+        }
+        Ok(None) => push_log(&app.logs, "AIOS: browser: no response".into()),
+        Err(e) => push_log(&app.logs, format!("AIOS: browser ERROR: {e}")),
+    }
+}
+
 fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
+    if app.browser_mode {
+        match key.code {
+            KeyCode::Esc => app.browser_mode = false,
+            KeyCode::Enter if !app.browser_url.is_empty() => {
+                let url = app.browser_url.clone();
+                app.browser_mode = false;
+                app.browser_url.clear();
+                dispatch_open_url(app, &url);
+            }
+            KeyCode::Char(c) => app.browser_url.push(c),
+            KeyCode::Backspace => {
+                app.browser_url.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
     match key.code {
         KeyCode::Char('q') if app.ai_input.is_empty() => {
             app.running = false;
@@ -60,6 +102,10 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Char('g') if app.ai_input.is_empty() => {
             let url = format!("http://localhost:{}", app.bridge_port);
             let _ = open::that(&url);
+        }
+        KeyCode::Char('b') if app.ai_input.is_empty() && !app.ai_mode => {
+            app.browser_mode = true;
+            app.browser_url.clear();
         }
         KeyCode::Char('r') if app.ai_input.is_empty() => {
             app.refresh_hw();

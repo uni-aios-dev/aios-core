@@ -593,7 +593,7 @@ Startup sequence:
 1. Initialize `env_logger`
 2. `HardwareProfile::detect()` — detect real hardware
 3. `AiTier::from_profile()` — classify AI capability
-4. Create `BlockRegistry` — load 3 blocks (hal, ipc_bus, scheduler)
+4. Create `BlockRegistry` — register 4 core blocks (hal, ipc_bus, scheduler, browser), boot-discover disk blocks from `AIOS_BLOCKS_DIR`, wire the browser block into the `MessageRouter`
 5. Create `Scheduler` — spawn 3 processes (ai_orchestrator, io_handler, health_monitor)
 6. Create `Watchdog` — start heartbeat thread in background
 7. Create `EmbeddedContextStore` + `TelemetryStore` — for system telemetry
@@ -972,7 +972,11 @@ Three adaptive AI modes depending on hardware resources:
   - `Renderer`: DOM → markdown-like text output (headings `#`, links `[text](url)`, lists `•`)
   - `Page` type: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
   - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
-  - **10 unit tests**: text extraction, link parsing, title extraction, URL resolution, comment stripping
+  - **11 unit tests**: text extraction, link parsing, title extraction, URL resolution, head/comment stripping
+- **`BrowserBlock` (kernel block integration)**: `BrowserBlock` implements `StatefulBlock` in `aios-browser/src/block.rs` and is registered at boot in all binaries (`aios`, `aios-tui`, `aiosd`)
+  - IPC commands: `browse` (fetch + parse a page, returns bincode-serialized `Page`), `open_native` (open URL in the OS default browser via the `open` crate), `browser_status` (config + state as JSON); `HealthCheck` supported
+  - Owns no persistent runtime — each navigation runs on a dedicated on-demand current-thread Tokio runtime, safe from both sync and async callers (no nested-runtime panic)
+  - State extract/restore via bincode (`BrowserConfig` + `BlockState`)
 - **`aios-search` crate**: `SearchEngine` with multi-backend anonymous search + AI summarization
   - `DuckDuckGoBackend`: POST to `html.duckduckgo.com/html/`, HTML response parsing
   - `SearXngBackend`: GET with `format=json`, JSON response parsing
@@ -1058,6 +1062,7 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 | 1-4 | Direct tab select |
 | q | Quit |
 | g | Open bridge URL in browser |
+| b | Open a URL in the native browser (URL input mode, dispatched to browser block via MessageRouter) |
 | r | Reprobe hardware |
 | Space | Pause/resume log scroll |
 
@@ -1065,10 +1070,12 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 1. Hardware probe (CPU, RAM, GPU, OS)
 2. Initialize IPC bus (SharedIpcBus)
 3. Create Scheduler with RAM-aware config
-4. Initialize BlockRegistry
+4. Initialize BlockRegistry — register core blocks (hal, ipc_bus, scheduler, browser), boot-discover `AIOS_BLOCKS_DIR` (default `./blocks`), register the browser IPC handler in the `MessageRouter`
 5. Setup AccessControl + Watchdog
 6. Initialize LLM Engine (cloud backend by default)
 7. Initialize WASM Executor (BlockExecutor)
 8. Create BridgeContext with all subsystems
 9. Spawn Bridge HTTP server (axum, port 8080)
 10. Start TUI event loop (or enter daemon loop)
+
+The browser works out of the box on a fresh machine: no config file, no installed browser, and no network are required to start — the block is active in the topology, dispatchable over IPC, and the `b` hotkey opens any URL in the OS default browser.

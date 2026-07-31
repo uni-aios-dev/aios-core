@@ -65,7 +65,7 @@ impl DuckDuckGoBackend {
             let abs_start = pos + start;
             let href_start = body[abs_start..]
                 .find(r#"href=""#)
-                .map(|i| abs_start + i + 7);
+                .map(|i| abs_start + i + 6);
             let href_end = href_start.and_then(|s| body[s..].find('"').map(|e| s + e));
             let href = href_end
                 .map(|e| &body[href_start.unwrap()..e])

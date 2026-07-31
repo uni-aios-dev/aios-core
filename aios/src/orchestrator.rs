@@ -1,12 +1,18 @@
 use crate::hw_probe::{self, HwProfile};
 use aios_block_mgr::registry::BlockRegistry;
+use aios_block_mgr::router::MessageRouter;
 use aios_bridge::server::{start_server, BridgeContext};
+use aios_browser::block::BrowserBlock;
+use aios_browser::types::BrowserConfig;
+use aios_core::block::BlockId;
+use aios_core::block::StatefulBlock;
 use aios_llm::{default_config, LlmEngine};
-use aios_wasm::executor::BlockExecutor;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_security::access_control::AccessControlLayer;
+use aios_wasm::executor::BlockExecutor;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -14,6 +20,8 @@ use std::time::Instant;
 pub struct OrchestratorState {
     pub hw_profile: HwProfile,
     pub bridge: Arc<BridgeContext>,
+    pub router: MessageRouter,
+    pub browser_block_id: BlockId,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
     pub logs: Arc<Mutex<Vec<String>>>,
@@ -70,7 +78,48 @@ pub async fn initialize(
         .with_max_restarts(5);
 
     push_log(&logs, "AIOS: initializing block registry...".into());
-    let registry = BlockRegistry::new();
+    let mut registry = BlockRegistry::new();
+
+    for (name, version, binary) in [
+        ("hal", "1.0.0", &b"hal-native-module"[..]),
+        ("ipc_bus", "1.0.0", &b"ipc_bus"[..]),
+        ("scheduler", "1.0.0", &b"scheduler"[..]),
+        ("browser", "0.1.0", &b"browser-native"[..]),
+    ] {
+        if let Ok(id) = registry.register_block(name, version, binary.to_vec()) {
+            let _ = registry.activate_block(id);
+        }
+    }
+    registry.set_block_dependencies("ipc_bus", vec!["hal".into()]);
+    registry.set_block_dependencies("scheduler", vec!["ipc_bus".into()]);
+
+    let blocks_dir = std::env::var("AIOS_BLOCKS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("blocks"));
+    let disk_results = registry.boot_discover(&blocks_dir);
+    push_log(
+        &logs,
+        format!(
+            "AIOS: registered {} core blocks, discovered {} disk blocks",
+            registry.count() - disk_results.len(),
+            disk_results.len()
+        ),
+    );
+
+    let browser_block_id = registry
+        .find_by_name("browser")
+        .map(|e| e.manifest.id)
+        .unwrap_or(BlockId::new(99));
+    let mut browser_block = BrowserBlock::new(browser_block_id, BrowserConfig::default());
+    let mut router = MessageRouter::new();
+    router.register_handler(
+        browser_block_id.0,
+        Box::new(move |packet| browser_block.handle_message(packet)),
+    );
+    push_log(
+        &logs,
+        format!("AIOS: browser block '{}' ready", browser_block_id),
+    );
 
     push_log(&logs, "AIOS: initializing access control...".into());
     let access_control = AccessControlLayer::new(b"aios_master_secret_2026".to_vec(), 86_400_000);
@@ -120,6 +169,8 @@ pub async fn initialize(
     Ok(OrchestratorState {
         hw_profile,
         bridge,
+        router,
+        browser_block_id,
         start_time: Instant::now(),
         bridge_running,
         logs,

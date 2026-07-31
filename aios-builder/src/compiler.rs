@@ -57,9 +57,9 @@ impl WorkflowCompiler {
             workflow.steps.len()
         ));
 
-        wat.push_str("  (func (export \"init\") (result i32)\n    i32.const 0\n  )\n");
+        wat.push_str("  (func (export \"init\"))\n");
 
-        wat.push_str("  (func (export \"start\") (result i32)\n    i32.const 1\n  )\n");
+        wat.push_str("  (func (export \"start\"))\n");
 
         wat.push_str(")\n");
         wat

@@ -105,3 +105,52 @@ As of v1.0.0, all 708 tests pass and clippy reports zero warnings.
 - **Root Cause:** The function skipped `COMPLETED:` marker lines but never collected the IDs from those markers to exclude matching entries. All entries with `status == "pending"` were returned regardless of whether they had been marked complete.
 - **Fix:** Collect completed IDs from `COMPLETED:` lines first, then filter entries by excluding those whose ID is in the completed set.
 - **Affected file:** `aios-persistence/src/recovery.rs:108-140`
+
+### BUG-013: Kernel (`aios`) booted with an empty block registry — no browser
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** On a fresh machine the kernel started with zero registered blocks; `aios-browser` was a plain library (no `StatefulBlock` impl), so no browser was available at boot and there was no auto-launch of the OS browser.
+- **Root Cause:** `aios/src/orchestrator.rs:73` created an empty `BlockRegistry`; the 3-block boot sequence existed only in `aios-tui`/`aiosd`; `BrowserEngine` never implemented `handle_message`.
+- **Fix:** Added `BrowserBlock` (`StatefulBlock`) in `aios-browser/src/block.rs`; kernel now registers hal/ipc_bus/scheduler/browser at boot, boot-discovers `AIOS_BLOCKS_DIR`, wires the browser handler into the `MessageRouter`, and the TUI `b` hotkey opens URLs in the OS default browser via the block.
+- **Affected files:** `aios-browser/src/block.rs`, `aios/src/orchestrator.rs`, `aios/src/tui/mod.rs`, `aios/src/tui/ui.rs`, `aios/src/tui/app_state.rs`, `aios-tui/src/main.rs`, `aios-daemon/src/main.rs`
+
+### BUG-014: DuckDuckGo search dropped first letter of result URLs
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** `test_duckduckgo_parse_results` failed — every result URL lost its leading `h` (e.g. `ttps://example.com`)
+- **Root Cause:** `DuckDuckGoBackend::parse_html_response` advanced past `href="` (6 chars) by 7
+- **Fix:** Offset corrected from `+7` to `+6`
+- **Affected file:** `aios-search/src/backends.rs:68`
+
+### BUG-015: HtmlParser::extract_text included <head>/<title> text
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** `test_html_parser_extract_text` failed — page text was `"Test Hello world"` instead of `"Hello world"`
+- **Root Cause:** `extract_text` stripped only `<script>`/`<style>` and tags, leaving `<head>`/`<title>` text in the body text
+- **Fix:** `extract_text` now strips `<head>...</head>` before tag removal; added `test_extract_text_strips_head`
+- **Affected file:** `aios-browser/src/html_parser.rs:22-36`
+
+### BUG-016: Chaos rapid-fire test asserted plaintext of redacted report
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** `test_chaos_reporter_rapid_fire` failed — `json.contains("event #0")` was false
+- **Root Cause:** Events with even indices used `zero_knowledge=true`, so `event #0` was SHA-256 hashed and never appeared in the JSON output
+- **Fix:** Assertions now check redaction semantics: `event #0` absent, `event #1`/`event #99` present, `"redacted":true` present
+- **Affected file:** `tests/chaos_test.rs:341-344`
+
+### BUG-017: WorkflowCompiler emitted init/start with a return value
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** `test_e2e_easylang_wasm_pipeline` failed — `result.functions_called` never contained `init`/`start`
+- **Root Cause:** `WorkflowCompiler::generate_wat` exported `init`/`start` with `(result i32)`, but `BlockExecutor::execute_block` invokes them with an empty results buffer; the calls errored (logged as warnings) and the functions were not recorded
+- **Fix:** `init`/`start` now export without a result, matching the executor contract and its unit fixtures
+- **Affected file:** `aios-builder/src/compiler.rs:60-62`
+
+### BUG-018: Bridge /api/v1/metrics never populated
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** `test_e2e_bridge_http_endpoints` failed — Prometheus text contained no `HELP`
+- **Root Cause:** `BridgeContext::metric_collector` was constructed but no handler recorded metrics, so `to_prometheus()` always returned an empty string
+- **Fix:** Added axum request middleware `record_metrics` that records `http_requests_total` (counter), `http_last_latency_ms` (gauge) and `http_request_latency_ms` (histogram) for every request
+- **Affected file:** `aios-bridge/src/server.rs`
+
+### BUG-019: Fault-tolerance test asserted mid-quantum preemption
+- **Status:** FIXED (v2.2.0)
+- **Symptom:** `test_fault_tolerance_scheduler_survives_crash` failed — "Replacement (high priority) should be next"
+- **Root Cause:** The scheduler continues the current process until its time-slice quota expires (time-slicing, no preemption), but the test scheduled once, then expected the newly spawned High process to run immediately while the current quantum was still active
+- **Fix:** The test now spawns the replacement before the final `schedule_next()`, matching the scheduler contract verified by `test_priority_scheduling`
+- **Affected file:** `tests/stress_fault_tolerance.rs:266-275`

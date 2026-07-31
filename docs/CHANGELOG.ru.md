@@ -1,6 +1,36 @@
 # Журнал разработки AIOS
 
-## v2.1.0 — Фаза 32: E2E-тесты, стресс-тесты, установщики (2026-07-30)
+## v2.2.0 — Фаза 33: Браузерный блок «из коробки» (2026-07-31)
+
+### `aios-browser`: Полноценный блок ядра (`BrowserBlock`)
+- Новый `BrowserBlock`, реализующий `StatefulBlock` (`aios-browser/src/block.rs`), экспортируется как `aios_browser::BrowserBlock`
+- IPC-команды: `browse` (загрузка и парсинг страницы, возвращает bincode-сериализованный `Page`), `open_native` (открыть URL в системном браузере через крейт `open`), `browser_status` (конфиг + состояние в JSON); поддерживается `HealthCheck`
+- Нет постоянного рантайма в поле — каждая навигация выполняется на выделенном однониточном Tokio-рантайме, безопасно и из sync-, и из async-контекста (исправлено падение при drop рантайма внутри async)
+- Извлечение/восстановление состояния через bincode (`BrowserConfig` + `BlockState`)
+- **7 новых unit-тестов** для `BrowserBlock`
+
+### Ядро (`aios`) — регистрация блоков при загрузке
+- Исправлено: ранее ядро запускалось с **пустым реестром блоков** (противоречие `docs/ARCHITECTURE.md`)
+- При загрузке регистрируются 4 базовых блока (hal, ipc_bus, scheduler, browser), boot-обнаружение блоков на диске из `AIOS_BLOCKS_DIR` (по умолчанию `./blocks`), браузерный блок подключён к `MessageRouter` (`OrchestratorState` получил поля `router` + `browser_block_id`)
+- Браузер работает «из коробки» на новом компьютере: не нужны ни конфиг, ни установленный браузер, ни сеть для запуска
+
+### TUI ядра — клавиша браузера
+- Новая клавиша `b`: режим ввода URL, `Enter` отправляет команду `open_native` в браузерный блок через `MessageRouter`, результат пишется в журнал событий
+- Добавлена строка ввода URL над строкой подсказок; строка подсказок обновлена (`[b] browse`)
+
+### `aios-tui` и `aiosd`
+- Оба бинарника теперь регистрируют браузерный блок при загрузке вместе с hal/ipc_bus/scheduler
+
+### Исправлены пред-существующие падения тестов
+- `tests/browser_search_tests.rs` `test_html_parser_extract_text` падал — `HtmlParser::extract_text` включал текст `<head>`/`<title>`; теперь вырезается `<head>...</head>` (только текст тела страницы), как в реальном браузере
+- `tests/browser_search_tests.rs` `test_duckduckgo_parse_results` падал — `DuckDuckGoBackend::parse_html_response` использовал смещение `+7` после `href="` (6 символов), теряя начальную `h` у каждого URL; исправлено на `+6`
+- Добавлен unit-тест `test_extract_text_strips_head` (всего в aios-browser: 18)
+- `tests/chaos_test.rs` `test_chaos_reporter_rapid_fire` падал — ассертил плейнтекст `event #0` для отчёта, заред актированного через zero-knowledge (чётные индексы); ассерты теперь проверяют редактирование (`event #0` отсутствует, `event #1`/`event #99` присутствуют, `"redacted":true` присутствует)
+- `tests/e2e_pipeline_test.rs` `test_e2e_easylang_wasm_pipeline` падал — `WorkflowCompiler::generate_wat` генерил `init`/`start` с `(result i32)`, а `BlockExecutor::execute_block` вызывает их с пустым буфером результатов, поэтому вызовы падали и `functions_called` не содержал `init`/`start`; `init`/`start` теперь экспортируются без результата (в соответствии с контрактом исполнителя и его unit-фикстурами)
+- `tests/e2e_pipeline_test.rs` `test_e2e_bridge_http_endpoints` падал — `MetricCollector` моста нигде не заполнялся, поэтому `/api/v1/metrics` всегда возвращал пустой Prometheus-текст (без строк `# HELP`); добавлен axum-middleware, записывающий счётчик `http_requests_total`, gauge `http_last_latency_ms` и гистограмму `http_request_latency_ms` для каждого запроса
+- `tests/stress_fault_tolerance.rs` `test_fault_tolerance_scheduler_survives_crash` падал — ассертил, что high-priority replacement запланируется сразу, но шедулер продолжает текущий процесс до истечения кванта (time-slicing, без вытеснения на середине кванта — тот же контракт, что в `test_priority_scheduling`); тест теперь планирует после спавна replacement
+
+
 
 ### Сквозные интеграционные тесты (`tests/e2e_pipeline_test.rs`)
 - HW & Core Probe: проверка профиля mock_modern (модель CPU, ядра, RAM, AI tier, сериализация)

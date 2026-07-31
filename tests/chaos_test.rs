@@ -338,8 +338,10 @@ fn test_chaos_reporter_rapid_fire() {
     assert_eq!(cr.report_count(), 100);
     let json = cr.to_json();
     assert!(json.len() > 100);
-    assert!(json.contains("event #0"));
+    assert!(!json.contains("event #0"));
+    assert!(json.contains("event #1"));
     assert!(json.contains("event #99"));
+    assert!(json.contains("\"redacted\":true"));
 }
 
 // ============================================================

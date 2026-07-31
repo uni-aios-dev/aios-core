@@ -15,15 +15,16 @@ use aios_telemetry::{FlightRecorder, MetricCollector, TraceContext};
 use aios_watchdog::watchdog::Watchdog;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tower_http::services::ServeDir;
 
@@ -97,6 +98,10 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/crash-report", post(crash_report_handler))
         .route("/ws/telemetry", get(ws_handler))
         .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            record_metrics,
+        ))
         .with_state(state)
         .fallback_service(ServeDir::new("aios-studio"));
 
@@ -110,6 +115,18 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .map_err(|e| BridgeError::ServerError(format!("Server error: {e}")))?;
 
     Ok(())
+}
+
+async fn record_metrics(State(state): State<SharedState>, req: Request, next: Next) -> Response {
+    let started = Instant::now();
+    let response = next.run(req).await;
+    let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+    if let Ok(mut collector) = state.metric_collector.lock() {
+        collector.increment_counter("http_requests_total", 1);
+        collector.set_gauge("http_last_latency_ms", latency_ms);
+        collector.observe_histogram("http_request_latency_ms", latency_ms);
+    }
+    response
 }
 
 async fn health_handler(State(state): State<SharedState>) -> Json<HealthResponse> {

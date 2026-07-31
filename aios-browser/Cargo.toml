@@ -13,6 +13,8 @@ reqwest = { version = "0.12", features = ["json"] }
 tokio = { workspace = true }
 url = "2"
 regex-lite = "0.1"
+bincode = { workspace = true }
+open = "5"
 
 [dev-dependencies]
 tempfile = "3"

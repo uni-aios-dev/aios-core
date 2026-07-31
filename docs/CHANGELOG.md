@@ -1,6 +1,36 @@
 # AIOS Development Log
 
-## v2.1.0 — Phase 32: E2E Tests, Stress Tests, Installers (2026-07-30)
+## v2.2.0 — Phase 33: Browser Block Out of the Box (2026-07-31)
+
+### `aios-browser`: First-Class Kernel Block (`BrowserBlock`)
+- New `BrowserBlock` implementing `StatefulBlock` (`aios-browser/src/block.rs`), exported as `aios_browser::BrowserBlock`
+- IPC commands: `browse` (fetch + parse page, returns bincode-serialized `Page`), `open_native` (open URL in OS default browser via `open` crate), `browser_status` (config + state as JSON); `HealthCheck` supported
+- No persistent runtime field — each navigation runs on a dedicated on-demand current-thread Tokio runtime, safe from both sync and async callers (fixes runtime-drop panic inside async contexts)
+- State extract/restore via bincode (`BrowserConfig` + `BlockState`)
+- **7 new unit tests** for `BrowserBlock`
+
+### Kernel (`aios`) — Blocks Registered at Boot
+- Fixed: kernel previously booted with an **empty block registry** (contradicting `docs/ARCHITECTURE.md`)
+- Boot now registers 4 core blocks (hal, ipc_bus, scheduler, browser), boot-discovers disk blocks from `AIOS_BLOCKS_DIR` (default `./blocks`), and wires the browser block into the `MessageRouter` (`OrchestratorState` gains `router` + `browser_block_id`)
+- Browser works out of the box on a fresh machine: no config file, no installed browser, no network needed to start
+
+### Kernel TUI — Browser Hotkey
+- New `b` hotkey: URL input mode, `Enter` dispatches `open_native` to the browser block via `MessageRouter`, result logged to Events
+- Browser URL prompt line added above the help bar; help bar updated (`[b] browse`)
+
+### `aios-tui` & `aiosd`
+- Both binaries now register the browser block at boot alongside hal/ipc_bus/scheduler
+
+### Pre-existing test failures fixed
+- `tests/browser_search_tests.rs` `test_html_parser_extract_text` failed — `HtmlParser::extract_text` included `<head>`/`<title>` text; now strips `<head>...</head>` (page body text only), matching real browser rendering
+- `tests/browser_search_tests.rs` `test_duckduckgo_parse_results` failed — `DuckDuckGoBackend::parse_html_response` used offset `+7` after `href="` (6 chars), dropping the leading `h` from every URL; corrected to `+6`
+- Added unit test `test_extract_text_strips_head` (aios-browser total: 18)
+- `tests/chaos_test.rs` `test_chaos_reporter_rapid_fire` failed — asserted plaintext `event #0` for a report that was deliberately zero-knowledge redacted (even indices); assertions now verify redaction (`event #0` absent, `event #1`/`event #99` present, `"redacted":true` present)
+- `tests/e2e_pipeline_test.rs` `test_e2e_easylang_wasm_pipeline` failed — `WorkflowCompiler::generate_wat` emitted `init`/`start` with `(result i32)` while `BlockExecutor::execute_block` calls them with an empty results buffer, so the calls errored and `functions_called` never contained `init`/`start`; `init`/`start` now export without a result (matching the executor contract and its unit fixtures)
+- `tests/e2e_pipeline_test.rs` `test_e2e_bridge_http_endpoints` failed — the bridge `MetricCollector` was never recorded anywhere, so `/api/v1/metrics` always returned an empty Prometheus text (no `# HELP` lines); added an axum request middleware that records `http_requests_total` counter, `http_last_latency_ms` gauge and `http_request_latency_ms` histogram for every request
+- `tests/stress_fault_tolerance.rs` `test_fault_tolerance_scheduler_survives_crash` failed — asserted the high-priority replacement was scheduled immediately, but the scheduler continues the current process until its quantum expires (time-slicing, no mid-quantum preemption — same contract as `test_priority_scheduling`); test now schedules after spawning the replacement
+
+
 
 ### End-to-End Pipeline Integration Tests (`tests/e2e_pipeline_test.rs`)
 - HW & Core Probe: mock_modern profile validation (CPU model, cores, RAM, AI tier, serialization)

@@ -327,6 +327,12 @@
   - [x] Prometheus-compatible `/api/v1/metrics` endpoint
   - [x] `GET /api/v1/traces` and `POST /api/v1/crash-report` REST endpoints
 
+- [x] **Phase 33: Browser Block Out of the Box — COMPLETE**
+  - [x] `BrowserBlock` implementing `StatefulBlock` in `aios-browser` (IPC: `browse`, `open_native`, `browser_status`, `HealthCheck`)
+  - [x] Kernel (`aios`) registers hal/ipc_bus/scheduler/browser at boot + boot-discovers `AIOS_BLOCKS_DIR` + wires browser handler into `MessageRouter`
+  - [x] Kernel TUI `b` hotkey — open any URL in the OS default browser via the browser block
+  - [x] Browser works out of the box on a fresh machine (no config, no installed browser, no network needed)
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

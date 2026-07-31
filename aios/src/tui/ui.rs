@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
             Constraint::Length(3),
             Constraint::Length(2),
             Constraint::Min(10),
-            Constraint::Length(6),
+            Constraint::Length(7),
         ])
         .split(area);
 
@@ -384,14 +384,44 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .style(Style::default().fg(Color::DarkGray));
 
     let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-4] goto  [g] browser  [r] reprobe  [Space] pause  [q] quit ",
+        " [Tab/F1] tabs  [1-4] goto  [g] dashboard  [b] browse  [r] reprobe  [Space] pause  [q] quit ",
     )]);
     let help_style = Style::default().fg(Color::DarkGray).bg(Color::Black);
 
+    let browser_line = if app.browser_mode {
+        Line::from(vec![
+            Span::styled(
+                " URL: ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.browser_url.clone(), Style::default().fg(Color::Green)),
+            Span::raw("  [Enter] open in browser  [Esc] cancel"),
+        ])
+    } else {
+        Line::from(Span::raw(
+            " [b] Open a URL in the native browser (e.g. https://example.com) ",
+        ))
+    };
+    let browser_style = if app.browser_mode {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray).bg(Color::Black)
+    };
+
     let log_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(area);
     frame.render_widget(list, log_chunks[0]);
-    frame.render_widget(Paragraph::new(help).style(help_style), log_chunks[1]);
+    frame.render_widget(
+        Paragraph::new(browser_line).style(browser_style),
+        log_chunks[1],
+    );
+    frame.render_widget(Paragraph::new(help).style(help_style), log_chunks[2]);
 }
