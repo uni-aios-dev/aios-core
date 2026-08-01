@@ -343,6 +343,14 @@
   - [x] TUI hotkey `W` (both `aios-tui` and kernel `aios`) launches the GUI dashboard
   - [ ] Future: embed the webview as an in-window child of the egui tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
 
+- [x] **Phase 35: WHATWG HTML Rendering & Web Tab Navigation in TUI — COMPLETE**
+  - [x] `HtmlParser` rebuilt on `scraper`/html5ever — structured text (headings `#`, lists `•`/`1.`, tables `|`, `pre`, `hr`, images `[alt]`), WHATWG-compliant
+  - [x] Link resolution against the page base URL + dedupe + non-web scheme filtering + root URL canonicalization (no trailing slash)
+  - [x] `Renderer` adapted to the real DOM tree from html5ever
+  - [x] `WebState.history` — back navigation in the Web tab (`b`)
+  - [x] Page text scroll keys `u`/`d` (±1 line) and `PageUp`/`PageDown` (±20 lines) with a scroll indicator `X–Y`
+  - [x] Page pane renders through the visible height with wrapping (no overflow)
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

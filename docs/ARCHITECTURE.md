@@ -552,12 +552,12 @@ Ratatui-based TUI with 7-tab interactive layout:
 
 **Tab 6 — Web** (vertical split):
 - Omnibox input bar (accepts a full URL, a bare host, or a plain search query — queries run through DuckDuckGo) with focus indicator
-- Page text content display area
-- Scrollable links list with selection (`>>` indicator)
+- Page text content display area (WHATWG-compliant rendering via html5ever: headings `#`, lists `•`/`1.`, `pre` preserved, tables `|`, `hr`, images as `[alt]`)
+- Scrollable links list with selection (`>>` indicator); links resolved against the page base URL, deduplicated, non-web schemes (`javascript:`, `mailto:`, `#anchor`) filtered
 - Background fetching via reqwest blocking + HtmlParser from aios-browser; DuckDuckGo search results are rendered as a page
-- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll
+- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll, history (Vec<String>)
 - `PageContent` struct: url, title, text, links Vec<(String,String)>
-- Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `Esc`=unfocus
+- Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `b`=back in history, `u/d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
 
 **Tab 7 — Shell** (vertical split):
 - Command input line with prompt indicator
@@ -583,7 +583,7 @@ Ratatui-based TUI with 7-tab interactive layout:
 - Dependency snapshot (`DependencySnapshot`) for Deps tab
 - Log buffer (capped at 100 entries)
 - Scheduler + Registry synchronization
-- Web state: url_input, current_url, page, loading, error, input_focused, scroll
+- Web state: url_input, current_url, page, loading, error, input_focused, scroll, history
 - Help overlay visibility (shown/hidden)
 - Shell state: input_buffer, output (Vec<String>), command_history, history_pos
 
@@ -602,7 +602,7 @@ Startup sequence:
 10. Event loop: poll key events, redraw dashboard, sync watchdog state
 11. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `W`=Launch GUI dashboard, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=omnibox focus, `o`/`Enter`=Open link, `Esc`=unfocus
+Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `W`=Launch GUI dashboard, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=omnibox focus, `o`/`Enter`=Open link, `b`=back in history, `u`/`d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
 
 ### Native WebView Browser (`aios-webview`)
 
@@ -981,12 +981,12 @@ Three adaptive AI modes depending on hardware resources:
 
 ### Phase 25: Secure Web Surfing & Search (`aios-browser` & `aios-search`) — *COMPLETED*
 - **`aios-browser` crate**: `BrowserEngine` with `navigate(url)` → fetches HTML via `reqwest`, parses via `HtmlParser`, renders to text via `Renderer`
-  - `HtmlParser`: extracts text content, links, title; strips `<script>`, `<style>`, HTML comments
+  - `HtmlParser`: built on `scraper`/html5ever (WHATWG-compliant) — extracts text content, links, title; structures output with headings `#`/`###`, lists `•`/`1.`, `pre`/`br` preserved, table rows `|`, `hr`, images as `[alt]`; strips `<script>`, `<style>`, `<head>`, `<iframe>` and hidden elements; links resolved against the page base URL and deduplicated, non-web schemes filtered
   - `NetworkClient`: configurable user-agent, timeout, redirect limit; capability-based sandboxed network
   - `Renderer`: DOM → markdown-like text output (headings `#`, links `[text](url)`, lists `•`)
   - `Page` type: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
   - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
-  - **11 unit tests**: text extraction, link parsing, title extraction, URL resolution, head/comment stripping
+  - **28 unit tests**: text extraction, link parsing, title extraction, URL resolution, head/comment stripping, structured layout
 - **`BrowserBlock` (kernel block integration)**: `BrowserBlock` implements `StatefulBlock` in `aios-browser/src/block.rs` and is registered at boot in all binaries (`aios`, `aios-tui`, `aiosd`)
   - IPC commands: `browse` (fetch + parse a page, returns bincode-serialized `Page`), `open_native` (open URL in the OS default browser via the `open` crate), `browser_status` (config + state as JSON); `HealthCheck` supported
   - Owns no persistent runtime — each navigation runs on a dedicated on-demand current-thread Tokio runtime, safe from both sync and async callers (no nested-runtime panic)

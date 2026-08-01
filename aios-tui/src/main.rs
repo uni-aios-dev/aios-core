@@ -81,9 +81,17 @@ fn load_url(state: &mut DashboardState, url: &str) {
     if url.is_empty() {
         return;
     }
+    let prev = state.web_state.current_url.clone();
+    if !prev.is_empty()
+        && prev != url
+        && state.web_state.history.last().map(String::as_str) != Some(url.as_str())
+    {
+        state.web_state.history.push(prev);
+    }
     state.web_state.loading = true;
     state.web_state.page = None;
     state.web_state.error = None;
+    state.web_state.scroll = 0;
     state.add_log(format!("Navigating to: {url}"));
     match fetch_url(&url) {
         Ok(page) => {
@@ -120,10 +128,18 @@ fn navigate_web(state: &mut DashboardState, raw: &str) {
         state.add_log(format!("Searching for: {raw}"));
         match search_web(raw) {
             Ok(page) => {
+                let prev = state.web_state.current_url.clone();
+                if !prev.is_empty()
+                    && prev != page.url
+                    && state.web_state.history.last().map(String::as_str) != Some(page.url.as_str())
+                {
+                    state.web_state.history.push(prev);
+                }
                 state.web_state.url_input.clear();
                 state.web_state.current_url = page.url.clone();
                 state.web_state.search_query = raw.to_string();
                 state.web_state.page = Some(page);
+                state.web_state.scroll = 0;
                 state.add_log("Search done".to_string());
             }
             Err(e) => {
@@ -144,6 +160,29 @@ fn open_selected_link(state: &mut DashboardState) {
     if let Some(href) = href {
         load_url(state, &href);
     }
+}
+
+/// Pop the last visited page from the web tab history and navigate back to it.
+fn web_go_back(state: &mut DashboardState) {
+    match state.web_state.history.pop() {
+        Some(prev) => {
+            state.add_log(format!("Web: back to {prev}"));
+            load_url(state, &prev);
+        }
+        None => state.add_log("Web: no history to go back to".into()),
+    }
+}
+
+/// Scroll the web page content one line (`dir` = +1 down, -1 up).
+fn web_scroll(state: &mut DashboardState, dir: isize) {
+    let max = state
+        .web_state
+        .page
+        .as_ref()
+        .map(|p| p.text.lines().count().saturating_sub(2))
+        .unwrap_or(0);
+    let next = state.web_state.scroll as isize + dir;
+    state.web_state.scroll = next.clamp(0, max as isize) as usize;
 }
 
 fn execute_shell_cmd(
@@ -773,6 +812,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('o') | KeyCode::Enter => {
                             if state.selected_tab == 5 {
                                 open_selected_link(&mut state);
+                            }
+                        }
+                        KeyCode::Char('b') => {
+                            if state.selected_tab == 5 {
+                                web_go_back(&mut state);
+                            }
+                        }
+                        KeyCode::Char('u') => {
+                            if state.selected_tab == 5 {
+                                web_scroll(&mut state, -1);
+                            }
+                        }
+                        KeyCode::Char('d') => {
+                            if state.selected_tab == 5 {
+                                web_scroll(&mut state, 1);
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            if state.selected_tab == 5 {
+                                web_scroll(&mut state, -20);
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if state.selected_tab == 5 {
+                                web_scroll(&mut state, 20);
                             }
                         }
                         KeyCode::Char('r') => {

@@ -2,7 +2,12 @@
 
 ## Current: None (Clean Build)
 
-As of v1.0.0, all 708 tests pass and clippy reports zero warnings.
+As of v2.2.5, all 1045 tests pass and clippy reports zero warnings.
+
+### KNOWN LIMITATION: TUI Web tab renders text only
+- **Status:** BY DESIGN
+- **Symptom:** The terminal Web tab cannot render CSS/JS/images — pages are shown as structured text (headings `#`, lists `•`/`1.`, tables `|`, `hr`, images as `[alt]`)
+- **Note:** This is an inherent terminal limitation, not a regression. For full-fidelity browsing use the native browser: press `W` in any TUI or open the GUI **Browser** tab (F7)
 
 ## Historical Issues (Fixed)
 

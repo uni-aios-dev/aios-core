@@ -71,6 +71,8 @@ pub struct WebState {
     pub error: Option<String>,
     pub input_focused: bool,
     pub scroll: usize,
+    /// Previously visited URLs, newest last; `b` pops back to the previous one.
+    pub history: Vec<String>,
 }
 
 pub struct ProcessSnapshot {
@@ -174,6 +176,7 @@ impl DashboardState {
                 error: None,
                 input_focused: false,
                 scroll: 0,
+                history: Vec::new(),
             },
             page_cache: Arc::new(Mutex::new(None)),
             shell_state: ShellState::default(),
@@ -1294,11 +1297,12 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .block(Block::default().borders(Borders::ALL).title(" Loading "));
         f.render_widget(loading, chunks[1]);
     } else if let Some(ref page) = ws.page {
+        let visible = chunks[1].height.saturating_sub(2) as usize;
         let lines: Vec<Line> = page
             .text
             .lines()
             .skip(ws.scroll)
-            .take(20)
+            .take(visible)
             .map(|l| {
                 Line::from(Span::styled(
                     format!("  {l}"),
@@ -1306,12 +1310,24 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                 ))
             })
             .collect();
-        let content =
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(format!(
-                " {} — {} links ",
-                page.title,
-                page.links.len()
-            )));
+        let total = page.text.lines().count();
+        let scroll_hint = if total > visible {
+            format!(
+                "  — {} links · u/d scroll {}–{}  ",
+                page.links.len(),
+                ws.scroll,
+                ws.scroll.saturating_add(visible)
+            )
+        } else {
+            format!("  — {} links  ", page.links.len())
+        };
+        let content = Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" {} — {}", page.title, scroll_hint)),
+            );
         f.render_widget(content, chunks[1]);
     } else {
         let placeholder = Paragraph::new(vec![
@@ -1377,7 +1393,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let link_list = List::new(link_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Links — o/Enter: open selected j/k: navigate "),
+            .title(" Links — o/Enter: open  j/k: navigate  b: back "),
     );
     f.render_widget(link_list, chunks[2]);
 }
@@ -1472,6 +1488,8 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
         Line::from(Span::raw("  Enter      — Search / navigate in omnibox")),
         Line::from(Span::raw("  o / Enter  — Open selected link")),
         Line::from(Span::raw("  j/k        — Navigate links")),
+        Line::from(Span::raw("  u/d        — Scroll page content")),
+        Line::from(Span::raw("  b          — Go back in history")),
         Line::from(Span::raw("  Esc        — Unfocus omnibox")),
         Line::from(Span::raw("")),
         Line::from(Span::styled(

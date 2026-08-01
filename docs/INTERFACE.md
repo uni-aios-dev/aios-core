@@ -80,6 +80,9 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `Enter` | Search / navigate (when omnibox focused); the omnibox auto-unfocuses after `Enter` |
 | `o` / `Enter` | Open selected link (when omnibox not focused) |
 | `j` / `k` | Move link selection down / up |
+| `b` | Go back to the previously visited page |
+| `u` / `d` | Scroll page text up / down by 1 line |
+| `PageUp` / `PageDown` | Scroll page text up / down by 20 lines |
 | `Esc` | Unfocus omnibox |
 
 ### Shell Tab Keys (when Shell tab is active)

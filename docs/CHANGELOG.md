@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## v2.2.5 — WHATWG-compliant HTML rendering in the TUI Web tab (2026-08-01)
+
+### `aios-browser`: HtmlParser rebuilt on `scraper`/html5ever
+- The old regex-based HTML parser was replaced with a **WHATWG-compliant** `html5ever` pipeline (`scraper` 0.21 + `ego-tree` 0.9; most deps were already in the lockfile through `wry` → `dom_query`, so the footprint grew minimally)
+- Text extraction is now **structured**: headings become `#`/`###`, lists `•`/`1.`, `pre`/`br` preserve formatting, table rows use `|`, `hr` renders as a rule, images render as `[alt]`; `<script>`, `<style>`, `<head>`, `<iframe>` and hidden elements are skipped
+- Link extraction resolves every `href` against the page base URL (protocol-relative and relative links now work), deduplicates, and filters non-web schemes (`javascript:`, `mailto:`, `tel:`, `#anchor`); root URLs are canonicalized without the trailing slash
+- **28 unit tests** (up from 21) covering text extraction, links, titles, script stripping and structured layout
+
+### `aios-tui`: Web tab navigation & rendering
+- `WebState` gains `history: Vec<String>` — the previously visited URL is remembered before every navigation
+- New keys on the Web tab: `b` = back in history, `u`/`d` = scroll the page text ±1 line, `PageUp`/`PageDown` = ±20 lines
+- The page text area renders through the visible window height with wrapping (`Wrap { trim: false }`) and a scroll indicator `X–Y` in the title; the links window title documents the full key set
+- `draw_web` no longer overflows the page pane; F1 help lists the new keys
+
 ## v2.2.4 — Full-featured native browser (WebView) + GUI dashboard hotkey (2026-08-01)
 
 ### New crate: `aios-webview` — real browser engine
