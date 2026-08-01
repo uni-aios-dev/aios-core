@@ -55,9 +55,7 @@ impl PanicHandler {
 
             reporter.lock().unwrap().generate_report(
                 CrashKind::Panic,
-                std::thread::current()
-                    .name()
-                    .unwrap_or("unknown"),
+                std::thread::current().name().unwrap_or("unknown"),
                 &message,
                 "panic stack not captured",
                 &fr_dump,

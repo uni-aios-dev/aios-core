@@ -22,6 +22,7 @@ aios-search = { path = "../aios-search" }
 aios-browser = { path = "../aios-browser" }
 aios-context = { path = "../aios-context" }
 aios-debug = { path = "../aios-debug" }
+aios-webview = { path = "../aios-webview" }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }

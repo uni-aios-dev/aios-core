@@ -53,6 +53,7 @@ cargo run --bin aios-tui
 | `r` | Refresh data |
 | `s` | Show telemetry |
 | `x` | Show status |
+| `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
 | `q` | Quit |
 | `F1` or `?` | Toggle help overlay |
 | `:` | Enter command mode in Shell tab |
@@ -140,6 +141,7 @@ cargo run --bin aios
 | `Alt`+`1`-`4` | Direct tab select even while the browser URL prompt or the AI query line is active |
 | `g` | Open bridge dashboard URL (`http://localhost:8080`) in the browser |
 | `b` | Open a URL or search query in the native browser (input mode) |
+| `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
 | `r` | Reprobe hardware |
 | `Space` | Pause/resume event log |
 | `q` | Quit |
@@ -169,9 +171,9 @@ cargo run --bin aios-gui
 │ Marketpl.│     (changes per selected tab)            │
 │ Metrics  │                                           │
 │ Deps     │                                           │
-│          │───────────────────────────────────────────│
-│ ──────── │  F1-F6 tabs | AIOS Dashboard              │  ← Bottom bar
-│ Quick    │
+│ Browser  │                                           │
+│ ──────── │───────────────────────────────────────────│
+│ Quick    │  F1-F7 tabs | AIOS Dashboard              │  ← Bottom bar
 │ Actions  │
 └──────────┴───────────────────────────────────────────┘
   Sidebar          Main area
@@ -181,7 +183,7 @@ cargo run --bin aios-gui
 
 | Key | Action |
 |-----|--------|
-| `F1`-`F6` | Switch tab |
+| `F1`-`F7` | Switch tab |
 | `j` | Move selection down |
 | `k` | Move selection up |
 
@@ -226,6 +228,12 @@ cargo run --bin aios-gui
 - **Summary**: block count + edge count
 - **Load Order**: visual chain (block A → block B → block C)
 - **Table**: Block name, Depends On, Depended By
+
+#### Browser (F7)
+- **Omnibox**: type a full URL (`https://...`), a bare host (`example.com`), or a plain search query (`rust scheduler`) — Enter resolves and loads it
+- **Navigation buttons**: Back, Forward; **Open Browser** / **Close** toggle
+- **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript and history support; the first navigation opens the window automatically
+- **Status line**: shows the resolved target or the last action/error
 
 ### Theming
 

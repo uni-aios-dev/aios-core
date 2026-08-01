@@ -66,6 +66,10 @@ pub struct AiosApp {
     pub dep_load_order: Vec<String>,
     pub dep_edges: Vec<(String, String)>,
 
+    pub browser: Option<aios_webview::WebBrowser>,
+    pub browser_addr: String,
+    pub browser_status: Option<String>,
+
     pub uptime_secs: u64,
 }
 
@@ -107,6 +111,9 @@ impl AiosApp {
             dep_blocks,
             dep_load_order,
             dep_edges,
+            browser: None,
+            browser_addr: String::new(),
+            browser_status: None,
             uptime_secs: 0,
         }
     }
@@ -177,6 +184,69 @@ impl AiosApp {
     pub fn uninstall_block(&mut self, name: String) {
         self.add_log(format!("Uninstalling block: {name}"));
         self.marketplace_status = Some(format!("Uninstalled {name}"));
+    }
+
+    pub fn browser_active(&self) -> bool {
+        self.browser.is_some()
+    }
+
+    pub fn open_browser(&mut self) -> Result<(), String> {
+        if self.browser.is_some() {
+            return Ok(());
+        }
+        let target = aios_webview::resolve_target(self.browser_addr.trim());
+        let browser = aios_webview::WebBrowser::open(&target)?;
+        self.browser = Some(browser);
+        self.browser_status = Some(format!("Opened: {target}"));
+        self.add_log(format!("Browser opened: {target}"));
+        Ok(())
+    }
+
+    pub fn navigate_browser(&mut self, input: &str) -> Result<(), String> {
+        let target = aios_webview::resolve_target(input);
+        match self.browser.as_ref() {
+            Some(browser) => {
+                browser.navigate(&target)?;
+                self.browser_status = Some(format!("Navigate: {target}"));
+            }
+            None => {
+                let browser = aios_webview::WebBrowser::open(&target)?;
+                self.browser = Some(browser);
+                self.browser_status = Some(format!("Opened: {target}"));
+            }
+        }
+        self.add_log(format!("Browser -> {target}"));
+        Ok(())
+    }
+
+    pub fn browser_back(&mut self) -> Result<(), String> {
+        match self.browser.as_ref() {
+            Some(browser) => {
+                browser.back()?;
+                self.browser_status = Some("History: back".into());
+                Ok(())
+            }
+            None => Err("Browser is not open".into()),
+        }
+    }
+
+    pub fn browser_forward(&mut self) -> Result<(), String> {
+        match self.browser.as_ref() {
+            Some(browser) => {
+                browser.forward()?;
+                self.browser_status = Some("History: forward".into());
+                Ok(())
+            }
+            None => Err("Browser is not open".into()),
+        }
+    }
+
+    pub fn close_browser(&mut self) {
+        if self.browser.is_some() {
+            self.browser = None;
+            self.browser_status = Some("Browser closed".into());
+            self.add_log("Browser closed".into());
+        }
     }
 
     fn move_selection_up(&mut self) {
@@ -290,7 +360,7 @@ impl eframe::App for AiosApp {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(
-                        "F1=Overview F2=Processes F3=Blocks F4=Marketplace F5=Metrics F6=Deps",
+                        "F1=Overview F2=Processes F3=Blocks F4=Marketplace F5=Metrics F6=Deps F7=Browser",
                     )
                     .color(theme.text_dim)
                     .size(11.0),
@@ -322,6 +392,7 @@ impl eframe::App for AiosApp {
                     ("\u{1f4e6} Marketplace", 3),
                     ("\u{2630} Metrics", 4),
                     ("\u{2913} Deps", 5),
+                    ("\u{1f310} Browser", 6),
                 ];
 
                 for (label, idx) in tabs {
@@ -402,6 +473,7 @@ impl eframe::App for AiosApp {
                 3 => tabs::marketplace::show(ui, self, &theme),
                 4 => tabs::metrics::show(ui, self, &theme),
                 5 => tabs::deps::show(ui, self, &theme),
+                6 => tabs::web::show(ui, self, &theme),
                 _ => tabs::overview::show(ui, self, &theme),
             });
 
@@ -420,6 +492,7 @@ impl eframe::App for AiosApp {
                         egui::Key::F4 => self.selected_tab = 3,
                         egui::Key::F5 => self.selected_tab = 4,
                         egui::Key::F6 => self.selected_tab = 5,
+                        egui::Key::F7 => self.selected_tab = 6,
                         egui::Key::J => self.move_selection_down(),
                         egui::Key::K => self.move_selection_up(),
                         _ => {}
@@ -552,5 +625,25 @@ mod tests {
         );
         app.install_block("my-block".into());
         assert!(app.log_messages.last().unwrap().contains("Installing"));
+    }
+
+    #[test]
+    fn test_browser_closed_actions_error() {
+        let mut app = AiosApp::new(
+            AiTier::Tier1,
+            HardwareProfile::mock_modern(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            4096,
+        );
+        assert!(!app.browser_active());
+        assert!(app.browser_back().is_err());
+        assert!(app.browser_forward().is_err());
+        app.browser_status = None;
+        app.close_browser();
+        assert!(app.browser_status.is_none());
+        assert!(!app.browser_active());
     }
 }

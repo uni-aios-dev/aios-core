@@ -99,6 +99,16 @@ As of v1.0.0, all 708 tests pass and clippy reports zero warnings.
 - **Fix:** Watchdog heartbeat thread now runs in background during TUI session; dashboard header shows live watchdog state
 - **Affected files:** `aios-tui/src/main.rs`, `aios-tui/src/dashboard.rs`
 
+### RISK-005: WebView runs on a background thread — macOS incompatible
+- **Description:** `WebBrowser` in `aios-webview` runs the winit event loop on a background thread; on macOS winit/wry require the event loop on the main thread
+- **Impact:** Browser window will not open on macOS builds
+- **Mitigation:** Documented; not addressed. On macOS spawn the webview from the app's main thread or use `build_as_child` inside the egui window (see TODO Phase 34)
+
+### RISK-006: GUI Browser is a companion window, not embedded
+- **Description:** The GUI Browser tab opens the webview in a separate OS window next to the egui dashboard rather than as a child viewport of the tab
+- **Impact:** Cosmetic UX gap — window focus/navigation differs from an embedded browser
+- **Mitigation:** Future work: `build_as_child` on Windows/macOS/X11 to render inside the egui tab (see TODO Phase 34)
+
 ### BUG-012: Recovery log get_pending_entries ignores completed IDs
 - **Status:** FIXED (v1.0.0)
 - **Symptom:** `test_recovery_log_pending` fails — `get_pending_entries()` returns completed entries instead of filtering them out

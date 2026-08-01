@@ -778,6 +778,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('r') => {
                             state.add_log("System refreshed".into());
                         }
+                        KeyCode::Char('W') => match aios_webview::launcher::launch_gui() {
+                            Ok(path) => {
+                                state.add_log(format!("GUI dashboard launched: {}", path.display()))
+                            }
+                            Err(e) => state.add_log(format!("GUI launch failed: {e}")),
+                        },
                         KeyCode::Char('s') => {
                             let entry = TelemetryEntry::new(
                                 "process_count",

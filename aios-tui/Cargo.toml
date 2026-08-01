@@ -11,6 +11,7 @@ aios-process-mgr = { path = "../aios-process-mgr" }
 aios-watchdog = { path = "../aios-watchdog" }
 aios-context = { path = "../aios-context" }
 aios-browser = { path = "../aios-browser" }
+aios-webview = { path = "../aios-webview" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

@@ -1438,6 +1438,7 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
         Line::from(Span::raw("  k / Up     — Move selection up")),
         Line::from(Span::raw("  r          — Refresh")),
         Line::from(Span::raw("  s          — Record telemetry snapshot")),
+        Line::from(Span::raw("  W          — Open AIOS GUI dashboard")),
         Line::from(Span::raw("")),
         Line::from(Span::styled(
             " Process Tab (1):",

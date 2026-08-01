@@ -66,7 +66,10 @@ impl RollbackManager {
         let entry = &self.snapshots[pos];
         log::info!(
             "Rollback to snapshot #{snapshot_id} ({}): block={}, version={}, {} bytes restored",
-            entry.label, entry.block_name, entry.version, entry.data.len()
+            entry.label,
+            entry.block_name,
+            entry.version,
+            entry.data.len()
         );
 
         let data = entry.data.clone();

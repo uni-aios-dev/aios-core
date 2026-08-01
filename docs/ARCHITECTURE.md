@@ -2,7 +2,7 @@
 
 ## System Overview
 
-AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 24 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (TUI/GUI/Integrated binary) at the top.
+AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 33 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (TUI/GUI/Integrated binary) at the top.
 
 All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios` crate provides a unified system binary with both interactive TUI mode and headless daemon mode, replacing the separate `aios-tui` and `aios-daemon` entry points.
 
@@ -572,7 +572,7 @@ Ratatui-based TUI with 7-tab interactive layout:
 - Shows all keyboard shortcuts and shell commands in a popup window
 - Overlay rendered via draw_help() function on top of current tab content
 
-**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, Alt+1-7=Tab everywhere, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, F1=Help, :=Cmd, s=Telemetry, x=Status, r=Refresh)
+**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, Alt+1-7=Tab everywhere, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, F1=Help, :=Cmd, s=Telemetry, x=Status, r=Refresh, W=GUI)
 
 `DashboardState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)
@@ -602,7 +602,21 @@ Startup sequence:
 10. Event loop: poll key events, redraw dashboard, sync watchdog state
 11. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=omnibox focus, `o`/`Enter`=Open link, `Esc`=unfocus
+Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `W`=Launch GUI dashboard, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=omnibox focus, `o`/`Enter`=Open link, `Esc`=unfocus
+
+### Native WebView Browser (`aios-webview`)
+
+The TUI cannot render real web pages (no CSS/JS engine), so the full-featured browser is a **native window** powered by `wry` (WebView2 on Windows, WebKitGTK on Linux, WKWebView on macOS) on a `winit` event loop:
+
+- `WebBrowser::open(target)` spawns the browser on a dedicated background thread; the caller receives a handle and never blocks
+- Commands (`navigate`, `back`, `forward`, `close`) are posted to the browser's event loop via `winit::EventLoopProxy` and applied asynchronously
+- Cookies and storage persist between restarts through a `WebContext` backed by a profile directory (`AIOS_DATA_DIR`/`aios/webview`, or the OS data dir)
+- `resolve_target()` implements the omnibox rule shared with the TUI: full `http(s)` URL → as-is, bare host → `https://`, anything else → DuckDuckGo (HTML edition) query
+- `launcher` module resolves the `aios-gui` binary (sibling of the current executable, then `PATH`) and spawns the GUI dashboard
+
+### GUI Dashboard (`aios-gui`)
+
+Native egui/eframe dashboard with 7 tabs: Overview, Processes, Blocks, Marketplace, Metrics, Deps, **Browser**. The **Browser** tab (F7) provides an omnibox, Back/Forward buttons and an Open/Close toggle that drive the `aios-webview` native window; the first navigation auto-opens the browser. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`.
 
 ---
 

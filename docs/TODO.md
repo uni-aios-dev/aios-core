@@ -333,6 +333,16 @@
   - [x] Kernel TUI `b` hotkey — open any URL in the OS default browser via the browser block
   - [x] Browser works out of the box on a fresh machine (no config, no installed browser, no network needed)
 
+- [x] **Phase 34: Full-Featured Native Browser (`aios-webview`) — COMPLETE**
+  - [x] New `aios-webview` crate: native WebView window (wry 0.56 + winit 0.30) with cookies, JavaScript and history out of the box
+  - [x] `WebBrowser::open/navigate/back/forward/close` — non-blocking commands via `EventLoopProxy`; browser runs on a background thread
+  - [x] Persistent profile via `WebContext` (`AIOS_DATA_DIR`/`aios/webview`) so cookies/storage survive restarts
+  - [x] `resolve_target()` omnibox rule shared with the TUI (URL / bare host / DuckDuckGo query)
+  - [x] `launcher` module — locate and spawn the `aios-gui` binary (sibling of exe, then PATH)
+  - [x] GUI Browser tab (F7) in `aios-gui` — omnibox, Back/Forward, Open/Close, status line
+  - [x] TUI hotkey `W` (both `aios-tui` and kernel `aios`) launches the GUI dashboard
+  - [ ] Future: embed the webview as an in-window child of the egui tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

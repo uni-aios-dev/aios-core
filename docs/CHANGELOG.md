@@ -1,5 +1,25 @@
 # AIOS Development Log
 
+## v2.2.4 — Full-featured native browser (WebView) + GUI dashboard hotkey (2026-08-01)
+
+### New crate: `aios-webview` — real browser engine
+- Full-featured browser impossible in a terminal (no CSS/JS rendering) — now implemented as a **native WebView** window (WebView2 on Windows, WebKitGTK on Linux, WKWebView on macOS) with cookies, JavaScript and history out of the box
+- `WebBrowser::open(target)` spawns the browser on a dedicated background thread (winit 0.30 event loop + wry 0.56 webview) so the caller never blocks; `navigate`/`back`/`forward`/`close` are non-blocking commands posted to the browser's event loop via `EventLoopProxy`
+- Persistent profile: cookies/storage survive restarts via `WebContext` under `AIOS_DATA_DIR`/`aios/webview` (OS data dir when unset), honoring `AIOS_DATA_DIR`
+- `resolve_target()` omnibox logic: full URL → as-is, bare host → `https://`, plain query → DuckDuckGo (HTML edition); **5 unit tests**
+- `launcher` module: locates the `aios-gui` binary (sibling of current exe, then PATH) and spawns it; **2 unit tests**
+- Added to workspace members; headless-safe (`cargo test` opens no windows)
+
+### `aios-gui`: Browser tab (7th) with native webview
+- New **Browser** tab (F7, `🌐 Browser` in sidebar): omnibox (URL or search query), Back/Forward buttons, Open/Close toggle, status line
+- First navigation auto-opens the browser window; the tab drives the native window — cookies, JS and history live in the engine
+- Bottom bar updated: `... F6=Deps F7=Browser`; `AiosApp` gains `browser`/`browser_addr`/`browser_status` fields and open/navigate/back/forward/close methods
+- New unit test for closed-browser error paths
+
+### `aios-tui` & kernel `aios`: GUI hotkey `W`
+- Press **`W`** to launch the AIOS GUI dashboard from either TUI; failure (binary not found) is logged instead of crashing
+- F1 help lists the new hotkey
+
 ## v2.2.3 — Web omnibox & opaque F1 help (2026-07-31)
 
 ### `aios-tui`: Web Tab Omnibox

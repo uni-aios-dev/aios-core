@@ -14,6 +14,7 @@ aios-context = { path = "../aios-context" }
 aios-optim = { path = "../aios-optim" }
 aios-security = { path = "../aios-security" }
 aios-net = { path = "../aios-net" }
+aios-webview = { path = "../aios-webview" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
