@@ -27,6 +27,70 @@ pub const LINKS_VIEW_ROWS: usize = 6;
 /// Upper bound for the in-memory web page cache (URL-keyed, oldest evicted).
 pub const WEB_CACHE_CAP: usize = 20;
 
+/// Fixed width of the Web tab navigation sidebar (history list).
+pub const SIDEBAR_WIDTH: usize = 26;
+
+/// A single entry in the Web tab navigation sidebar.
+#[derive(Clone, Debug)]
+pub struct NavEntry {
+    pub label: String,
+    pub url: String,
+    pub is_current: bool,
+}
+
+/// Columns available for page text wrapping, given the terminal width and the
+/// fixed navigation sidebar (sidebar + page borders + 2-col line prefix).
+pub fn web_page_width(term_width: usize) -> usize {
+    term_width.saturating_sub(SIDEBAR_WIDTH + 4).max(4)
+}
+
+/// Short, human-readable label for a URL, truncated to `max` columns.
+pub fn compact_url_label(url: &str, max: usize) -> String {
+    let mut s = url.trim();
+    for scheme in ["https://", "http://"] {
+        if let Some(rest) = s.strip_prefix(scheme) {
+            s = rest;
+            break;
+        }
+    }
+    if let Some(rest) = s.strip_prefix("www.") {
+        s = rest;
+    }
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    if max <= 3 {
+        return s.chars().take(max).collect();
+    }
+    let mut truncated: String = s.chars().take(max - 1).collect();
+    truncated.push('…');
+    truncated
+}
+
+/// Build the navigation sidebar entries: the current page first (marked), then
+/// the visited history newest-first, deduplicated against already listed URLs.
+pub fn web_nav_entries(ws: &WebState) -> Vec<NavEntry> {
+    let mut out = Vec::new();
+    if !ws.current_url.is_empty() {
+        out.push(NavEntry {
+            label: compact_url_label(&ws.current_url, SIDEBAR_WIDTH - 4),
+            url: ws.current_url.clone(),
+            is_current: true,
+        });
+    }
+    for url in ws.history.iter().rev() {
+        if url.is_empty() || out.iter().any(|e| e.url == *url) {
+            continue;
+        }
+        out.push(NavEntry {
+            label: compact_url_label(url, SIDEBAR_WIDTH - 4),
+            url: url.clone(),
+            is_current: false,
+        });
+    }
+    out
+}
+
 /// Outbox for background web fetches: `(fetch generation, result)`.
 pub type WebFetchOutbox = Arc<Mutex<Option<(u64, Result<(PageContent, Option<String>), String>)>>>;
 
@@ -90,6 +154,10 @@ pub struct WebState {
     pub web_fetch_gen: u64,
     /// Terminal width used to pre-wrap `page.text` into visual lines.
     pub wrap_width: usize,
+    /// Whether the navigation sidebar has keyboard focus (`\` toggles it).
+    pub sidebar_focused: bool,
+    /// Selected entry index in the navigation sidebar list.
+    pub history_sel: usize,
 }
 
 impl WebState {
@@ -265,6 +333,8 @@ impl DashboardState {
                 cache: Vec::new(),
                 web_fetch_gen: 0,
                 wrap_width: 78,
+                sidebar_focused: false,
+                history_sel: 0,
             },
             page_cache: Arc::new(Mutex::new(None)),
             shell_state: ShellState::default(),
@@ -1369,16 +1439,64 @@ fn draw_dependencies(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     f.render_widget(summary, chunks[1]);
 }
 
+fn draw_web_sidebar(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let ws = &state.web_state;
+    let entries = web_nav_entries(ws);
+    let items: Vec<ListItem> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let selected = i == ws.history_sel;
+            let base = if e.is_current {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::Blue)
+            };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                base
+            };
+            let glyph = if e.is_current { "▸" } else { " " };
+            ListItem::new(Line::from(vec![
+                Span::styled(glyph, Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {}", e.label), style),
+            ]))
+        })
+        .collect();
+    let title = if ws.sidebar_focused {
+        " Nav — j/k:sel  Enter:go  Esc:back "
+    } else {
+        " Nav — \\:focus "
+    };
+    let sidebar = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    f.render_widget(sidebar, area);
+}
+
 fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let ws = &state.web_state;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(8),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
         .split(area);
+
+    let sidebar_width = if area.width as usize > SIDEBAR_WIDTH + 10 {
+        SIDEBAR_WIDTH as u16
+    } else {
+        0
+    };
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(sidebar_width), Constraint::Min(1)])
+        .split(chunks[1]);
+    draw_web_sidebar(f, body[0], state);
+    let main = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(8)])
+        .split(body[1]);
 
     let url_style = if ws.input_focused {
         Style::default().fg(Color::Black).bg(Color::White)
@@ -1413,16 +1531,16 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             Style::default().fg(Color::Red),
         )))
         .block(Block::default().borders(Borders::ALL).title(" Error "));
-        f.render_widget(err_para, chunks[1]);
+        f.render_widget(err_para, main[0]);
     } else if ws.loading {
         let loading = Paragraph::new(Line::from(Span::styled(
             "  Loading...",
             Style::default().fg(Color::Yellow),
         )))
         .block(Block::default().borders(Borders::ALL).title(" Loading "));
-        f.render_widget(loading, chunks[1]);
+        f.render_widget(loading, main[0]);
     } else if let Some(ref page) = ws.page {
-        let visible = chunks[1].height.saturating_sub(2) as usize;
+        let visible = main[0].height.saturating_sub(2) as usize;
         let wrapped = wrap_text(&page.text, ws.wrap_width);
         let lines: Vec<Line> = wrapped
             .iter()
@@ -1460,7 +1578,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                     .borders(Borders::ALL)
                     .title(format!(" {} — {}", page.title, scroll_hint)),
             );
-        f.render_widget(content, chunks[1]);
+        f.render_widget(content, main[0]);
     } else {
         let placeholder = Paragraph::new(vec![
             Line::from(Span::styled(
@@ -1489,7 +1607,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                 .borders(Borders::ALL)
                 .title(" Web Browser "),
         );
-        f.render_widget(placeholder, chunks[1]);
+        f.render_widget(placeholder, main[0]);
     }
 
     let link_items: Vec<ListItem> = ws
@@ -1539,7 +1657,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let link_list = List::new(link_items).block(Block::default().borders(Borders::ALL).title(
         format!(" Links — o/Enter: open  j/k: navigate  b: back  {link_range} "),
     ));
-    f.render_widget(link_list, chunks[2]);
+    f.render_widget(link_list, main[1]);
 }
 
 fn draw_shell(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1876,6 +1994,8 @@ mod tests {
             cache: Vec::new(),
             web_fetch_gen: 0,
             wrap_width: 78,
+            sidebar_focused: false,
+            history_sel: 0,
         };
         assert!(ws.cached_page("https://a").is_none());
         ws.cache_page(make_page("https://a", 0));
@@ -1902,6 +2022,8 @@ mod tests {
             cache: Vec::new(),
             web_fetch_gen: 0,
             wrap_width: 78,
+            sidebar_focused: false,
+            history_sel: 0,
         };
         for i in 0..WEB_CACHE_CAP + 5 {
             ws.cache_page(make_page(&format!("https://e{i}"), 0));
@@ -1996,5 +2118,63 @@ mod tests {
                 "plain".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_web_page_width_accounts_for_sidebar() {
+        assert_eq!(web_page_width(80), 80 - SIDEBAR_WIDTH - 4);
+        assert_eq!(web_page_width(120), 120 - SIDEBAR_WIDTH - 4);
+    }
+
+    #[test]
+    fn test_web_page_width_clamps_low() {
+        assert_eq!(web_page_width(0), 4);
+        assert_eq!(web_page_width(5), 4);
+    }
+
+    #[test]
+    fn test_compact_url_label_strips_scheme_and_www() {
+        assert_eq!(
+            compact_url_label("https://www.example.com/path", 30),
+            "example.com/path"
+        );
+        assert_eq!(compact_url_label("http://example.com", 30), "example.com");
+    }
+
+    #[test]
+    fn test_compact_url_label_truncates() {
+        let label = compact_url_label("https://www.verylongdomainname.com/deep/path", 12);
+        assert_eq!(label.chars().count(), 12);
+        assert!(label.ends_with('…'));
+        assert!(label.starts_with("verylongdom"));
+    }
+
+    #[test]
+    fn test_web_nav_entries_current_first_history_newest() {
+        let mut state = make_state();
+        state.web_state.current_url = "https://b".into();
+        state.web_state.history = vec!["https://a".into(), "https://b".into(), "https://c".into()];
+        let entries = web_nav_entries(&state.web_state);
+        let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(urls, vec!["https://b", "https://c", "https://a"]);
+        assert!(entries[0].is_current);
+        assert!(!entries[1].is_current);
+    }
+
+    #[test]
+    fn test_web_nav_entries_empty_when_no_history() {
+        let state = make_state();
+        let entries = web_nav_entries(&state.web_state);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_web_nav_entries_dedups_current() {
+        let mut state = make_state();
+        state.web_state.current_url = "https://b".into();
+        state.web_state.history = vec!["https://a".into(), "https://b".into()];
+        let entries = web_nav_entries(&state.web_state);
+        let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(urls, vec!["https://b", "https://a"]);
     }
 }

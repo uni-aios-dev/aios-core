@@ -1,5 +1,14 @@
 # AIOS Development Log
 
+## v2.2.8 — Web tab navigation sidebar with history (2026-08-02)
+
+### `aios-tui`: history sidebar in the Web tab
+- New fixed-width navigation sidebar (`SIDEBAR_WIDTH = 26`) to the left of the page pane: current page first (marked `▸`), then the visited history newest-first, deduplicated
+- Sidebar labels are compacted URLs (`https://www.example.com/deep/path` → `example.com/deep/path`), truncated with `…` to fit the pane
+- Focus toggled with `\` (like `g` for the omnibox): `j`/`k`/`Up`/`Down` move the selection, `Enter`/`o` opens the highlighted entry (reloads the current page when it is selected), `Esc` returns to the links list; selection wraps around the list
+- Page text width now accounts for the sidebar: `web_page_width()` computes the wrap width from the terminal width minus the sidebar, borders and line prefix; `wrap_width` is derived from it at startup and on every `Event::Resize` (completing the Phase 37 "proportional pane" follow-up)
+- New helpers `web_nav_entries()`, `compact_url_label()`, `web_page_width()`; 8 new unit tests
+
 ## v2.2.7 — Word-wrapped page text in the Web tab (2026-08-01)
 
 ### `aios-tui`: scroll units now match visual lines

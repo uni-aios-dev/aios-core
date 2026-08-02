@@ -72,7 +72,7 @@ cargo run --bin aios-tui
 
 ### Web Tab Keys (when Web tab is active)
 
-The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain search query (`how does AIOS work`) — queries are searched via DuckDuckGo automatically. After you press `Enter` the omnibox loses focus, so you can immediately navigate the results with `j`/`k` and open a link. Fetches run in the background (the TUI stays responsive) and recent pages are cached, so `b` back-navigation is instant. The links window scrolls with your selection and shows the visible range in its title.
+The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain search query (`how does AIOS work`) — queries are searched via DuckDuckGo automatically. After you press `Enter` the omnibox loses focus, so you can immediately navigate the results with `j`/`k` and open a link. Fetches run in the background (the TUI stays responsive) and recent pages are cached, so `b` back-navigation is instant. The links window scrolls with your selection and shows the visible range in its title. A **navigation sidebar** on the left shows the current page (marked `▸`) and the visit history; focus it with `\` and jump to any past page.
 
 | Key | Action |
 |-----|--------|
@@ -83,7 +83,10 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `b` | Go back to the previously visited page |
 | `u` / `d` | Scroll page text up / down by 1 line |
 | `PageUp` / `PageDown` | Scroll page text up / down by 20 lines |
-| `Esc` | Unfocus omnibox |
+| `\` | Toggle navigation sidebar focus (history list) |
+| `j` / `k` | Move sidebar selection down / up (when sidebar focused) |
+| `Enter` / `o` | Open the selected sidebar entry / reload the current page (when sidebar focused) |
+| `Esc` | Unfocus omnibox or sidebar |
 
 ### Shell Tab Keys (when Shell tab is active)
 

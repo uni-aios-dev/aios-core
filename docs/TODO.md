@@ -361,7 +361,14 @@
   - [x] `wrap_text()` word-wrap helper: word-boundary split, hard split of over-long words, preserves blank lines and indentation
   - [x] Scroll units equal visual lines — `u`/`d`/`PageUp`/`PageDown` move exactly one/20 visible rows and the bottom of a wrapped page is reachable
   - [x] `WebState.wrap_width` tracked from `crossterm::terminal::size()` and refreshed on `Event::Resize`
-  - [ ] Future: proportional-pane rendering for the Web tab when a sidebar is added
+
+- [x] **Phase 38: Web Tab Navigation Sidebar — COMPLETE**
+  - [x] Fixed-width history sidebar (`SIDEBAR_WIDTH = 26`) left of the page pane: current page first (marked `▸`), history newest-first, deduplicated
+  - [x] Compact URL labels (`compact_url_label`) truncated to the pane width
+  - [x] Sidebar focus via `\`: `j`/`k`/`Up`/`Down` move the selection, `Enter`/`o` open it, `Esc` back to links; selection wraps around
+  - [x] `web_page_width()` — page wrap width derived from terminal width minus sidebar/borders/prefix; applied at startup and on resize (proportional pane rendering completed)
+  - [ ] Future: bookmarks with persistence in the Web tab
+  - [ ] Future: tabs (multiple open pages) in the Web tab
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |

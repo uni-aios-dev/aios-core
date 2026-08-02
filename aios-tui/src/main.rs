@@ -195,6 +195,33 @@ fn web_scroll(state: &mut DashboardState, dir: isize) {
     state.web_state.scroll = next.clamp(0, max as isize) as usize;
 }
 
+/// Move the navigation sidebar selection (`dir` = +1 down, -1 up), wrapping
+/// around the entry list.
+fn web_sidebar_move(state: &mut DashboardState, dir: isize) {
+    let len = dashboard::web_nav_entries(&state.web_state).len();
+    if len == 0 {
+        state.web_state.history_sel = 0;
+        return;
+    }
+    let next = state.web_state.history_sel as isize + dir;
+    state.web_state.history_sel = next.rem_euclid(len as isize) as usize;
+}
+
+/// Open the currently selected navigation sidebar entry. Selecting the current
+/// page reloads it; selecting a history entry navigates back to it.
+fn web_sidebar_open(state: &mut DashboardState) {
+    let entries = dashboard::web_nav_entries(&state.web_state);
+    let sel = state.web_state.history_sel;
+    if let Some(entry) = entries.get(sel) {
+        if entry.is_current {
+            state.add_log("Web: reloading current page".into());
+        } else {
+            state.add_log(format!("Web: history → {}", entry.url));
+        }
+        load_url(state, &entry.url);
+    }
+}
+
 fn execute_shell_cmd(
     state: &mut DashboardState,
     cmd: &str,
@@ -469,7 +496,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = DashboardState::new(ai_tier, profile, &registry, &scheduler);
 
     if let Ok((w, _)) = crossterm::terminal::size() {
-        state.web_state.wrap_width = (w as usize).saturating_sub(4).max(4);
+        state.web_state.wrap_width = dashboard::web_page_width(w as usize);
     }
 
     log::info!("AIOS: TUI started — press q to quit");
@@ -491,7 +518,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event::read()? {
                 Event::Resize(w, h) => {
                     let _ = h;
-                    state.web_state.wrap_width = (w as usize).saturating_sub(4).max(4);
+                    state.web_state.wrap_width = dashboard::web_page_width(w as usize);
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if key.modifiers.contains(KeyModifiers::ALT) {
@@ -532,6 +559,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             KeyCode::Backspace => {
                                 state.web_state.url_input.pop();
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    if state.selected_tab == 5 && state.web_state.sidebar_focused {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('\\') => {
+                                state.web_state.sidebar_focused = false;
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                web_sidebar_move(&mut state, 1);
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                web_sidebar_move(&mut state, -1);
+                            }
+                            KeyCode::Enter | KeyCode::Char('o') => {
+                                web_sidebar_open(&mut state);
                             }
                             _ => {}
                         }
@@ -841,6 +887,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 web_go_back(&mut state);
                             }
                         }
+                        KeyCode::Char('\\') => {
+                            if state.selected_tab == 5 && !state.web_state.input_focused {
+                                state.web_state.sidebar_focused = !state.web_state.sidebar_focused;
+                                state.web_state.history_sel = 0;
+                            }
+                        }
                         KeyCode::Char('u') => {
                             if state.selected_tab == 5 {
                                 web_scroll(&mut state, -1);
@@ -929,7 +981,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_url_input;
+    use super::{is_url_input, web_sidebar_move};
+    use aios_tui::dashboard::DashboardState;
 
     #[test]
     fn test_is_url_input_scheme_urls() {
@@ -953,5 +1006,31 @@ mod tests {
     #[test]
     fn test_is_url_input_whitespace_padded_host() {
         assert!(is_url_input("  example.com  "));
+    }
+
+    fn make_dashboard_state() -> DashboardState {
+        use aios_block_mgr::registry::BlockRegistry;
+        use aios_hal::ai_tier::AiTier;
+        use aios_hal::hardware::HardwareProfile;
+        use aios_process_mgr::scheduler::Scheduler;
+        let profile = HardwareProfile::mock_modern();
+        let mut reg = BlockRegistry::new();
+        reg.register_block("test", "0.1.0", b"t".to_vec()).unwrap();
+        let sched = Scheduler::new(65536);
+        DashboardState::new(AiTier::Tier1, profile, &reg, &sched)
+    }
+
+    #[test]
+    fn test_web_sidebar_move_wraps_around() {
+        let mut state = make_dashboard_state();
+        state.web_state.current_url = "https://b".into();
+        state.web_state.history = vec!["https://a".into()];
+        assert_eq!(state.web_state.history_sel, 0);
+        web_sidebar_move(&mut state, 1);
+        assert_eq!(state.web_state.history_sel, 1);
+        web_sidebar_move(&mut state, 1);
+        assert_eq!(state.web_state.history_sel, 0);
+        web_sidebar_move(&mut state, -1);
+        assert_eq!(state.web_state.history_sel, 1);
     }
 }
