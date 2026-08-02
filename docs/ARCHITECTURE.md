@@ -556,7 +556,8 @@ Ratatui-based TUI with 7-tab interactive layout:
 - Scrollable links list with selection (`>>` indicator); links resolved against the page base URL, deduplicated, non-web schemes (`javascript:`, `mailto:`, `#anchor`) filtered; the window scrolls with the selection (6 visible rows) and shows the visible range in the title
 - Fetches run **in the background** (never block the TUI): `load_url`/`navigate_web` spawn a thread that posts the result to the `page_cache` outbox, picked up by `check_page_cache()` each frame; a fetch-generation counter drops stale results
 - Bounded **page cache** (`WebState.cache`, 20 pages keyed by URL, oldest evicted) makes revisits and `b` back-navigation instant
-- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll, links_scroll, history (Vec<String>), cache, web_fetch_gen
+- Page text is **word-wrapped** to the terminal width (`wrap_text()`): each raw line is split at word boundaries (long words hard-split), blank lines and indentation preserved; scroll units equal visual lines; `WebState.wrap_width` is set at startup and updated on terminal resize
+- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll, links_scroll, history (Vec<String>), cache, web_fetch_gen, wrap_width
 - `PageContent` struct: url, title, text, links Vec<(String,String)>
 - Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `b`=back in history, `u`/`d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
 

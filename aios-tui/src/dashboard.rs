@@ -88,6 +88,8 @@ pub struct WebState {
     pub cache: Vec<(String, PageContent)>,
     /// Monotonic id of the latest web fetch; stale background results are dropped.
     pub web_fetch_gen: u64,
+    /// Terminal width used to pre-wrap `page.text` into visual lines.
+    pub wrap_width: usize,
 }
 
 impl WebState {
@@ -110,6 +112,50 @@ impl WebState {
             .find(|(u, _)| u == url)
             .map(|(_, p)| p.clone())
     }
+}
+
+/// Word-wrap `text` so every line is at most `width` columns wide. Over-long
+/// words are hard-split; existing blank lines and leading indentation are
+/// preserved.
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        if raw.trim().is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let indent = &raw[..raw.len() - raw.trim_start().len()];
+        let mut line = String::new();
+        let mut start_of_line = true;
+        let mut has_content = false;
+        for word in raw.split_whitespace() {
+            if has_content && line.chars().count() + 1 + word.chars().count() > width {
+                out.push(std::mem::take(&mut line));
+                has_content = false;
+            }
+            if has_content {
+                line.push(' ');
+            } else if start_of_line {
+                line.push_str(indent);
+                start_of_line = false;
+            }
+            let mut rest = word.to_string();
+            while !rest.is_empty() && line.chars().count() + rest.chars().count() > width {
+                let avail = width.saturating_sub(line.chars().count()).max(1);
+                let cut: String = rest.chars().take(avail).collect();
+                line.push_str(&cut);
+                out.push(std::mem::take(&mut line));
+                rest = rest.chars().skip(avail).collect();
+            }
+            line.push_str(&rest);
+            has_content = !line.is_empty();
+        }
+        if !line.is_empty() {
+            out.push(line);
+        }
+    }
+    out
 }
 
 pub struct ProcessSnapshot {
@@ -218,6 +264,7 @@ impl DashboardState {
                 history: Vec::new(),
                 cache: Vec::new(),
                 web_fetch_gen: 0,
+                wrap_width: 78,
             },
             page_cache: Arc::new(Mutex::new(None)),
             shell_state: ShellState::default(),
@@ -1376,9 +1423,9 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         f.render_widget(loading, chunks[1]);
     } else if let Some(ref page) = ws.page {
         let visible = chunks[1].height.saturating_sub(2) as usize;
-        let lines: Vec<Line> = page
-            .text
-            .lines()
+        let wrapped = wrap_text(&page.text, ws.wrap_width);
+        let lines: Vec<Line> = wrapped
+            .iter()
             .skip(ws.scroll)
             .take(visible)
             .map(|l| {
@@ -1395,7 +1442,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                 Line::from(Span::styled(format!("  {l}"), style))
             })
             .collect();
-        let total = page.text.lines().count();
+        let total = wrapped.len();
         let scroll_hint = if total > visible {
             format!(
                 "  — {} links · u/d scroll {}–{}  ",
@@ -1828,6 +1875,7 @@ mod tests {
             history: Vec::new(),
             cache: Vec::new(),
             web_fetch_gen: 0,
+            wrap_width: 78,
         };
         assert!(ws.cached_page("https://a").is_none());
         ws.cache_page(make_page("https://a", 0));
@@ -1853,6 +1901,7 @@ mod tests {
             history: Vec::new(),
             cache: Vec::new(),
             web_fetch_gen: 0,
+            wrap_width: 78,
         };
         for i in 0..WEB_CACHE_CAP + 5 {
             ws.cache_page(make_page(&format!("https://e{i}"), 0));
@@ -1909,5 +1958,43 @@ mod tests {
         state.check_page_cache();
         assert!(state.web_state.page.is_none());
         assert_eq!(state.web_state.cache.len(), 0);
+    }
+
+    #[test]
+    fn test_wrap_text_short_lines_unchanged() {
+        let wrapped = wrap_text("hello world", 80);
+        assert_eq!(wrapped, vec!["hello world".to_string()]);
+    }
+
+    #[test]
+    fn test_wrap_text_splits_at_word_boundaries() {
+        let wrapped = wrap_text("aaa bbb ccc ddd", 7);
+        assert_eq!(wrapped, vec!["aaa bbb".to_string(), "ccc ddd".to_string()]);
+    }
+
+    #[test]
+    fn test_wrap_text_hard_splits_long_words() {
+        let wrapped = wrap_text("abcdefghijkl", 4);
+        assert_eq!(
+            wrapped,
+            vec!["abcd".to_string(), "efgh".to_string(), "ijkl".to_string(),]
+        );
+    }
+
+    #[test]
+    fn test_wrap_text_preserves_indent_and_blanks() {
+        let text = "\n  • item with long words here\n\nplain\n";
+        let wrapped = wrap_text(text, 12);
+        assert_eq!(
+            wrapped,
+            vec![
+                String::new(),
+                "  • item".to_string(),
+                "with long".to_string(),
+                "words here".to_string(),
+                String::new(),
+                "plain".to_string(),
+            ]
+        );
     }
 }

@@ -185,7 +185,11 @@ fn web_scroll(state: &mut DashboardState, dir: isize) {
         .web_state
         .page
         .as_ref()
-        .map(|p| p.text.lines().count().saturating_sub(2))
+        .map(|p| {
+            dashboard::wrap_text(&p.text, state.web_state.wrap_width)
+                .len()
+                .saturating_sub(2)
+        })
         .unwrap_or(0);
     let next = state.web_state.scroll as isize + dir;
     state.web_state.scroll = next.clamp(0, max as isize) as usize;
@@ -464,6 +468,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = DashboardState::new(ai_tier, profile, &registry, &scheduler);
 
+    if let Ok((w, _)) = crossterm::terminal::size() {
+        state.web_state.wrap_width = (w as usize).saturating_sub(4).max(4);
+    }
+
     log::info!("AIOS: TUI started — press q to quit");
 
     loop {
@@ -480,8 +488,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            match event::read()? {
+                Event::Resize(w, h) => {
+                    let _ = h;
+                    state.web_state.wrap_width = (w as usize).saturating_sub(4).max(4);
+                }
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if key.modifiers.contains(KeyModifiers::ALT) {
                         if let KeyCode::Char(d) = key.code {
                             if let Some(d) = d.to_digit(10) {
@@ -888,6 +900,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         _ => {}
                     }
                 }
+                _ => {}
             }
         }
     }

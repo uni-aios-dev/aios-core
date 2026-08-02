@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.2.7 — Word-wrapped page text in the Web tab (2026-08-01)
+
+### `aios-tui`: scroll units now match visual lines
+- New `wrap_text()` word-wrap helper (no new dependency): wraps every page line to the terminal width, hard-splitting over-long words and preserving blank lines and leading indentation (nested lists/tables keep their structure)
+- `draw_web` renders the pre-wrapped lines instead of relying on ratatui wrapping, so a "page line" always equals one terminal row; the scroll hint and `u`/`d`/`PageUp`/`PageDown` scrolling now operate on **visual** lines — pressing `d` moves exactly one visible row and the bottom of a wrapped page is reachable
+- `WebState.wrap_width` tracks the terminal width: initialised from `crossterm::terminal::size()` at startup and refreshed on every `Event::Resize`
+- `web_scroll` clamps against the wrapped line count; 4 new unit tests for `wrap_text` (word-boundary split, hard split of long words, indent/blank preservation)
+
 ## v2.2.6 — Responsive Web tab: background fetch, page cache, link scrolling (2026-08-01)
 
 ### `aios-tui`: non-blocking web fetches

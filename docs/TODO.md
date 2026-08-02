@@ -356,7 +356,12 @@
   - [x] Bounded page cache (`WebState.cache`, 20 pages, oldest evicted) — instant `b` back-navigation and revisits
   - [x] Links window scrolls with the selection (6 visible rows, visible range in the title)
   - [x] Page text color-codes structure: headings bold cyan, blank lines dark gray
-  - [ ] Future: textwrap to the pane width so scroll units always match visual lines
+
+- [x] **Phase 37: Word-Wrapped Page Text — COMPLETE**
+  - [x] `wrap_text()` word-wrap helper: word-boundary split, hard split of over-long words, preserves blank lines and indentation
+  - [x] Scroll units equal visual lines — `u`/`d`/`PageUp`/`PageDown` move exactly one/20 visible rows and the bottom of a wrapped page is reachable
+  - [x] `WebState.wrap_width` tracked from `crossterm::terminal::size()` and refreshed on `Event::Resize`
+  - [ ] Future: proportional-pane rendering for the Web tab when a sidebar is added
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
