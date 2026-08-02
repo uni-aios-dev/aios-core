@@ -6,7 +6,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use aios_block_mgr::loader::BlockLoader;
@@ -34,8 +34,24 @@ fn is_headless() -> bool {
         || std::env::args().any(|a| a == "--headless")
 }
 
+/// HTTP client with a desktop-browser User-Agent so real sites respond
+/// (default `reqwest` UA is often blocked) and a 15s timeout so a stuck host
+/// cannot hang a fetch forever.
+fn http_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
+    reqwest::blocking::Client::builder()
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        )
+        .timeout(Duration::from_secs(15))
+        .build()
+}
+
 fn fetch_url(url: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
-    let resp = reqwest::blocking::get(url)?;
+    let resp = http_client()?
+        .get(url)
+        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+        .send()?;
     let html = resp.text()?;
     let title = HtmlParser::extract_title(&html);
     let text = HtmlParser::extract_text(&html);
@@ -53,7 +69,7 @@ fn fetch_url(url: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
 
 fn search_web(query: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
     let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
-    let resp = reqwest::blocking::get(&url)?;
+    let resp = http_client()?.get(&url).send()?;
     let html = resp.text()?;
     let title = format!("Search results: {query}");
     let text = HtmlParser::extract_text(&html);
@@ -220,6 +236,64 @@ fn web_sidebar_open(state: &mut DashboardState) {
         }
         load_url(state, &entry.url);
     }
+}
+
+/// Live native browser window handle (aios-webview), kept alive across key
+/// presses. Lives outside `DashboardState` so a background thread can create
+/// the window without blocking the TUI.
+static WEB_BROWSER: OnceLock<Mutex<Option<aios_webview::WebBrowser>>> = OnceLock::new();
+
+fn web_browser_handle() -> &'static Mutex<Option<aios_webview::WebBrowser>> {
+    WEB_BROWSER.get_or_init(|| Mutex::new(None))
+}
+
+/// Open `target` in the full native browser window (`B` on the Web tab). If a
+/// window already exists it is reused and just navigated; otherwise one is
+/// created on a background thread so the TUI stays responsive.
+fn web_open_native(state: &mut DashboardState, target: Option<String>) {
+    let target = match target {
+        Some(t) => t,
+        None => match web_current_page_url(state) {
+            Some(u) => u,
+            None => {
+                state.add_log("Web: nothing to open — load a page first".into());
+                return;
+            }
+        },
+    };
+    let handle = web_browser_handle();
+    let mut guard = handle.lock().unwrap_or_else(|p| p.into_inner());
+    match guard.as_mut() {
+        Some(browser) => match browser.navigate(&target) {
+            Ok(()) => state.add_log(format!("Browser: navigating to {target}")),
+            Err(_) => {
+                *guard = None;
+                state.add_log(format!("Browser: reopening {target}"));
+                web_browser_spawn(target);
+            }
+        },
+        None => {
+            state.add_log(format!("Browser: opening {target}"));
+            web_browser_spawn(target);
+        }
+    }
+}
+
+/// URL of the currently loaded page, if any.
+fn web_current_page_url(state: &DashboardState) -> Option<String> {
+    state.web_state.page.as_ref().map(|p| p.url.clone())
+}
+
+fn web_browser_spawn(target: String) {
+    let handle = web_browser_handle();
+    std::thread::spawn(move || match aios_webview::WebBrowser::open(&target) {
+        Ok(browser) => {
+            if let Ok(mut guard) = handle.lock() {
+                *guard = Some(browser);
+            }
+        }
+        Err(e) => log::warn!("native browser failed to open: {e}"),
+    });
 }
 
 fn execute_shell_cmd(
@@ -887,6 +961,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 web_go_back(&mut state);
                             }
                         }
+                        KeyCode::Char('B') => {
+                            if state.selected_tab == 5 {
+                                web_open_native(&mut state, None);
+                            }
+                        }
+                        KeyCode::Char('n') => {
+                            if state.selected_tab == 5 {
+                                if let Some(href) = state.web_state.page.as_ref().and_then(|p| {
+                                    p.links
+                                        .get(state.selected_row)
+                                        .map(|(_text, href)| href.clone())
+                                }) {
+                                    web_open_native(&mut state, Some(href));
+                                }
+                            }
+                        }
                         KeyCode::Char('\\') => {
                             if state.selected_tab == 5 && !state.web_state.input_focused {
                                 state.web_state.sidebar_focused = !state.web_state.sidebar_focused;
@@ -981,7 +1071,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_url_input, web_sidebar_move};
+    use super::{is_url_input, web_current_page_url, web_sidebar_move};
     use aios_tui::dashboard::DashboardState;
 
     #[test]
@@ -1032,5 +1122,23 @@ mod tests {
         assert_eq!(state.web_state.history_sel, 0);
         web_sidebar_move(&mut state, -1);
         assert_eq!(state.web_state.history_sel, 1);
+    }
+
+    #[test]
+    fn test_web_current_page_url_none_when_no_page() {
+        let state = make_dashboard_state();
+        assert_eq!(web_current_page_url(&state), None);
+    }
+
+    #[test]
+    fn test_web_current_page_url_returns_page_url() {
+        let mut state = make_dashboard_state();
+        state.web_state.page = Some(aios_tui::dashboard::PageContent {
+            url: "https://x".into(),
+            title: "X".into(),
+            text: "t".into(),
+            links: vec![],
+        });
+        assert_eq!(web_current_page_url(&state), Some("https://x".into()));
     }
 }

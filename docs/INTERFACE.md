@@ -81,6 +81,8 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `o` / `Enter` | Open selected link (when omnibox not focused) |
 | `j` / `k` | Move link selection down / up |
 | `b` | Go back to the previously visited page |
+| `B` | Open the current page in the **full native browser** window (WebView2 — JS/CSS/images); the window is reused across presses |
+| `n` | Open the selected link in the native browser window |
 | `u` / `d` | Scroll page text up / down by 1 line |
 | `PageUp` / `PageDown` | Scroll page text up / down by 20 lines |
 | `\` | Toggle navigation sidebar focus (history list) |

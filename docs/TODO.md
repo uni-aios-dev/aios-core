@@ -370,6 +370,14 @@
   - [ ] Future: bookmarks with persistence in the Web tab
   - [ ] Future: tabs (multiple open pages) in the Web tab
 
+- [x] **Phase 39: Full Native Browser from the Web Tab — COMPLETE**
+  - [x] `B` opens the current page in the full native browser (`aios-webview` WebView2 — JS/CSS/images); the window is reused and auto-recreated, opened on a background thread
+  - [x] `n` opens the currently selected link in the native browser
+  - [x] Browser handle in a module-level `OnceLock<Mutex<Option<WebBrowser>>>` — kernel untouched
+  - [x] `http_client()`: desktop User-Agent + `Accept: text/html` + 15s timeout for text fetches (fewer bot-blocks, no hangs)
+  - [ ] Future: embed the webview as an in-window child of the GUI Browser tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
+  - [ ] Future: headless render-to-text fallback (chromium/WebDriver) for JS-heavy sites in the TUI text view
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

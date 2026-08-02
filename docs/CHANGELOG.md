@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.2.9 — Full native browser from the Web tab (2026-08-02)
+
+### `aios-tui`: open any page in the real browser
+- `B` on the Web tab opens the current page in the **full native browser** (`aios-webview`: WebView2 — JavaScript, CSS, images, real rendering). The window is reused across key presses and re-created automatically if it closed; opening happens on a background thread so the TUI never freezes
+- `n` opens the currently selected link in the native browser window (complementing `o`/`Enter`, which open it in the text view)
+- Browser handle lives in a module-level `OnceLock<Mutex<Option<WebBrowser>>>` — no kernel, block registry or scheduler changes
+- Text fetches now send a desktop-browser User-Agent + `Accept: text/html` header and use a 15s timeout (`http_client()`), so more sites answer instead of bot-blocking, and a stuck host cannot hang the fetch
+
 ## v2.2.8 — Web tab navigation sidebar with history (2026-08-02)
 
 ### `aios-tui`: history sidebar in the Web tab

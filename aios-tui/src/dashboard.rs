@@ -1563,13 +1563,13 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         let total = wrapped.len();
         let scroll_hint = if total > visible {
             format!(
-                "  — {} links · u/d scroll {}–{}  ",
+                "  — {} links · u/d {}–{} · B:browser  ",
                 page.links.len(),
                 ws.scroll,
                 ws.scroll.saturating_add(visible)
             )
         } else {
-            format!("  — {} links  ", page.links.len())
+            format!("  — {} links · B:browser  ", page.links.len())
         };
         let content = Paragraph::new(lines)
             .wrap(ratatui::widgets::Wrap { trim: false })
@@ -1655,7 +1655,7 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         })
         .unwrap_or_default();
     let link_list = List::new(link_items).block(Block::default().borders(Borders::ALL).title(
-        format!(" Links — o/Enter: open  j/k: navigate  b: back  {link_range} "),
+        format!(" Links — o:open  j/k:sel  b:back  n:browser  {link_range} "),
     ));
     f.render_widget(link_list, main[1]);
 }
