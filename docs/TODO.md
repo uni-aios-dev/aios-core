@@ -351,6 +351,13 @@
   - [x] Page text scroll keys `u`/`d` (±1 line) and `PageUp`/`PageDown` (±20 lines) with a scroll indicator `X–Y`
   - [x] Page pane renders through the visible height with wrapping (no overflow)
 
+- [x] **Phase 36: Responsive Web Tab — Background Fetch, Page Cache, Link Scrolling — COMPLETE**
+  - [x] Web fetches moved to background threads (never block the TUI) with a fetch-generation counter that drops stale results
+  - [x] Bounded page cache (`WebState.cache`, 20 pages, oldest evicted) — instant `b` back-navigation and revisits
+  - [x] Links window scrolls with the selection (6 visible rows, visible range in the title)
+  - [x] Page text color-codes structure: headings bold cyan, blank lines dark gray
+  - [ ] Future: textwrap to the pane width so scroll units always match visual lines
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

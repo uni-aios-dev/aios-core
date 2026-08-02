@@ -1,5 +1,21 @@
 # AIOS Development Log
 
+## v2.2.6 — Responsive Web tab: background fetch, page cache, link scrolling (2026-08-01)
+
+### `aios-tui`: non-blocking web fetches
+- `load_url` / `navigate_web` no longer block the TUI: page and search fetches run on background threads and the result is picked up by `check_page_cache()` each frame (the previously unused `page_cache` outbox is now wired up)
+- A monotonic fetch generation counter (`WebState.web_fetch_gen`) drops stale results, so a slow older fetch can never overwrite a newer navigation
+- The "Loading..." pane stays live while a page is being fetched
+
+### `aios-tui`: bounded page cache
+- `WebState.cache` stores up to `WEB_CACHE_CAP = 20` recently fetched pages keyed by URL (oldest evicted); revisiting or going back (`b`) through a cached URL renders instantly without a network round-trip
+- 2 unit tests: cache insert/lookup/dedupe and cap eviction
+
+### `aios-tui`: link list scrolling + heading colors
+- The links window scrolls with the selection (`WebState.links_scroll`): with more than `LINKS_VIEW_ROWS = 6` links the window follows the selected row, and the title shows the visible range (`3–8 / 23`)
+- Page text now color-codes structure: headings (`#`) render bold cyan, blank lines dark gray
+- 3 new unit tests: links-scroll clamping, fetch result application, stale-generation drop
+
 ## v2.2.5 — WHATWG-compliant HTML rendering in the TUI Web tab (2026-08-01)
 
 ### `aios-browser`: HtmlParser rebuilt on `scraper`/html5ever

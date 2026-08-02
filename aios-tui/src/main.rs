@@ -88,25 +88,36 @@ fn load_url(state: &mut DashboardState, url: &str) {
     {
         state.web_state.history.push(prev);
     }
+    if let Some(page) = state.web_state.cached_page(&url) {
+        state.web_state.page = Some(page.clone());
+        state.web_state.current_url = url.clone();
+        state.web_state.url_input.clear();
+        state.web_state.search_query.clear();
+        state.web_state.loading = false;
+        state.web_state.error = None;
+        state.web_state.scroll = 0;
+        state.web_state.links_scroll = 0;
+        state.selected_row = 0;
+        state.add_log(format!("Web: loaded {url} (cached)"));
+        return;
+    }
     state.web_state.loading = true;
     state.web_state.page = None;
     state.web_state.error = None;
     state.web_state.scroll = 0;
+    state.web_state.web_fetch_gen += 1;
+    let gen = state.web_state.web_fetch_gen;
+    let outbox = state.page_cache.clone();
+    let url_fetch = url.clone();
     state.add_log(format!("Navigating to: {url}"));
-    match fetch_url(&url) {
-        Ok(page) => {
-            state.web_state.current_url = url;
-            state.web_state.url_input.clear();
-            state.web_state.search_query.clear();
-            state.web_state.page = Some(page);
-            state.add_log("Loaded".to_string());
+    std::thread::spawn(move || {
+        let result = fetch_url(&url_fetch)
+            .map(|p| (p, None))
+            .map_err(|e| e.to_string());
+        if let Ok(mut slot) = outbox.lock() {
+            *slot = Some((gen, result));
         }
-        Err(e) => {
-            state.web_state.error = Some(e.to_string());
-            state.add_log("Fetch failed".to_string());
-        }
-    }
-    state.web_state.loading = false;
+    });
 }
 
 fn navigate_web(state: &mut DashboardState, raw: &str) {
@@ -122,32 +133,27 @@ fn navigate_web(state: &mut DashboardState, raw: &str) {
         };
         load_url(state, &url);
     } else {
+        let prev = state.web_state.current_url.clone();
+        if !prev.is_empty() && prev != raw {
+            state.web_state.history.push(prev);
+        }
         state.web_state.loading = true;
         state.web_state.page = None;
         state.web_state.error = None;
+        state.web_state.url_input.clear();
+        state.web_state.web_fetch_gen += 1;
+        let gen = state.web_state.web_fetch_gen;
+        let outbox = state.page_cache.clone();
+        let query = raw.to_string();
         state.add_log(format!("Searching for: {raw}"));
-        match search_web(raw) {
-            Ok(page) => {
-                let prev = state.web_state.current_url.clone();
-                if !prev.is_empty()
-                    && prev != page.url
-                    && state.web_state.history.last().map(String::as_str) != Some(page.url.as_str())
-                {
-                    state.web_state.history.push(prev);
-                }
-                state.web_state.url_input.clear();
-                state.web_state.current_url = page.url.clone();
-                state.web_state.search_query = raw.to_string();
-                state.web_state.page = Some(page);
-                state.web_state.scroll = 0;
-                state.add_log("Search done".to_string());
+        std::thread::spawn(move || {
+            let result = search_web(&query)
+                .map(|p| (p, Some(query)))
+                .map_err(|e| e.to_string());
+            if let Ok(mut slot) = outbox.lock() {
+                *slot = Some((gen, result));
             }
-            Err(e) => {
-                state.web_state.error = Some(e.to_string());
-                state.add_log("Search failed".to_string());
-            }
-        }
-        state.web_state.loading = false;
+        });
     }
 }
 
@@ -314,6 +320,9 @@ fn urlencoding(s: &str) -> String {
 fn switch_tab(state: &mut DashboardState, tab: usize) {
     state.selected_tab = tab;
     state.selected_row = 0;
+    if tab == 5 {
+        state.web_state.links_scroll = 0;
+    }
     state.process_kill_result = None;
     state.block_operation_result = None;
 }
@@ -463,6 +472,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|s| *s)
             .unwrap_or(WatchdogState::Monitoring);
         state.update_watchdog(wd_state);
+        state.check_page_cache();
 
         terminal.draw(|f| {
             state.update_from_scheduler(&scheduler, &registry);

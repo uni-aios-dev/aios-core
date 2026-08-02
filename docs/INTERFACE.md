@@ -67,12 +67,12 @@ cargo run --bin aios-tui
 - **Blocks**: Table with ID, Name, Version, State, Size + load/unload/hot-swap operations
 - **Metrics**: RAM gauge, priority distribution, RAM history chart
 - **Deps**: Dependency graph table + load order chain
-- **Web**: Omnibox (search query or URL), page text content, scrollable links list
+- **Web**: Omnibox (search query or URL), page text content (headings highlighted), scrollable links list — pages load in the background and up to 20 recent pages are cached, so going back with `b` is instant
 - **Shell**: Interactive command line with command history, fetch, search, open, clear commands
 
 ### Web Tab Keys (when Web tab is active)
 
-The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain search query (`how does AIOS work`) — queries are searched via DuckDuckGo automatically. After you press `Enter` the omnibox loses focus, so you can immediately navigate the results with `j`/`k` and open a link.
+The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain search query (`how does AIOS work`) — queries are searched via DuckDuckGo automatically. After you press `Enter` the omnibox loses focus, so you can immediately navigate the results with `j`/`k` and open a link. Fetches run in the background (the TUI stays responsive) and recent pages are cached, so `b` back-navigation is instant. The links window scrolls with your selection and shows the visible range in its title.
 
 | Key | Action |
 |-----|--------|

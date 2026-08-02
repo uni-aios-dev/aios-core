@@ -552,12 +552,13 @@ Ratatui-based TUI with 7-tab interactive layout:
 
 **Tab 6 — Web** (vertical split):
 - Omnibox input bar (accepts a full URL, a bare host, or a plain search query — queries run through DuckDuckGo) with focus indicator
-- Page text content display area (WHATWG-compliant rendering via html5ever: headings `#`, lists `•`/`1.`, `pre` preserved, tables `|`, `hr`, images as `[alt]`)
-- Scrollable links list with selection (`>>` indicator); links resolved against the page base URL, deduplicated, non-web schemes (`javascript:`, `mailto:`, `#anchor`) filtered
-- Background fetching via reqwest blocking + HtmlParser from aios-browser; DuckDuckGo search results are rendered as a page
-- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll, history (Vec<String>)
+- Page text content display area (WHATWG-compliant rendering via html5ever: headings `#` in bold cyan, lists `•`/`1.`, `pre` preserved, tables `|`, `hr`, images as `[alt]`)
+- Scrollable links list with selection (`>>` indicator); links resolved against the page base URL, deduplicated, non-web schemes (`javascript:`, `mailto:`, `#anchor`) filtered; the window scrolls with the selection (6 visible rows) and shows the visible range in the title
+- Fetches run **in the background** (never block the TUI): `load_url`/`navigate_web` spawn a thread that posts the result to the `page_cache` outbox, picked up by `check_page_cache()` each frame; a fetch-generation counter drops stale results
+- Bounded **page cache** (`WebState.cache`, 20 pages keyed by URL, oldest evicted) makes revisits and `b` back-navigation instant
+- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll, links_scroll, history (Vec<String>), cache, web_fetch_gen
 - `PageContent` struct: url, title, text, links Vec<(String,String)>
-- Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `b`=back in history, `u/d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
+- Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `b`=back in history, `u`/`d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
 
 **Tab 7 — Shell** (vertical split):
 - Command input line with prompt indicator

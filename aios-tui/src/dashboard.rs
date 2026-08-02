@@ -21,6 +21,15 @@ pub struct PageContent {
     pub links: Vec<(String, String)>,
 }
 
+/// Number of link rows visible in the Web tab links window.
+pub const LINKS_VIEW_ROWS: usize = 6;
+
+/// Upper bound for the in-memory web page cache (URL-keyed, oldest evicted).
+pub const WEB_CACHE_CAP: usize = 20;
+
+/// Outbox for background web fetches: `(fetch generation, result)`.
+pub type WebFetchOutbox = Arc<Mutex<Option<(u64, Result<(PageContent, Option<String>), String>)>>>;
+
 #[derive(Clone, Debug)]
 pub struct ShellState {
     pub input_buffer: String,
@@ -71,8 +80,36 @@ pub struct WebState {
     pub error: Option<String>,
     pub input_focused: bool,
     pub scroll: usize,
+    /// Scroll offset of the links list window (keeps the selection visible).
+    pub links_scroll: usize,
     /// Previously visited URLs, newest last; `b` pops back to the previous one.
     pub history: Vec<String>,
+    /// Bounded in-memory cache of fetched pages keyed by URL.
+    pub cache: Vec<(String, PageContent)>,
+    /// Monotonic id of the latest web fetch; stale background results are dropped.
+    pub web_fetch_gen: u64,
+}
+
+impl WebState {
+    /// Insert a fetched page into the bounded cache, evicting the oldest entry
+    /// when the cap is reached.
+    pub fn cache_page(&mut self, page: PageContent) {
+        let key = page.url.clone();
+        self.cache.retain(|(u, _)| u != &key);
+        self.cache.push((key, page));
+        while self.cache.len() > WEB_CACHE_CAP {
+            self.cache.remove(0);
+        }
+    }
+
+    /// Look up a previously fetched page by URL, newest match first.
+    pub fn cached_page(&self, url: &str) -> Option<PageContent> {
+        self.cache
+            .iter()
+            .rev()
+            .find(|(u, _)| u == url)
+            .map(|(_, p)| p.clone())
+    }
 }
 
 pub struct ProcessSnapshot {
@@ -122,7 +159,8 @@ pub struct DashboardState {
     pub block_input_buffer: String,
     pub dep_snapshot: DependencySnapshot,
     pub web_state: WebState,
-    pub page_cache: Arc<Mutex<Option<PageContent>>>,
+    /// Outbox for background web fetches: `(fetch generation, result)`.
+    pub page_cache: WebFetchOutbox,
     pub shell_state: ShellState,
     pub show_help: bool,
 }
@@ -176,7 +214,10 @@ impl DashboardState {
                 error: None,
                 input_focused: false,
                 scroll: 0,
+                links_scroll: 0,
                 history: Vec::new(),
+                cache: Vec::new(),
+                web_fetch_gen: 0,
             },
             page_cache: Arc::new(Mutex::new(None)),
             shell_state: ShellState::default(),
@@ -213,6 +254,7 @@ impl DashboardState {
         if self.selected_row > 0 {
             self.selected_row -= 1;
         }
+        self.clamp_web_links_scroll();
     }
 
     pub fn move_selection_down(&mut self) {
@@ -233,18 +275,54 @@ impl DashboardState {
         if max > 0 && self.selected_row < max - 1 {
             self.selected_row += 1;
         }
+        self.clamp_web_links_scroll();
     }
 
+    /// Keep the Web tab links window scrolled so the selected row stays visible.
+    fn clamp_web_links_scroll(&mut self) {
+        if self.selected_tab != 5 {
+            return;
+        }
+        let max_start = self
+            .web_state
+            .page
+            .as_ref()
+            .map(|p| p.links.len().saturating_sub(LINKS_VIEW_ROWS))
+            .unwrap_or(0);
+        self.web_state.links_scroll = self
+            .selected_row
+            .saturating_sub(LINKS_VIEW_ROWS - 1)
+            .min(max_start);
+    }
+
+    /// Pick up the result of a background web fetch, ignoring stale generations.
     pub fn check_page_cache(&mut self) {
         let content = self.page_cache.lock().ok().and_then(|mut c| c.take());
-        if let Some(page) = content {
-            let url = page.url.clone();
-            self.web_state.page = Some(page);
-            self.web_state.current_url = url.clone();
-            self.web_state.loading = false;
-            self.web_state.error = None;
-            self.web_state.scroll = 0;
-            self.add_log(format!("Web: loaded {}", url));
+        if let Some((gen, result)) = content {
+            if gen != self.web_state.web_fetch_gen {
+                return;
+            }
+            match result {
+                Ok((page, search_query)) => {
+                    let url = page.url.clone();
+                    self.web_state.cache_page(page.clone());
+                    self.web_state.page = Some(page);
+                    self.web_state.current_url = url.clone();
+                    self.web_state.url_input.clear();
+                    self.web_state.search_query = search_query.unwrap_or_default();
+                    self.web_state.loading = false;
+                    self.web_state.error = None;
+                    self.web_state.scroll = 0;
+                    self.web_state.links_scroll = 0;
+                    self.selected_row = 0;
+                    self.add_log(format!("Web: loaded {url}"));
+                }
+                Err(e) => {
+                    self.web_state.loading = false;
+                    self.web_state.error = Some(e);
+                    self.add_log("Web: fetch failed".into());
+                }
+            }
         }
     }
 
@@ -1304,10 +1382,17 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             .skip(ws.scroll)
             .take(visible)
             .map(|l| {
-                Line::from(Span::styled(
-                    format!("  {l}"),
-                    Style::default().fg(Color::White),
-                ))
+                let trimmed = l.trim_start();
+                let style = if trimmed.starts_with('#') {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else if trimmed.is_empty() {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                Line::from(Span::styled(format!("  {l}"), style))
             })
             .collect();
         let total = page.text.lines().count();
@@ -1367,6 +1452,8 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             page.links
                 .iter()
                 .enumerate()
+                .skip(ws.links_scroll)
+                .take(LINKS_VIEW_ROWS)
                 .map(|(i, (text, href))| {
                     let style = if i == state.selected_row {
                         Style::default()
@@ -1390,11 +1477,21 @@ fn draw_web(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         })
         .unwrap_or_default();
 
-    let link_list = List::new(link_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Links — o/Enter: open  j/k: navigate  b: back "),
-    );
+    let link_range = ws
+        .page
+        .as_ref()
+        .map(|p| {
+            if p.links.is_empty() {
+                "0–0".to_string()
+            } else {
+                let end = (ws.links_scroll + LINKS_VIEW_ROWS).min(p.links.len());
+                format!("{}–{}", ws.links_scroll + 1, end)
+            }
+        })
+        .unwrap_or_default();
+    let link_list = List::new(link_items).block(Block::default().borders(Borders::ALL).title(
+        format!(" Links — o/Enter: open  j/k: navigate  b: back  {link_range} "),
+    ));
     f.render_widget(link_list, chunks[2]);
 }
 
@@ -1703,5 +1800,114 @@ mod tests {
     fn test_block_state_styles() {
         assert_eq!(block_state_style("Active").fg, Some(Color::Green));
         assert_eq!(block_state_style("Error").fg, Some(Color::Red));
+    }
+
+    fn make_page(url: &str, links: usize) -> PageContent {
+        PageContent {
+            url: url.to_string(),
+            title: format!("Title {url}"),
+            text: "text".into(),
+            links: (0..links)
+                .map(|i| (format!("t{i}"), format!("{url}/{i}")))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_web_cache_insert_and_lookup() {
+        let mut ws = WebState {
+            url_input: String::new(),
+            current_url: String::new(),
+            search_query: String::new(),
+            page: None,
+            loading: false,
+            error: None,
+            input_focused: false,
+            scroll: 0,
+            links_scroll: 0,
+            history: Vec::new(),
+            cache: Vec::new(),
+            web_fetch_gen: 0,
+        };
+        assert!(ws.cached_page("https://a").is_none());
+        ws.cache_page(make_page("https://a", 0));
+        ws.cache_page(make_page("https://b", 0));
+        assert!(ws.cached_page("https://a").is_some());
+        assert_eq!(ws.cached_page("https://b").unwrap().url, "https://b");
+        ws.cache_page(make_page("https://a", 1));
+        assert_eq!(ws.cache.len(), 2);
+    }
+
+    #[test]
+    fn test_web_cache_eviction_caps_at_bound() {
+        let mut ws = WebState {
+            url_input: String::new(),
+            current_url: String::new(),
+            search_query: String::new(),
+            page: None,
+            loading: false,
+            error: None,
+            input_focused: false,
+            scroll: 0,
+            links_scroll: 0,
+            history: Vec::new(),
+            cache: Vec::new(),
+            web_fetch_gen: 0,
+        };
+        for i in 0..WEB_CACHE_CAP + 5 {
+            ws.cache_page(make_page(&format!("https://e{i}"), 0));
+        }
+        assert_eq!(ws.cache.len(), WEB_CACHE_CAP);
+        assert!(ws.cached_page("https://e0").is_none());
+        assert!(ws
+            .cached_page(&format!("https://e{}", WEB_CACHE_CAP + 4))
+            .is_some());
+    }
+
+    #[test]
+    fn test_web_links_scroll_keeps_selection_visible() {
+        let mut state = make_state();
+        state.selected_tab = 5;
+        state.web_state.page = Some(make_page("https://p", 12));
+        for _ in 0..12 {
+            state.move_selection_down();
+        }
+        assert_eq!(state.selected_row, 11);
+        assert_eq!(
+            state.web_state.links_scroll,
+            12usize.saturating_sub(LINKS_VIEW_ROWS)
+        );
+        for _ in 0..12 {
+            state.move_selection_up();
+        }
+        assert_eq!(state.selected_row, 0);
+        assert_eq!(state.web_state.links_scroll, 0);
+    }
+
+    #[test]
+    fn test_web_fetch_result_applied() {
+        let mut state = make_state();
+        state.selected_tab = 5;
+        state.web_state.web_fetch_gen = 3;
+        let page = make_page("https://applied", 0);
+        *state.page_cache.lock().unwrap() = Some((3, Ok((page, Some("q".into())))));
+        state.check_page_cache();
+        assert!(state.web_state.page.is_some());
+        assert_eq!(state.web_state.current_url, "https://applied");
+        assert_eq!(state.web_state.search_query, "q");
+        assert!(!state.web_state.loading);
+        assert!(state.web_state.error.is_none());
+        assert_eq!(state.web_state.cache.len(), 1);
+    }
+
+    #[test]
+    fn test_web_stale_generation_dropped() {
+        let mut state = make_state();
+        state.web_state.web_fetch_gen = 3;
+        let page = make_page("https://stale", 0);
+        *state.page_cache.lock().unwrap() = Some((2, Ok((page, None))));
+        state.check_page_cache();
+        assert!(state.web_state.page.is_none());
+        assert_eq!(state.web_state.cache.len(), 0);
     }
 }
