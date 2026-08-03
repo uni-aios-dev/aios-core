@@ -1067,6 +1067,13 @@ Three adaptive AI modes depending on hardware resources:
 - `NetSettingsBlock` — `StatefulBlock` on the IPC bus: `net_get`, `net_set <json>`, `net_reset`, `net_persist`; state extract/restore via bincode
 - **32 unit tests** across config/validation/store/block
 
+### Kernel `net_settings` integration (Phase 41)
+- `net_settings` is registered in the kernel block registry at boot (`aios/src/orchestrator.rs`) and its handler is wired into the `MessageRouter`; the resulting `BlockId` is exposed as `OrchestratorState::net_block_id`
+- Kernel TUI (`aios`) hotkey `n` opens a `key=value` input mode; on `Enter` the tokens are converted to a partial-JSON update and dispatched as `net_set` over IPC, with the returned config JSON logged to the Events pane
+- Shell command `store publish <file.wasm> [name] [version]` (`aios-tui`) computes the file SHA-256, base64-encodes the wasm and posts a `StorePublishRequest` to `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); name defaults to the file stem, version to `1.0.0`
+- `StorePublishRequest` / `StorePublishResponse` in `aios-bridge::dto` are both `Serialize + Deserialize` for client round-trips
+
+
 ### TUI Store & Network Shell Commands (`aios-tui`, Phase 40)
 - `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
 - `net get | net set key=value ... | net reset` — reads/writes the network config through `NetSettingsBlock` (persisted via `NetworkConfigStore`)

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
+use aios_bridge::dto::{StorePublishRequest, StorePublishResponse};
 use aios_browser::html_parser::HtmlParser;
 use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
@@ -597,10 +598,85 @@ fn execute_shell_cmd(
                             .add_output(format!("Rollback failed: {e}")),
                     }
                 }
+                "publish" => {
+                    let file = parts.get(2).copied().unwrap_or("");
+                    if file.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: store publish <file.wasm> [name] [version]".into());
+                        return;
+                    }
+                    let path = std::path::Path::new(file);
+                    let binary = match std::fs::read(path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            state.shell_state.add_output(format!("Read failed: {e}"));
+                            return;
+                        }
+                    };
+                    let name = parts
+                        .get(3)
+                        .map(|n| n.to_string())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| {
+                            path.file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "block".to_string())
+                        });
+                    let version = parts.get(4).copied().unwrap_or("1.0.0").to_string();
+                    let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&binary));
+                    let wasm_base64 =
+                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &binary);
+                    let req = StorePublishRequest {
+                        name: name.clone(),
+                        version: version.clone(),
+                        description: "Published from TUI shell".into(),
+                        author: "local-user".into(),
+                        capabilities: Vec::new(),
+                        checksum_sha256: sha,
+                        wasm_base64,
+                    };
+                    let port = env_or("AIOS_BRIDGE_PORT", "8080");
+                    let url = format!("http://localhost:{port}/api/v1/store/publish");
+                    state.shell_state.add_output(format!(
+                        "Publishing '{}' v{} ({} bytes) to {url}...",
+                        name,
+                        version,
+                        binary.len()
+                    ));
+                    match http_client().map(|client| client.post(&url).json(&req).send()) {
+                        Ok(Ok(resp)) => match resp.json::<StorePublishResponse>() {
+                            Ok(pub_resp) => {
+                                if pub_resp.success {
+                                    state.shell_state.add_output(format!(
+                                        "Published {} {}",
+                                        pub_resp.name, pub_resp.version
+                                    ));
+                                } else {
+                                    state.shell_state.add_output(format!(
+                                        "Publish failed: {}",
+                                        pub_resp.error.unwrap_or_default()
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                state
+                                    .shell_state
+                                    .add_output(format!("Response parse failed: {e}"));
+                            }
+                        },
+                        Ok(Err(e)) => {
+                            state.shell_state.add_output(format!("Publish failed: {e}"));
+                        }
+                        Err(e) => {
+                            state.shell_state.add_output(format!("Publish failed: {e}"));
+                        }
+                    }
+                }
                 _ => state.shell_state.add_output(
                     "Usage: store list | sources | search <q> [--source N] | \
                      install <name> [--source N] | update [name] [--source N] | \
-                     uninstall <name> | rollback <name>"
+                     uninstall <name> | rollback <name> | publish <file.wasm> [name] [version]"
                         .into(),
                 ),
             }

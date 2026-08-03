@@ -2,7 +2,13 @@
 
 ## Current: None (Clean Build)
 
-As of v2.3.0, all 1130 tests pass and clippy reports zero warnings.
+As of v2.4.0, all tests pass and clippy reports zero warnings.
+
+### KNOWN LIMITATION: `store publish` needs a running update service
+- **Status:** BY DESIGN
+- **Symptom:** `store publish <file.wasm>` fails with a connection error when no bridge server is listening on `AIOS_BRIDGE_PORT` (default `8080`)
+- **Workaround:** Run the kernel (`cargo run --bin aios`) so the bridge serves `POST /api/v1/store/publish`, or point `AIOS_BRIDGE_PORT` at the running update service
+- **Note:** The wasm payload is base64-encoded and verified against the computed SHA-256 server-side before install
 
 ### KNOWN LIMITATION: Store remote sources require network
 - **Status:** BY DESIGN

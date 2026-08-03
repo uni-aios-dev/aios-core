@@ -387,8 +387,12 @@
   - [x] Update service in `aios-bridge`: `GET /index.json`, `GET /blocks/{name}.wasm`, `GET /store/index.json`, `GET /store/blocks/{name}.wasm`, `POST /api/v1/store/publish`
   - [x] TUI shell commands: `store list|sources|add-source|search|install|update|uninstall|rollback` and `net get|set|reset`
   - [x] Tests: 32 (`aios-net-config`) + 42 (`aios-store`) unit tests, 2 new integration tests (update flow + net block roundtrip)
-  - [ ] Future: pull `NetSettingsBlock` into the kernel registry at boot and route `net_*` over IPC
-  - [ ] Future: `store publish` command in the TUI shell (publish a local `.wasm` to the update service)
+
+- [x] **Phase 41: Net settings block in kernel + store publish — COMPLETE**
+  - [x] `net_settings` block registered in the kernel registry at boot (`aios/src/orchestrator.rs`), wired into the `MessageRouter`, id exposed as `OrchestratorState::net_block_id`
+  - [x] Kernel TUI hotkey `n`: input mode for `key=value` network-config updates dispatched over IPC (`net_set`) with the result shown in the Events pane
+  - [x] `store publish <file.wasm> [name] [version]` in the `aios-tui` shell — SHA-256 + base64 → `POST /api/v1/store/publish` (port from `AIOS_BRIDGE_PORT`)
+  - [x] Kernel router tests (4): registry registration + `net_get`/`net_set`/`net_reset` IPC routing
   - [ ] Future: signed manifests (Ed25519) enforcement in `BlockInstaller` + signature check for GitHub/official store
 
 ### Readiness Targets

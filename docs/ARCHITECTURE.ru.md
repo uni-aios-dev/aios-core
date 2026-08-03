@@ -1065,6 +1065,12 @@ User Input (TUI)
 - `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
 - `net get | net set key=value ... | net reset` — чтение/запись сетевой конфигурации через `NetSettingsBlock` (сохранение через `NetworkConfigStore`)
 
+### Интеграция `net_settings` в ядро (Фаза 41)
+- `net_settings` регистрируется в реестре блоков ядра при загрузке (`aios/src/orchestrator.rs`), обработчик подключается к `MessageRouter`; итоговый `BlockId` доступен как `OrchestratorState::net_block_id`
+- Горячая клавиша `n` в TUI ядра (`aios`) открывает режим ввода пар `key=value`; по `Enter` токены преобразуются в частичное JSON-обновление и уходят как `net_set` через IPC, возвращённый JSON конфигурации выводится в панель событий
+- Команда `store publish <file.wasm> [name] [version]` (`aios-tui`) вычисляет SHA-256 файла, кодирует wasm в base64 и отправляет `StorePublishRequest` в `POST /api/v1/store/publish` (порт моста из `AIOS_BRIDGE_PORT`, по умолчанию `8080`); имя по умолчанию — имя файла без расширения, версия — `1.0.0`
+- `StorePublishRequest` / `StorePublishResponse` в `aios-bridge::dto` оба `Serialize + Deserialize` для клиентских round-trip
+
 ---
 
 ## Слой 6: Интегрированный бинарник (`aios/`)

@@ -7,6 +7,8 @@ use aios_browser::types::BrowserConfig;
 use aios_core::block::BlockId;
 use aios_core::block::StatefulBlock;
 use aios_llm::{default_config, LlmEngine};
+use aios_net_config::block::NetSettingsBlock;
+use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_security::access_control::AccessControlLayer;
 use aios_wasm::executor::BlockExecutor;
@@ -22,6 +24,7 @@ pub struct OrchestratorState {
     pub bridge: Arc<BridgeContext>,
     pub router: MessageRouter,
     pub browser_block_id: BlockId,
+    pub net_block_id: BlockId,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
     pub logs: Arc<Mutex<Vec<String>>>,
@@ -85,6 +88,7 @@ pub async fn initialize(
         ("ipc_bus", "1.0.0", &b"ipc_bus"[..]),
         ("scheduler", "1.0.0", &b"scheduler"[..]),
         ("browser", "0.1.0", &b"browser-native"[..]),
+        ("net_settings", "1.0.0", &b"net-settings-native"[..]),
     ] {
         if let Ok(id) = registry.register_block(name, version, binary.to_vec()) {
             let _ = registry.activate_block(id);
@@ -119,6 +123,26 @@ pub async fn initialize(
     push_log(
         &logs,
         format!("AIOS: browser block '{}' ready", browser_block_id),
+    );
+
+    let net_block_id = registry
+        .find_by_name("net_settings")
+        .map(|e| e.manifest.id)
+        .unwrap_or(BlockId::new(100));
+    let mut net_block =
+        NetSettingsBlock::with_default_store(net_block_id, NetworkConfig::default());
+    let net_hostname = net_block.config().hostname.clone();
+    let net_port = net_block.config().listen_port;
+    router.register_handler(
+        net_block_id.0,
+        Box::new(move |packet| net_block.handle_message(packet)),
+    );
+    push_log(
+        &logs,
+        format!(
+            "AIOS: net settings block '{}' ready ({}:{})",
+            net_block_id, net_hostname, net_port
+        ),
     );
 
     push_log(&logs, "AIOS: initializing access control...".into());
@@ -171,8 +195,87 @@ pub async fn initialize(
         bridge,
         router,
         browser_block_id,
+        net_block_id,
         start_time: Instant::now(),
         bridge_running,
         logs,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+
+    fn build_net_router(dir: &tempfile::TempDir) -> (MessageRouter, BlockId) {
+        let mut registry = BlockRegistry::new();
+        let _ = registry.register_block("net_settings", "1.0.0", b"net-settings-native".to_vec());
+        let id = registry
+            .find_by_name("net_settings")
+            .map(|e| e.manifest.id)
+            .unwrap_or(BlockId::new(100));
+        let mut net_block =
+            NetSettingsBlock::new(id, NetworkConfig::default(), dir.path().join("net.json"));
+        let mut router = MessageRouter::new();
+        router.register_handler(
+            id.0,
+            Box::new(move |packet| net_block.handle_message(packet)),
+        );
+        (router, id)
+    }
+
+    fn dispatch_net(
+        router: &mut MessageRouter,
+        id: BlockId,
+        command: &str,
+        data: Vec<u8>,
+    ) -> NetworkConfig {
+        let packet = IpcPacket::new(
+            0,
+            id.0,
+            CommandId::Custom,
+            Payload::Custom(command.into(), data),
+        );
+        let resp = router.dispatch(&packet).unwrap().unwrap();
+        let json = match &resp.payload {
+            Payload::Text(t) => t.clone(),
+            other => panic!("expected text response, got {other:?}"),
+        };
+        NetworkConfig::from_json(&json).unwrap()
+    }
+
+    #[test]
+    fn test_net_settings_registered_in_registry() {
+        let mut registry = BlockRegistry::new();
+        let _ = registry.register_block("net_settings", "1.0.0", b"net-settings-native".to_vec());
+        assert!(registry.find_by_name("net_settings").is_some());
+    }
+
+    #[test]
+    fn test_net_get_routed_over_ipc() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut router, id) = build_net_router(&dir);
+        let config = dispatch_net(&mut router, id, "net_get", Vec::new());
+        assert_eq!(config.hostname, "aios-host");
+    }
+
+    #[test]
+    fn test_net_set_routed_over_ipc() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut router, id) = build_net_router(&dir);
+        let updates = serde_json::json!({ "hostname": "kernel-host", "listen_port": 9090 });
+        let config = dispatch_net(&mut router, id, "net_set", updates.to_string().into_bytes());
+        assert_eq!(config.hostname, "kernel-host");
+        assert_eq!(config.listen_port, 9090);
+    }
+
+    #[test]
+    fn test_net_reset_routed_over_ipc() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut router, id) = build_net_router(&dir);
+        let updates = serde_json::json!({ "hostname": "temporary" });
+        let _ = dispatch_net(&mut router, id, "net_set", updates.to_string().into_bytes());
+        let config = dispatch_net(&mut router, id, "net_reset", Vec::new());
+        assert_eq!(config.hostname, "aios-host");
+    }
 }

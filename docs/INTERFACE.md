@@ -135,6 +135,7 @@ The block store fetches blocks from three kinds of sources: GitHub (`github:owne
 | `store update` | `[name] [--source NAME]` | Check for and apply updates (auto-rollback on failure) |
 | `store uninstall` | `<name>` | Remove every installed version of a block |
 | `store rollback` | `<name>` | Restore the previous version from backup |
+| `store publish` | `<file.wasm> [name] [version]` | Publish a local wasm file to the running update service via `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); the file's SHA-256 is verified server-side |
 
 ### Network Shell Commands
 
@@ -176,6 +177,7 @@ cargo run --bin aios
 | `Alt`+`1`-`4` | Direct tab select even while the browser URL prompt or the AI query line is active |
 | `g` | Open bridge dashboard URL (`http://localhost:8080`) in the browser |
 | `b` | Open a URL or search query in the native browser (input mode) |
+| `n` | Edit network settings (input mode, applied over IPC) |
 | `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
 | `r` | Reprobe hardware |
 | `Space` | Pause/resume event log |
@@ -184,6 +186,10 @@ cargo run --bin aios
 ### Browser Hotkey (`b`)
 
 The browser block is registered at boot — no configuration, installed browser, or network required. Press `b`, type a full URL (e.g. `https://example.com`), a bare host (`example.com`), or a plain search query (`rust scheduler`), press `Enter`: the input is dispatched to the browser block over IPC (`open_native` command via `MessageRouter`). Queries and bare hosts are converted to a DuckDuckGo search / `https://` URL and opened in your OS default browser. The result is shown in the Events pane.
+
+### Network Hotkey (`n`)
+
+The `net_settings` block is registered at boot in the kernel registry and wired into the `MessageRouter`. Press `n`, type `key=value` pairs (e.g. `hostname=server-1 listen_port=9090 dhcp_enabled=false`), press `Enter`: the input is converted to a JSON partial update and dispatched to the block over IPC (`net_set` command). The returned config JSON is shown in the Events pane. `Esc` cancels the input. Numeric-looking values are parsed as numbers; anything else is kept as a string.
 
 ---
 

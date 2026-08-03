@@ -178,7 +178,7 @@ pub struct StoreRegisterResponse {
     pub version: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StorePublishRequest {
     pub name: String,
     pub version: String,
@@ -190,7 +190,7 @@ pub struct StorePublishRequest {
     pub wasm_base64: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StorePublishResponse {
     pub success: bool,
     pub name: String,

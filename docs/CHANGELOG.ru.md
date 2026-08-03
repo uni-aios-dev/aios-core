@@ -409,8 +409,24 @@
 - Каждое исполнение намерения проверяет `AccessControlLayer` перед системными вызовами
 - Недостающая capability возвращает HTTP 403 Forbidden с описанием
 - Bridge работает со своим `bridge_block_id` для идентификации в ACL
-
 # Журнал разработки AIOS
+
+## v2.4.0 — Блок сетевых настроек в ядре + store publish (2026-08-03)
+
+### Ядро `aios`: сетевые настройки через IPC
+- Блок `net_settings` регистрируется при загрузке в реестре ядра и подключается к `MessageRouter` (`aios/src/orchestrator.rs`); его `BlockId` доступен как `OrchestratorState::net_block_id`
+- Новая клавиша `n` в TUI ядра (`aios`): режим ввода пар `key=value` для частичного обновления сетевой конфигурации, уходит в блок по IPC (команда `net_set` через `MessageRouter`); возвращённый JSON конфигурации выводится в панель событий; `Esc` отменяет ввод
+- Обработка событий TUI: `TuiApp` получил поля `net_input` / `net_mode`; `ui.rs` рисует строку-подсказку сети и обновлённую справку; переключение вкладок Alt+цифра также сбрасывает net-режим
+
+### Шелл `aios-tui`: `store publish`
+- Новая команда `store publish <file.wasm> [name] [version]` — читает файл, вычисляет SHA-256, кодирует wasm в base64 и отправляет `StorePublishRequest` в `POST /api/v1/store/publish` локального сервиса обновлений (порт моста из `AIOS_BRIDGE_PORT`, по умолчанию `8080`); имя по умолчанию — имя файла без расширения, версия — `1.0.0`
+- `StorePublishRequest` / `StorePublishResponse` в `aios-bridge::dto` теперь оба `Serialize + Deserialize`, чтобы клиент мог их сериализовать и разбирать
+- `aios-tui` теперь зависит от `aios-bridge`, `sha2`, `hex`, `base64`
+
+### Тесты и верификация
+- Новые тесты ядра в `aios/src/orchestrator.rs` (4): регистрация `net_settings` в реестре, маршрутизация `net_get` / `net_set` / `net_reset` через IPC по `MessageRouter`
+- Полная сборка workspace, `cargo test --workspace`, `cargo clippy --workspace` (0 предупреждений), `cargo fmt --all` — всё проходит
+
 
 ## v1.0.0 — Автообнаружение, парсинг манифестов, enforcement capabilities (2026-07-28)
 

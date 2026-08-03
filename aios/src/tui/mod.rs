@@ -88,6 +88,51 @@ fn dispatch_open_url(app: &mut TuiApp, url: &str) {
     }
 }
 
+fn dispatch_net_set(app: &mut TuiApp, raw: &str) {
+    let mut updates = serde_json::Map::new();
+    for token in raw.split_whitespace() {
+        let (k, v) = match token.split_once('=') {
+            Some(kv) => kv,
+            None => {
+                push_log(
+                    &app.logs,
+                    format!("AIOS: net: bad token '{token}' (use key=value)"),
+                );
+                return;
+            }
+        };
+        let value = serde_json::from_str::<serde_json::Value>(v)
+            .unwrap_or_else(|_| serde_json::Value::String(v.to_string()));
+        updates.insert(k.to_string(), value);
+    }
+    if updates.is_empty() {
+        push_log(&app.logs, "AIOS: net: usage: key=value ...".into());
+        return;
+    }
+    let body = serde_json::Value::Object(updates).to_string();
+    let result = {
+        let mut state = app.state.lock().unwrap();
+        let packet = IpcPacket::new(
+            0,
+            state.net_block_id.0,
+            CommandId::Custom,
+            Payload::Custom("net_set".into(), body.into_bytes()),
+        );
+        state.router.dispatch(&packet)
+    };
+    match result {
+        Ok(Some(resp)) => {
+            let msg = match resp.payload {
+                Payload::Text(text) => text,
+                _ => "net settings block: OK".to_string(),
+            };
+            push_log(&app.logs, format!("AIOS: net: {msg}"));
+        }
+        Ok(None) => push_log(&app.logs, "AIOS: net: no response".into()),
+        Err(e) => push_log(&app.logs, format!("AIOS: net ERROR: {e}")),
+    }
+}
+
 fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
     if key.modifiers.contains(KeyModifiers::ALT) {
         if let KeyCode::Char(d) = key.code {
@@ -96,6 +141,7 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
                     app.current_tab = (d - 1) as usize;
                     app.ai_mode = false;
                     app.browser_mode = false;
+                    app.net_mode = false;
                     return;
                 }
             }
@@ -119,6 +165,25 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
         }
         return;
     }
+
+    if app.net_mode {
+        match key.code {
+            KeyCode::Esc => app.net_mode = false,
+            KeyCode::Enter if !app.net_input.is_empty() => {
+                let input = app.net_input.clone();
+                app.net_mode = false;
+                app.net_input.clear();
+                dispatch_net_set(app, &input);
+            }
+            KeyCode::Char(c) => app.net_input.push(c),
+            KeyCode::Backspace => {
+                app.net_input.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') if app.ai_input.is_empty() => {
             app.running = false;
@@ -130,6 +195,10 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Char('b') if app.ai_input.is_empty() && !app.ai_mode => {
             app.browser_mode = true;
             app.browser_url.clear();
+        }
+        KeyCode::Char('n') if app.ai_input.is_empty() && !app.ai_mode => {
+            app.net_mode = true;
+            app.net_input.clear();
         }
         KeyCode::Char('r') if app.ai_input.is_empty() => {
             app.refresh_hw();

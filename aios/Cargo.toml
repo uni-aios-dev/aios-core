@@ -18,6 +18,7 @@ aios-watchdog = { path = "../aios-watchdog" }
 aios-security = { path = "../aios-security" }
 aios-store = { path = "../aios-store" }
 aios-net = { path = "../aios-net" }
+aios-net-config = { path = "../aios-net-config" }
 aios-search = { path = "../aios-search" }
 aios-browser = { path = "../aios-browser" }
 aios-context = { path = "../aios-context" }
@@ -40,3 +41,6 @@ open = "5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 url = "2"
+
+[dev-dependencies]
+tempfile = "3"

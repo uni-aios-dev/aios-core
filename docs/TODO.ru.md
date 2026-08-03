@@ -385,8 +385,12 @@
   - [x] Сервис обновлений в `aios-bridge`: `GET /index.json`, `GET /blocks/{name}.wasm`, `GET /store/index.json`, `GET /store/blocks/{name}.wasm`, `POST /api/v1/store/publish`
   - [x] Команды TUI-шелла: `store list|sources|add-source|search|install|update|uninstall|rollback` и `net get|set|reset`
   - [x] Тесты: 32 (`aios-net-config`) + 42 (`aios-store`) юнит-теста, 2 новых интеграционных теста (поток обновлений + roundtrip net-блока)
-  - [ ] Будущее: подключать `NetSettingsBlock` в реестр ядра при загрузке и маршрутизировать `net_*` через IPC
-  - [ ] Будущее: команда `store publish` в TUI-шелл (публикация локального `.wasm` в сервис обновлений)
+
+- [x] **Фаза 41: Блок сетевых настроек в ядре + store publish — ЗАВЕРШЕНА**
+  - [x] Блок `net_settings` регистрируется в реестре ядра при загрузке (`aios/src/orchestrator.rs`), подключается к `MessageRouter`, id доступен как `OrchestratorState::net_block_id`
+  - [x] Горячая клавиша `n` в TUI ядра: режим ввода пар `key=value` для обновления сетевой конфигурации через IPC (`net_set`) с выводом результата в панель событий
+  - [x] `store publish <file.wasm> [name] [version]` в шелле `aios-tui` — SHA-256 + base64 → `POST /api/v1/store/publish` (порт из `AIOS_BRIDGE_PORT`)
+  - [x] Тесты роутера ядра (4): регистрация в реестре + маршрутизация `net_get`/`net_set`/`net_reset` через IPC
   - [ ] Будущее: подписанные манифесты (Ed25519) в `BlockInstaller` + проверка подписи для GitHub/официального магазина
 
 ### Целевые показатели готовности

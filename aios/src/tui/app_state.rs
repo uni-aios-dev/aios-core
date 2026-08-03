@@ -13,6 +13,8 @@ pub struct TuiApp {
     pub ai_mode: bool,
     pub browser_url: String,
     pub browser_mode: bool,
+    pub net_input: String,
+    pub net_mode: bool,
     pub ai_output: Arc<Mutex<VecDeque<String>>>,
     pub bridge_port: u16,
 }
@@ -35,6 +37,8 @@ impl TuiApp {
             ai_mode: false,
             browser_url: String::new(),
             browser_mode: false,
+            net_input: String::new(),
+            net_mode: false,
             ai_output: Arc::new(Mutex::new(VecDeque::new())),
             bridge_port,
         }

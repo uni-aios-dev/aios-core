@@ -384,7 +384,7 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .style(Style::default().fg(Color::DarkGray));
 
     let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-4] goto  [g] dashboard  [b] browse  [r] reprobe  [Space] pause  [q] quit ",
+        " [Tab/F1] tabs  [1-4] goto  [g] dashboard  [b] browse  [n] net  [r] reprobe  [Space] pause  [q] quit ",
     )]);
     let help_style = Style::default().fg(Color::DarkGray).bg(Color::Black);
 
@@ -410,10 +410,33 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
         Style::default().fg(Color::DarkGray).bg(Color::Black)
     };
 
+    let net_line = if app.net_mode {
+        Line::from(vec![
+            Span::styled(
+                " net: ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.net_input.clone(), Style::default().fg(Color::Green)),
+            Span::raw("  [Enter] apply  [Esc] cancel  (e.g. hostname=server-1 listen_port=8080)"),
+        ])
+    } else {
+        Line::from(Span::raw(
+            " [n] Change network settings via IPC (hostname, listen_port, dhcp_enabled, dns_server) ",
+        ))
+    };
+    let net_style = if app.net_mode {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray).bg(Color::Black)
+    };
+
     let log_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
@@ -423,5 +446,6 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
         Paragraph::new(browser_line).style(browser_style),
         log_chunks[1],
     );
-    frame.render_widget(Paragraph::new(help).style(help_style), log_chunks[2]);
+    frame.render_widget(Paragraph::new(net_line).style(net_style), log_chunks[2]);
+    frame.render_widget(Paragraph::new(help).style(help_style), log_chunks[3]);
 }

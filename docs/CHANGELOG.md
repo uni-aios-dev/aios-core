@@ -1,5 +1,21 @@
 # AIOS Development Log
 
+## v2.4.0 — Net settings block in kernel + store publish (2026-08-03)
+
+### Kernel `aios` binary: net settings over IPC
+- `net_settings` block registered at boot in the kernel registry and wired into the `MessageRouter` (`aios/src/orchestrator.rs`); its `BlockId` is exposed as `OrchestratorState::net_block_id`
+- New `n` hotkey in the kernel TUI (`aios`): input mode for `key=value` partial network-config updates, dispatched to the block over IPC (`net_set` via `MessageRouter`); the returned config JSON is logged to the Events pane; `Esc` cancels
+- TUI event plumbing: `TuiApp` gains `net_input` / `net_mode`; `ui.rs` renders a net prompt line and updated help; Alt+digit tab switch now also resets net mode
+
+### `aios-tui` shell: `store publish`
+- New `store publish <file.wasm> [name] [version]` command — reads the file, computes SHA-256, base64-encodes the wasm and posts a `StorePublishRequest` to `POST /api/v1/store/publish` on the local update service (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); name defaults to the file stem, version to `1.0.0`
+- `StorePublishRequest` / `StorePublishResponse` in `aios-bridge::dto` are now both `Serialize + Deserialize` so a client can round-trip them
+- `aios-tui` now depends on `aios-bridge`, `sha2`, `hex`, `base64`
+
+### Tests & verification
+- New kernel tests in `aios/src/orchestrator.rs` (4): `net_settings` registered in the registry, `net_get` / `net_set` / `net_reset` routed over IPC via `MessageRouter`
+- Full workspace build, `cargo test --workspace`, `cargo clippy --workspace` (0 warnings), `cargo fmt --all` all pass
+
 ## v2.3.0 — Block store: update service + network settings (2026-08-03)
 
 ### `aios-store`: sources, catalog, installer, manager
