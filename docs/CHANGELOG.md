@@ -1,5 +1,33 @@
 # AIOS Development Log
 
+## v2.5.0 — Ed25519-signed block manifests with trust enforcement (2026-08-04)
+
+### `aios-store`: real Ed25519 signing & verification
+- `manifest::canonical_bytes()` — deterministic canonical serialization `aios-manifest-v1\n` + name/version/description/author/sorted capabilities/size/`wasm_sha256`
+- `manifest::sign_manifest(manifest, &SigningKey) -> SignatureInfo` — Ed25519 signature (`ed25519-dalek` v2, `rand_core` feature) over the canonical bytes; `verify_signature` now runs a real `verify_strict` check; `verify_signature_with_keys(manifest, &[String])` validates against a list of trusted public keys
+- Workspace root `Cargo.toml` gains `ed25519-dalek = { version = "2", features = ["rand_core"] }`; `aios-store` adds `ed25519-dalek` dep and `rand_core` dev-dep (for `OsRng` in tests)
+- 11 manifest tests: sign/verify roundtrip, tampered wasm/capabilities, wrong key, trusted-key accept/reject, missing signature error, bad algorithm
+
+### `aios-store`: signature enforcement in `BlockInstaller`
+- `BlockInstaller.trusted_keys: Vec<String>` — when non-empty, `install_from_bytes` rejects unsigned manifests and any manifest not signed by one of the trusted keys
+- New constructors `with_trusted_keys(dir, keys)` and `from_env(dir)`; `Default` reads `AIOS_TRUSTED_PUBLIC_KEYS` (`,`/`;`-separated); with no trusted keys the signature is still verified against the embedded signing key
+- Sidecar now persists the full `ManifestInfo` (including the signature) so signed installs remain verifiable via `store verify`
+- 16 installer tests: reject unsigned/wrong key, accept correct signature, tampered manifest reject, env parsing, signature preserved in sidecar
+
+### `aios-store`: per-source trust policy
+- `StoreSource.trusted_public_keys: Vec<String>` (`#[serde(default)]`); `StoreManager::verify_source_manifest(source, manifest)` rejects a manifest not signed by one of the source's trusted keys; enforced in `install()` and `update()`
+- `github_default` inherits the official key from `AIOS_OFFICIAL_PUBLIC_KEY` via `official_public_key()`; `StoreManager::new`/`with_sources` now use `BlockInstaller::from_env`
+- 2 manager tests: reject untrusted / accept trusted signature from a source
+
+### `aios-tui` shell: `store sign` / `store verify`
+- `store sign <file.wasm> [name] [version] [--key <secret_hex>]` — computes SHA-256, builds the manifest, signs it with Ed25519 (key from `AIOS_STORE_SIGNING_KEY` if `--key` is omitted), writes the signed sidecar JSON next to the file and prints the public key
+- `store verify <name>` — checks the installed block: SHA-256 of the binary + Ed25519 signature of the sidecar manifest
+- `aios-tui` now depends on `ed25519-dalek`
+
+### Tests & verification
+- `aios-store` grows to 56 unit tests; total workspace suite 1148 tests, all passing
+- Full workspace build, `cargo test --workspace`, `cargo clippy --workspace` (0 warnings), `cargo fmt --all` all pass
+
 ## v2.4.0 — Net settings block in kernel + store publish (2026-08-03)
 
 ### Kernel `aios` binary: net settings over IPC

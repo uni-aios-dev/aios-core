@@ -11,6 +11,15 @@ pub enum SourceKind {
     Http,
 }
 
+/// Hex-encoded Ed25519 public key trusted to sign official AIOS store
+/// manifests, configured via `AIOS_OFFICIAL_PUBLIC_KEY`.
+pub fn official_public_key() -> Option<String> {
+    std::env::var("AIOS_OFFICIAL_PUBLIC_KEY")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// A named source of block catalogs and binaries.
 ///
 /// `base` is interpreted depending on `kind`:
@@ -25,12 +34,21 @@ pub struct StoreSource {
     pub kind: SourceKind,
     /// Source-specific base location.
     pub base: String,
+    /// Hex-encoded Ed25519 public keys that manifests from this source must be
+    /// signed by. Empty means no signature is required from this source.
+    #[serde(default)]
+    pub trusted_public_keys: Vec<String>,
 }
 
 impl StoreSource {
-    /// Official community store hosted on GitHub.
+    /// Official community store hosted on GitHub. When `AIOS_OFFICIAL_PUBLIC_KEY`
+    /// is set, manifests from it must be signed by that key.
     pub fn github_default() -> Self {
-        Self::github("uni-aios-dev/aios-official-store")
+        let mut source = Self::github("uni-aios-dev/aios-official-store");
+        if let Some(key) = official_public_key() {
+            source.trusted_public_keys.push(key);
+        }
+        source
     }
 
     /// GitHub source for `owner/repo`.
@@ -45,7 +63,15 @@ impl StoreSource {
             name: format!("github:{base}"),
             kind: SourceKind::GitHub,
             base,
+            trusted_public_keys: Vec::new(),
         }
+    }
+
+    /// GitHub source that additionally requires manifests signed by `keys`.
+    pub fn github_with_keys(owner_repo: &str, keys: Vec<String>) -> Self {
+        let mut source = Self::github(owner_repo);
+        source.trusted_public_keys = keys;
+        source
     }
 
     /// Local directory source.
@@ -54,6 +80,7 @@ impl StoreSource {
             name: format!("local:{path}"),
             kind: SourceKind::Local,
             base: path.to_string(),
+            trusted_public_keys: Vec::new(),
         }
     }
 
@@ -63,6 +90,7 @@ impl StoreSource {
             name: format!("http:{}", url.trim_end_matches('/')),
             kind: SourceKind::Http,
             base: url.trim_end_matches('/').to_string(),
+            trusted_public_keys: Vec::new(),
         }
     }
 

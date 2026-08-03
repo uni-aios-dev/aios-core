@@ -1065,6 +1065,13 @@ User Input (TUI)
 - `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
 - `net get | net set key=value ... | net reset` — чтение/запись сетевой конфигурации через `NetSettingsBlock` (сохранение через `NetworkConfigStore`)
 
+### Подписи Ed25519 и политика доверия (`aios-store`, Фаза 42 / v2.5.0)
+- **Модель подписи** — каждый манифест несёт опциональный `SignatureInfo`; канонические байты: `aios-manifest-v1\n` + name + version + description + author + отсортированные capabilities + размер + `wasm_sha256`; `sign_manifest(manifest, &SigningKey) -> SignatureInfo` подписывает их по Ed25519 (`ed25519-dalek` v2, фича `rand_core`)
+- **Проверка** — `ManifestValidator::verify_signature` выполняет реальную проверку `verify_strict` по встроенному ключу; `verify_signature_with_keys(manifest, &[String])` принимает любой доверенный публичный ключ из списка
+- **Enforcement в установщике** — `BlockInstaller.trusted_keys: Vec<String>`: если список не пуст, `install_from_bytes` отклоняет неподписанные манифесты и любые манифесты, не подписанные одним из доверенных ключей. Конструкторы `with_trusted_keys(dir, keys)` / `from_env(dir)`; `Default` читает `AIOS_TRUSTED_PUBLIC_KEYS` (разделители `,`/`;`). Sidecar установщика теперь сохраняет полный `ManifestInfo` включая подпись, поэтому подписанные установки остаются проверяемыми
+- **Политика доверия по источникам** — `StoreSource.trusted_public_keys` (`#[serde(default)]`); `StoreManager::verify_source_manifest(source, manifest)` применяется в `install()` и `update()`. Источник GitHub по умолчанию наследует официальный ключ из `AIOS_OFFICIAL_PUBLIC_KEY` через `official_public_key()`. Если ключи не заданы, подпись всё равно проверяется по встроенному ключу (неподписанные установки разрешены)
+- **TUI-шелл** — `store sign <file.wasm> [name] [version] [--key <secret_hex>]` подписывает локальный wasm (ключ из `AIOS_STORE_SIGNING_KEY`, если `--key` опущен) и пишет подписанный sidecar; `store verify <name>` проверяет SHA-256 + Ed25519 установленного блока
+
 ### Интеграция `net_settings` в ядро (Фаза 41)
 - `net_settings` регистрируется в реестре блоков ядра при загрузке (`aios/src/orchestrator.rs`), обработчик подключается к `MessageRouter`; итоговый `BlockId` доступен как `OrchestratorState::net_block_id`
 - Горячая клавиша `n` в TUI ядра (`aios`) открывает режим ввода пар `key=value`; по `Enter` токены преобразуются в частичное JSON-обновление и уходят как `net_set` через IPC, возвращённый JSON конфигурации выводится в панель событий

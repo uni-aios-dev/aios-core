@@ -411,6 +411,34 @@
 - Bridge работает со своим `bridge_block_id` для идентификации в ACL
 # Журнал разработки AIOS
 
+## v2.5.0 — Подписанные манифесты блоков Ed25519 с политикой доверия (2026-08-04)
+
+### `aios-store`: реальная подпись и проверка Ed25519
+- `manifest::canonical_bytes()` — детерминированная каноническая сериализация `aios-manifest-v1\n` + name/version/description/author/отсортированные capabilities/размер/`wasm_sha256`
+- `manifest::sign_manifest(manifest, &SigningKey) -> SignatureInfo` — подпись Ed25519 (`ed25519-dalek` v2, фича `rand_core`) по каноническим байтам; `verify_signature` теперь выполняет реальную проверку `verify_strict`; `verify_signature_with_keys(manifest, &[String])` проверяет по списку доверенных публичных ключей
+- Корневой `Cargo.toml` получил `ed25519-dalek = { version = "2", features = ["rand_core"] }`; `aios-store` добавил dep `ed25519-dalek` и dev-dep `rand_core` (для `OsRng` в тестах)
+- 11 тестов манифеста: roundtrip подпись/проверка, изменение wasm/capabilities, чужой ключ, принятие/отклонение доверенным ключом, ошибка отсутствия подписи, неверный алгоритм
+
+### `aios-store`: enforcement подписей в `BlockInstaller`
+- `BlockInstaller.trusted_keys: Vec<String>` — если список не пуст, `install_from_bytes` отклоняет неподписанные манифесты и любые манифесты, не подписанные одним из доверенных ключей
+- Новые конструкторы `with_trusted_keys(dir, keys)` и `from_env(dir)`; `Default` читает `AIOS_TRUSTED_PUBLIC_KEYS` (разделители `,`/`;`); без доверенных ключей подпись всё равно проверяется по встроенному ключу
+- Sidecar теперь сохраняет полный `ManifestInfo` (включая подпись), поэтому подписанные установки остаются проверяемыми через `store verify`
+- 16 тестов установщика: отклонение неподписанного/чужого ключа, принятие корректной подписи, отклонение изменённого манифеста, парсинг env, сохранение подписи в sidecar
+
+### `aios-store`: политика доверия по источникам
+- `StoreSource.trusted_public_keys: Vec<String>` (`#[serde(default)]`); `StoreManager::verify_source_manifest(source, manifest)` отклоняет манифест, не подписанный одним из доверенных ключей источника; применяется в `install()` и `update()`
+- `github_default` наследует официальный ключ из `AIOS_OFFICIAL_PUBLIC_KEY` через `official_public_key()`; `StoreManager::new`/`with_sources` теперь используют `BlockInstaller::from_env`
+- 2 теста менеджера: отклонение недоверенной / принятие доверенной подписи от источника
+
+### Шелл `aios-tui`: `store sign` / `store verify`
+- `store sign <file.wasm> [name] [version] [--key <secret_hex>]` — вычисляет SHA-256, строит манифест, подписывает его по Ed25519 (ключ из `AIOS_STORE_SIGNING_KEY`, если `--key` опущен), пишет подписанный sidecar JSON рядом с файлом и печатает публичный ключ
+- `store verify <name>` — проверяет установленный блок: SHA-256 бинарника + подпись Ed25519 манифеста из sidecar
+- `aios-tui` теперь зависит от `ed25519-dalek`
+
+### Тесты и верификация
+- `aios-store` вырос до 56 unit-тестов; всего в workspace 1148 тестов, все проходят
+- Полная сборка workspace, `cargo test --workspace`, `cargo clippy --workspace` (0 предупреждений), `cargo fmt --all` — всё проходит
+
 ## v2.4.0 — Блок сетевых настроек в ядре + store publish (2026-08-03)
 
 ### Ядро `aios`: сетевые настройки через IPC

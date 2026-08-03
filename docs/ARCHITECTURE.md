@@ -1078,6 +1078,13 @@ Three adaptive AI modes depending on hardware resources:
 - `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
 - `net get | net set key=value ... | net reset` — reads/writes the network config through `NetSettingsBlock` (persisted via `NetworkConfigStore`)
 
+### Ed25519 Signature & Trust Enforcement (`aios-store`, Phase 42 / v2.5.0)
+- **Signing model** — every manifest carries an optional `SignatureInfo`; the canonical bytes are `aios-manifest-v1\n` + name + version + description + author + sorted capabilities + size + `wasm_sha256`; `sign_manifest(manifest, &SigningKey) -> SignatureInfo` signs them with Ed25519 (`ed25519-dalek` v2, `rand_core` feature)
+- **Verification** — `ManifestValidator::verify_signature` performs a real `verify_strict` check against the embedded signing key; `verify_signature_with_keys(manifest, &[String])` accepts any trusted public key from the list
+- **Installer enforcement** — `BlockInstaller.trusted_keys: Vec<String>`: when non-empty, `install_from_bytes` rejects unsigned manifests and any manifest not signed by one of the trusted keys. Constructed via `with_trusted_keys(dir, keys)` / `from_env(dir)`; `Default` reads `AIOS_TRUSTED_PUBLIC_KEYS` (`,`/`;`-separated). The installer sidecar now persists the full `ManifestInfo` including the signature, so signed installs stay verifiable
+- **Per-source trust policy** — `StoreSource.trusted_public_keys` (`#[serde(default)]`); `StoreManager::verify_source_manifest(source, manifest)` is enforced in `install()` and `update()`. The default GitHub source inherits its official key from `AIOS_OFFICIAL_PUBLIC_KEY` via `official_public_key()`. With no keys configured, signatures are still checked against the embedded key (unsigned installs allowed)
+- **TUI shell** — `store sign <file.wasm> [name] [version] [--key <secret_hex>]` signs a local wasm (key from `AIOS_STORE_SIGNING_KEY` if `--key` is omitted) and writes the signed sidecar; `store verify <name>` checks SHA-256 + Ed25519 of an installed block
+
 ---
 
 ## Layer 6: Integrated Binary (`aios/`)

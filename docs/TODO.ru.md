@@ -391,7 +391,13 @@
   - [x] Горячая клавиша `n` в TUI ядра: режим ввода пар `key=value` для обновления сетевой конфигурации через IPC (`net_set`) с выводом результата в панель событий
   - [x] `store publish <file.wasm> [name] [version]` в шелле `aios-tui` — SHA-256 + base64 → `POST /api/v1/store/publish` (порт из `AIOS_BRIDGE_PORT`)
   - [x] Тесты роутера ядра (4): регистрация в реестре + маршрутизация `net_get`/`net_set`/`net_reset` через IPC
-  - [ ] Будущее: подписанные манифесты (Ed25519) в `BlockInstaller` + проверка подписи для GitHub/официального магазина
+
+- [x] **Фаза 42: Подписанные манифесты блоков Ed25519 с политикой доверия — ЗАВЕРШЕНА**
+  - [x] Реальная подпись/проверка Ed25519 в `aios-store::manifest`: `canonical_bytes()` + `sign_manifest()` + реальный `verify_strict` в `verify_signature` + `verify_signature_with_keys` (11 тестов)
+  - [x] Enforcement в `BlockInstaller`: `trusted_keys`, `with_trusted_keys`/`from_env`, `Default` читает `AIOS_TRUSTED_PUBLIC_KEYS`; sidecar сохраняет полный манифест включая подпись (16 тестов)
+  - [x] Политика доверия по источникам: `StoreSource.trusted_public_keys`, `StoreManager::verify_source_manifest` в `install()`/`update()`, официальный ключ GitHub через `AIOS_OFFICIAL_PUBLIC_KEY` (2 теста менеджера)
+  - [x] TUI-шелл `store sign <file.wasm> [name] [version] [--key <hex>]` + `store verify <name>`
+  - [ ] Будущее: подписанный `store publish` (манифест подписывается до установки мостом) и команда `store trust <source>` для задания доверенных ключей источника из шелла
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |

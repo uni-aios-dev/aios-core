@@ -26,6 +26,7 @@ url = "2"
 sha2 = { workspace = true }
 hex = { workspace = true }
 base64 = "0.22"
+ed25519-dalek = { workspace = true }
 
 [[bin]]
 name = "aios-tui"

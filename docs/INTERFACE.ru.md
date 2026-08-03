@@ -136,6 +136,8 @@ cargo run --bin aios-tui
 | `store uninstall` | `<name>` | Удалить все установленные версии блока |
 | `store rollback` | `<name>` | Восстановить предыдущую версию из бэкапа |
 | `store publish` | `<file.wasm> [name] [version]` | Опубликовать локальный wasm-файл в работающий сервис обновлений через `POST /api/v1/store/publish` (порт моста из `AIOS_BRIDGE_PORT`, по умолчанию `8080`); SHA-256 файла проверяется на сервере |
+| `store sign` | `<file.wasm> [name] [version] [--key <secret_hex>]` | Подписать локальный wasm-файл по Ed25519: вычисляет SHA-256, строит манифест и пишет подписанный sidecar JSON (`{name}_{version}.json`) рядом с файлом; ключ берётся из `--key` или `AIOS_STORE_SIGNING_KEY` (32 байта, 64 hex-символа); выводит публичный ключ |
+| `store verify` | `<name>` | Проверить установленный блок: пересчитать SHA-256 установленного бинарника и проверить подпись Ed25519 манифеста из sidecar; выводит `SHA-256: OK/MISMATCH` и `Signature: OK/INVALID/none` |
 
 ### Команды сетевых настроек (Net)
 

@@ -2,7 +2,13 @@
 
 ## Current: None (Clean Build)
 
-As of v2.4.0, all tests pass and clippy reports zero warnings.
+As of v2.5.0, all tests pass and clippy reports zero warnings.
+
+### KNOWN LIMITATION: signed-manifest enforcement is opt-in via env
+- **Status:** BY DESIGN
+- **Symptom:** `store install` / `store update` reject unsigned or un-trusted blocks when `AIOS_TRUSTED_PUBLIC_KEYS` (or a source's `trusted_public_keys`) is set, while the same install succeeds without it
+- **Workaround:** Only set `AIOS_TRUSTED_PUBLIC_KEYS` on systems that require verified-only installs; leave it unset (default) to allow unsigned blocks while still verifying signatures against the embedded key
+- **Note:** The bridge `store publish` path uses `BlockInstaller::new` (no env keys), so publishing unsigned blocks keeps working regardless of the environment
 
 ### KNOWN LIMITATION: `store publish` needs a running update service
 - **Status:** BY DESIGN

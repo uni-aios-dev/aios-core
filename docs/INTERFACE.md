@@ -136,6 +136,8 @@ The block store fetches blocks from three kinds of sources: GitHub (`github:owne
 | `store uninstall` | `<name>` | Remove every installed version of a block |
 | `store rollback` | `<name>` | Restore the previous version from backup |
 | `store publish` | `<file.wasm> [name] [version]` | Publish a local wasm file to the running update service via `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); the file's SHA-256 is verified server-side |
+| `store sign` | `<file.wasm> [name] [version] [--key <secret_hex>]` | Sign a local wasm file with Ed25519: computes SHA-256, builds the manifest and writes the signed sidecar JSON (`{name}_{version}.json`) next to the file; the key comes from `--key` or `AIOS_STORE_SIGNING_KEY` (32 bytes, 64 hex chars); prints the public key |
+| `store verify` | `<name>` | Verify an installed block: recompute the SHA-256 of the installed binary and check the Ed25519 signature of its sidecar manifest; reports `SHA-256: OK/MISMATCH` and `Signature: OK/INVALID/none` |
 
 ### Network Shell Commands
 

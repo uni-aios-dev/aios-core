@@ -51,6 +51,10 @@ pub fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
 pub struct BlockInstaller {
     /// Directory holding installed block binaries and sidecars.
     pub blocks_dir: PathBuf,
+    /// Hex-encoded Ed25519 public keys trusted to sign manifests. When
+    /// non-empty, `install_from_bytes` rejects unsigned manifests and
+    /// manifests not signed by one of these keys.
+    pub trusted_keys: Vec<String>,
 }
 
 impl BlockInstaller {
@@ -58,6 +62,30 @@ impl BlockInstaller {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self {
             blocks_dir: dir.into(),
+            trusted_keys: Vec::new(),
+        }
+    }
+
+    /// Create an installer with a fixed set of trusted manifest keys.
+    pub fn with_trusted_keys(dir: impl Into<PathBuf>, trusted_keys: Vec<String>) -> Self {
+        Self {
+            blocks_dir: dir.into(),
+            trusted_keys,
+        }
+    }
+
+    /// Create an installer reading trusted keys from `AIOS_TRUSTED_PUBLIC_KEYS`
+    /// (comma- or semicolon-separated hex Ed25519 public keys).
+    pub fn from_env(dir: impl Into<PathBuf>) -> Self {
+        let trusted_keys = std::env::var("AIOS_TRUSTED_PUBLIC_KEYS")
+            .unwrap_or_default()
+            .split([',', ';'])
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Self {
+            blocks_dir: dir.into(),
+            trusted_keys,
         }
     }
 
@@ -93,8 +121,63 @@ impl BlockInstaller {
         out
     }
 
-    /// Install a binary together with its manifest, verifying the SHA-256.
+    /// Verify a manifest against the configured trusted keys before install.
+    ///
+    /// - No signature + no trusted keys → allowed (dev mode).
+    /// - No signature + trusted keys configured → rejected.
+    /// - Signature present + no trusted keys → verified against the key
+    ///   embedded in the manifest.
+    /// - Signature present + trusted keys → must verify against one trusted key.
+    pub fn verify_manifest(&self, manifest: &ManifestInfo) -> Result<(), String> {
+        match &manifest.signature {
+            Some(_) => {
+                if self.trusted_keys.is_empty() {
+                    let ok = crate::manifest::ManifestValidator::verify_signature(manifest)
+                        .map_err(|e| format!("Signature verification failed: {e}"))?;
+                    if !ok {
+                        return Err(format!(
+                            "Manifest '{}' has an invalid signature",
+                            manifest.name
+                        ));
+                    }
+                } else {
+                    let ok = crate::manifest::ManifestValidator::verify_signature_with_keys(
+                        manifest,
+                        &self.trusted_keys,
+                    )
+                    .map_err(|e| format!("Signature verification failed: {e}"))?;
+                    if !ok {
+                        return Err(format!(
+                            "Manifest '{}' is not signed by a trusted key",
+                            manifest.name
+                        ));
+                    }
+                }
+            }
+            None => {
+                if !self.trusted_keys.is_empty() {
+                    return Err(format!(
+                        "Manifest '{}' is not signed, but trusted keys are configured",
+                        manifest.name
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Install a binary together with its manifest, verifying the SHA-256 and
+    /// enforcing the trusted-key signature policy.
     pub fn install_from_bytes(
+        &mut self,
+        manifest: ManifestInfo,
+        binary: &[u8],
+    ) -> Result<InstalledBlock, String> {
+        self.verify_manifest(&manifest)?;
+        self.install_verified(manifest, binary)
+    }
+
+    fn install_verified(
         &mut self,
         manifest: ManifestInfo,
         binary: &[u8],
@@ -157,16 +240,11 @@ impl BlockInstaller {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let json = serde_json::json!({
-            "name": manifest.name,
-            "version": manifest.version,
-            "description": manifest.description,
-            "author": manifest.author,
-            "capabilities": manifest.capabilities,
-            "wasm_size_bytes": manifest.wasm_size_bytes,
-            "wasm_sha256": manifest.wasm_sha256,
-            "installed_at": now,
-        });
+        let mut json = serde_json::to_value(manifest)
+            .map_err(|e| format!("Failed to serialize manifest: {e}"))?;
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("installed_at".into(), serde_json::json!(now));
+        }
         std::fs::write(
             &sidecar,
             serde_json::to_string_pretty(&json).unwrap_or_default(),
@@ -332,7 +410,7 @@ impl BlockInstaller {
             store_url: None,
         };
 
-        let result = self.install_from_bytes(manifest, &binary)?;
+        let result = self.install_verified(manifest, &binary)?;
         let _ = std::fs::remove_file(&backup);
         let _ = std::fs::remove_file(PathBuf::from(format!("{}.bak", backup.display())));
         log::info!(
@@ -367,7 +445,7 @@ impl BlockInstaller {
 
 impl Default for BlockInstaller {
     fn default() -> Self {
-        Self::new(Self::default_dir())
+        Self::from_env(Self::default_dir())
     }
 }
 
@@ -549,5 +627,93 @@ mod tests {
             block.manifest.wasm_sha256,
             hex::encode(Sha256::digest(b"file-binary"))
         );
+    }
+
+    #[test]
+    fn test_install_rejects_unsigned_with_trusted_keys() {
+        use crate::manifest::sign_manifest;
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = SigningKey::generate(&mut OsRng);
+        let trusted = vec![hex::encode(key.verifying_key().to_bytes())];
+        let mut installer = BlockInstaller::with_trusted_keys(dir.path(), trusted);
+        let mut manifest = sample_manifest("signed", "1.0.0", b"data");
+        manifest.wasm_sha256 = hex::encode(Sha256::digest(b"data"));
+        manifest.signature = Some(sign_manifest(&manifest, &key));
+        assert!(installer
+            .install_from_bytes(manifest.clone(), b"data")
+            .is_ok());
+
+        let unsigned = sample_manifest("unsigned", "1.0.0", b"data");
+        assert!(installer.install_from_bytes(unsigned, b"data").is_err());
+    }
+
+    #[test]
+    fn test_install_rejects_wrong_key() {
+        use crate::manifest::sign_manifest;
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let dir = tempfile::tempdir().unwrap();
+        let trusted_key = SigningKey::generate(&mut OsRng);
+        let attacker = SigningKey::generate(&mut OsRng);
+        let trusted = vec![hex::encode(trusted_key.verifying_key().to_bytes())];
+        let mut installer = BlockInstaller::with_trusted_keys(dir.path(), trusted);
+        let mut manifest = sample_manifest("evil", "1.0.0", b"data");
+        manifest.wasm_sha256 = hex::encode(Sha256::digest(b"data"));
+        manifest.signature = Some(sign_manifest(&manifest, &attacker));
+        assert!(installer.install_from_bytes(manifest, b"data").is_err());
+    }
+
+    #[test]
+    fn test_install_verifies_embedded_signature() {
+        use crate::manifest::sign_manifest;
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = SigningKey::generate(&mut OsRng);
+        let mut installer = BlockInstaller::new(dir.path());
+        let mut manifest = sample_manifest("selfsig", "1.0.0", b"data");
+        manifest.wasm_sha256 = hex::encode(Sha256::digest(b"data"));
+        manifest.signature = Some(sign_manifest(&manifest, &key));
+        assert!(installer
+            .install_from_bytes(manifest.clone(), b"data")
+            .is_ok());
+
+        let mut tampered = manifest.clone();
+        tampered.capabilities.insert("CAP_NET_BIND".into());
+        assert!(installer.install_from_bytes(tampered, b"data").is_err());
+    }
+
+    #[test]
+    fn test_install_preserves_signature_in_sidecar() {
+        use crate::manifest::{sign_manifest, ManifestValidator};
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = SigningKey::generate(&mut OsRng);
+        let mut installer = BlockInstaller::new(dir.path());
+        let mut manifest = sample_manifest("sig", "1.0.0", b"data");
+        manifest.wasm_sha256 = hex::encode(Sha256::digest(b"data"));
+        manifest.signature = Some(sign_manifest(&manifest, &key));
+        installer
+            .install_from_bytes(manifest.clone(), b"data")
+            .unwrap();
+
+        let reloaded = installer.find_installed("sig").unwrap();
+        assert!(reloaded.manifest.signature.is_some());
+        assert!(ManifestValidator::verify_signature(&reloaded.manifest).unwrap());
+    }
+
+    #[test]
+    fn test_from_env_parses_keys() {
+        std::env::set_var("AIOS_TRUSTED_PUBLIC_KEYS", "aa, bb;cc ,,dd");
+        let installer = BlockInstaller::from_env("blocks");
+        assert_eq!(installer.trusted_keys, vec!["aa", "bb", "cc", "dd"]);
+        std::env::remove_var("AIOS_TRUSTED_PUBLIC_KEYS");
     }
 }

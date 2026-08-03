@@ -23,7 +23,8 @@ use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::Priority;
-use aios_store::StoreManager;
+use aios_store::manager::StoreManager;
+use aios_store::manifest::{sign_manifest, ManifestInfo, ManifestValidator};
 use aios_tui::dashboard::{self, DashboardState, PageContent};
 use aios_watchdog::heartbeat::Heartbeat;
 use aios_watchdog::safe_mode::SafeModeShell;
@@ -673,10 +674,169 @@ fn execute_shell_cmd(
                         }
                     }
                 }
+                "sign" => {
+                    let mut name = None;
+                    let mut version = None;
+                    let mut key_hex = std::env::var("AIOS_STORE_SIGNING_KEY").ok();
+                    let mut file = None;
+                    let mut i = 2;
+                    while i < parts.len() {
+                        if parts[i] == "--key" {
+                            key_hex = parts.get(i + 1).map(|s| s.to_string());
+                            i += 2;
+                        } else if file.is_none() {
+                            file = Some(parts[i].to_string());
+                            i += 1;
+                        } else if name.is_none() {
+                            name = Some(parts[i].to_string());
+                            i += 1;
+                        } else if version.is_none() {
+                            version = Some(parts[i].to_string());
+                            i += 1;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    let file = match file {
+                        Some(f) => f,
+                        None => {
+                            state.shell_state.add_output(
+                                "Usage: store sign <file.wasm> [name] [version] [--key <secret_hex>]"
+                                    .into(),
+                            );
+                            return;
+                        }
+                    };
+                    let key_hex = match key_hex {
+                        Some(k) => k,
+                        None => {
+                            state.shell_state.add_output(
+                                "No signing key: pass --key <secret_hex> or set AIOS_STORE_SIGNING_KEY"
+                                    .into(),
+                            );
+                            return;
+                        }
+                    };
+                    let secret = match hex::decode(&key_hex) {
+                        Ok(bytes) => match <[u8; 32]>::try_from(bytes.as_slice()) {
+                            Ok(arr) => arr,
+                            Err(_) => {
+                                state.shell_state.add_output(
+                                    "Signing key must be 32 bytes (64 hex chars)".into(),
+                                );
+                                return;
+                            }
+                        },
+                        Err(e) => {
+                            state
+                                .shell_state
+                                .add_output(format!("Invalid key hex: {e}"));
+                            return;
+                        }
+                    };
+                    let path = std::path::Path::new(&file);
+                    let binary = match std::fs::read(path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            state.shell_state.add_output(format!("Read failed: {e}"));
+                            return;
+                        }
+                    };
+                    let default_name = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "block".to_string());
+                    let name = name.unwrap_or(default_name);
+                    let version = version.unwrap_or_else(|| "1.0.0".to_string());
+                    let mut manifest = ManifestInfo {
+                        name: name.clone(),
+                        version: version.clone(),
+                        description: "Published from TUI shell".into(),
+                        author: "local-user".into(),
+                        capabilities: std::collections::HashSet::new(),
+                        wasm_size_bytes: binary.len() as u64,
+                        wasm_sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&binary)),
+                        signature: None,
+                        store_url: None,
+                    };
+                    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+                    manifest.signature = Some(sign_manifest(&manifest, &signing_key));
+                    let sidecar = path.with_file_name(format!("{name}_{version}.json"));
+                    match std::fs::write(
+                        &sidecar,
+                        serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+                    ) {
+                        Ok(()) => state.shell_state.add_output(format!(
+                            "Signed '{}' v{} (key {}) -> {}",
+                            name,
+                            version,
+                            hex::encode(signing_key.verifying_key().to_bytes()),
+                            sidecar.display()
+                        )),
+                        Err(e) => state.shell_state.add_output(format!("Write failed: {e}")),
+                    }
+                }
+                "verify" => {
+                    let name = parts.get(2).copied().unwrap_or("");
+                    if name.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: store verify <name>".into());
+                        return;
+                    }
+                    let block = match manager.find_installed(name) {
+                        Some(b) => b,
+                        None => {
+                            state
+                                .shell_state
+                                .add_output(format!("Block '{name}' is not installed"));
+                            return;
+                        }
+                    };
+                    let binary = match std::fs::read(&block.path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            state.shell_state.add_output(format!("Read failed: {e}"));
+                            return;
+                        }
+                    };
+                    let sha_ok = ManifestValidator::validate_sha256(&block.manifest, &binary)
+                        .unwrap_or(false);
+                    state.shell_state.add_output(format!(
+                        "Block '{}' v{} — {} bytes",
+                        block.manifest.name,
+                        block.manifest.version,
+                        binary.len()
+                    ));
+                    state.shell_state.add_output(if sha_ok {
+                        "SHA-256: OK".into()
+                    } else {
+                        "SHA-256: MISMATCH".into()
+                    });
+                    match &block.manifest.signature {
+                        None => state.shell_state.add_output("Signature: none".into()),
+                        Some(_) => match ManifestValidator::verify_signature(&block.manifest) {
+                            Ok(true) => {
+                                state
+                                    .shell_state
+                                    .add_output("Signature: OK (Ed25519)".into());
+                            }
+                            Ok(false) => {
+                                state.shell_state.add_output("Signature: INVALID".into());
+                            }
+                            Err(e) => {
+                                state
+                                    .shell_state
+                                    .add_output(format!("Signature: error — {e}"));
+                            }
+                        },
+                    }
+                }
                 _ => state.shell_state.add_output(
                     "Usage: store list | sources | search <q> [--source N] | \
                      install <name> [--source N] | update [name] [--source N] | \
-                     uninstall <name> | rollback <name> | publish <file.wasm> [name] [version]"
+                     uninstall <name> | rollback <name> | publish <file.wasm> [name] [version] | \
+                     sign <file.wasm> [name] [version] [--key <secret_hex>] | verify <name>"
                         .into(),
                 ),
             }

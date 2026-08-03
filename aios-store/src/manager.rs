@@ -1,7 +1,7 @@
 //! High-level store operations combining sources and the on-disk installer.
 use crate::catalog::{download_block, fetch_index};
 use crate::installer::{cmp_version, BlockInstaller, InstalledBlock, UpdateInfo};
-use crate::manifest::ManifestInfo;
+use crate::manifest::{ManifestInfo, ManifestValidator};
 use crate::source::StoreSource;
 use std::path::PathBuf;
 
@@ -18,7 +18,7 @@ impl StoreManager {
     pub fn new(blocks_dir: impl Into<PathBuf>) -> Self {
         Self {
             sources: vec![StoreSource::github_default()],
-            installer: BlockInstaller::new(blocks_dir),
+            installer: BlockInstaller::from_env(blocks_dir),
         }
     }
 
@@ -26,7 +26,7 @@ impl StoreManager {
     pub fn with_sources(sources: Vec<StoreSource>, blocks_dir: impl Into<PathBuf>) -> Self {
         Self {
             sources,
-            installer: BlockInstaller::new(blocks_dir),
+            installer: BlockInstaller::from_env(blocks_dir),
         }
     }
 
@@ -66,6 +66,39 @@ impl StoreManager {
 
     fn client(&self) -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    /// Verify a downloaded manifest against the source's trust policy before
+    /// installation.
+    ///
+    /// - Source has trusted keys → the manifest must be signed by one of them.
+    /// - Source has no trusted keys → an embedded signature is still verified
+    ///   if present (defense in depth); unsigned manifests are allowed.
+    fn verify_source_manifest(source: &StoreSource, manifest: &ManifestInfo) -> Result<(), String> {
+        if source.trusted_public_keys.is_empty() {
+            if manifest.signature.is_some() {
+                let ok = ManifestValidator::verify_signature(manifest)
+                    .map_err(|e| format!("Signature verification failed: {e}"))?;
+                if !ok {
+                    return Err(format!(
+                        "Manifest '{}' has an invalid signature",
+                        manifest.name
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        let ok =
+            ManifestValidator::verify_signature_with_keys(manifest, &source.trusted_public_keys)
+                .map_err(|e| format!("Signature verification failed: {e}"))?;
+        if !ok {
+            return Err(format!(
+                "Manifest '{}' is not signed by a key trusted by source '{}'",
+                manifest.name,
+                source.display()
+            ));
+        }
+        Ok(())
     }
 
     /// Fetch the catalog of a source (default first source when `None`).
@@ -119,6 +152,7 @@ impl StoreManager {
         };
         let source = self.source(source_name)?.clone();
         let binary = download_block(&source, &manifest.name, &self.client()).await?;
+        Self::verify_source_manifest(&source, &manifest)?;
         if let Some(already) = self.installer.find_installed(&manifest.name) {
             if cmp_version(&already.manifest.version, &manifest.version) != std::cmp::Ordering::Less
             {
@@ -161,6 +195,7 @@ impl StoreManager {
                 Ok(b) => b,
                 Err(e) => return Err(format!("Download of '{name}' failed: {e}")),
             };
+            Self::verify_source_manifest(&source, &update.available)?;
             let _ = self.installer.backup(&name);
             match self
                 .installer
@@ -411,5 +446,71 @@ mod tests {
         let restored = manager.rollback("app").unwrap();
         assert_eq!(restored.manifest.version, "1.0.0");
         assert_eq!(std::fs::read(&restored.path).unwrap(), b"old");
+    }
+
+    #[test]
+    fn test_install_rejects_untrusted_signature_from_source() {
+        use crate::manifest::sign_manifest;
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let src_dir = tempfile::tempdir().unwrap();
+        let blocks_dir = tempfile::tempdir().unwrap();
+        let signer = SigningKey::generate(&mut OsRng);
+        let trusted = SigningKey::generate(&mut OsRng);
+
+        write_source_block(src_dir.path(), "net", "1.0.0", b"wasm-net");
+        let mut manifest = source_manifest("net", "1.0.0", b"wasm-net");
+        manifest.signature = Some(sign_manifest(&manifest, &signer));
+        std::fs::write(
+            src_dir.path().join("index.json"),
+            serde_json::to_vec(&vec![manifest]).unwrap(),
+        )
+        .unwrap();
+
+        let mut source = StoreSource::local(src_dir.path().to_str().unwrap());
+        source.trusted_public_keys = vec![hex::encode(trusted.verifying_key().to_bytes())];
+        let mut manager = StoreManager::with_sources(vec![source], blocks_dir.path());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = runtime
+            .block_on(manager.install(None, "net", None))
+            .unwrap_err();
+        assert!(err.contains("not signed by a key trusted"), "got: {err}");
+    }
+
+    #[test]
+    fn test_install_accepts_trusted_signature_from_source() {
+        use crate::manifest::sign_manifest;
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let src_dir = tempfile::tempdir().unwrap();
+        let blocks_dir = tempfile::tempdir().unwrap();
+        let signer = SigningKey::generate(&mut OsRng);
+
+        write_source_block(src_dir.path(), "net", "1.0.0", b"wasm-net");
+        let mut manifest = source_manifest("net", "1.0.0", b"wasm-net");
+        manifest.signature = Some(sign_manifest(&manifest, &signer));
+        std::fs::write(
+            src_dir.path().join("index.json"),
+            serde_json::to_vec(&vec![manifest]).unwrap(),
+        )
+        .unwrap();
+
+        let mut source = StoreSource::local(src_dir.path().to_str().unwrap());
+        source.trusted_public_keys = vec![hex::encode(signer.verifying_key().to_bytes())];
+        let mut manager = StoreManager::with_sources(vec![source], blocks_dir.path());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let installed = runtime
+            .block_on(manager.install(None, "net", None))
+            .unwrap();
+        assert_eq!(installed.manifest.version, "1.0.0");
+        assert_eq!(std::fs::read(&installed.path).unwrap(), b"wasm-net");
     }
 }

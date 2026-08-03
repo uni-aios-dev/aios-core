@@ -393,7 +393,13 @@
   - [x] Kernel TUI hotkey `n`: input mode for `key=value` network-config updates dispatched over IPC (`net_set`) with the result shown in the Events pane
   - [x] `store publish <file.wasm> [name] [version]` in the `aios-tui` shell — SHA-256 + base64 → `POST /api/v1/store/publish` (port from `AIOS_BRIDGE_PORT`)
   - [x] Kernel router tests (4): registry registration + `net_get`/`net_set`/`net_reset` IPC routing
-  - [ ] Future: signed manifests (Ed25519) enforcement in `BlockInstaller` + signature check for GitHub/official store
+
+- [x] **Phase 42: Ed25519-signed block manifests with trust enforcement — COMPLETE**
+  - [x] Real Ed25519 signing/verification in `aios-store::manifest`: `canonical_bytes()` + `sign_manifest()` + real `verify_strict` in `verify_signature` + `verify_signature_with_keys` (11 tests)
+  - [x] Enforcement in `BlockInstaller`: `trusted_keys`, `with_trusted_keys`/`from_env`, `Default` reads `AIOS_TRUSTED_PUBLIC_KEYS`; sidecar persists the full manifest incl. signature (16 tests)
+  - [x] Per-source trust policy: `StoreSource.trusted_public_keys`, `StoreManager::verify_source_manifest` in `install()`/`update()`, official GitHub key via `AIOS_OFFICIAL_PUBLIC_KEY` (2 manager tests)
+  - [x] TUI shell `store sign <file.wasm> [name] [version] [--key <hex>]` + `store verify <name>`
+  - [ ] Future: signed `store publish` (manifest signed before the bridge installs it) and `store trust <source>` command to set a source's trusted keys from the shell
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
