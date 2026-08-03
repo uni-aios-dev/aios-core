@@ -178,6 +178,26 @@ pub struct StoreRegisterResponse {
     pub version: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct StorePublishRequest {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    pub checksum_sha256: String,
+    pub wasm_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StorePublishResponse {
+    pub success: bool,
+    pub name: String,
+    pub version: String,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MetricsResponse {
     pub success: bool,

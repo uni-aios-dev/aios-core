@@ -10,12 +10,15 @@ use aios_llm::{default_config, LlmEngine};
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::ProcessId;
 use aios_security::access_control::AccessControlLayer;
+use aios_store::installer::BlockInstaller;
+use aios_store::manifest::ManifestInfo;
 use aios_store::StoreRegistry;
 use aios_telemetry::{FlightRecorder, MetricCollector, TraceContext};
 use aios_watchdog::watchdog::Watchdog;
+use sha2::{Digest, Sha256};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -45,6 +48,8 @@ pub struct BridgeContext {
     pub trace_context: Mutex<TraceContext>,
     pub crash_reporter: Mutex<CrashReporter>,
     pub _panic_handler: Mutex<PanicHandler>,
+    /// Directory holding installed block binaries (`<name>_<version>.wasm`).
+    pub blocks_dir: String,
 }
 
 impl BridgeContext {
@@ -72,7 +77,14 @@ impl BridgeContext {
             trace_context: Mutex::new(TraceContext::new()),
             crash_reporter: Mutex::new(CrashReporter::new("aios-bridge", "1.0.0")),
             _panic_handler: Mutex::new(PanicHandler::new("aios-bridge", "1.0.0")),
+            blocks_dir: std::env::var("AIOS_BLOCKS_DIR").unwrap_or_else(|_| "./blocks".to_string()),
         }
+    }
+
+    /// Override the directory used by the update-service endpoints.
+    pub fn with_blocks_dir(mut self, dir: impl Into<String>) -> Self {
+        self.blocks_dir = dir.into();
+        self
     }
 
     pub fn uptime_secs(&self) -> u64 {
@@ -93,6 +105,11 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/search", post(search_handler))
         .route("/api/v1/store/index", get(store_index_handler))
         .route("/api/v1/store/register", post(store_register_handler))
+        .route("/api/v1/store/publish", post(store_publish_handler))
+        .route("/store/index.json", get(store_catalog_handler))
+        .route("/store/blocks/{name}.wasm", get(store_block_handler))
+        .route("/index.json", get(store_catalog_handler))
+        .route("/blocks/{name}.wasm", get(store_block_handler))
         .route("/api/v1/metrics", get(metrics_handler))
         .route("/api/v1/traces", get(traces_handler))
         .route("/api/v1/crash-report", post(crash_report_handler))
@@ -697,6 +714,114 @@ async fn store_register_handler(
             success: false,
             name: req.name,
             version: req.version,
+        }),
+    }
+}
+
+/// Raw catalog endpoint used by the update service and `store update`
+/// clients. Serves the on-disk block index as `application/json`.
+async fn store_catalog_handler(State(state): State<SharedState>) -> Response {
+    let installer = BlockInstaller::new(&state.blocks_dir);
+    let installed = installer.list_installed();
+    let catalog: Vec<ManifestInfo> = installed.iter().map(|b| b.manifest.clone()).collect();
+    let body = match serde_json::to_vec(&catalog) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "catalog serialization failed",
+            )
+                .into_response()
+        }
+    };
+    (StatusCode::OK, [("content-type", "application/json")], body).into_response()
+}
+
+/// Binary block download for the update service. `{name}` is the block name.
+async fn store_block_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Response {
+    let installer = BlockInstaller::new(&state.blocks_dir);
+    match installer.find_installed(&name) {
+        Some(installed) => match std::fs::read(&installed.path) {
+            Ok(bytes) => (
+                StatusCode::OK,
+                [("content-type", "application/wasm")],
+                bytes,
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read block: {e}"),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::NOT_FOUND,
+            format!("block '{name}' not installed"),
+        )
+            .into_response(),
+    }
+}
+
+/// Publish a user-created block (base64 wasm) to the local update service.
+async fn store_publish_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<StorePublishRequest>,
+) -> Json<StorePublishResponse> {
+    use base64::Engine;
+    let wasm = match base64::engine::general_purpose::STANDARD.decode(&req.wasm_base64) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Json(StorePublishResponse {
+                success: false,
+                name: req.name,
+                version: req.version,
+                error: Some(format!("invalid base64: {e}")),
+            })
+        }
+    };
+
+    let sha = hex::encode(Sha256::digest(&wasm));
+    if !req.checksum_sha256.is_empty() && sha != req.checksum_sha256 {
+        return Json(StorePublishResponse {
+            success: false,
+            name: req.name,
+            version: req.version,
+            error: Some("sha256 checksum mismatch".to_string()),
+        });
+    }
+
+    let manifest = aios_store::ManifestInfo {
+        name: req.name.clone(),
+        version: req.version.clone(),
+        author: req.author,
+        description: req.description,
+        wasm_sha256: sha,
+        capabilities: req
+            .capabilities
+            .into_iter()
+            .map(|c| c.to_lowercase())
+            .collect(),
+        wasm_size_bytes: wasm.len() as u64,
+        signature: None,
+        store_url: Some(format!("http://127.0.0.1:4242/blocks/{}.wasm", req.name)),
+    };
+
+    let mut installer = BlockInstaller::new(&state.blocks_dir);
+    match installer.install_from_bytes(manifest, &wasm) {
+        Ok(installed) => Json(StorePublishResponse {
+            success: true,
+            name: installed.manifest.name,
+            version: installed.manifest.version,
+            error: None,
+        }),
+        Err(e) => Json(StorePublishResponse {
+            success: false,
+            name: req.name,
+            version: req.version,
+            error: Some(e),
         }),
     }
 }

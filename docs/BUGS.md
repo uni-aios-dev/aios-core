@@ -2,7 +2,13 @@
 
 ## Current: None (Clean Build)
 
-As of v2.2.5, all 1045 tests pass and clippy reports zero warnings.
+As of v2.3.0, all 1130 tests pass and clippy reports zero warnings.
+
+### KNOWN LIMITATION: Store remote sources require network
+- **Status:** BY DESIGN
+- **Symptom:** `store search` / `store install` / `store update` against a GitHub or HTTP source fail with a download error when offline or the remote is unreachable
+- **Workaround:** Use a local source (`store add-source local:<path>`) for offline installs, or run the built-in update service (`aios-bridge` on `AIOS_BLOCKS_DIR`) and point `store add-source http://host:port` at it
+- **Note:** Block binaries are verified against the manifest SHA-256 on install; a tampered payload is rejected with a checksum error
 
 ### KNOWN LIMITATION: TUI Web tab renders text only
 - **Status:** BY DESIGN

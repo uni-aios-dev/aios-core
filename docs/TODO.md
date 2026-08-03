@@ -378,6 +378,19 @@
   - [ ] Future: embed the webview as an in-window child of the GUI Browser tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
   - [ ] Future: headless render-to-text fallback (chromium/WebDriver) for JS-heavy sites in the TUI text view
 
+- [x] **Phase 40: Block Store — Sources, Catalog, Installer, Update Service — COMPLETE**
+  - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), local (`local:path`), HTTP update service (`http://host:port`)
+  - [x] `aios-store::catalog`: `fetch_index`/`download_block` (async HTTP + local scan of `*.wasm`/`*.bin` + sidecar JSON), `parse_name_version`
+  - [x] `aios-store::installer`: `BlockInstaller` — `{name}_{version}.wasm` + sidecar, SHA-256 verification, `list_installed`/`find_installed`/`uninstall`, `backup`/`rollback` (`.bak`), `check_updates`, semantic `cmp_version`
+  - [x] `aios-store::manager`: `StoreManager` facade — `search`/`install`/`update` (auto-rollback)/`check_updates`/`parse_source_spec`/`block_on`
+  - [x] `aios-net-config` crate: `NetworkConfig`+partial `apply_updates`, `NetworkConfigStore` (atomic JSON), `NetSettingsBlock` (`net_get`/`net_set`/`net_reset`/`net_persist`, StatefulBlock + state roundtrip)
+  - [x] Update service in `aios-bridge`: `GET /index.json`, `GET /blocks/{name}.wasm`, `GET /store/index.json`, `GET /store/blocks/{name}.wasm`, `POST /api/v1/store/publish`
+  - [x] TUI shell commands: `store list|sources|add-source|search|install|update|uninstall|rollback` and `net get|set|reset`
+  - [x] Tests: 32 (`aios-net-config`) + 42 (`aios-store`) unit tests, 2 new integration tests (update flow + net block roundtrip)
+  - [ ] Future: pull `NetSettingsBlock` into the kernel registry at boot and route `net_*` over IPC
+  - [ ] Future: `store publish` command in the TUI shell (publish a local `.wasm` to the update service)
+  - [ ] Future: signed manifests (Ed25519) enforcement in `BlockInstaller` + signature check for GitHub/official store
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

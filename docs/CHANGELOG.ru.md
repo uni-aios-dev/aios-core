@@ -1,5 +1,35 @@
 # Журнал разработки AIOS
 
+## v2.3.0 — Хранилище блоков: сервис обновлений + сетевые настройки (2026-08-03)
+
+### `aios-store`: источники, каталог, установщик, менеджер
+- Новый модуль `aios-store::source`: `StoreSource` / `SourceKind` — три источника блоков: `github:owner/repo`, `local:path`, `http://host:port` (сервис обновлений)
+- Новый модуль `aios-store::catalog`: `fetch_index` / `download_block` (async HTTP + локальное сканирование), `parse_name_version`
+- Новый модуль `aios-store::installer`: `BlockInstaller` — установка `{name}_{version}.wasm` + sidecar JSON, проверка SHA-256, `list_installed` / `find_installed` / `uninstall`, `backup` / `rollback` (`.bak`), `check_updates`, семантический `cmp_version`
+- Новый модуль `aios-store::manager`: фасад `StoreManager` — `search`, `install`, `update` (автооткат при ошибке), `check_updates`, `parse_source_spec`, `block_on` для синхронных контекстов
+- Исправление: `rollback` теперь удаляет текущий (битый/новый) файл версии перед восстановлением бэкапа, поэтому `find_installed` возвращает откаченную версию
+
+### Новый крейт `aios-net-config`
+- `NetworkConfig` / `ProxyConfig` / `DnsConfig` / `InterfaceConfig` / `ProxyProtocol` с JSON-сериализацией и частичными обновлениями (`apply_updates` с валидацией)
+- `NetworkConfigStore`: атомарное сохранение JSON (временный файл + rename) в `AIOS_DATA_DIR`
+- `NetSettingsBlock`: `StatefulBlock` поверх IPC-шины с командами `net_get`, `net_set`, `net_reset`, `net_persist`; извлечение/восстановление состояния через bincode
+
+### `aios-bridge`: эндпоинты сервиса обновлений
+- `GET /index.json` и `GET /store/index.json` — «сырой» каталог блоков с диска
+- `GET /blocks/{name}.wasm` и `GET /store/blocks/{name}.wasm` — скачивание бинарника блока
+- `POST /api/v1/store/publish` — публикация пользовательского блока (base64 wasm + SHA-256 + манифест); роль локального сервиса обновлений
+- `BridgeContext` получил поле `blocks_dir` (из `AIOS_BLOCKS_DIR`, по умолчанию `./blocks`)
+
+### `aios-tui`: команды шелла
+- `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
+- `net get | net set key=value ... | net reset` — просмотр/изменение/сохранение сетевой конфигурации через `NetSettingsBlock`
+
+### Тесты и верификация
+- `aios-net-config`: 32 юнит-теста (валидация, JSON roundtrip, блок IPC, roundtrip состояния)
+- `aios-store`: 42 юнит-теста (URL источников, сканирование каталога, установщик, откат, менеджер)
+- Интеграция: `test_block_store_update_flow` (поиск → установка → отклонение подделки → обновление → откат) и `test_net_settings_block_roundtrip`; всего в интеграционном наборе 30 тестов
+- Полная сборка workspace, `cargo test --workspace`, `cargo clippy --workspace` (0 предупреждений), `cargo fmt --all` — всё проходит
+
 ## v2.2.9 — Полноценный нативный браузер из вкладки Web (2026-08-02)
 
 ### `aios-tui`: открытие любой страницы в настоящем браузере

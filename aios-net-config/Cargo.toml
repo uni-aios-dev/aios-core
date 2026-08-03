@@ -1,0 +1,15 @@
+[package]
+name = "aios-net-config"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+url = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

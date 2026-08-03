@@ -18,8 +18,11 @@ use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::BlockId;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
+use aios_net_config::block::NetSettingsBlock;
+use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::Priority;
+use aios_store::StoreManager;
 use aios_tui::dashboard::{self, DashboardState, PageContent};
 use aios_watchdog::heartbeat::Heartbeat;
 use aios_watchdog::safe_mode::SafeModeShell;
@@ -391,6 +394,218 @@ fn execute_shell_cmd(
             navigate_web(state, &url);
             return;
         }
+        Some("net") => {
+            let sub = parts.get(1).copied().unwrap_or("");
+            let mut block =
+                NetSettingsBlock::with_default_store(BlockId::new(9), NetworkConfig::default());
+            match sub {
+                "get" => state.shell_state.add_output(block.config().to_json()),
+                "set" => {
+                    let mut updates = serde_json::Map::new();
+                    for kv in parts.iter().skip(2) {
+                        let (k, v) = match kv.split_once('=') {
+                            Some(kv) => kv,
+                            None => {
+                                state.shell_state.add_output(format!(
+                                    "Usage: net set key=value ... (bad token: {kv})"
+                                ));
+                                return;
+                            }
+                        };
+                        let value = serde_json::from_str::<serde_json::Value>(v)
+                            .unwrap_or_else(|_| serde_json::Value::String(v.to_string()));
+                        updates.insert(k.to_string(), value);
+                    }
+                    if updates.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: net set hostname=myhost listen_port=9090".into());
+                        return;
+                    }
+                    match block.apply(&serde_json::Value::Object(updates)) {
+                        Ok(()) => state.shell_state.add_output(block.config().to_json()),
+                        Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                    }
+                }
+                "reset" => match block.reset() {
+                    Ok(()) => state.shell_state.add_output(block.config().to_json()),
+                    Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                },
+                _ => state
+                    .shell_state
+                    .add_output("Usage: net get | net set key=value ... | net reset".into()),
+            }
+            return;
+        }
+        Some("store") => {
+            let blocks_dir = env_or("AIOS_BLOCKS_DIR", "/app/blocks");
+            let mut manager = StoreManager::new(blocks_dir);
+            let sub = parts.get(1).copied().unwrap_or("");
+            match sub {
+                "list" => {
+                    let installed = manager.list_installed();
+                    if installed.is_empty() {
+                        state.shell_state.add_output("No blocks installed.".into());
+                    } else {
+                        state
+                            .shell_state
+                            .add_output(format!("Installed blocks ({}):", installed.len()));
+                        for b in &installed {
+                            state.shell_state.add_output(format!(
+                                "  {} {}",
+                                b.manifest.name, b.manifest.version
+                            ));
+                        }
+                    }
+                }
+                "sources" => {
+                    for s in &manager.sources {
+                        state.shell_state.add_output(format!("  {}", s.display()));
+                    }
+                }
+                "add-source" => {
+                    let spec = parts.get(2).copied().unwrap_or("");
+                    if spec.is_empty() {
+                        state.shell_state.add_output(
+                            "Usage: store add-source <github:owner/repo|local:path|http://url>"
+                                .into(),
+                        );
+                        return;
+                    }
+                    match StoreManager::parse_source_spec(spec) {
+                        Ok(source) => match manager.add_source(source) {
+                            Ok(()) => state
+                                .shell_state
+                                .add_output(format!("Added source: {spec}")),
+                            Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                        },
+                        Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                    }
+                }
+                "search" => {
+                    let (query, source_name) = split_store_args(parts.get(2..).unwrap_or(&[]));
+                    if query.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: store search <query> [--source NAME]".into());
+                        return;
+                    }
+                    state
+                        .shell_state
+                        .add_output(format!("Searching store for '{query}'..."));
+                    match StoreManager::block_on(manager.search(&query, source_name.as_deref())) {
+                        Ok(results) => {
+                            if results.is_empty() {
+                                state.shell_state.add_output("No matches.".into());
+                            } else {
+                                state
+                                    .shell_state
+                                    .add_output(format!("Found {} result(s):", results.len()));
+                                for m in &results {
+                                    state.shell_state.add_output(format!(
+                                        "  {} {} — {}",
+                                        m.name, m.version, m.description
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => state.shell_state.add_output(format!("Search failed: {e}")),
+                    }
+                }
+                "install" => {
+                    let (name, source_name) = split_store_args(parts.get(2..).unwrap_or(&[]));
+                    if name.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: store install <name> [--source NAME]".into());
+                        return;
+                    }
+                    state
+                        .shell_state
+                        .add_output(format!("Installing '{name}'..."));
+                    match StoreManager::block_on(manager.install(
+                        source_name.as_deref(),
+                        &name,
+                        None,
+                    )) {
+                        Ok(b) => state.shell_state.add_output(format!(
+                            "Installed {} {}",
+                            b.manifest.name, b.manifest.version
+                        )),
+                        Err(e) => state.shell_state.add_output(format!("Install failed: {e}")),
+                    }
+                }
+                "update" => {
+                    let (name, source_name) = split_store_args(parts.get(2..).unwrap_or(&[]));
+                    state
+                        .shell_state
+                        .add_output("Checking for updates...".into());
+                    let name_arg = if name.is_empty() {
+                        None
+                    } else {
+                        Some(name.as_str())
+                    };
+                    match StoreManager::block_on(manager.update(source_name.as_deref(), name_arg)) {
+                        Ok(updated) => {
+                            if updated.is_empty() {
+                                state.shell_state.add_output("Already up to date.".into());
+                            } else {
+                                for b in &updated {
+                                    state.shell_state.add_output(format!(
+                                        "Updated {} -> {}",
+                                        b.manifest.name, b.manifest.version
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => state.shell_state.add_output(format!("Update failed: {e}")),
+                    }
+                }
+                "uninstall" => {
+                    let name = parts.get(2).copied().unwrap_or("");
+                    if name.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: store uninstall <name>".into());
+                        return;
+                    }
+                    match manager.uninstall(name) {
+                        Ok(removed) => state.shell_state.add_output(format!(
+                            "Uninstalled {} version(s) of '{name}'",
+                            removed.len()
+                        )),
+                        Err(e) => state
+                            .shell_state
+                            .add_output(format!("Uninstall failed: {e}")),
+                    }
+                }
+                "rollback" => {
+                    let name = parts.get(2).copied().unwrap_or("");
+                    if name.is_empty() {
+                        state
+                            .shell_state
+                            .add_output("Usage: store rollback <name>".into());
+                        return;
+                    }
+                    match manager.rollback(name) {
+                        Ok(b) => state.shell_state.add_output(format!(
+                            "Rolled back '{}' to {}",
+                            b.manifest.name, b.manifest.version
+                        )),
+                        Err(e) => state
+                            .shell_state
+                            .add_output(format!("Rollback failed: {e}")),
+                    }
+                }
+                _ => state.shell_state.add_output(
+                    "Usage: store list | sources | search <q> [--source N] | \
+                     install <name> [--source N] | update [name] [--source N] | \
+                     uninstall <name> | rollback <name>"
+                        .into(),
+                ),
+            }
+            return;
+        }
         Some("help") | Some("?") => {
             let resp = safe_shell.execute(
                 aios_watchdog::safe_mode::ShellCommand::Help,
@@ -420,6 +635,27 @@ fn execute_shell_cmd(
 
 fn urlencoding(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+/// Split trailing `store` subcommand args into `(query/name, source_name)`,
+/// extracting any `--source NAME` token.
+fn split_store_args(args: &[&str]) -> (String, Option<String>) {
+    let mut query = String::new();
+    let mut source_name = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--source" {
+            source_name = args.get(i + 1).map(|s| s.to_string());
+            i += 2;
+        } else {
+            if !query.is_empty() {
+                query.push(' ');
+            }
+            query.push_str(args[i]);
+            i += 1;
+        }
+    }
+    (query, source_name)
 }
 
 fn switch_tab(state: &mut DashboardState, tab: usize) {

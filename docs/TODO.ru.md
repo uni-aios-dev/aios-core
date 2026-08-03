@@ -376,6 +376,19 @@
   - [ ] Будущее: встроить webview как дочернее окно вкладки Browser в GUI через `build_as_child` (Windows/macOS/X11), заменив companion window
   - [ ] Будущее: headless render-to-text fallback (chromium/WebDriver) для JS-тяжёлых сайтов в текстовом виде TUI
 
+- [x] **Фаза 40: Хранилище блоков — источники, каталог, установщик, сервис обновлений — ЗАВЕРШЕНА**
+  - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), локально (`local:path`), HTTP-сервис обновлений (`http://host:port`)
+  - [x] `aios-store::catalog`: `fetch_index`/`download_block` (async HTTP + локальное сканирование `*.wasm`/`*.bin` + sidecar JSON), `parse_name_version`
+  - [x] `aios-store::installer`: `BlockInstaller` — `{name}_{version}.wasm` + sidecar, проверка SHA-256, `list_installed`/`find_installed`/`uninstall`, `backup`/`rollback` (`.bak`), `check_updates`, семантический `cmp_version`
+  - [x] `aios-store::manager`: фасад `StoreManager` — `search`/`install`/`update` (автооткат)/`check_updates`/`parse_source_spec`/`block_on`
+  - [x] Крейт `aios-net-config`: `NetworkConfig` + частичные `apply_updates`, `NetworkConfigStore` (атомарный JSON), `NetSettingsBlock` (`net_get`/`net_set`/`net_reset`/`net_persist`, StatefulBlock + roundtrip состояния)
+  - [x] Сервис обновлений в `aios-bridge`: `GET /index.json`, `GET /blocks/{name}.wasm`, `GET /store/index.json`, `GET /store/blocks/{name}.wasm`, `POST /api/v1/store/publish`
+  - [x] Команды TUI-шелла: `store list|sources|add-source|search|install|update|uninstall|rollback` и `net get|set|reset`
+  - [x] Тесты: 32 (`aios-net-config`) + 42 (`aios-store`) юнит-теста, 2 новых интеграционных теста (поток обновлений + roundtrip net-блока)
+  - [ ] Будущее: подключать `NetSettingsBlock` в реестр ядра при загрузке и маршрутизировать `net_*` через IPC
+  - [ ] Будущее: команда `store publish` в TUI-шелл (публикация локального `.wasm` в сервис обновлений)
+  - [ ] Будущее: подписанные манифесты (Ed25519) в `BlockInstaller` + проверка подписи для GitHub/официального магазина
+
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |
 |------|-------------------|-----------------|

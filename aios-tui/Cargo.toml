@@ -12,6 +12,8 @@ aios-watchdog = { path = "../aios-watchdog" }
 aios-context = { path = "../aios-context" }
 aios-browser = { path = "../aios-browser" }
 aios-webview = { path = "../aios-webview" }
+aios-store = { path = "../aios-store" }
+aios-net-config = { path = "../aios-net-config" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

@@ -1,5 +1,35 @@
 # AIOS Development Log
 
+## v2.3.0 — Block store: update service + network settings (2026-08-03)
+
+### `aios-store`: sources, catalog, installer, manager
+- New module `aios-store::source`: `StoreSource` / `SourceKind` — three block sources: `github:owner/repo`, `local:path`, `http://host:port` (update service)
+- New module `aios-store::catalog`: `fetch_index` / `download_block` (async HTTP + local scan), `parse_name_version`
+- New module `aios-store::installer`: `BlockInstaller` — installs `{name}_{version}.wasm` + sidecar JSON, verifies SHA-256, `list_installed` / `find_installed` / `uninstall`, `backup` / `rollback` (`.bak`), `check_updates`, semantic `cmp_version`
+- New module `aios-store::manager`: `StoreManager` facade — `search`, `install`, `update` (auto rollback on failure), `check_updates`, `parse_source_spec`, `block_on` for sync contexts
+- Fix: `rollback` now removes the current (broken/newer) version file before restoring the backup, so `find_installed` returns the reverted version
+
+### New crate `aios-net-config`
+- `NetworkConfig` / `ProxyConfig` / `DnsConfig` / `InterfaceConfig` / `ProxyProtocol` with JSON serialization and partial updates (`apply_updates` with validation)
+- `NetworkConfigStore`: atomic JSON persistence (temp file + rename) under `AIOS_DATA_DIR`
+- `NetSettingsBlock`: `StatefulBlock` over the IPC bus with custom commands `net_get`, `net_set`, `net_reset`, `net_persist`; state extract/restore via bincode
+
+### `aios-bridge`: update-service endpoints
+- `GET /index.json` and `GET /store/index.json` — raw on-disk block catalog
+- `GET /blocks/{name}.wasm` and `GET /store/blocks/{name}.wasm` — block binary download
+- `POST /api/v1/store/publish` — publish a user-created block (base64 wasm + SHA-256 + manifest); serves the local update-service role
+- `BridgeContext` gains `blocks_dir` (from `AIOS_BLOCKS_DIR`, default `./blocks`)
+
+### `aios-tui`: shell commands
+- `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
+- `net get | net set key=value ... | net reset` — view/change/persist network config through `NetSettingsBlock`
+
+### Tests & verification
+- `aios-net-config`: 32 unit tests (validation, JSON roundtrip, block IPC, state roundtrip)
+- `aios-store`: 42 unit tests (source URLs, catalog scan, installer, rollback, manager)
+- Integration: `test_block_store_update_flow` (search → install → tamper rejection → update → rollback) and `test_net_settings_block_roundtrip`; total integration suite now 30 tests
+- Full workspace build, `cargo test --workspace`, `cargo clippy --workspace` (0 warnings), `cargo fmt --all` all pass
+
 ## v2.2.9 — Full native browser from the Web tab (2026-08-02)
 
 ### `aios-tui`: open any page in the real browser

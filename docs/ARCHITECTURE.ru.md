@@ -1029,7 +1029,10 @@ User Input (TUI)
   - `ManifestValidator`: Валидация SHA-256, проверка подписи Ed25519, белый список capability
   - `StoreRegistry`: HashMap по ключу name@version с `register()`, `get()`, `find_all()`, `list()`, `unregister()`
   - `StoreClient`: HTTP-клиент с `fetch_index()` и `download_block()` для удалённого магазина
-  - **9 unit-тестов**: валидация SHA-256, валидация capability, CRUD реестра
+  - `StoreSource` / `SourceKind`: три источника блоков — GitHub (`github:owner/repo`), локальная папка (`local:path`), HTTP-сервис обновлений (`http://host:port`)
+  - `BlockInstaller`: установка на диск `{name}_{version}.wasm` + sidecar JSON в `AIOS_BLOCKS_DIR`; проверка SHA-256, `backup`/`rollback` (`.bak`), `check_updates`, семантический `cmp_version`
+  - `StoreManager`: фасад над источниками и установщиком — `search`, `install`, `update` (автооткат при ошибке), `uninstall`, `rollback`, `parse_source_spec`, `block_on` (синхронные контексты)
+  - **42 unit-теста**: URL источников, сканирование каталога, установщик, откат, сценарии менеджера
 - **Крейт `aios-telemetry`**:
   - `TraceContext`: Дерево спанов с `begin_span()`, `end_span()`, `set_tag()`, `set_status()`, `to_json()` (JSON-экспорт)
   - `FlightRecorder`: Кольцевой буфер с фильтрацией по типу, настраиваемыми max_events + retention_secs, `dump()` и `dump_by_kind()`
@@ -1046,7 +1049,21 @@ User Input (TUI)
   - `GET /api/v1/metrics` — метрики в формате Prometheus
   - `GET /api/v1/traces` — текущий TraceContext в JSON
   - `POST /api/v1/crash-report` — создание отчёта об аварии
-- **BridgeContext** расширен: `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`
+- **Эндпоинты сервиса обновлений** (Фаза 40, `aios-bridge`):
+  - `GET /index.json`, `GET /store/index.json` — «сырой» каталог блоков с диска
+  - `GET /blocks/{name}.wasm`, `GET /store/blocks/{name}.wasm` — скачивание бинарника блока
+  - `POST /api/v1/store/publish` — публикация пользовательского блока (base64 wasm + SHA-256 + манифест); роль локального сервиса обновлений
+- **BridgeContext** расширен: `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`, `blocks_dir` (`AIOS_BLOCKS_DIR`)
+
+### Блок сетевых настроек (`aios-net-config`, Фаза 40)
+- `NetworkConfig` / `ProxyConfig` / `DnsConfig` / `InterfaceConfig` / `ProxyProtocol` — полная сетевая конфигурация с JSON-сериализацией и частичными обновлениями (`apply_updates` с валидацией: порты 1–65535, синтаксис IP, разбор URL прокси)
+- `NetworkConfigStore` — атомарное сохранение JSON (временный файл + rename) в `AIOS_DATA_DIR`/`network.json`
+- `NetSettingsBlock` — `StatefulBlock` на IPC-шине: `net_get`, `net_set <json>`, `net_reset`, `net_persist`; извлечение/восстановление состояния через bincode
+- **32 unit-теста** по config/validation/store/block
+
+### Команды TUI-шелла для Store и сети (`aios-tui`, Фаза 40)
+- `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
+- `net get | net set key=value ... | net reset` — чтение/запись сетевой конфигурации через `NetSettingsBlock` (сохранение через `NetworkConfigStore`)
 
 ---
 

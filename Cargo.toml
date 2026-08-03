@@ -29,6 +29,7 @@ aios-browser = { path = "aios-browser" }
 aios-search = { path = "aios-search" }
 aios-updater = { path = "aios-updater" }
 aios-store = { path = "aios-store" }
+aios-net-config = { path = "aios-net-config" }
 aios-telemetry = { path = "aios-telemetry" }
 aios-debug = { path = "aios-debug" }
 aios-llm = { path = "aios-llm" }
@@ -40,6 +41,8 @@ tempfile = "3"
 wasmtime = "47"
 portpicker = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
+sha2 = "0.10"
+hex = "0.4"
 
 [workspace]
 resolver = "2"
@@ -66,6 +69,7 @@ members = [
     "aios",
     "aios-wasm", "aios-net", "aios-gui", "aios-bridge", "aios-builder", "aios-llm", "aios-browser", "aios-search", "aios-updater", "aios-store", "aios-telemetry", "aios-debug",
     "aios-webview",
+    "aios-net-config",
 ]
 
 [workspace.dependencies]

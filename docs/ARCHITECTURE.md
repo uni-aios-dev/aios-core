@@ -1035,7 +1035,10 @@ Three adaptive AI modes depending on hardware resources:
   - `ManifestValidator`: SHA-256 content validation, Ed25519 signature verification, capability whitelist
   - `StoreRegistry`: name@version keyed HashMap with `register()`, `get()`, `find_all()`, `list()`, `unregister()`
   - `StoreClient`: HTTP client with `fetch_index()` and `download_block()` for remote store
-  - **9 unit tests**: SHA-256 validation, capability validation, registry CRUD
+  - `StoreSource` / `SourceKind`: three block sources — GitHub (`github:owner/repo`), local dir (`local:path`), HTTP update service (`http://host:port`)
+  - `BlockInstaller`: on-disk installs `{name}_{version}.wasm` + sidecar JSON in `AIOS_BLOCKS_DIR`; SHA-256 verification, `backup`/`rollback` (`.bak`), `check_updates`, semantic `cmp_version`
+  - `StoreManager`: facade over sources + installer — `search`, `install`, `update` (auto-rollback on failure), `uninstall`, `rollback`, `parse_source_spec`, `block_on` (sync contexts)
+  - **42 unit tests**: source URLs, catalog scan, installer, rollback, manager flows
 - **`aios-telemetry` crate**:
   - `TraceContext`: Span tree with `begin_span()`, `end_span()`, `set_tag()`, `set_status()`, `to_json()` (JSON export)
   - `FlightRecorder`: Ring buffer with kind-based filtering, configurable max_events + retention_secs, `dump()` and `dump_by_kind()`
@@ -1052,7 +1055,21 @@ Three adaptive AI modes depending on hardware resources:
   - `GET /api/v1/metrics` — Prometheus-format metrics
   - `GET /api/v1/traces` — current TraceContext as JSON
   - `POST /api/v1/crash-report` — trigger a crash report
-- **BridgeContext** enriched with `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`
+- **Update service endpoints** (Phase 40, `aios-bridge`):
+  - `GET /index.json`, `GET /store/index.json` — raw on-disk block catalog
+  - `GET /blocks/{name}.wasm`, `GET /store/blocks/{name}.wasm` — block binary download
+  - `POST /api/v1/store/publish` — publish user-created block (base64 wasm + SHA-256 + manifest); serves the local update-service role
+- **BridgeContext** enriched with `StoreRegistry`, `MetricCollector`, `FlightRecorder`, `TraceContext`, `CrashReporter`, `PanicHandler`, `blocks_dir` (`AIOS_BLOCKS_DIR`)
+
+### Network Settings Block (`aios-net-config`, Phase 40)
+- `NetworkConfig` / `ProxyConfig` / `DnsConfig` / `InterfaceConfig` / `ProxyProtocol` — full network configuration with JSON serialization and partial updates (`apply_updates` with validation: ports 1–65535, IP syntax, proxy URL parsing)
+- `NetworkConfigStore` — atomic JSON persistence (temp file + rename) under `AIOS_DATA_DIR`/`network.json`
+- `NetSettingsBlock` — `StatefulBlock` on the IPC bus: `net_get`, `net_set <json>`, `net_reset`, `net_persist`; state extract/restore via bincode
+- **32 unit tests** across config/validation/store/block
+
+### TUI Store & Network Shell Commands (`aios-tui`, Phase 40)
+- `store list | sources | add-source <spec> | search <q> [--source N] | install <name> [--source N] | update [name] [--source N] | uninstall <name> | rollback <name>`
+- `net get | net set key=value ... | net reset` — reads/writes the network config through `NetSettingsBlock` (persisted via `NetworkConfigStore`)
 
 ---
 

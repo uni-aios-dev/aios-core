@@ -1159,3 +1159,92 @@ fn test_cross_subsystem_scheduler_security_ipc() {
     let next = scheduler.schedule_next().unwrap();
     assert_eq!(next, pid);
 }
+
+// ============================================================
+// Test 29: Block store update flow (local source + publish + rollback)
+// ============================================================
+#[test]
+fn test_block_store_update_flow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source_dir = tmp.path().join("source");
+    let blocks_dir = tmp.path().join("installed");
+
+    let v1 = b"block-v1-binary";
+    let v2 = b"block-v2-binary";
+    let source_blocks = source_dir.join("blocks");
+    std::fs::create_dir_all(&source_blocks).unwrap();
+    std::fs::write(source_blocks.join("net_1.0.0.wasm"), v1).unwrap();
+
+    let mut manager = aios_store::manager::StoreManager::with_sources(
+        vec![aios_store::source::StoreSource::local(
+            &source_dir.to_string_lossy(),
+        )],
+        &blocks_dir,
+    );
+
+    let found = aios_store::manager::StoreManager::block_on(manager.search("net", None)).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "net");
+    assert_eq!(found[0].version, "1.0.0");
+
+    let installed =
+        aios_store::manager::StoreManager::block_on(manager.install(None, "net", None)).unwrap();
+    assert_eq!(installed.manifest.version, "1.0.0");
+    assert_eq!(std::fs::read(&installed.path).unwrap(), v1);
+
+    let bad_manifest = aios_store::manifest::ManifestInfo {
+        name: "net".into(),
+        version: "9.9.9".into(),
+        description: "tampered".into(),
+        author: "attacker".into(),
+        capabilities: std::collections::HashSet::new(),
+        wasm_size_bytes: v2.len() as u64,
+        wasm_sha256: "0".repeat(64),
+        signature: None,
+        store_url: None,
+    };
+    assert!(manager
+        .installer
+        .install_from_bytes(bad_manifest, v2)
+        .is_err());
+
+    std::fs::write(source_blocks.join("net_2.0.0.wasm"), v2).unwrap();
+
+    let updated =
+        aios_store::manager::StoreManager::block_on(manager.update(None, Some("net"))).unwrap();
+    assert_eq!(updated.len(), 1);
+    assert_eq!(updated[0].manifest.version, "2.0.0");
+
+    let rolled_back = manager.rollback("net").unwrap();
+    assert_eq!(rolled_back.manifest.version, "1.0.0");
+    assert_eq!(manager.list_installed().len(), 1);
+}
+
+// ============================================================
+// Test 30: Network settings block roundtrip (net get/set/reset)
+// ============================================================
+#[test]
+fn test_net_settings_block_roundtrip() {
+    use aios_net_config::block::NetSettingsBlock;
+    use aios_net_config::config::NetworkConfig;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("net.json");
+
+    let mut block = NetSettingsBlock::new(BlockId::new(9), NetworkConfig::default(), &store_path);
+    assert_eq!(block.config().hostname, "aios-host");
+
+    block
+        .apply(&serde_json::json!({ "hostname": "e2e-host", "listen_port": 9090 }))
+        .unwrap();
+    assert_eq!(block.config().hostname, "e2e-host");
+    assert_eq!(block.config().listen_port, 9090);
+
+    let reloaded = NetSettingsBlock::new(BlockId::new(9), NetworkConfig::default(), &store_path);
+    assert_eq!(reloaded.config().hostname, "e2e-host");
+    assert_eq!(reloaded.config().listen_port, 9090);
+
+    block.reset().unwrap();
+    assert_eq!(block.config().hostname, "aios-host");
+    assert_eq!(block.config().listen_port, 8080);
+}

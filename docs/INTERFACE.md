@@ -116,8 +116,35 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `status` / `info` | — | System status |
 | `logs` | — | View safe-mode event log |
 | `restart` | — | Restart the orchestrator |
+| `store` | `<sub>` | Block store management (see below) |
+| `net` | `<sub>` | Network settings (see below) |
 | `help` / `?` | — | Show all available commands |
 | `exit` | — | Exit the safe-mode shell |
+
+### Store Shell Commands
+
+The block store fetches blocks from three kinds of sources: GitHub (`github:owner/repo`), a local directory (`local:path`) and an HTTP update service (`http://host:port`). Installations land in `AIOS_BLOCKS_DIR` as `{name}_{version}.wasm` + sidecar JSON; updates are backed up (`.bak`) and auto-rollback on failure.
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `store list` | — | List installed blocks (newest version per name) |
+| `store sources` | — | List configured sources |
+| `store add-source` | `<github:owner/repo\|local:path\|http://url>` | Register a new source |
+| `store search` | `<query> [--source NAME]` | Search the source catalog |
+| `store install` | `<name> [--source NAME]` | Install a block (newest version) |
+| `store update` | `[name] [--source NAME]` | Check for and apply updates (auto-rollback on failure) |
+| `store uninstall` | `<name>` | Remove every installed version of a block |
+| `store rollback` | `<name>` | Restore the previous version from backup |
+
+### Network Shell Commands
+
+Reads/writes the network configuration through the `NetSettingsBlock`, persisted as JSON under `AIOS_DATA_DIR`/`network.json`.
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `net get` | — | Show the current network configuration (JSON) |
+| `net set` | `key=value [key2=value2 ...]` | Apply a partial update (e.g. `hostname=myhost`, `listen_port=9090`, `allow_private_access=true`, `dns={"primary":"1.1.1.1"}`); valid keys: `hostname`, `listen_port`, `connect_timeout_ms`, `max_connections`, `user_agent`, `allow_private_access`, `proxy` (JSON object or `null`), `dns` (JSON object with `primary`/`secondary`/`search_domains`) |
+| `net reset` | — | Restore factory defaults and persist |
 
 ### F1 Help Overlay
 
