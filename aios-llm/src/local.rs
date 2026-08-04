@@ -37,6 +37,11 @@ impl LocalEngine {
         }
     }
 
+    /// Returns the configuration this engine was created with.
+    pub fn config(&self) -> &LlmConfig {
+        &self.config
+    }
+
     pub async fn query(&self, request: &LlmRequest) -> LlmResult<LlmResponse> {
         let model = self.model.as_ref().ok_or_else(|| {
             LlmError::NotAvailable(

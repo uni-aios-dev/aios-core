@@ -259,28 +259,18 @@ fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
 fn draw_ai_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(4)])
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
         .split(area);
 
-    let output: Vec<ListItem> = app
-        .ai_output
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|line| {
-            if line.starts_with('>') {
-                ListItem::new(Line::from(Span::styled(
-                    line.clone(),
-                    Style::default().fg(Color::Cyan),
-                )))
-            } else {
-                ListItem::new(Line::from(line.clone()))
-            }
-        })
-        .collect();
-    let output_list =
-        List::new(output).block(Block::default().title(" AI Console ").borders(Borders::ALL));
-    frame.render_widget(output_list, chunks[0]);
+    if app.ai_show_help {
+        draw_ai_help(frame, chunks[0]);
+    } else {
+        draw_ai_output(frame, chunks[0], app);
+    }
 
     let input_style = if app.ai_mode {
         Style::default().fg(Color::Green)
@@ -290,12 +280,134 @@ fn draw_ai_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     let input_text = if app.ai_mode {
         format!(">> {}", app.ai_input)
     } else {
-        " Press 'i' to enter query mode ".into()
+        " Press 'i' to enter query mode  |  'h' for help ".into()
     };
     let input_para = Paragraph::new(input_text)
         .style(input_style)
         .block(Block::default().title(" Input ").borders(Borders::ALL));
     frame.render_widget(input_para, chunks[1]);
+
+    let status = app.ai_status.lock().unwrap().clone();
+    let cfg = &app.ai_config;
+    let backend = match cfg.backend {
+        aios_llm::BackendKind::Cloud(ref p) => format!("cloud/{}", aios_llm::provider_name(p)),
+        aios_llm::BackendKind::MicroLocal => "local/micro".into(),
+        aios_llm::BackendKind::FullLocal => "local/full".into(),
+    };
+    let status_line = format!(
+        " {backend} | {} | temp {} | tokens {} | {status} ",
+        cfg.model, cfg.temperature, cfg.max_tokens
+    );
+    let status_para = Paragraph::new(status_line).style(Style::default().fg(Color::Cyan));
+    frame.render_widget(status_para, chunks[2]);
+}
+
+fn wrap_line(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in text.chars() {
+        if cur.chars().count() >= width {
+            out.push(cur);
+            cur = String::new();
+        }
+        cur.push(ch);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+fn draw_ai_output(frame: &mut Frame, area: Rect, app: &TuiApp) {
+    let width = area.width.saturating_sub(2).max(1) as usize;
+    let mut items: Vec<ListItem> = Vec::new();
+    {
+        let guard = app.ai_output.lock().unwrap();
+        for line in guard.iter() {
+            let (style, text) = if line.starts_with('>') {
+                (Style::default().fg(Color::Cyan), format!("  {line}"))
+            } else if line.starts_with("[error]") {
+                (Style::default().fg(Color::Red), line.clone())
+            } else {
+                (Style::default().fg(Color::White), line.clone())
+            };
+            for wrapped in wrap_line(&text, width) {
+                items.push(ListItem::new(Line::from(Span::styled(wrapped, style))));
+            }
+        }
+    }
+    if items.is_empty() {
+        items.push(ListItem::new(Line::from(
+            " Type a message and press Enter, or type /help for the command reference. ",
+        )));
+    }
+    let output_list =
+        List::new(items).block(Block::default().title(" AI Console ").borders(Borders::ALL));
+    frame.render_widget(output_list, area);
+}
+
+const AI_HELP: &[&str] = &[
+    "=== AI Console Help ===",
+    "",
+    "Keys:",
+    "  i            enter query mode",
+    "  Enter        send query or run command",
+    "  Up / Down    navigate prompt history",
+    "  Esc          exit query mode / close help",
+    "  h            toggle this help panel",
+    "  q            quit AIOS (when not typing)",
+    "",
+    "Slash commands (type '/<command>' then Enter):",
+    "  /help            open this panel",
+    "  /status          show backend, model and parameter info",
+    "  /clear           clear the chat output",
+    "  /history         show the last prompts",
+    "  /system <text>   set the system prompt",
+    "  /model <name>    set the model (e.g. llama-3.3-70b-versatile)",
+    "  /backend <kind>  groq | openrouter | google | micro | full",
+    "  /key <api-key>   set the API key (no argument clears it)",
+    "  /temp <0.0-2.0>  set sampling temperature",
+    "  /tokens <1-8192> set max output tokens",
+    "",
+    "Notes:",
+    "  * Cloud backends need an API key (AIOS_LLM_API_KEY or /key).",
+    "  * Local backends need a GGUF model (AIOS_MODEL_PATH / AIOS_MODELS_DIR).",
+    "  * Changes are applied to the shared engine, so the HTTP",
+    "    /api/v1/llm/query endpoint uses the same configuration.",
+];
+
+fn draw_ai_help(frame: &mut Frame, area: Rect) {
+    let lines: Vec<Line> = AI_HELP
+        .iter()
+        .map(|l| {
+            if l.starts_with("===") {
+                Line::from(Span::styled(
+                    *l,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else if l.starts_with("  /") {
+                Line::from(Span::styled(*l, Style::default().fg(Color::Cyan)))
+            } else {
+                Line::from(*l)
+            }
+        })
+        .collect();
+    let para = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .title(" AI Console Help ")
+                .borders(Borders::ALL),
+        )
+        .style(Style::default().fg(Color::White));
+    frame.render_widget(para, area);
 }
 
 fn draw_bridge_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {

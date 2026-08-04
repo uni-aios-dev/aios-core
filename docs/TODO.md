@@ -401,6 +401,14 @@
   - [x] TUI shell `store sign <file.wasm> [name] [version] [--key <hex>]` + `store verify <name>`
   - [ ] Future: signed `store publish` (manifest signed before the bridge installs it) and `store trust <source>` command to set a source's trusted keys from the shell
 
+- [x] **Phase 43: AI Console — slash commands, help panel, runtime reconfiguration — COMPLETE (v2.6.0)**
+  - [x] Kernel TUI AI Console (tab 3): slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens`
+  - [x] Runtime backend/model/key reconfiguration applied to the shared engine (HTTP `/api/v1/llm/query` stays in sync)
+  - [x] Built-in help panel (справка) toggled with `h` or `/help`; prompt history (last 50) via `Up`/`Down`
+  - [x] Status footer + `/status` report incl. local GGUF model detection; word-wrapped output with prompt/error coloring
+  - [x] `aios-llm` config introspection: `LlmEngine::config()`, `provider_name()`, `backend_label()`; 1 new unit test
+  - [ ] Future: chat persistence to disk, `/preset` prompt templates, streaming responses
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

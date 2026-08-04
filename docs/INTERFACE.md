@@ -185,6 +185,36 @@ cargo run --bin aios
 | `Space` | Pause/resume event log |
 | `q` | Quit |
 
+### AI Console (Tab 3)
+
+The AI Console is an interactive chat with the LLM. Press `i` to enter query mode, type a message (or a `/`-command), press `Enter` to send. The footer shows the live backend/model/temperature/tokens/state. Long responses are word-wrapped to the pane width; user prompts are shown in cyan, errors in red.
+
+| Key | Action |
+|-----|--------|
+| `i` | Enter query mode |
+| `Enter` | Send the query or run a slash command |
+| `Esc` | Exit query mode / close help |
+| `Up` / `Down` | Navigate the last 50 prompts |
+| `h` | Toggle the built-in help panel |
+| `q` | Quit (when not typing) |
+
+Slash commands are typed at the input line (e.g. `/status`) and executed with `Enter`:
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `/help` | — | Open the help panel + command summary |
+| `/status` | — | Show backend, model, API key state, parameters, detected local GGUF models |
+| `/clear` | — | Clear the chat output |
+| `/history` | — | List the recent prompts |
+| `/system` | `<prompt>` | Set the system prompt (no argument prints the current one) |
+| `/model` | `<name>` | Set the model (no argument prints the current one) |
+| `/backend` | `<groq\|openrouter\|google\|micro\|full>` | Switch backend/provider; local backends reset the API key |
+| `/key` | `<api-key>` | Set the API key (no argument clears it) |
+| `/temp` | `<0.0-2.0>` | Set sampling temperature |
+| `/tokens` | `<1-8192>` | Set max output tokens |
+
+Backend/model/key changes rebuild the shared `LlmEngine` asynchronously, so the HTTP `POST /api/v1/llm/query` endpoint uses the same configuration as the console. Cloud backends need an API key (`AIOS_LLM_API_KEY` or `/key`); local backends need a GGUF model (`AIOS_MODEL_PATH`).
+
 ### Browser Hotkey (`b`)
 
 The browser block is registered at boot — no configuration, installed browser, or network required. Press `b`, type a full URL (e.g. `https://example.com`), a bare host (`example.com`), or a plain search query (`rust scheduler`), press `Enter`: the input is dispatched to the browser block over IPC (`open_native` command via `MessageRouter`). Queries and bare hosts are converted to a DuckDuckGo search / `https://` URL and opened in your OS default browser. The result is shown in the Events pane.

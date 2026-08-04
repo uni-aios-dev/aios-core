@@ -107,4 +107,14 @@ mod tests {
         let models = local::detect_local_models();
         assert!(models.is_empty());
     }
+
+    #[test]
+    fn test_engine_config_accessor() {
+        let cfg = default_config();
+        let engine = LlmEngine::from_config(cfg.clone());
+        let back = engine.config();
+        assert_eq!(back.model, cfg.model);
+        assert_eq!(back.max_tokens, cfg.max_tokens);
+        assert!(!engine.backend_label().is_empty());
+    }
 }

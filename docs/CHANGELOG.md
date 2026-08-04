@@ -1,5 +1,24 @@
 # AIOS Development Log
 
+## v2.6.0 — AI Console: slash commands, help panel, runtime reconfiguration (2026-08-04)
+
+### Kernel TUI (`aios`) — AI Console (tab 3) overhaul
+- **Slash-command system** in the AI query line: `/help`, `/status`, `/clear`, `/history`, `/system <prompt>`, `/model <name>`, `/backend <groq|openrouter|google|micro|full>`, `/key <api-key>`, `/temp <0.0-2.0>`, `/tokens <1-8192>`
+- **Runtime reconfiguration**: `/backend`, `/model` and `/key` rebuild the shared `LlmEngine` inside `BridgeContext` asynchronously, so the HTTP `POST /api/v1/llm/query` endpoint uses the same configuration as the console; every query also re-applies the current console config before running
+- **Help panel (справка)**: built-in styled reference of keys + slash commands in the AI tab, toggled with `h` or `/help`, dismissed with `Esc`/`h`/`q`
+- **Prompt history**: `Up`/`Down` navigate the last 50 prompts while typing; `/history` prints them; `/clear` resets the chat
+- **Status footer**: live `backend | model | temp | tokens | state` line (`thinking...` / `done: Nms[, N tokens]` / error); `/status` prints a full report incl. detected local GGUF models
+- **Render polish**: long responses word-wrapped to the pane width, user prompts (`>`) styled cyan, `[error]` lines red, larger output buffer (200 entries)
+- `TuiApp` gains `ai_system_prompt`, `ai_config`, `ai_history`/`ai_history_index`, `ai_show_help`, `ai_status`; new helpers `submit_ai_query`, `handle_ai_command`, `apply_config_async`, `push_ai_line`
+
+### `aios-llm`: config introspection
+- `LlmEngine::config() -> LlmConfig` plus `config()` accessors on `CloudEngine`/`LocalEngine`; new `provider_name(&CloudProvider)` helper and `LlmEngine::backend_label()`
+- 1 new unit test `test_engine_config_accessor` (aios-llm total: 9)
+
+### Tests & verification
+- Full workspace suite grows to 1149 tests, all passing in debug and release (changed crates)
+- `cargo clippy --workspace` — 0 warnings, `cargo fmt --all` clean
+
 ## v2.5.0 — Ed25519-signed block manifests with trust enforcement (2026-08-04)
 
 ### `aios-store`: real Ed25519 signing & verification

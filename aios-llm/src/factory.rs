@@ -28,6 +28,26 @@ impl LlmEngine {
             LlmEngine::FullLocal(e) => e.query(request).await,
         }
     }
+
+    /// Returns a clone of the active configuration for introspection.
+    pub fn config(&self) -> LlmConfig {
+        match self {
+            LlmEngine::Cloud(e) => e.config().clone(),
+            LlmEngine::MicroLocal(e) | LlmEngine::FullLocal(e) => e.config().clone(),
+        }
+    }
+
+    /// Short human-readable label of the active backend (e.g. `cloud/groq`).
+    pub fn backend_label(&self) -> String {
+        match self {
+            LlmEngine::Cloud(e) => match e.config().backend {
+                BackendKind::Cloud(ref p) => format!("cloud/{}", crate::types::provider_name(p)),
+                _ => "cloud".into(),
+            },
+            LlmEngine::MicroLocal(_) => "local/micro".into(),
+            LlmEngine::FullLocal(_) => "local/full".into(),
+        }
+    }
 }
 
 pub fn default_config() -> LlmConfig {

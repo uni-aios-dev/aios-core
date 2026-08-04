@@ -1114,8 +1114,16 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 | q | Quit |
 | g | Open bridge URL in browser |
 | b | Open a URL in the native browser (URL input mode, dispatched to browser block via MessageRouter) |
+| n | Edit network settings (`key=value` input mode, `net_set` over IPC) |
 | r | Reprobe hardware |
 | Space | Pause/resume log scroll |
+
+### AI Console (Tab 3, Phase 43 / v2.6.0)
+- Interactive LLM chat: `i` enters query mode, `Enter` sends; each query re-applies the current console `LlmConfig` to the shared `BridgeContext.llm` engine, so console settings and the HTTP `/api/v1/llm/query` endpoint stay consistent
+- Slash-command system handled in `TuiApp::handle_ai_command`: `/help /status /clear /history /system /model /backend /key /temp /tokens`; backend/model/key changes rebuild the engine asynchronously via `apply_config_async`
+- Built-in help panel (справка) toggled with `h` or `/help`, styled reference of keys + commands; prompt history (last 50) navigable with `Up`/`Down`
+- Status footer `backend | model | temp | tokens | state` (`thinking...` / `done: Nms` / error); `/status` reports config + detected local GGUF models via `aios_llm::local::detect_local_models`
+- `aios-llm` exposes `LlmEngine::config()`, `provider_name()`, `backend_label()` for config introspection
 
 ### Startup Sequence
 1. Hardware probe (CPU, RAM, GPU, OS)

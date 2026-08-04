@@ -42,6 +42,15 @@ impl CloudProvider {
     }
 }
 
+/// Short lower-case name of a cloud provider (`groq`, `openrouter`, `google`).
+pub fn provider_name(p: &CloudProvider) -> &'static str {
+    match p {
+        CloudProvider::Groq => "groq",
+        CloudProvider::OpenRouter => "openrouter",
+        CloudProvider::GoogleAiStudio => "google",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LlmRequest {
     pub system_prompt: String,
