@@ -66,6 +66,7 @@ impl BlockExecutor {
             .instance_ref()
             .and_then(|inst| inst.get_func(&mut store, "init"))
         {
+            wasm_block.arm_timeout(&mut store);
             match init_func.call(&mut store, &[], &mut []) {
                 Ok(_) => {
                     log::info!("BlockExecutor: Called init() on block '{}'", name);
@@ -81,6 +82,7 @@ impl BlockExecutor {
             .instance_ref()
             .and_then(|inst| inst.get_func(&mut store, "start"))
         {
+            wasm_block.arm_timeout(&mut store);
             match start_func.call(&mut store, &[], &mut []) {
                 Ok(_) => {
                     log::info!("BlockExecutor: Called start() on block '{}'", name);

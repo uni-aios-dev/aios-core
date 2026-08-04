@@ -315,9 +315,10 @@ and `docs/CHANGELOG.md` v2.7.0.
 - **Fix:** `0xFFFFFFFF` (`AdapterRAM` > 4 GB) is treated as unknown (0)
 - **Affected file:** `aios/src/hw_probe.rs`
 
-### BUG-038: wasmtime epoch deadline semantics misread as a bug
-- **Status:** CLARIFIED (v2.7.0)
-- **Symptom:** no host-side ticker ever increments the engine epoch, so `timeout_ms` is not enforced as wall-clock
-- **Root Cause:** none — wasmtime's default epoch deadline is 0, which interrupts immediately; `set_epoch_deadline(1)` keeps execution safe and arms the timeout for a future ticker
-- **Resolution:** documented in `SandboxConfig.timeout_ms` and `create_store`; execution stays bounded by the fuel limit
-- **Affected file:** `aios-wasm/src/sandbox.rs`
+### BUG-038: wasm `timeout_ms` never enforced — epoch deadline never reached
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** no host-side ticker ever incremented the engine epoch, so `timeout_ms` was not enforced as wall-clock time; only the fuel limit bounded runaway wasm (an infinite loop ran until fuel ran out)
+- **Root Cause:** `set_epoch_deadline(1)` armed the store, but nothing called `Engine::increment_epoch()`, so the deadline was unreachable (engine epoch stayed 0)
+- **Fix:** a per-engine background ticker (`EpochTicker`) calls `Engine::increment_epoch()` every `timeout_ms / 4`; every store is armed with `EPOCH_TICKS_PER_TIMEOUT = 4` ticks, and `call_func`/`instantiate` (plus the executor's `init`/`start`) re-arm the deadline before each wasm call so long-lived stores keep working while every call is bounded by `timeout_ms`
+- **Tests:** `test_epoch_timeout_interrupts_runaway_wasm` (infinite loop interrupted in ~150 ms with fuel that alone would take ~10 s) and `test_epoch_deadline_rearmed_between_calls`
+- **Affected files:** `aios-wasm/src/sandbox.rs`, `aios-wasm/src/executor.rs`

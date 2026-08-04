@@ -69,12 +69,14 @@
 - **BUG-037 (LOW)** — a 0xFFFFFFFF `AdapterRAM` value (VRAM > 4 GB) was reported as a bogus ~4 GB instead of unknown. Such values are now treated as unknown (0).
 - Files: `aios/src/hw_probe.rs`
 
-### `aios-wasm`: epoch-deadline semantics clarified
-- **BUG-038 (LOW)** — wasmtime's default epoch deadline is 0, which interrupts immediately when epoch interruption is enabled. `set_epoch_deadline(1)` keeps execution safe (engine epoch starts at 0) and arms the timeout for a host-side ticker; the sandbox config and store creation now document this. `timeout_ms` is a hint until a ticker is added.
+### `aios-wasm`: `timeout_ms` now enforced via an epoch ticker
+- **BUG-038 (LOW)** — `timeout_ms` was never enforced as wall-clock time: no thread ever called `Engine::increment_epoch()`, so the epoch deadline was unreachable and only the fuel limit bounded runaway wasm. A per-engine background ticker (`EpochTicker`) now increments the epoch every `timeout_ms / 4`; stores are armed with `EPOCH_TICKS_PER_TIMEOUT = 4` ticks and `call_func`/`instantiate` (plus the executor's `init`/`start`) re-arm the deadline before every wasm call, so each call is bounded by `timeout_ms` while long-lived stores keep working.
+- New tests `test_epoch_timeout_interrupts_runaway_wasm` and `test_epoch_deadline_rearmed_between_calls`; `aios-wasm` total now 56 unit tests.
+- Files: `aios-wasm/src/sandbox.rs`, `aios-wasm/src/executor.rs`
 
 ### Tests & verification
 - Workspace suite: 82 test targets, 0 failures in debug. `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings; `cargo fmt --all --check` clean.
-- 15+ new tests covering each fix.
+- 17 new tests covering each fix (incl. the two epoch-timeout tests).
 
 ## v2.6.0 — AI Console: slash commands, help panel, runtime reconfiguration (2026-08-04)
 

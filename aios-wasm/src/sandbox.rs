@@ -1,19 +1,95 @@
 use crate::isolation::IsolationConfig;
 use aios_core::error::{AIOSException, Result};
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wasmtime::*;
 
 pub const AIOS_MODULE: &str = "aios";
+
+/// Number of epoch ticks a store is allowed to run before the ticker's
+/// `timeout_ms` window elapses. The ticker fires every `timeout_ms / 4`.
+pub const EPOCH_TICKS_PER_TIMEOUT: u64 = 4;
+
+/// Background thread that increments the engine epoch once per tick window.
+/// A store armed with [`Store::set_epoch_deadline`] is interrupted as soon as
+/// the epoch has been incremented `EPOCH_TICKS_PER_TIMEOUT` times, which bounds
+/// every wasm call to roughly `timeout_ms` of wall-clock time regardless of the
+/// fuel limit.
+struct EpochTicker {
+    state: Arc<EpochTickerState>,
+    handle: Option<JoinHandle<()>>,
+}
+
+struct EpochTickerState {
+    stop: AtomicBool,
+    cv: Condvar,
+    mtx: Mutex<()>,
+}
+
+impl EpochTicker {
+    fn start(engine: &Engine, timeout_ms: u64) -> Self {
+        let state = Arc::new(EpochTickerState {
+            stop: AtomicBool::new(false),
+            cv: Condvar::new(),
+            mtx: Mutex::new(()),
+        });
+        let ticker_state = state.clone();
+        let engine = engine.clone();
+        let tick_ms = (timeout_ms / EPOCH_TICKS_PER_TIMEOUT).max(1);
+
+        let handle = std::thread::Builder::new()
+            .name("aios-wasm-epoch-ticker".to_string())
+            .spawn(move || {
+                let mut guard = ticker_state
+                    .mtx
+                    .lock()
+                    .expect("epoch ticker mutex poisoned");
+                loop {
+                    if ticker_state.stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let (g, _) = ticker_state
+                        .cv
+                        .wait_timeout(guard, Duration::from_millis(tick_ms))
+                        .expect("epoch ticker condvar poisoned");
+                    guard = g;
+                    if ticker_state.stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    engine.increment_epoch();
+                }
+            })
+            .map_err(|e| {
+                log::warn!("WASM: failed to start epoch ticker thread: {e}");
+            })
+            .ok();
+
+        Self { state, handle }
+    }
+}
+
+impl Drop for EpochTicker {
+    fn drop(&mut self) {
+        self.state.stop.store(true, Ordering::Relaxed);
+        self.state.cv.notify_all();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxConfig {
     pub memory_limit_pages: u32,
     pub fuel_limit: u64,
     pub max_instances: u32,
-    /// Wall-clock budget hint. Enforced via the fuel limit on the current
-    /// single-threaded host (epoch interruption needs a host-side ticker that
-    /// calls [`Engine::increment_epoch`], which AIOS does not run yet).
+    /// Wall-clock budget per wasm call. Enforced by an epoch ticker thread that
+    /// calls [`Engine::increment_epoch`] and per-call re-arming of the store
+    /// deadline in [`WasmBlock::call_func`] and [`WasmBlock::instantiate`];
+    /// the fuel limit additionally bounds total execution.
     pub timeout_ms: u64,
 }
 
@@ -31,6 +107,7 @@ impl Default for SandboxConfig {
 pub struct WasmSandbox {
     engine: Engine,
     config: SandboxConfig,
+    _ticker: EpochTicker,
 }
 
 impl WasmSandbox {
@@ -40,14 +117,20 @@ impl WasmSandbox {
 
         let engine = Engine::new(&engine_config)
             .map_err(|e| AIOSException::Generic(format!("WASM engine init: {e}")))?;
+        let ticker = EpochTicker::start(&engine, config.timeout_ms);
 
         log::info!(
-            "WASM: Sandbox engine initialized (fuel={}, max_mem={} pages)",
+            "WASM: Sandbox engine initialized (fuel={}, max_mem={} pages, timeout={}ms)",
             config.fuel_limit,
-            config.memory_limit_pages
+            config.memory_limit_pages,
+            config.timeout_ms
         );
 
-        Ok(Self { engine, config })
+        Ok(Self {
+            engine,
+            config,
+            _ticker: ticker,
+        })
     }
 
     pub fn engine(&self) -> &Engine {
@@ -81,12 +164,16 @@ impl WasmSandbox {
         store
             .set_fuel(self.config.fuel_limit)
             .map_err(|e| AIOSException::Generic(format!("WASM set fuel: {e}")))?;
-        // Epoch interruption is enabled, and wasmtime's default epoch deadline
-        // is 0, which would interrupt immediately. Setting the deadline to 1
-        // keeps execution safe (engine epoch starts at 0) and arms the timeout
-        // for a host-side ticker calling [`Engine::increment_epoch`].
-        store.set_epoch_deadline(1);
+        // wasmtime's default epoch deadline is 0 (immediate trap), so every
+        // store is armed with a fresh timeout window. Each wasm call re-arms
+        // the deadline via `arm_timeout` so long-lived stores do not trap once
+        // their first window elapses.
+        store.set_epoch_deadline(EPOCH_TICKS_PER_TIMEOUT);
         Ok(store)
+    }
+
+    pub fn arm_timeout(&self, store: &mut Store<StoreState>) {
+        store.set_epoch_deadline(EPOCH_TICKS_PER_TIMEOUT);
     }
 }
 
@@ -105,6 +192,7 @@ pub struct WasmBlock {
     instance: Option<Instance>,
     config: SandboxConfig,
     isolation: IsolationConfig,
+    _ticker: EpochTicker,
 }
 
 impl WasmBlock {
@@ -118,14 +206,16 @@ impl WasmBlock {
         let sandbox = WasmSandbox::new(config.clone())?;
         let engine = sandbox.engine().clone();
         let module = sandbox.compile_any(wasm_bytes)?;
+        let ticker = EpochTicker::start(&engine, config.timeout_ms);
 
         log::info!(
-            "WASM: Block loaded — {} v{} ({} bytes, memory={} pages, fuel={})",
+            "WASM: Block loaded — {} v{} ({} bytes, memory={} pages, fuel={}, timeout={}ms)",
             name,
             version,
             wasm_bytes.len(),
             config.memory_limit_pages,
-            config.fuel_limit
+            config.fuel_limit,
+            config.timeout_ms
         );
 
         Ok(Self {
@@ -136,6 +226,7 @@ impl WasmBlock {
             instance: None,
             config,
             isolation,
+            _ticker: ticker,
         })
     }
 
@@ -149,6 +240,7 @@ impl WasmBlock {
         let sandbox = WasmSandbox::new(config.clone())?;
         let engine = sandbox.engine().clone();
         let module = sandbox.compile_wat(wat)?;
+        let ticker = EpochTicker::start(&engine, config.timeout_ms);
 
         log::info!("WASM: Block loaded from WAT — {} v{}", name, version);
 
@@ -160,6 +252,7 @@ impl WasmBlock {
             instance: None,
             config,
             isolation,
+            _ticker: ticker,
         })
     }
 
@@ -167,6 +260,7 @@ impl WasmBlock {
         let mut linker = Linker::new(store.engine());
         Self::register_aios_host_functions(&mut linker)?;
 
+        self.arm_timeout(store);
         let needs_imports = self.module.imports().count() > 0;
         if !needs_imports {
             let instance = linker
@@ -229,12 +323,12 @@ impl WasmBlock {
         store
             .set_fuel(self.config.fuel_limit)
             .map_err(|e| AIOSException::Generic(format!("WASM set fuel: {e}")))?;
-        // Epoch interruption is enabled, and wasmtime's default epoch deadline
-        // is 0, which would interrupt immediately. Setting the deadline to 1
-        // keeps execution safe (engine epoch starts at 0) and arms the timeout
-        // for a host-side ticker calling [`Engine::increment_epoch`].
-        store.set_epoch_deadline(1);
+        store.set_epoch_deadline(EPOCH_TICKS_PER_TIMEOUT);
         Ok(store)
+    }
+
+    pub fn arm_timeout(&self, store: &mut Store<StoreState>) {
+        store.set_epoch_deadline(EPOCH_TICKS_PER_TIMEOUT);
     }
 
     pub fn call_func(
@@ -254,6 +348,7 @@ impl WasmBlock {
             ))
         })?;
 
+        self.arm_timeout(store);
         let mut results = vec![Val::I32(0); func.ty(&*store).results().len()];
         func.call(&mut *store, args, &mut results)
             .map_err(|e| AIOSException::Generic(format!("WASM call: {e}")))?;
@@ -652,5 +747,78 @@ mod tests {
             !block.restore_linear_memory(&mut store, &oversized),
             "restoring more bytes than the linear memory holds must fail, not truncate"
         );
+    }
+
+    #[test]
+    fn test_epoch_timeout_interrupts_runaway_wasm() {
+        const SPIN_WAT: &str = r#"
+            (module
+                (func (export "spin")
+                    (loop $l
+                        br $l)))
+        "#;
+        // Fuel high enough that exhaustion alone would take ~10 s; the epoch
+        // ticker must interrupt the loop in ~timeout_ms instead.
+        let config = SandboxConfig {
+            timeout_ms: 150,
+            fuel_limit: 10_000_000_000,
+            ..SandboxConfig::default()
+        };
+        let isolation = IsolationConfig::default();
+        let mut block =
+            WasmBlock::from_wat("spin".into(), "1.0.0".into(), SPIN_WAT, config, isolation)
+                .unwrap();
+        let mut store = block.create_store().unwrap();
+        block.instantiate(&mut store).unwrap();
+
+        let start = std::time::Instant::now();
+        let result = block.call_func(&mut store, "spin", &[]);
+        let elapsed = start.elapsed();
+
+        assert!(
+            result.is_err(),
+            "runaway wasm must be interrupted by the epoch timeout, not run until fuel runs out"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("wasm backtrace"),
+            "expected a wasm-time trap, got: {err:?}"
+        );
+        assert!(
+            elapsed.as_millis() < 5_000,
+            "epoch interrupt must fire near the timeout, took {elapsed:?} (fuel-only trap takes ~10s)"
+        );
+    }
+
+    #[test]
+    fn test_epoch_deadline_rearmed_between_calls() {
+        const COUNT_WAT: &str = r#"
+            (module
+                (func (export "count") (param i32) (result i32)
+                    local.get 0
+                    i32.const 1
+                    i32.add))
+        "#;
+        let config = SandboxConfig {
+            timeout_ms: 50,
+            fuel_limit: 1_000_000_000,
+            ..SandboxConfig::default()
+        };
+        let isolation = IsolationConfig::default();
+        let mut block =
+            WasmBlock::from_wat("count".into(), "1.0.0".into(), COUNT_WAT, config, isolation)
+                .unwrap();
+        let mut store = block.create_store().unwrap();
+        block.instantiate(&mut store).unwrap();
+
+        // Let several timeout windows elapse between calls; each call must still
+        // run because `call_func` re-arms the epoch deadline.
+        for i in 0..5 {
+            std::thread::sleep(Duration::from_millis(60));
+            let results = block
+                .call_func(&mut store, "count", &[Val::I32(i)])
+                .unwrap();
+            assert_eq!(results[0].i32(), Some(i + 1));
+        }
     }
 }

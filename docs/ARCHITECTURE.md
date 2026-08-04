@@ -843,6 +843,7 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 `WasmSandbox` — Wasmtime-based sandboxed execution engine:
 - Fuel consumption and epoch interruption for resource limits
 - `SandboxConfig`: memory page limits, fuel limits, max instances, timeout
+- `timeout_ms` is enforced wall-clock by an `EpochTicker` background thread: it increments the engine epoch every `timeout_ms / 4`, and every wasm call re-arms the store deadline (`EPOCH_TICKS_PER_TIMEOUT = 4`), bounding each call while keeping long-lived stores usable
 
 ### Block Lifecycle (`block.rs`)
 
