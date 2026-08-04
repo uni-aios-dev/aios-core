@@ -1,8 +1,11 @@
 # AIOS Known Bugs & Workarounds
 
-## Current: None (Clean Build)
+## Current: No known defects (Clean Build)
 
-As of v2.5.0, all tests pass and clippy reports zero warnings.
+As of v2.7.0, all tests pass (82 test targets, 0 failures), clippy reports zero
+warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038)
+are fixed and covered by regression tests. See the Historical Issues section
+and `docs/CHANGELOG.md` v2.7.0.
 
 ### KNOWN LIMITATION: signed-manifest enforcement is opt-in via env
 - **Status:** BY DESIGN
@@ -194,3 +197,127 @@ As of v2.5.0, all tests pass and clippy reports zero warnings.
 - **Root Cause:** `execute_shell_cmd` in `aios-tui/src/main.rs:160` mapped every unrecognized command to `ShellCommand::Unknown(cmd.to_string())`, bypassing `SafeModeShell::parse_command` — only the TUI's own four commands reached the SafeModeShell, so the entire safe-mode command set was unreachable
 - **Fix:** Commands now route through `SafeModeShell::parse_command`; `help`/`?` additionally list the TUI-specific commands; `blocks` output now prints the block state cleanly (`Active`, not `Some(Active)`) via `registry.topology_with_state()`
 - **Affected files:** `aios-tui/src/main.rs:160-177`, `aios-watchdog/src/safe_mode.rs`
+
+### BUG-021: extract_text returned empty text for pages with `<!DOCTYPE html>`
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** `HtmlParser::extract_text` returned an empty string for any page whose root is `<!DOCTYPE html><html>…`; all browsed pages appeared blank in the TUI Web tab
+- **Root Cause:** `extract_text` iterated the body's own text instead of walking the element children of the document root, so a doctype-first document produced no text
+- **Fix:** `extract_text` now iterates the element children of the document root; added regression test `test_extract_text_with_doctype`
+- **Affected file:** `aios-browser/src/html_parser.rs`
+
+### BUG-022: IpcBus `DropOldest` evicted the most critical packet
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** with `BoundedBusPolicy::DropOldest`, overflow discarded the highest-priority queued packet and kept the least important one
+- **Root Cause:** `DropOldest` popped from the front, but the queue is ordered highest-priority-first (send time order for equal priorities)
+- **Fix:** `DropOldest` now pops from the back (lowest priority); added `test_drop_oldest_keeps_highest_priority`
+- **Affected file:** `aios-ipc/src/bus.rs`
+
+### BUG-023: Bridge status handler never listed the newest process
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** `GET /api/v1/status` and the `status` intent showed every process except the newest one
+- **Root Cause:** the handler probed PIDs `0..process_count`, but process IDs start at 1, so the last (newest) process was always skipped
+- **Fix:** the handler now iterates `scheduler.all_processes()`; the TUI processes tab uses the same source
+- **Affected files:** `aios-bridge/src/server.rs`, `aios/src/tui/ui.rs`
+
+### BUG-024: Bridge `MetricType::All` hardcoded process_count to 0
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** metrics for the `All` metric type always reported `process_count = 0`
+- **Root Cause:** the count was read after `scheduler` was dropped (moved into the report), so it always evaluated to 0
+- **Fix:** `process_count` is captured before the scheduler is dropped
+- **Affected file:** `aios-bridge/src/server.rs`
+
+### BUG-025: TUI Web back-navigation ping-ponged forever
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** pressing `b` to go back to page A, then `b` again, returned to B instead of staying on A — A↔B infinite loop
+- **Root Cause:** `load_url` always pushed the URL onto the history stack, including when called for back-navigation, re-adding the page that was just popped
+- **Fix:** `load_url` gained `push_history: bool`; back navigation pops without re-pushing; all call sites updated
+- **Affected file:** `aios-tui/src/main.rs`
+
+### BUG-026: Rapid `B` presses spawned multiple native browser windows
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** pressing `B` repeatedly in the TUI Web tab started several native browser instances
+- **Root Cause:** no guard between the keypress and the spawn; each press launched the OS browser
+- **Fix:** a `WEB_BROWSER_SPAWNING` atomic guard allows one spawn in flight until the child is reported
+- **Affected file:** `aios-tui/src/main.rs`
+
+### BUG-027: GUI browser open blocked the egui UI up to 45 s
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** opening the WebView from the GUI Browser tab froze the dashboard for up to 45 s (window init timeout)
+- **Root Cause:** `WebBrowser::open` ran synchronously on the egui thread
+- **Fix:** the open runs on a background thread (`pending_browser`/`pending_browser_error` slots, `browser_opening` guard); `poll_browser_open` picks up the result each frame; repeated opens during startup are ignored
+- **Affected file:** `aios-gui/src/app.rs`
+
+### BUG-028: DuckDuckGo `uddg` redirect URL not decoded
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** result URLs pointed at `https://duckduckgo.com/l/?uddg=%2F...` instead of the real target
+- **Root Cause:** `DuckDuckGoBackend` returned the redirect URL as-is
+- **Fix:** `resolve_duckduckgo_url` unwraps the `uddg` parameter, skipping non-http/s values; `aios-search` adds the `url` dependency; 4 tests
+- **Affected files:** `aios-search/src/backends.rs`, `aios-search/Cargo.toml`
+
+### BUG-029: `save_telemetry` clobbered earlier batches
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** saving telemetry twice left only the latest batch in the store
+- **Root Cause:** every batch was written under the same key
+- **Fix:** keys are assigned from a monotonic `TELEMETRY_NEXT_KEY` counter persisted in `META_TABLE`; added `test_save_telemetry_does_not_clobber_previous_batches`
+- **Affected file:** `aios-context/src/persistence.rs`
+
+### BUG-030: compressed-telemetry chunk keys collided each round
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** each compression round overwrote the previous chunk, so only the last compression survived
+- **Root Cause:** chunk keys were derived from a timestamp/metric key that was identical across rounds
+- **Fix:** chunks use a monotonic `next_chunk_id`; removed `chrono_block_name`; added `test_multiple_compression_rounds_do_not_collide`
+- **Affected file:** `aios-context/src/compressed_telemetry.rs`
+
+### BUG-031: `response_err` discarded the error message
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** IPC error responses carried an empty payload, so callers saw a generic failure with no message
+- **Root Cause:** `response_err` built the response with `Payload::Empty`
+- **Fix:** the message is carried as `Payload::Text(msg)`; added `test_response_err_carries_message`
+- **Affected file:** `aios-core/src/ipc_protocol.rs`
+
+### BUG-032: capability `remaining_ms` was inverted
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** long-lived capabilities reported ~0 ms remaining; `remaining_ms` grew as expiry approached
+- **Root Cause:** `remaining_ms` computed `now − expires`
+- **Fix:** now `expires_at_ms.saturating_sub(now_ms())`; added a test for a future expiry
+- **Affected file:** `aios-security/src/capability.rs`
+
+### BUG-033: priority-inheritance counter never incremented
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** `total_inheritances` always reported 0 even when priority boosts happened
+- **Root Cause:** the field was declared but never incremented
+- **Fix:** the counter increments in both the `acquire_lock` and `request_resource` boost paths and is surfaced via `state()`; tests added
+- **Affected file:** `aios-process-mgr/src/priority_inheritance.rs`
+
+### BUG-034: `restore_linear_memory` silently truncated oversized data
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** restoring a larger state snapshot into linear memory silently dropped the trailing bytes
+- **Root Cause:** the copy length was `min(data, memory)`
+- **Fix:** restore now fails explicitly when data exceeds the linear memory; `aios-live-update` logs a warning; added `test_restore_linear_memory_rejects_oversized_data`
+- **Affected files:** `aios-wasm/src/sandbox.rs`, `aios-live-update/src/wasm_engine.rs`
+
+### BUG-035: CPU affinity applied to the scheduler thread
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** `set_cpu_affinity` pinned the scheduler thread (OS affinity targets the calling thread) instead of the spawned process thread
+- **Root Cause:** the OS call was invoked from the scheduler context
+- **Fix:** the mask is stored per-thread (`Arc<Mutex<Vec<usize>>>`) and applied by the spawned thread itself before running the payload; `validate_cores` pre-validates the mask; `set_cpu_affinity` no longer touches the calling thread
+- **Affected files:** `aios-process-mgr/src/cpu_affinity.rs`, `aios-process-mgr/src/scheduler.rs`
+
+### BUG-036: TUI/bridge lock-order inversion
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** deadlock risk — the TUI blocks tab locked `scheduler → registry` while the bridge used `registry → scheduler`
+- **Fix:** both sides now lock `scheduler → registry`
+- **Affected file:** `aios/src/tui/ui.rs`
+
+### BUG-037: WMIC `AdapterRAM` 32-bit overflow
+- **Status:** FIXED (v2.7.0)
+- **Symptom:** GPUs with more than 4 GB VRAM reported a bogus ~4 GB; `0xFFFFFFFF` overflow
+- **Fix:** `0xFFFFFFFF` (`AdapterRAM` > 4 GB) is treated as unknown (0)
+- **Affected file:** `aios/src/hw_probe.rs`
+
+### BUG-038: wasmtime epoch deadline semantics misread as a bug
+- **Status:** CLARIFIED (v2.7.0)
+- **Symptom:** no host-side ticker ever increments the engine epoch, so `timeout_ms` is not enforced as wall-clock
+- **Root Cause:** none — wasmtime's default epoch deadline is 0, which interrupts immediately; `set_epoch_deadline(1)` keeps execution safe and arms the timeout for a future ticker
+- **Resolution:** documented in `SandboxConfig.timeout_ms` and `create_store`; execution stays bounded by the fuel limit
+- **Affected file:** `aios-wasm/src/sandbox.rs`

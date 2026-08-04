@@ -13,6 +13,7 @@ pub struct PriorityInheritance {
     original_priorities: HashMap<ProcessId, Priority>,
     lock_waiters: HashMap<u32, Vec<ProcessId>>,
     pending_boosts: Vec<PriorityBoost>,
+    total_inheritances: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +52,7 @@ impl PriorityInheritance {
             original_priorities: HashMap::new(),
             lock_waiters: HashMap::new(),
             pending_boosts: Vec::new(),
+            total_inheritances: 0,
         }
     }
 
@@ -81,6 +83,7 @@ impl PriorityInheritance {
                 self.original_priorities
                     .entry(*current_owner)
                     .or_insert(owner_priority);
+                self.total_inheritances += 1;
             }
 
             self.lock_waiters
@@ -146,6 +149,10 @@ impl PriorityInheritance {
                     to: current_priority,
                     reason: BoostReason::ResourceWait,
                 });
+                self.original_priorities
+                    .entry(*owner)
+                    .or_insert(owner_priority);
+                self.total_inheritances += 1;
             }
 
             ResourceResult::Blocked { owner: *owner }
@@ -193,7 +200,7 @@ impl PriorityInheritance {
             active_locks: self.lock_owners.len(),
             boosted_processes: self.original_priorities.len(),
             pending_boosts: self.pending_boosts.len(),
-            total_inheritances: 0,
+            total_inheritances: self.total_inheritances,
         }
     }
 
@@ -362,6 +369,27 @@ mod tests {
         assert_eq!(state.active_locks, 1);
         assert!(state.boosted_processes >= 1);
         assert!(state.pending_boosts >= 1);
+        assert_eq!(state.total_inheritances, 1);
+    }
+
+    #[test]
+    fn test_request_resource_tracks_boosted_owner() {
+        let mut pi = PriorityInheritance::new();
+        pi.request_resource(pid(1), Priority::Low, 100);
+        let result = pi.request_resource(pid(2), Priority::Critical, 100);
+        assert_eq!(result, ResourceResult::Blocked { owner: pid(1) });
+
+        let boosts = pi.apply_pending_boosts();
+        assert_eq!(boosts.len(), 1);
+        assert_eq!(boosts[0].reason, BoostReason::ResourceWait);
+
+        let state = pi.state();
+        assert_eq!(state.total_inheritances, 1);
+        assert_eq!(
+            pi.restore_priority(pid(1)),
+            Some(Priority::Low),
+            "resource-boosted owner must keep its original priority for restore"
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ const TELEMETRY_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("telem
 const WORKFLOW_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("workflows");
 const STABILITY_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("stability");
 const META_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("meta");
+const TELEMETRY_NEXT_KEY: &str = "telemetry_next_key";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedTelemetryEntry {
@@ -91,14 +92,25 @@ impl PersistentStore {
             let mut table = write_txn
                 .open_table(TELEMETRY_TABLE)
                 .map_err(|e| e.to_string())?;
+            let mut meta = write_txn
+                .open_table(META_TABLE)
+                .map_err(|e| e.to_string())?;
+            let next: u64 = meta
+                .get(TELEMETRY_NEXT_KEY)
+                .map_err(|e| e.to_string())?
+                .and_then(|v| bincode::deserialize(v.value()).ok())
+                .unwrap_or(1);
             for (i, entry) in entries.iter().enumerate() {
                 let persisted = PersistedTelemetryEntry::from(entry);
                 let bytes = bincode::serialize(&persisted).map_err(|e| e.to_string())?;
-                let key = (i as u64) + 1;
                 table
-                    .insert(key, bytes.as_slice())
+                    .insert(next + i as u64, bytes.as_slice())
                     .map_err(|e| e.to_string())?;
             }
+            let next_bytes =
+                bincode::serialize(&(next + entries.len() as u64)).map_err(|e| e.to_string())?;
+            meta.insert(TELEMETRY_NEXT_KEY, next_bytes.as_slice())
+                .map_err(|e| e.to_string())?;
             Ok::<(), String>(())
         }
         .map_err(|e: String| e)?;
@@ -257,6 +269,33 @@ mod tests {
         ];
         let count = store.save_telemetry(&entries).unwrap();
         assert_eq!(count, 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_save_telemetry_does_not_clobber_previous_batches() {
+        let path = test_db_path("telemetry_batches");
+        let store = PersistentStore::new(&path);
+
+        store
+            .save_telemetry(&[
+                TelemetryEntry::new("cpu", 50.0, 1024),
+                TelemetryEntry::new("cpu", 60.0, 2048),
+            ])
+            .unwrap();
+        store
+            .save_telemetry(&[TelemetryEntry::new("ram", 70.0, 4096)])
+            .unwrap();
+
+        let loaded = store.load_telemetry().unwrap();
+        assert_eq!(
+            loaded.len(),
+            3,
+            "later batches must not overwrite earlier ones"
+        );
+        assert!(loaded.iter().any(|e| e.metric_name == "cpu"));
+        assert!(loaded.iter().any(|e| e.metric_name == "ram"));
 
         cleanup(&path);
     }

@@ -395,10 +395,12 @@ Ready → Running → Terminated
 - `create_session(name, priority)` → `u64` session ID (group with session_id)
 
 **CPU affinity** (`cpu_affinity.rs`):
-- `set_cpu_affinity(pid, cores)` — pins a real OS thread to specific CPU cores
+- `set_cpu_affinity(pid, cores)` — stores a per-thread affinity mask (the OS call targets the calling thread, so it must run on the target thread itself)
 - `get_cpu_affinity(pid)` — queries current affinity for a thread
 - `available_cpu_cores()` — returns number of available cores
+- `validate_cores(cores)` — pre-validates a mask before storing it
 - Platform: `SetThreadAffinityMask` (Windows), `sched_setaffinity` (Linux), no-op fallback
+- Application model: the spawned process thread reads its stored mask (`Arc<Mutex<Vec<usize>>>`) and applies it before running the payload, so the scheduler thread is never re-pinned
 - `add_to_group(pid, group_id)` / `remove_from_group(pid)` — membership management
 - `kill_group(group_id)` — terminate all members and remove group
 - `suspend_group(group_id)` / `resume_group(group_id)` — bulk state changes

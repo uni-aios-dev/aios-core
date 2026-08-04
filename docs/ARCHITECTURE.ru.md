@@ -400,10 +400,12 @@ Ready → Running → Terminated
 - `group_members(group_id)`, `all_groups()`, `group_count()`, `get_group()`
 
 **Привязка к CPU** (`cpu_affinity.rs`):
-- `set_cpu_affinity(pid, cores)` — привязывает реальный ОС-поток к конкретным ядрам CPU
+- `set_cpu_affinity(pid, cores)` — сохраняет маску привязки на поток (вызов ОС действует на вызывающий поток, поэтому должен выполняться в целевом потоке)
 - `get_cpu_affinity(pid)` — запрашивает текущую привязку для потока
 - `available_cpu_cores()` — возвращает количество доступных ядер
+- `validate_cores(cores)` — предварительная проверка маски перед сохранением
 - Платформа: `SetThreadAffinityMask` (Windows), `sched_setaffinity` (Linux), no-op fallback
+- Модель применения: порождённый поток процесса сам читает сохранённую маску (`Arc<Mutex<Vec<usize>>>`) и применяет её перед запуском payload, поэтому поток планировщика никогда не перепривязывается
 
 **Режим планирования реального времени**:
 - Перечисление `SchedulingMode`: `Normal` (взвешенный round-robin) и `RealTime` (на основе дедлайнов)

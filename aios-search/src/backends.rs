@@ -93,7 +93,7 @@ impl DuckDuckGoBackend {
             if !href.is_empty() {
                 results.push(SearchResult {
                     title: Self::clean_text(title),
-                    url: href.to_string(),
+                    url: Self::resolve_duckduckgo_url(href),
                     snippet: Self::clean_text(snippet),
                     source: "duckduckgo".into(),
                 });
@@ -103,6 +103,21 @@ impl DuckDuckGoBackend {
         }
 
         results
+    }
+
+    /// DuckDuckGo's HTML results wrap every real URL in a redirect link of the
+    /// form `https://duckduckgo.com/l/?uddg=<urlencoded-real-url>&rut=...`.
+    /// Unwrap the `uddg` query parameter so callers receive the actual target.
+    fn resolve_duckduckgo_url(href: &str) -> String {
+        url::Url::parse(href)
+            .ok()
+            .and_then(|u| {
+                u.query_pairs()
+                    .find(|(k, _)| k == "uddg")
+                    .map(|(_, v)| v.into_owned())
+            })
+            .filter(|resolved| resolved.starts_with("http://") || resolved.starts_with("https://"))
+            .unwrap_or_else(|| href.to_string())
     }
 
     fn clean_text(text: &str) -> String {
@@ -220,5 +235,48 @@ impl BraveBackend {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_duckduckgo_uddg() {
+        let href = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage%3Fa%3D1%26b%3D2&rut=abc";
+        assert_eq!(
+            DuckDuckGoBackend::resolve_duckduckgo_url(href),
+            "https://example.com/page?a=1&b=2"
+        );
+    }
+
+    #[test]
+    fn test_resolve_duckduckgo_non_redirect() {
+        assert_eq!(
+            DuckDuckGoBackend::resolve_duckduckgo_url("https://example.com/plain"),
+            "https://example.com/plain"
+        );
+    }
+
+    #[test]
+    fn test_resolve_duckduckgo_invalid_uddg() {
+        let href = "https://duckduckgo.com/l/?uddg=javascript%3Aalert(1)&rut=abc";
+        assert_eq!(
+            DuckDuckGoBackend::resolve_duckduckgo_url(href),
+            href.to_string()
+        );
+    }
+
+    #[test]
+    fn test_parse_html_response_unwraps_uddg() {
+        let body = r##"
+<html>
+  <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Freal.example.com%2Fx&rut=1">Real</a>
+</html>
+"##;
+        let results = DuckDuckGoBackend::parse_html_response(body);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://real.example.com/x");
     }
 }

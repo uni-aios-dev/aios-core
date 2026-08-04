@@ -141,8 +141,11 @@ impl IpcBus {
                     self.metrics.total_dropped += 1;
                     return Err(AIOSException::IPCError("Message queue full".into()));
                 }
+                // The queue is ordered highest-priority first, so the oldest /
+                // least important packet sits at the back. Evicting the front
+                // would drop the most critical packet, so pop from the back.
                 BackpressurePolicy::DropOldest => {
-                    if let Some(dropped) = self.queue.pop_front() {
+                    if let Some(dropped) = self.queue.pop_back() {
                         self.seen_packet_ids.remove(&dropped.header.packet_id);
                         self.metrics.total_dropped += 1;
                     }
@@ -473,6 +476,20 @@ mod tests {
         assert_eq!(bus.len(), 2);
         let first = bus.receive().unwrap();
         assert_eq!(first.header.target_block, 3);
+    }
+
+    #[test]
+    fn test_drop_oldest_keeps_highest_priority() {
+        let mut bus = IpcBus::new(2).with_backpressure(BackpressurePolicy::DropOldest);
+        bus.send_priority(test_packet_with_priority(1, 5)).unwrap();
+        bus.send_priority(test_packet_with_priority(2, 1)).unwrap();
+        bus.send_priority(test_packet_with_priority(3, 3)).unwrap();
+        assert_eq!(bus.len(), 2);
+        assert_eq!(bus.metrics().total_dropped, 1);
+        let first = bus.receive().unwrap();
+        let second = bus.receive().unwrap();
+        assert_eq!(first.header.target_block, 1);
+        assert_eq!(second.header.target_block, 3);
     }
 
     #[test]

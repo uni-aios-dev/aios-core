@@ -11,6 +11,9 @@ pub struct SandboxConfig {
     pub memory_limit_pages: u32,
     pub fuel_limit: u64,
     pub max_instances: u32,
+    /// Wall-clock budget hint. Enforced via the fuel limit on the current
+    /// single-threaded host (epoch interruption needs a host-side ticker that
+    /// calls [`Engine::increment_epoch`], which AIOS does not run yet).
     pub timeout_ms: u64,
 }
 
@@ -78,6 +81,10 @@ impl WasmSandbox {
         store
             .set_fuel(self.config.fuel_limit)
             .map_err(|e| AIOSException::Generic(format!("WASM set fuel: {e}")))?;
+        // Epoch interruption is enabled, and wasmtime's default epoch deadline
+        // is 0, which would interrupt immediately. Setting the deadline to 1
+        // keeps execution safe (engine epoch starts at 0) and arms the timeout
+        // for a host-side ticker calling [`Engine::increment_epoch`].
         store.set_epoch_deadline(1);
         Ok(store)
     }
@@ -222,6 +229,10 @@ impl WasmBlock {
         store
             .set_fuel(self.config.fuel_limit)
             .map_err(|e| AIOSException::Generic(format!("WASM set fuel: {e}")))?;
+        // Epoch interruption is enabled, and wasmtime's default epoch deadline
+        // is 0, which would interrupt immediately. Setting the deadline to 1
+        // keeps execution safe (engine epoch starts at 0) and arms the timeout
+        // for a host-side ticker calling [`Engine::increment_epoch`].
         store.set_epoch_deadline(1);
         Ok(store)
     }
@@ -303,12 +314,20 @@ impl WasmBlock {
             None => return false,
         };
         let current_len = memory.data(store.as_context()).len();
-        let target_len = data.len().min(current_len);
+        if data.len() > current_len {
+            log::warn!(
+                "WASM: Cannot restore {} bytes into {} bytes of linear memory for {}",
+                data.len(),
+                current_len,
+                self.name
+            );
+            return false;
+        }
         let dest = memory.data_mut(store.as_context_mut());
-        dest[..target_len].copy_from_slice(&data[..target_len]);
+        dest[..data.len()].copy_from_slice(data);
         log::info!(
             "WASM: Restored {} bytes of linear memory for {}",
-            target_len,
+            data.len(),
             self.name
         );
         true
@@ -616,5 +635,22 @@ mod tests {
         let mut store = block.create_store().unwrap();
         let restored = block.restore_linear_memory(&mut store, &[1, 2, 3]);
         assert!(!restored);
+    }
+
+    #[test]
+    fn test_restore_linear_memory_rejects_oversized_data() {
+        let config = SandboxConfig::default();
+        let isolation = IsolationConfig::default();
+        let mut block =
+            WasmBlock::from_wat("mem".into(), "1.0.0".into(), MEMORY_WAT, config, isolation)
+                .unwrap();
+        let mut store = block.create_store().unwrap();
+        block.instantiate(&mut store).unwrap();
+
+        let oversized = vec![0u8; 65536 + 1];
+        assert!(
+            !block.restore_linear_memory(&mut store, &oversized),
+            "restoring more bytes than the linear memory holds must fail, not truncate"
+        );
     }
 }

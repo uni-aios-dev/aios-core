@@ -190,8 +190,10 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
 fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let state = app.state.lock().unwrap();
-    let registry = state.bridge.registry.lock().unwrap();
+    // Lock order must match the bridge (scheduler → registry) to avoid a
+    // deadlock between the TUI render thread and bridge request handlers.
     let scheduler = state.bridge.scheduler.lock().unwrap();
+    let registry = state.bridge.registry.lock().unwrap();
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -235,21 +237,18 @@ fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
             ram_usage.0
         ))),
     ];
-    for id in 0..5u64 {
-        let pid = aios_process_mgr::task::ProcessId(id + 1);
-        if let Some(proc) = scheduler.get_process(pid) {
-            let state_str = match proc.state {
-                aios_process_mgr::task::ProcessState::Running => "Running",
-                aios_process_mgr::task::ProcessState::Ready => "Ready",
-                aios_process_mgr::task::ProcessState::Suspended => "Suspended",
-                aios_process_mgr::task::ProcessState::Terminated => "Terminated",
-                aios_process_mgr::task::ProcessState::Crashed => "Crashed",
-            };
-            proc_items.push(ListItem::new(Line::from(format!(
-                "  pid_{}: {} [{}]",
-                proc.pid.0, proc.name, state_str
-            ))));
-        }
+    for proc in scheduler.all_processes() {
+        let state_str = match proc.state {
+            aios_process_mgr::task::ProcessState::Running => "Running",
+            aios_process_mgr::task::ProcessState::Ready => "Ready",
+            aios_process_mgr::task::ProcessState::Suspended => "Suspended",
+            aios_process_mgr::task::ProcessState::Terminated => "Terminated",
+            aios_process_mgr::task::ProcessState::Crashed => "Crashed",
+        };
+        proc_items.push(ListItem::new(Line::from(format!(
+            "  pid_{}: {} [{}]",
+            proc.pid.0, proc.name, state_str
+        ))));
     }
     let proc_list =
         List::new(proc_items).block(Block::default().title(" Processes ").borders(Borders::ALL));

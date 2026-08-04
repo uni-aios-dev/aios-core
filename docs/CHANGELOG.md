@@ -1,5 +1,81 @@
 # AIOS Development Log
 
+## v2.7.0 — Bug-fix pass: correctness, robustness, UI fixes (2026-08-04)
+
+### `aios-browser`: `extract_text` returns empty on pages with `<!DOCTYPE html>`
+- **BUG-021 (HIGH)** — `HtmlParser::extract_text` iterated the body's own text, so a document root of `<!DOCTYPE html><html>...` yielded no text at all. The parser now walks the element children of the document root and returns the visible text regardless of doctype.
+- New regression test `test_extract_text_with_doctype`.
+- Files: `aios-browser/src/html_parser.rs`
+
+### `aios-ipc`: `DropOldest` policy evicted the most critical packet
+- **BUG-022 (MED)** — `IpcBus` `DropOldest` popped from the front, but the queue is ordered highest-priority-first, so overflow discarded the most important packet and kept the least important one. It now drops from the back (lowest priority) instead.
+- New test `test_drop_oldest_keeps_highest_priority`.
+- Files: `aios-ipc/src/bus.rs`
+
+### `aios-bridge`: process listing missed the newest process; status metrics always reported 0
+- **BUG-023 (MED)** — `status_handler` probed PIDs `0..process_count`, but process IDs start at 1, so the newest process was never listed. It now uses `scheduler.all_processes()`.
+- **BUG-024 (MED)** — the `MetricType::All` branch captured `process_count` after the scheduler was dropped, hardcoding `0`. The count is now read before dropping.
+- Files: `aios-bridge/src/server.rs`
+
+### `aios-tui`: Web back-navigation ping-ponged forever
+- **BUG-025 (MED)** — pressing `b` to go back pushed the current page back onto the history stack, so navigating back to A and re-pressing `b` returned to B (A↔B loop). `load_url` now takes `push_history: bool`; back navigation pops without re-pushing. Updated all call sites (navigation, link click, sidebar open).
+- **BUG-026 (MED)** — rapid `B` presses could spawn a second native browser window. A `WEB_BROWSER_SPAWNING` atomic guard now allows only one spawn in flight.
+- Files: `aios-tui/src/main.rs`
+
+### `aios-gui`: browser open blocked the UI for up to 45 s and could double-spawn
+- **BUG-027 (MED)** — opening the WebView happened synchronously on the egui thread. It now spawns on a background thread with `pending_browser`/`pending_browser_error` slots and a `browser_opening` guard; `poll_browser_open` picks up the result each frame.
+- Files: `aios-gui/src/app.rs`
+
+### `aios-search`: DuckDuckGo `uddg` redirect URL was not resolved
+- **BUG-028 (MED)** — search result URLs pointing at `/l/?uddg=...` were returned as-is. `resolve_duckduckgo_url` now unwraps the `uddg` parameter (skipping non-http/s values).
+- `aios-search` adds the `url` dependency; 4 new tests.
+- Files: `aios-search/src/backends.rs`, `aios-search/Cargo.toml`
+
+### `aios-context`: telemetry and compression batches clobbered earlier data
+- **BUG-029 (MED)** — `save_telemetry` wrote every batch under the same key, so later batches overwrote earlier ones. Keys now come from a monotonic `TELEMETRY_NEXT_KEY` counter in `META_TABLE`.
+- **BUG-030 (MED)** — compressed-telemetry chunk keys were derived from a metric key/timestamp that collided each round, so every compression overwrote the previous chunk. Chunks now use a monotonic `next_chunk_id`.
+- New tests `test_save_telemetry_does_not_clobber_previous_batches` and `test_multiple_compression_rounds_do_not_collide`.
+- Files: `aios-context/src/persistence.rs`, `aios-context/src/compressed_telemetry.rs`
+
+### `aios-core`: `response_err` dropped the error message
+- **BUG-031 (MED)** — `response_err` returned `Payload::Empty`, discarding the error text. The message is now carried as `Payload::Text(msg)`.
+- New test `test_response_err_carries_message`.
+- Files: `aios-core/src/ipc_protocol.rs`
+
+### `aios-security`: capability `remaining_ms` was inverted
+- **BUG-032 (LOW)** — `remaining_ms()` computed `now − expires`, returning near-zero for long-lived capabilities. Now `expires_at_ms.saturating_sub(now_ms())`.
+- New test for a future expiry.
+- Files: `aios-security/src/capability.rs`
+
+### `aios-process-mgr`: inheritance counter never counted
+- **BUG-033 (LOW)** — `total_inheritances` was declared but never incremented, so it always reported 0. It now increments in both the lock-acquire and resource-request boost paths and is surfaced via `state()`.
+- New tests.
+- Files: `aios-process-mgr/src/priority_inheritance.rs`
+
+### `aios-wasm`: linear-memory restore silently truncated oversized data
+- **BUG-034 (LOW)** — `restore_linear_memory` copied `min(data, memory)`, silently dropping bytes. It now fails loudly when data exceeds the linear memory; `aios-live-update` logs a warning when restore fails.
+- New test `test_restore_linear_memory_rejects_oversized_data`.
+- Files: `aios-wasm/src/sandbox.rs`, `aios-live-update/src/wasm_engine.rs`
+
+### `aios-process-mgr`: CPU affinity was applied to the scheduler thread
+- **BUG-035 (LOW)** — the OS affinity call targets the calling thread, so affinity was applied to the scheduler thread instead of the spawned process thread. The mask is now stored per-thread and applied by the spawned thread itself before running the payload; `validate_cores` pre-validates the mask.
+- Files: `aios-process-mgr/src/cpu_affinity.rs`, `aios-process-mgr/src/scheduler.rs`
+
+### `aios`: TUI/bridge lock-order inversion
+- **BUG-036 (LOW)** — the TUI blocks tab locked `scheduler → registry` while the bridge used `registry → scheduler`, a classic deadlock ordering. Both now lock `scheduler → registry`; the process list iterates `all_processes()` instead of hardcoded PIDs 1..5.
+- Files: `aios/src/tui/ui.rs`
+
+### `aios`: WMIC `AdapterRAM` 32-bit overflow
+- **BUG-037 (LOW)** — a 0xFFFFFFFF `AdapterRAM` value (VRAM > 4 GB) was reported as a bogus ~4 GB instead of unknown. Such values are now treated as unknown (0).
+- Files: `aios/src/hw_probe.rs`
+
+### `aios-wasm`: epoch-deadline semantics clarified
+- **BUG-038 (LOW)** — wasmtime's default epoch deadline is 0, which interrupts immediately when epoch interruption is enabled. `set_epoch_deadline(1)` keeps execution safe (engine epoch starts at 0) and arms the timeout for a host-side ticker; the sandbox config and store creation now document this. `timeout_ms` is a hint until a ticker is added.
+
+### Tests & verification
+- Workspace suite: 82 test targets, 0 failures in debug. `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings; `cargo fmt --all --check` clean.
+- 15+ new tests covering each fix.
+
 ## v2.6.0 — AI Console: slash commands, help panel, runtime reconfiguration (2026-08-04)
 
 ### Kernel TUI (`aios`) — AI Console (tab 3) overhaul

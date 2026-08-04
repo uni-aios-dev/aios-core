@@ -158,7 +158,11 @@ fn probe_gpu() -> Option<GpuInfo> {
                     model = val.trim().to_string();
                 }
                 if let Some(val) = line.strip_prefix("AdapterRAM=") {
-                    vram = val.trim().parse::<u64>().unwrap_or(0);
+                    let parsed = val.trim().parse::<u64>().unwrap_or(0);
+                    // AdapterRAM is a 32-bit field; drivers report 0xFFFFFFFF
+                    // for cards with >4 GB VRAM (or unknown size), which is not
+                    // a real amount of memory.
+                    vram = if parsed == 0xFFFF_FFFF { 0 } else { parsed };
                 }
             }
             if !model.is_empty() {

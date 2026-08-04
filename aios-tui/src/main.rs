@@ -6,6 +6,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -97,13 +98,14 @@ fn is_url_input(s: &str) -> bool {
         || (s.contains('.') && !s.contains(|c: char| c.is_whitespace()))
 }
 
-fn load_url(state: &mut DashboardState, url: &str) {
+fn load_url(state: &mut DashboardState, url: &str, push_history: bool) {
     let url = url.trim().to_string();
     if url.is_empty() {
         return;
     }
     let prev = state.web_state.current_url.clone();
-    if !prev.is_empty()
+    if push_history
+        && !prev.is_empty()
         && prev != url
         && state.web_state.history.last().map(String::as_str) != Some(url.as_str())
     {
@@ -152,7 +154,7 @@ fn navigate_web(state: &mut DashboardState, raw: &str) {
         } else {
             format!("https://{raw}")
         };
-        load_url(state, &url);
+        load_url(state, &url, true);
     } else {
         let prev = state.web_state.current_url.clone();
         if !prev.is_empty() && prev != raw {
@@ -185,16 +187,18 @@ fn open_selected_link(state: &mut DashboardState) {
             .map(|(_text, href)| href.clone())
     });
     if let Some(href) = href {
-        load_url(state, &href);
+        load_url(state, &href, true);
     }
 }
 
 /// Pop the last visited page from the web tab history and navigate back to it.
+/// The page is restored without pushing anything back, so repeated presses
+/// drain the history instead of ping-ponging between the last two pages.
 fn web_go_back(state: &mut DashboardState) {
     match state.web_state.history.pop() {
         Some(prev) => {
             state.add_log(format!("Web: back to {prev}"));
-            load_url(state, &prev);
+            load_url(state, &prev, false);
         }
         None => state.add_log("Web: no history to go back to".into()),
     }
@@ -239,7 +243,7 @@ fn web_sidebar_open(state: &mut DashboardState) {
         } else {
             state.add_log(format!("Web: history → {}", entry.url));
         }
-        load_url(state, &entry.url);
+        load_url(state, &entry.url, false);
     }
 }
 
@@ -248,8 +252,16 @@ fn web_sidebar_open(state: &mut DashboardState) {
 /// the window without blocking the TUI.
 static WEB_BROWSER: OnceLock<Mutex<Option<aios_webview::WebBrowser>>> = OnceLock::new();
 
+/// Raised while a background thread is still opening the native browser, so
+/// rapid repeated key presses do not spawn a second window.
+static WEB_BROWSER_SPAWNING: OnceLock<AtomicBool> = OnceLock::new();
+
 fn web_browser_handle() -> &'static Mutex<Option<aios_webview::WebBrowser>> {
     WEB_BROWSER.get_or_init(|| Mutex::new(None))
+}
+
+fn web_browser_spawning() -> &'static AtomicBool {
+    WEB_BROWSER_SPAWNING.get_or_init(|| AtomicBool::new(false))
 }
 
 /// Open `target` in the full native browser window (`B` on the Web tab). If a
@@ -291,13 +303,21 @@ fn web_current_page_url(state: &DashboardState) -> Option<String> {
 
 fn web_browser_spawn(target: String) {
     let handle = web_browser_handle();
-    std::thread::spawn(move || match aios_webview::WebBrowser::open(&target) {
-        Ok(browser) => {
-            if let Ok(mut guard) = handle.lock() {
-                *guard = Some(browser);
+    let spawning = web_browser_spawning();
+    if spawning.swap(true, Ordering::SeqCst) {
+        log::debug!("native browser already being opened, ignoring");
+        return;
+    }
+    std::thread::spawn(move || {
+        match aios_webview::WebBrowser::open(&target) {
+            Ok(browser) => {
+                if let Ok(mut guard) = handle.lock() {
+                    *guard = Some(browser);
+                }
             }
+            Err(e) => log::warn!("native browser failed to open: {e}"),
         }
-        Err(e) => log::warn!("native browser failed to open: {e}"),
+        spawning.store(false, Ordering::SeqCst);
     });
 }
 

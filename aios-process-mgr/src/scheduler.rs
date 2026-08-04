@@ -2,7 +2,7 @@ use crate::task::{Priority, Process, ProcessGroup, ProcessId, ProcessState, Proc
 use aios_core::error::{AIOSException, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SchedulingMode {
@@ -41,7 +41,9 @@ struct RealThread {
     handle: Option<std::thread::JoinHandle<()>>,
     terminate: Arc<AtomicBool>,
     suspend: Arc<AtomicBool>,
-    affinity: Option<Vec<usize>>,
+    /// Desired CPU affinity, shared with the spawned thread so it can pin
+    /// itself without affecting the scheduler thread.
+    affinity: Arc<Mutex<Vec<usize>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -313,6 +315,8 @@ impl Scheduler {
         let suspend_check = susp_arc.clone();
         let term_for_thread = term_arc.clone();
         let susp_for_thread = susp_arc.clone();
+        let affinity_slot: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
+        let affinity_for_thread = affinity_slot.clone();
         let handle = builder
             .spawn(move || loop {
                 if term_flag.should_stop() {
@@ -321,6 +325,13 @@ impl Scheduler {
                 if suspend_check.load(Ordering::Relaxed) {
                     std::thread::park();
                     continue;
+                }
+                // Apply the requested CPU affinity to *this* thread before the
+                // payload runs (the OS call targets the current thread).
+                if let Ok(cores) = affinity_for_thread.lock() {
+                    if !cores.is_empty() {
+                        let _ = crate::cpu_affinity::set_current_thread_affinity(&cores);
+                    }
                 }
                 f(
                     TerminateFlag(term_for_thread.clone()),
@@ -346,7 +357,7 @@ impl Scheduler {
                 handle: Some(handle),
                 terminate: term_arc,
                 suspend: susp_arc,
-                affinity: None,
+                affinity: affinity_slot,
             },
         );
 
@@ -861,14 +872,20 @@ impl Scheduler {
     }
 
     pub fn set_cpu_affinity(&mut self, pid: ProcessId, cores: &[usize]) -> Result<()> {
-        let _real = self.real_threads.get(&pid).ok_or_else(|| {
-            AIOSException::SchedulerError(format!("Process {} is not a real thread", pid.0))
-        })?;
+        crate::cpu_affinity::validate_cores(cores)?;
 
-        crate::cpu_affinity::set_current_thread_affinity(cores)?;
+        let affinity_slot = {
+            let real = self.real_threads.get(&pid).ok_or_else(|| {
+                AIOSException::SchedulerError(format!("Process {} is not a real thread", pid.0))
+            })?;
+            real.affinity.clone()
+        };
 
-        if let Some(real_mut) = self.real_threads.get_mut(&pid) {
-            real_mut.affinity = Some(cores.to_vec());
+        {
+            let mut guard = affinity_slot
+                .lock()
+                .map_err(|_| AIOSException::SchedulerError("Affinity lock poisoned".into()))?;
+            *guard = cores.to_vec();
         }
 
         log::info!(
@@ -880,7 +897,13 @@ impl Scheduler {
     }
 
     pub fn get_cpu_affinity(&self, pid: ProcessId) -> Option<Vec<usize>> {
-        self.real_threads.get(&pid).and_then(|r| r.affinity.clone())
+        let real = self.real_threads.get(&pid)?;
+        let guard = real.affinity.lock().ok()?;
+        if guard.is_empty() {
+            None
+        } else {
+            Some(guard.clone())
+        }
     }
 
     pub fn available_cpu_cores() -> usize {

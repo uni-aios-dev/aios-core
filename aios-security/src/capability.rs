@@ -134,7 +134,7 @@ impl CapabilityToken {
     }
 
     pub fn remaining_ms(&self) -> u64 {
-        now_ms().saturating_sub(self.expires_at_ms)
+        self.expires_at_ms.saturating_sub(now_ms())
     }
 
     pub fn verify(&self, issuer_secret: &[u8]) -> bool {
@@ -220,6 +220,18 @@ mod tests {
         let mut token = CapabilityToken::new(1, vec![Capability::FsRead], 60_000, b"secret");
         token.expires_at_ms = now_ms().saturating_sub(1000);
         assert!(token.is_expired());
+    }
+
+    #[test]
+    fn test_remaining_ms() {
+        let mut token = CapabilityToken::new(1, vec![Capability::FsRead], 60_000, b"secret");
+        let remaining = token.remaining_ms();
+        assert!(
+            remaining <= 60_000 && remaining > 0,
+            "fresh token should report remaining ttl, got {remaining}"
+        );
+        token.expires_at_ms = now_ms().saturating_sub(1000);
+        assert_eq!(token.remaining_ms(), 0);
     }
 
     #[test]

@@ -306,6 +306,7 @@ cargo run --bin aios-gui
 - **Omnibox**: type a full URL (`https://...`), a bare host (`example.com`), or a plain search query (`rust scheduler`) — Enter resolves and loads it
 - **Navigation buttons**: Back, Forward; **Open Browser** / **Close** toggle
 - **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript and history support; the first navigation opens the window automatically
+- **Non-blocking open**: the WebView is spawned on a background thread, so the dashboard stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
 - **Status line**: shows the resolved target or the last action/error
 
 ### Theming

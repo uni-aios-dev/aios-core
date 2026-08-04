@@ -138,7 +138,12 @@ impl WasmLiveUpdateEngine {
         wasm_block.instantiate(&mut store)?;
 
         if let Some(ref mem_data) = old_memory {
-            wasm_block.restore_linear_memory(&mut store, mem_data);
+            if !wasm_block.restore_linear_memory(&mut store, mem_data) {
+                log::warn!(
+                    "WasmLiveUpdate: state restore failed for '{}' — memory was not migrated",
+                    old_entry.manifest.name
+                );
+            }
         }
 
         let mut functions_called = Vec::new();

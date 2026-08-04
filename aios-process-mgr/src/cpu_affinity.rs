@@ -14,14 +14,12 @@ mod windows_affinity {
         fn GetCurrentThread() -> Handle;
     }
 
-    pub fn set_thread_affinity(cores: &[usize]) -> Result<()> {
+    pub fn validate_cores(cores: &[usize]) -> Result<()> {
         if cores.is_empty() {
             return Err(AIOSException::SchedulerError(
                 "CPU affinity requires at least one core".into(),
             ));
         }
-
-        let mut mask: usize = 0;
         for &core in cores {
             if core >= 64 {
                 return Err(AIOSException::SchedulerError(format!(
@@ -29,6 +27,15 @@ mod windows_affinity {
                     core
                 )));
             }
+        }
+        Ok(())
+    }
+
+    pub fn set_thread_affinity(cores: &[usize]) -> Result<()> {
+        validate_cores(cores)?;
+
+        let mut mask: usize = 0;
+        for &core in cores {
             mask |= 1usize << core;
         }
 
@@ -95,12 +102,25 @@ mod linux_affinity {
         Ok(set)
     }
 
-    pub fn set_thread_affinity(cores: &[usize]) -> Result<()> {
+    pub fn validate_cores(cores: &[usize]) -> Result<()> {
         if cores.is_empty() {
             return Err(AIOSException::SchedulerError(
                 "CPU affinity requires at least one core".into(),
             ));
         }
+        for &core in cores {
+            if core >= CPU_SETSIZE {
+                return Err(AIOSException::SchedulerError(format!(
+                    "Core index {} exceeds maximum ({})",
+                    core, CPU_SETSIZE
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_thread_affinity(cores: &[usize]) -> Result<()> {
+        validate_cores(cores)?;
 
         let set = cores_to_set(cores)?;
         let ret = unsafe { sched_setaffinity(0, std::mem::size_of::<cpu_set_t>(), &set) };
@@ -124,7 +144,16 @@ mod linux_affinity {
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 mod fallback_affinity {
-    use aios_core::error::Result;
+    use aios_core::error::{AIOSException, Result};
+
+    pub fn validate_cores(cores: &[usize]) -> Result<()> {
+        if cores.is_empty() {
+            return Err(AIOSException::SchedulerError(
+                "CPU affinity requires at least one core".into(),
+            ));
+        }
+        Ok(())
+    }
 
     pub fn set_thread_affinity(_cores: &[usize]) -> Result<()> {
         log::warn!("CPU affinity not supported on this platform");
@@ -147,6 +176,13 @@ use linux_affinity as platform;
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use fallback_affinity as platform;
+
+/// Validate a core list without touching the calling thread's OS affinity.
+/// Used by the scheduler to fail fast on invalid core sets before handing them
+/// to a target process thread.
+pub fn validate_cores(cores: &[usize]) -> Result<()> {
+    platform::validate_cores(cores)
+}
 
 pub fn set_thread_affinity(cores: &[usize]) -> Result<()> {
     platform::set_thread_affinity(cores)

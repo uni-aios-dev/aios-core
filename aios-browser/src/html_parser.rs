@@ -117,8 +117,10 @@ impl HtmlParser {
     pub fn extract_text(html: &str) -> String {
         let document = Html::parse_document(html);
         let mut out = String::new();
-        if let Some(root) = document.tree.root().children().next() {
-            Self::render_flow(&mut out, &root);
+        for child in document.tree.root().children() {
+            if let Node::Element(_) = child.value() {
+                Self::render_flow(&mut out, &child);
+            }
         }
         Self::finalize(&mut out);
         out.trim().to_string()
@@ -417,6 +419,16 @@ mod tests {
         let html = "<html><body><p>Hello world</p></body></html>";
         let text = HtmlParser::extract_text(html);
         assert!(text.contains("Hello world"));
+    }
+
+    #[test]
+    fn test_extract_text_with_doctype() {
+        let html = "<!DOCTYPE html><html><body><p>Hello world</p></body></html>";
+        let text = HtmlParser::extract_text(html);
+        assert!(
+            text.contains("Hello world"),
+            "text should be extracted even with a doctype node, got: {text:?}"
+        );
     }
 
     #[test]

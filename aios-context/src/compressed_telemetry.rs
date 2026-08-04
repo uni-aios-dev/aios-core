@@ -8,6 +8,7 @@ pub struct CompressedTelemetryStore {
     hot_entries: Vec<TelemetryEntry>,
     compressed_cold: Mutex<HashMap<String, Vec<u8>>>,
     hot_threshold: usize,
+    next_chunk_id: u64,
 }
 
 impl CompressedTelemetryStore {
@@ -18,6 +19,7 @@ impl CompressedTelemetryStore {
             hot_entries: Vec::new(),
             compressed_cold: Mutex::new(HashMap::new()),
             hot_threshold,
+            next_chunk_id: 0,
         }
     }
 
@@ -37,7 +39,8 @@ impl CompressedTelemetryStore {
 
         if let Ok(serialized) = bincode::serialize(&cold_entries) {
             if let Ok(compressed) = self.compressor.compress(&serialized) {
-                let key = format!("chunk_{}", chrono_block_name(&cold_entries));
+                let key = format!("chunk_{}", self.next_chunk_id);
+                self.next_chunk_id += 1;
                 let mut cold = self.compressed_cold.lock().unwrap();
                 cold.insert(key, compressed);
             }
@@ -101,13 +104,6 @@ impl CompressedTelemetryStore {
     }
 }
 
-fn chrono_block_name(entries: &[TelemetryEntry]) -> String {
-    entries
-        .first()
-        .map(|e| format!("{}_{}", e.metric_name, e.timestamp_ms))
-        .unwrap_or_else(|| "empty".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +128,18 @@ mod tests {
         }
         assert!(store.compressed_chunks() > 0);
         assert!(store.hot_entries().len() <= 10);
+    }
+
+    #[test]
+    fn test_multiple_compression_rounds_do_not_collide() {
+        let mut store = CompressedTelemetryStore::new(3, 10);
+        for i in 0..30 {
+            let mut entry = TelemetryEntry::new("cpu", i as f64, 1024);
+            entry.timestamp_ms = 1234;
+            store.record(entry);
+        }
+        assert!(store.compressed_chunks() >= 2);
+        assert_eq!(store.total_entries(), 30);
     }
 
     #[test]

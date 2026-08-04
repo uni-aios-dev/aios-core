@@ -4,6 +4,8 @@ use crate::theme::AiosTheme;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 
+use std::sync::{Arc, Mutex};
+
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u64,
@@ -69,6 +71,11 @@ pub struct AiosApp {
     pub browser: Option<aios_webview::WebBrowser>,
     pub browser_addr: String,
     pub browser_status: Option<String>,
+    /// True while a background thread is still creating the native window, so
+    /// repeated clicks do not spawn a second browser.
+    pub browser_opening: bool,
+    pending_browser: Arc<Mutex<Option<aios_webview::WebBrowser>>>,
+    pending_browser_error: Arc<Mutex<Option<String>>>,
 
     pub uptime_secs: u64,
 }
@@ -114,6 +121,9 @@ impl AiosApp {
             browser: None,
             browser_addr: String::new(),
             browser_status: None,
+            browser_opening: false,
+            pending_browser: Arc::new(Mutex::new(None)),
+            pending_browser_error: Arc::new(Mutex::new(None)),
             uptime_secs: 0,
         }
     }
@@ -190,15 +200,75 @@ impl AiosApp {
         self.browser.is_some()
     }
 
+    /// Start opening the native browser on a background thread. The UI stays
+    /// responsive and repeated calls are ignored while an open is in flight.
+    fn start_browser_open(&mut self, target: String) {
+        if self.browser.is_some() || self.browser_opening {
+            return;
+        }
+        self.browser_opening = true;
+        if let Ok(mut slot) = self.pending_browser.lock() {
+            *slot = None;
+        }
+        if let Ok(mut slot) = self.pending_browser_error.lock() {
+            *slot = None;
+        }
+        self.browser_status = Some(format!("Opening browser: {target}"));
+        self.add_log(format!("Browser opening: {target}"));
+
+        let slot = self.pending_browser.clone();
+        let err_slot = self.pending_browser_error.clone();
+        std::thread::spawn(move || match aios_webview::WebBrowser::open(&target) {
+            Ok(browser) => {
+                if let Ok(mut guard) = slot.lock() {
+                    *guard = Some(browser);
+                }
+            }
+            Err(e) => {
+                if let Ok(mut guard) = err_slot.lock() {
+                    *guard = Some(e);
+                }
+            }
+        });
+    }
+
+    /// Pick up the result of a background browser open, if it has finished.
+    fn poll_browser_open(&mut self) {
+        if !self.browser_opening {
+            return;
+        }
+        let err = self
+            .pending_browser_error
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(e) = err {
+            self.browser_opening = false;
+            self.browser_status = Some(format!("Failed to open browser: {e}"));
+            self.add_log(format!("Browser failed to open: {e}"));
+            return;
+        }
+        let got = {
+            let mut slot = self
+                .pending_browser
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            slot.take()
+        };
+        if let Some(browser) = got {
+            self.browser_opening = false;
+            self.browser = Some(browser);
+            self.browser_status = Some("Browser opened".into());
+            self.add_log("Browser opened".into());
+        }
+    }
+
     pub fn open_browser(&mut self) -> Result<(), String> {
         if self.browser.is_some() {
             return Ok(());
         }
         let target = aios_webview::resolve_target(self.browser_addr.trim());
-        let browser = aios_webview::WebBrowser::open(&target)?;
-        self.browser = Some(browser);
-        self.browser_status = Some(format!("Opened: {target}"));
-        self.add_log(format!("Browser opened: {target}"));
+        self.start_browser_open(target);
         Ok(())
     }
 
@@ -210,12 +280,10 @@ impl AiosApp {
                 self.browser_status = Some(format!("Navigate: {target}"));
             }
             None => {
-                let browser = aios_webview::WebBrowser::open(&target)?;
-                self.browser = Some(browser);
-                self.browser_status = Some(format!("Opened: {target}"));
+                self.add_log(format!("Browser -> {target}"));
+                self.start_browser_open(target);
             }
         }
-        self.add_log(format!("Browser -> {target}"));
         Ok(())
     }
 
@@ -242,6 +310,13 @@ impl AiosApp {
     }
 
     pub fn close_browser(&mut self) {
+        self.browser_opening = false;
+        if let Ok(mut slot) = self.pending_browser.lock() {
+            *slot = None;
+        }
+        if let Ok(mut slot) = self.pending_browser_error.lock() {
+            *slot = None;
+        }
         if self.browser.is_some() {
             self.browser = None;
             self.browser_status = Some("Browser closed".into());
@@ -299,6 +374,8 @@ impl eframe::App for AiosApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let theme = AiosTheme::default();
         theme.apply(ctx);
+
+        self.poll_browser_open();
 
         self.uptime_secs += 1;
 

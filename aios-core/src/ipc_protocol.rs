@@ -133,8 +133,8 @@ impl IpcPacket {
         }
     }
 
-    pub fn response_err(source: u32, target: u32, in_reply_to: u64, _msg: String) -> Self {
-        let payload = Payload::Empty;
+    pub fn response_err(source: u32, target: u32, in_reply_to: u64, msg: String) -> Self {
+        let payload = Payload::Text(msg);
         let payload_bytes = payload.to_bytes();
         let checksum = crate::crypto::compute_sha256_bytes(&payload_bytes);
         Self {
@@ -213,6 +213,17 @@ mod tests {
         assert!(pkt.verify_checksum());
         pkt.payload = Payload::Binary(b"tampered".to_vec());
         assert!(!pkt.verify_checksum());
+    }
+
+    #[test]
+    fn test_response_err_carries_message() {
+        let pkt = IpcPacket::response_err(1, 2, 42, "boom".into());
+        assert_eq!(
+            pkt.payload,
+            Payload::Text("boom".into()),
+            "response_err must propagate the error message"
+        );
+        assert!(pkt.verify_checksum());
     }
 
     #[test]

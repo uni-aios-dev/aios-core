@@ -163,17 +163,16 @@ async fn status_handler(State(state): State<SharedState>) -> Json<SystemStatus> 
     let process_count = scheduler.process_count();
     let (ram_used, ram_total) = scheduler.ram_usage();
 
-    let processes: Vec<ProcessEntry> = (0..process_count)
-        .filter_map(|i| {
-            let pid = ProcessId(i as u64);
-            scheduler.get_process(pid).map(|p| ProcessEntry {
-                pid: p.pid.0,
-                name: p.name.clone(),
-                priority: format!("{:?}", p.priority),
-                state: format!("{:?}", p.state),
-                ram_mb: p.ram_quota_mb,
-                cpu_ms: p.cpu_time_ms,
-            })
+    let processes: Vec<ProcessEntry> = scheduler
+        .all_processes()
+        .iter()
+        .map(|p| ProcessEntry {
+            pid: p.pid.0,
+            name: p.name.clone(),
+            priority: format!("{:?}", p.priority),
+            state: format!("{:?}", p.state),
+            ram_mb: p.ram_quota_mb,
+            cpu_ms: p.cpu_time_ms,
         })
         .collect();
 
@@ -468,10 +467,11 @@ fn execute_intent(
                     Ok(serde_json::json!({ "block_count": registry.count() }))
                 }
                 MetricType::All => {
+                    let process_count = scheduler.process_count();
                     drop(scheduler);
                     let registry = state.registry.lock().map_err(|e| e.to_string())?;
                     Ok(serde_json::json!({
-                        "process_count": 0,
+                        "process_count": process_count,
                         "block_count": registry.count(),
                         "ram_used_mb": ram_used,
                         "ram_total_mb": ram_total,
