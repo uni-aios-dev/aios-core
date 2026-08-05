@@ -1,5 +1,24 @@
 # Журнал разработки AIOS
 
+## v2.8.0 — TUI ядра из 7 вкладок, safe mode, GUI AI Studio и Network Settings (2026-08-05)
+
+### `aios`: TUI ядра приведён к спецификации из 7 вкладок
+- TUI ядра `aios` (ratatui) теперь содержит 7 вкладок: **System & HW**, **Blocks & Svc**, **AI Console**, **Studio Bridge**, **Network & Store**, **Web**, **Shell**. Прямой выбор через `1`-`7`, `Alt`+`1`-`7`, `Tab`/`F1`, оверлей справки через `?`. В шапке показывается обнаруженный **AI Tier** и версия приложения (`AIOS v2.8.0`).
+- Вкладка Blocks получила клавиши `r`/`k`/`l` (перезапуск / выгрузка / загрузка с диска) в дополнение к выбору. Вкладка Web реализует полный набор клавиш спецификации (`g` омнибокс, `j/k` выбор ссылки, `o`/`Enter` открыть, `u/d` и `PageUp`/`PageDown` прокрутка текста, `b` назад, `B` нативный просмотрщик, `n` открыть выбранную ссылку нативно). Вкладка Shell реализует `ps`, `blocks`, `kill`, `spawn`, `store list/search/install`, `net get/set`, `status`, `logs`, `restart`, `help`, `clear` и полностью вводится инлайном (каждое нажатие идёт в строку ввода; `q` выходит только с других вкладок).
+- Клавиши `n`/`g` перенесены на вкладку Network & Store; удалены старые горячие клавиши ядра `b`/`r` и хак `dispatch_open_url`.
+- Файлы: `aios/src/tui/mod.rs`, `aios/src/tui/ui.rs`, `aios/src/tui/app_state.rs`
+
+### `aios`: флаг загрузки `--safe-mode`
+- Новый CLI-флаг `--safe-mode`: AIOS загружается только с минимальным ядром — сторонние блоки с диска не обнаруживаются, HTTP/WebSocket мост выключен, в шапке показывается `SAFE MODE`. Ядро, планировщик, watchdog, LLM-движок, TUI и Shell остаются доступны.
+- Файлы: `aios/src/main.rs`, `aios/src/orchestrator.rs`
+
+### `aios-gui`: вкладки AI Studio и Network Settings
+- GUI переструктурирован из 6-табовой спецификации в 7 вкладок: **System Dashboard** (объединённые overview + metrics + processes), **WASM Blocks**, **AI Studio**, **App Store**, **Network Settings**, **Deps**, **Native Browser**. Модули вкладок `processes` и `metrics` удалены.
+- AI Studio: асинхронный чат с LLM со слэш-командами (`/help /backend /model /key /temp /tokens /clear /history`), строка статуса, отправка по Enter с сохранением фокуса; запросы выполняются в фоновой tokio-задаче, интерфейс остаётся отзывчивым.
+- Network Settings: форма hostname/port/таймауты/private-access/DNS/user-agent с кнопками Save (частичное JSON-обновление по IPC в `net_settings`) и Reset, плюс живой JSON-предпросмотр.
+- Строка состояния теперь показывает `HW Tier | IPC: N pkts | F6=Deps F7=Browser` с живым счётчиком IPC-пакетов.
+- Файлы: `aios-gui/src/app.rs`, `aios-gui/src/tabs/mod.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios-gui/src/tabs/network.rs`, `aios-gui/src/tabs/overview.rs`, `aios-gui/Cargo.toml`
+
 ## v2.7.0 — Проход по багам: корректность, надёжность, правки UI (2026-08-04)
 
 ### `aios-browser`: `extract_text` возвращал пустой текст на страницах с `<!DOCTYPE html>`

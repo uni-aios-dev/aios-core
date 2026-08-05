@@ -168,22 +168,44 @@ The F1 help overlay shows all keyboard shortcuts and shell commands as a full-sc
 cargo run --bin aios
 # or from the compiled binary:
 ./target/release/aios.exe
+
+# Safe mode (skip third-party disk blocks, disable the bridge)
+cargo run --bin aios -- --safe-mode
 ```
+
+At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1`/`Tier2`) plus CPU/RAM; safe mode is shown as `SAFE MODE`.
+
+### Tabs
+
+| # | Tab | Content |
+|---|-----|---------|
+| 1 | System & HW | CPU, RAM, OS/kernel, GPU, AI Tier, RAM gauge |
+| 2 | Blocks & Svc | Block list (select/restart/unload/load) + process list |
+| 3 | AI Console | LLM chat with slash commands |
+| 4 | Studio Bridge | Bridge server status, URL, REST/WebSocket endpoints |
+| 5 | Network & Store | Network settings (IPC) + installed block store |
+| 6 | Web | Text-mode browser (omnibox, links, history, native viewer) |
+| 7 | Shell | Command line (`ps`, `blocks`, `store`, `net`, ...) |
 
 ### Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `F1` | Next tab |
-| `1`-`4` | Direct tab select |
-| `Alt`+`1`-`4` | Direct tab select even while the browser URL prompt or the AI query line is active |
-| `g` | Open bridge dashboard URL (`http://localhost:8080`) in the browser |
-| `b` | Open a URL or search query in the native browser (input mode) |
-| `n` | Edit network settings (input mode, applied over IPC) |
+| `Tab` / `F1` / `?` | Next tab / help overlay |
+| `1`-`7` | Direct tab select |
+| `Alt`+`1`-`7` | Direct tab select even while typing in the Shell / Web URL / AI input / net line |
 | `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
-| `r` | Reprobe hardware |
 | `Space` | Pause/resume event log |
-| `q` | Quit |
+| `q` / `Ctrl+C` | Quit |
+
+### Blocks Tab (2)
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move block selection down / up |
+| `r` | Restart the selected block |
+| `k` | Unload the selected block |
+| `l` | Load a block from disk (prompts for a path) |
 
 ### AI Console (Tab 3)
 
@@ -215,13 +237,57 @@ Slash commands are typed at the input line (e.g. `/status`) and executed with `E
 
 Backend/model/key changes rebuild the shared `LlmEngine` asynchronously, so the HTTP `POST /api/v1/llm/query` endpoint uses the same configuration as the console. Cloud backends need an API key (`AIOS_LLM_API_KEY` or `/key`); local backends need a GGUF model (`AIOS_MODEL_PATH`).
 
-### Browser Hotkey (`b`)
+### Network & Store (Tab 5)
 
-The browser block is registered at boot — no configuration, installed browser, or network required. Press `b`, type a full URL (e.g. `https://example.com`), a bare host (`example.com`), or a plain search query (`rust scheduler`), press `Enter`: the input is dispatched to the browser block over IPC (`open_native` command via `MessageRouter`). Queries and bare hosts are converted to a DuckDuckGo search / `https://` URL and opened in your OS default browser. The result is shown in the Events pane.
+| Key | Action |
+|-----|--------|
+| `n` | Edit network settings (input line, applied over IPC as `key=value` pairs) |
+| `g` | Show the current network configuration (JSON) |
+| `s` | Refresh the installed block store list |
 
-### Network Hotkey (`n`)
+The same network commands are available from the Shell as `net get` / `net set`. Store operations (`store list`, `store search`, `store install`) are also available from the Shell.
 
-The `net_settings` block is registered at boot in the kernel registry and wired into the `MessageRouter`. Press `n`, type `key=value` pairs (e.g. `hostname=server-1 listen_port=9090 dhcp_enabled=false`), press `Enter`: the input is converted to a JSON partial update and dispatched to the block over IPC (`net_set` command). The returned config JSON is shown in the Events pane. `Esc` cancels the input. Numeric-looking values are parsed as numbers; anything else is kept as a string.
+### Web Tab (6)
+
+The built-in text-mode browser loads pages in the background (the TUI stays responsive). The omnibox accepts a full URL, a bare host (`example.com`), or a plain search query (searched via DuckDuckGo). A sidebar lists the links of the current page; the page text wraps to the pane width and can be scrolled.
+
+| Key | Action |
+|-----|--------|
+| `g` | Focus the omnibox |
+| `Enter` | Search / navigate (when the omnibox is focused) |
+| `j` / `k` | Move link selection down / up |
+| `o` / `Enter` | Open the selected link |
+| `u` / `d` | Scroll page text up / down by 1 line |
+| `PageUp` / `PageDown` | Scroll page text up / down by 20 lines |
+| `b` | Go back to the previously visited page |
+| `B` | Open the current page in the full native browser window (WebView2) |
+| `n` | Open the selected link in the native browser window |
+| `Esc` | Unfocus the omnibox |
+
+### Shell Tab (7)
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `ps` | — | List running processes |
+| `blocks` | — | List loaded blocks |
+| `kill` | `<pid>` | Kill a process |
+| `spawn` | `<wasm-path-or-file>` | Load a block from disk |
+| `store list` | — | List installed blocks |
+| `store search` | `<query>` | Search the block store catalog |
+| `store install` | `<name>` | Install a block from the store |
+| `net get` | — | Show the current network configuration (JSON) |
+| `net set` | `key=value [key2=value2 ...]` | Apply a partial network update |
+| `status` | — | Uptime, bridge state, AI tier, RAM, block count |
+| `logs` | — | Show the last 20 event log entries |
+| `restart` | — | Re-probe hardware and re-initialize subsystems |
+| `help` / `?` | — | Show all available commands |
+| `clear` | — | Clear the shell output |
+
+`Esc` clears the current input line. Every keystroke on the Shell tab is captured by the input line, so `q` quits only from other tabs.
+
+### Safe Mode
+
+With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks are not discovered, the bridge HTTP/WebSocket server is disabled, and the header shows `SAFE MODE`. Core blocks, the scheduler, the watchdog, the LLM engine and the TUI/Shell remain available.
 
 ---
 
@@ -237,16 +303,16 @@ cargo run --bin aios-gui
 
 ```
 ┌──────────┬───────────────────────────────────────────┐
-│          │  AIOS v1.0.0 | Tier1 | WD: OK | RAM: ... │  ← Top bar
-│ Overview │───────────────────────────────────────────│
-│ Processes│                                           │
-│ Blocks   │          Central panel                    │
-│ Marketpl.│     (changes per selected tab)            │
-│ Metrics  │                                           │
+│          │  AIOS v2.8.0 | HW Tier | IPC: 0 pkts      │  ← Top bar
+│ System   │───────────────────────────────────────────│
+│ WASM     │                                           │
+│ AI Studio│          Central panel                    │
+│ App Store│     (changes per selected tab)            │
+│ Network  │                                           │
 │ Deps     │                                           │
 │ Browser  │                                           │
 │ ──────── │───────────────────────────────────────────│
-│ Quick    │  F1-F7 tabs | AIOS Dashboard              │  ← Bottom bar
+│ Quick    │  F1-F7 tabs | AIOS Dashboard | Status...  │  ← Bottom bar
 │ Actions  │
 └──────────┴───────────────────────────────────────────┘
   Sidebar          Main area
@@ -269,45 +335,52 @@ cargo run --bin aios-gui
 
 ### Tabs
 
-#### Overview (F1)
+#### System Dashboard (F1)
 - **Stat cards**: RAM (used/total), Blocks count, Processes count, Watchdog status
-- **System panel**: CPU model, cores, threads, AVX2/AVX-512/SSE4.2, GPU, storage
+- **System panel**: CPU model, cores, threads, AVX2/AVX-512/SSE4.2, GPU, storage, detected HW Tier
 - **RAM Usage**: progress bar + sparkline chart (last 60 samples)
+- **Priority Distribution**: bar chart (Background / Low / Normal / High / Critical)
+- **Processes**: table (PID, Name, Priority, State, RAM, CPU ms, Crashes) + Refresh, Kill, Suspend, Resume
 - **Activity Log**: scrollable log with color-coded messages
 
-#### Processes (F2)
-- **Table**: PID, Name, Priority (color-coded), State (badge), RAM, CPU, Crashes
-- **Actions**: Kill Selected, Suspend, Resume
-- **Detail bar**: shows selected process info
-
-#### Blocks (F3)
+#### WASM Blocks (F2)
 - **Table**: ID, Name, Version, State (badge), Size, Dependencies
 - **Actions**: Refresh, Load Block (2-step dialog), Unload, Hot-Swap
 - **Load Dialog**: Step 1 — enter block name, Step 2 — enter version, Enter/Cancel
 
-#### Marketplace (F4)
+#### AI Studio (F3)
+- **Chat panel**: message list, streaming replies, error highlights
+- **Input**: type a message or a slash command, `Enter` (or the Send button) submits; focus stays in the input
+- **Commands**: `/help /backend /model /key /temp /tokens /clear /history` (same grammar as the kernel TUI AI Console)
+- **Status line**: backend, model, temperature, token budget, busy/error state
+- **Async model**: responses run on a background tokio task; the UI stays responsive, results appear when ready
+
+#### App Store (F4)
 - **Search box**: filter by name, description, or tags
 - **Table**: Name, Version, Author, Status (badge), Downloads
 - **Actions**: Install, Update, Uninstall
 - **Status bar**: shows operation result
 
-#### Metrics (F5)
-- **RAM**: progress bar + sparkline
-- **Priority Distribution**: bar chart (Background / Low / Normal / High / Critical)
-- **Block Statistics**: count per state with progress bars
-- **System Info**: CPU, GPU, storage summary
+#### Network Settings (F5)
+- **Form**: hostname, listen port, connect timeouts, private access toggle, DNS, user agent
+- **Actions**: Save (applies a partial JSON update over IPC to `net_settings`), Reset (restores defaults)
+- **Preview**: live JSON of the config being edited
 
 #### Dependencies (F6)
 - **Summary**: block count + edge count
 - **Load Order**: visual chain (block A → block B → block C)
 - **Table**: Block name, Depends On, Depended By
 
-#### Browser (F7)
+#### Native Browser (F7)
 - **Omnibox**: type a full URL (`https://...`), a bare host (`example.com`), or a plain search query (`rust scheduler`) — Enter resolves and loads it
 - **Navigation buttons**: Back, Forward; **Open Browser** / **Close** toggle
 - **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript and history support; the first navigation opens the window automatically
 - **Non-blocking open**: the WebView is spawned on a background thread, so the dashboard stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
 - **Status line**: shows the resolved target or the last action/error
+
+### Status Bar
+
+The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser`, where N is the live IPC packet counter, plus the last operation result.
 
 ### Theming
 

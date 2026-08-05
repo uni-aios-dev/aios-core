@@ -35,6 +35,7 @@
 - [x] Фаза 20: TEE (Trusted Execution Environment) Integration — SGX/TrustZone/SEV, запечатывание, аттестация, анклавы, 28 тестов
 - [x] Docker: Multi-stage production сборка — builder + runtime (debian:bookworm-slim), entrypoint aios-tui
 - [x] Фаза 21: aios-bridge — HTTP/WS API шлюз + Intent engine (RU/EN) + контроль capabilities
+- [x] Фаза 44: TUI ядра из 7 вкладок + `--safe-mode` + GUI AI Studio/Network Settings (v2.8.0)
 
 ## Оценка готовности (2026-07-28, обновлено)
 
@@ -406,6 +407,16 @@
   - [x] Строка состояния + отчёт `/status` включая обнаружение локальных GGUF-моделей; перенос ответов по ширине с подсветкой промптов/ошибок
   - [x] Интроспекция конфигурации в `aios-llm`: `LlmEngine::config()`, `provider_name()`, `backend_label()`; 1 новый unit-тест
   - [ ] Будущее: сохранение чата на диск, шаблоны промптов `/preset`, потоковые ответы
+
+- [x] **Фаза 44: TUI ядра из 7 вкладок, safe mode, GUI AI Studio + Network Settings — ЗАВЕРШЕНО (v2.8.0)**
+  - [x] TUI ядра (`aios`) переструктурирован под спецификацию из 7 вкладок: System & HW / Blocks & Svc / AI Console / Studio Bridge / Network & Store / Web / Shell; `1`-`7` + `Alt`+`1`-`7` + `Tab`/`F1`/`?`; в шапке AI Tier + версия
+  - [x] Вкладка Blocks `r`/`k`/`l` перезапуск/выгрузка/загрузка; вкладка Web полный набор клавиш (`g j k o u d PageUp PageDown b B n`); вкладка Shell полный набор команд (`ps blocks kill spawn store list/search/install net get/set status logs restart help clear`) с вводом инлайном
+  - [x] Флаг загрузки `--safe-mode` (пропуск сторонних блоков с диска + мост; шапка `SAFE MODE`; минимальная восстанавливаемая оболочка)
+  - [x] GUI переструктурирован в 7 вкладок: System Dashboard (объединённые overview+metrics+processes) / WASM Blocks / AI Studio / App Store / Network Settings / Deps / Native Browser
+  - [x] GUI AI Studio: асинхронный чат с LLM со слэш-командами, фоновая tokio-задача, строка статуса
+  - [x] GUI Network Settings: форма (hostname/port/таймауты/private-access/DNS/user-agent) с Save/Reset + живой JSON-предпросмотр
+  - [x] Строка состояния GUI: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` с живым счётчиком IPC-пакетов
+  - [ ] Будущее: сохранение чата в GUI AI Studio, шаблоны `/preset`, потоковые ответы в GUI
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |

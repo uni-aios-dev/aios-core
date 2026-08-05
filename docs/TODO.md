@@ -35,6 +35,7 @@
 - [x] Phase 20: TEE (Trusted Execution Environment) Integration — SGX/TrustZone/SEV, sealing, attestation, enclaves, 28 tests
 - [x] Docker: Multi-stage production build — builder + runtime (debian:bookworm-slim), entrypoint aios-tui
 - [x] Phase 21: aios-bridge — HTTP/WS API gateway + Intent engine (RU/EN) + Capability enforcement
+- [x] Phase 44: 7-tab kernel TUI + `--safe-mode` + GUI AI Studio/Network Settings (v2.8.0)
 
 ## Readiness Assessment (2026-07-29, updated)
 
@@ -408,6 +409,16 @@
   - [x] Status footer + `/status` report incl. local GGUF model detection; word-wrapped output with prompt/error coloring
   - [x] `aios-llm` config introspection: `LlmEngine::config()`, `provider_name()`, `backend_label()`; 1 new unit test
   - [ ] Future: chat persistence to disk, `/preset` prompt templates, streaming responses
+
+- [x] **Phase 44: 7-tab kernel TUI, safe mode, GUI AI Studio + Network Settings — COMPLETE (v2.8.0)**
+  - [x] Kernel TUI (`aios`) restructured to the 7-tab spec: System & HW / Blocks & Svc / AI Console / Studio Bridge / Network & Store / Web / Shell; `1`-`7` + `Alt`+`1`-`7` + `Tab`/`F1`/`?`; header shows AI Tier + version
+  - [x] Blocks tab `r`/`k`/`l` restart/unload/load; Web tab full spec keymap (`g j k o u d PageUp PageDown b B n`); Shell tab full command set (`ps blocks kill spawn store list/search/install net get/set status logs restart help clear`) typed inline
+  - [x] `--safe-mode` boot flag (skip third-party disk blocks + bridge; `SAFE MODE` header; minimal recoverable shell)
+  - [x] GUI restructured to 7 tabs: System Dashboard (overview+metrics+processes merged) / WASM Blocks / AI Studio / App Store / Network Settings / Deps / Native Browser
+  - [x] GUI AI Studio: async LLM chat with slash commands, background tokio task, status line
+  - [x] GUI Network Settings: form (hostname/port/timeouts/private-access/DNS/user-agent) with Save/Reset + live JSON preview
+  - [x] GUI status bar: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with live IPC packet counter
+  - [ ] Future: chat persistence in GUI AI Studio, `/preset` templates, streaming in GUI
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |

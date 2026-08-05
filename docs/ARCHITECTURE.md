@@ -493,7 +493,7 @@ Ready → Running → Terminated
 
 ---
 
-## Layer 4: User Interface (`aios-tui`)
+## Layer 4: User Interface (aios TUI + aios-gui)
 
 ### Intent Engine (`intent_engine.rs`)
 
@@ -516,100 +516,82 @@ Ready → Running → Terminated
 
 `IntentContext` provides system state for translation: active processes, loaded blocks, current tier, RAM usage.
 
-### Dashboard (`dashboard.rs`)
+### Dashboard (`aios/src/tui`)
 
-Ratatui-based TUI with 7-tab interactive layout:
+Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
 
 **Header zone**:
-- Project title "AIOS v1.0.0"
-- Current AI tier with color coding: Tier1=Green, Tier2=Yellow, Tier3=Red
+- Project title "AIOS v2.8.0"
+- Detected AI tier with color coding: Tier1=Green, Tier2=Yellow, Tier3=Red
+- `SAFE MODE` badge (Yellow) when booted with `--safe-mode`
 - Watchdog state: OK (Green), SUSPENDED (Red), RECOVERING (Yellow), SAFE MODE (Magenta)
 - CPU cores, RAM usage, block count, process count
 
-**Tabs zone**: 7 selectable tabs — Overview | Processes | Blocks | Metrics | Deps | Web | Shell
+**Tabs zone**: 7 tabs — System & HW | Blocks & Svc | AI Console | Studio Bridge | Network & Store | Web | Shell. Selection via `1`-`7`, `Alt`+`1`-`7` (works even while typing), `Tab`/`F1` cycles, `?` toggles the help overlay.
 
-**Tab 1 — Overview** (45/55 horizontal split):
-- Left: System info panel (CPU model, cores/threads, AVX flags, GPU name/VRAM, storage devices, system counts)
-- Right: Activity log (last 20 messages, color-coded: Red=error, Yellow=warn, Green=success)
+**Tab 1 — System & HW**: CPU model, cores/threads, AVX flags, GPU name/VRAM, storage, AI tier; RAM gauge; activity log (last messages, color-coded: Red=error, Yellow=warn, Green=success)
 
-**Tab 2 — Processes** (vertical split):
-- Top: Process table with columns: PID, Name, Priority, State, RAM, CPU Time, Crashes
-- Row selection with `>>` indicator, color-coded priority/state
-- Bottom: Process detail panel or kill result display
+**Tab 2 — Blocks & Svc**: block table (ID, Name, Version, State, Size) with `j`/`k` selection; keybindings `r`=restart, `k`=unload, `l`=load from disk (prompts a path); bottom pane shows the selected block and the process list
 
-**Tab 3 — Blocks** (vertical split):
-- Top: Block table with columns: ID, Name, Version, State, Size — row selection with `>>` indicator
-- Title bar shows keybindings: `j/k: navigate  U: unload  L: load  H: hot-swap`
-- Bottom: Block detail panel with selected block info and available actions, OR block input dialog for name/version entry
+**Tab 3 — AI Console**: LLM chat with `i` to enter query mode, `Enter` to send, `Esc` to leave, `Up`/`Down` prompt history (last 50), `h` help panel; slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens`; footer shows backend/model/temperature/tokens/state; word-wrapped output with cyan prompts and red errors; backend/model/key changes rebuild the shared `LlmEngine` asynchronously
 
-**Tab 4 — Metrics** (3-zone vertical):
-- RAM usage gauge (Green/Yellow/Red threshold)
-- Process priority distribution histogram (colored bars)
-- RAM history time-series (60-entry ring buffer, bar chart)
+**Tab 4 — Studio Bridge**: bridge server state (running/disabled), URL, REST/WebSocket endpoints
 
-**Tab 5 — Deps** (vertical split):
-- Top: Dependency graph table with columns: #, Block, Depends On, Depended By
-- Row selection with `>>` indicator, color-coded dependency relationships
-- Bottom: Load order & stats panel (topological sort, edge count, block count)
+**Tab 5 — Network & Store**: network config editor (`n` = `key=value` input applied over IPC `net_set`; `g` = show config JSON) plus the installed block store list (`s` = refresh); same operations available from the Shell as `net get`/`net set`/`store list`/`store search`/`store install`
 
-**Tab 6 — Web** (vertical split):
-- Omnibox input bar (accepts a full URL, a bare host, or a plain search query — queries run through DuckDuckGo) with focus indicator
-- Page text content display area (WHATWG-compliant rendering via html5ever: headings `#` in bold cyan, lists `•`/`1.`, `pre` preserved, tables `|`, `hr`, images as `[alt]`)
-- Scrollable links list with selection (`>>` indicator); links resolved against the page base URL, deduplicated, non-web schemes (`javascript:`, `mailto:`, `#anchor`) filtered; the window scrolls with the selection (6 visible rows) and shows the visible range in the title
-- Fetches run **in the background** (never block the TUI): `load_url`/`navigate_web` spawn a thread that posts the result to the `page_cache` outbox, picked up by `check_page_cache()` each frame; a fetch-generation counter drops stale results
-- Bounded **page cache** (`WebState.cache`, 20 pages keyed by URL, oldest evicted) makes revisits and `b` back-navigation instant
-- Page text is **word-wrapped** to the terminal width (`wrap_text()`): each raw line is split at word boundaries (long words hard-split), blank lines and indentation preserved; scroll units equal visual lines; `WebState.wrap_width` is set at startup and updated on terminal resize
-- A fixed **navigation sidebar** (`SIDEBAR_WIDTH = 26`) sits left of the page pane and shows the current page (marked `▸`) followed by the visit history newest-first (`web_nav_entries()`), with compact truncated URL labels (`compact_url_label()`); focus toggles with `\`, `j`/`k` move the selection, `Enter`/`o` opens it, `Esc` returns to the links; the wrap width is derived with `web_page_width()` = terminal width minus the sidebar, pane borders and the 2-col line prefix
-- **Full browser on demand**: `B` opens the current page (and `n` the selected link) in the real `aios-webview` browser window (WebView2 — JS/CSS/images). The handle lives in a module-level `OnceLock<Mutex<Option<WebBrowser>>>` in `aios-tui`, so the window is reused, auto-recreated on close, and opening happens on a background thread (the TUI never blocks). The text view is unchanged — the native browser is an escape hatch for full rendering
-- Text fetches use `http_client()` — desktop Chrome User-Agent, `Accept: text/html` and a 15s timeout — to avoid bot-blocks and hangs
-- `WebState`: url_input, current_url, search_query, page (PageContent), loading, error, input_focused, scroll, links_scroll, history (Vec<String>), cache, web_fetch_gen, wrap_width, sidebar_focused, history_sel
-- `PageContent` struct: url, title, text, links Vec<(String,String)>
-- Keys: `g`=focus omnibox, `Enter`=search/navigate (auto-unfocus), `o`/`Enter`=open selected link, `j/k`=nav, `b`=back in history, `u`/`d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
+**Tab 6 — Web**: omnibox (full URL / bare host / DuckDuckGo query), word-wrapped page text, scrollable link sidebar. Keys: `g`=omnibox focus, `Enter`=navigate, `j/k`=link nav, `o`/`Enter`=open link, `u/d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `b`=back in history, `B`=open current page in the native WebView, `n`=open selected link natively, `Esc`=unfocus. Fetches run in background threads (never block the TUI) with a fetch-generation counter that drops stale results; a bounded 20-page cache makes revisits and back-navigation instant
+- **Full browser on demand**: `B`/`n` open the page in the real `aios-webview` browser window (WebView2 — JS/CSS/images). The handle lives in a module-level `OnceLock<Mutex<Option<WebBrowser>>>`, so the window is reused, auto-recreated on close, and opening happens on a background thread
 
 **Tab 7 — Shell** (vertical split):
 - Command input line with prompt indicator
 - Output display area (scrollable command output)
-- Command history navigation with ↑/↓
+- Command history navigation with ↑/↓; `Esc` clears the current input line
+- Every keystroke on the Shell tab goes to the input line, so `q` quits only from other tabs
 - `ShellState`: input_buffer, output (Vec<String>), command_history, history_pos
-- Available commands: `ps`/`list`, `blocks`/`ls`, `kill <pid>`, `spawn <name> [prio] [ram_mb]`, `load <name> [version]`, `unload <id>`, `status`/`info`, `logs`, `restart`, `help`/`?`, `exit` (SafeModeShell) plus TUI extras `fetch <url>`, `search <query>`, `open <url>`, `clear`
-- Execution flow: TUI → execute_shell_cmd() → `SafeModeShell::parse_command` / fetch / search / open
+- Available commands: `ps`, `blocks`, `kill <pid>`, `spawn <wasm-path>`, `store list|search|install`, `net get|set`, `status`, `logs`, `restart`, `help`/`?`, `clear`
+- Execution flow: TUI → `shell_execute()` → `SafeModeShell::parse_command` / store manager / net block IPC
 
 **F1 Help Overlay**:
 - Toggled with F1 or '?', dismissed with F1/Esc/'?'
 - Shows all keyboard shortcuts and shell commands in a popup window
-- Overlay rendered via draw_help() function on top of current tab content
 
-**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, Alt+1-7=Tab everywhere, j/k=Nav, K=Kill, U=Unload, L=Load, H=Hot-swap, F1=Help, :=Cmd, s=Telemetry, x=Status, r=Refresh, W=GUI)
+**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, Alt+1-7=Tab everywhere, W=GUI, Space=Pause log, F1=Help)
 
-`DashboardState` manages:
+`OrchestratorState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)
 - RAM history ring buffer (60 entries)
 - Selection state (selected_tab, selected_row)
-- Process kill result display
-- Block operation result display + `BlockInputMode` (None/LoadName/LoadVersion) + input buffer
-- Dependency snapshot (`DependencySnapshot`) for Deps tab
+- Block operation result display + load-from-disk input
 - Log buffer (capped at 100 entries)
 - Scheduler + Registry synchronization
 - Web state: url_input, current_url, page, loading, error, input_focused, scroll, history
+- Network state: `net_status` (last config JSON from the `net_settings` block)
 - Help overlay visibility (shown/hidden)
 - Shell state: input_buffer, output (Vec<String>), command_history, history_pos
+- `safe_mode` flag from `--safe-mode`
 
-### Entry Point (`main.rs`)
+### Entry Point (`aios/src/main.rs`)
 
 Startup sequence:
 1. Initialize `env_logger`
-2. `HardwareProfile::detect()` — detect real hardware
-3. `AiTier::from_profile()` — classify AI capability
-4. Create `BlockRegistry` — register 4 core blocks (hal, ipc_bus, scheduler, browser), boot-discover disk blocks from `AIOS_BLOCKS_DIR`, wire the browser block into the `MessageRouter`
-5. Create `Scheduler` — spawn 3 processes (ai_orchestrator, io_handler, health_monitor)
-6. Create `Watchdog` — start heartbeat thread in background
-7. Create `EmbeddedContextStore` + `TelemetryStore` — for system telemetry
-8. Create `SafeModeShell` — for safe mode recovery commands
-9. Enter crossterm raw mode + alternate screen
-10. Event loop: poll key events, redraw dashboard, sync watchdog state
-11. Restore terminal on exit
+2. Parse `--safe-mode` (and `--bridge-port`) into `AppConfig`
+3. `HardwareProfile::detect()` — detect real hardware
+4. `AiTier::from_profile()` — classify AI capability, log the tier at boot
+5. Create `BlockRegistry` — register core blocks, boot-discover disk blocks from `AIOS_BLOCKS_DIR` **unless safe mode**, wire the browser block into the `MessageRouter`
+6. Create `Scheduler` — spawn 3 processes (ai_orchestrator, io_handler, health_monitor)
+7. Create `Watchdog` — start heartbeat thread in background
+8. Create `EmbeddedContextStore` + `TelemetryStore` — for system telemetry
+9. Create `SafeModeShell` — for safe mode recovery commands
+10. Start the bridge HTTP/WS server on the configured port **unless safe mode**
+11. Enter crossterm raw mode + alternate screen
+12. Event loop: poll key events, redraw dashboard, sync watchdog state
+13. Restore terminal on exit
 
-Keybindings: `q`=Quit, `1-7`=Tab, `Alt+1-7`=Tab even while typing in Shell/URL input, `j/k`=Navigate, `K`=Kill process, `r`=Refresh, `s`=Record telemetry, `x`=System status, `W`=Launch GUI dashboard, `F1`/`?`=Help, `:`=Shell command, ↑/↓=Shell history, Web tab: `g`=omnibox focus, `o`/`Enter`=Open link, `b`=back in history, `u`/`d`=scroll ±1 line, `PageUp`/`PageDown`=scroll ±20 lines, `Esc`=unfocus
+Keybindings: `q`/`Ctrl+C`=Quit, `1-7`/`Alt+1-7`=Tab (Alt works while typing in Shell/URL/AI/net input), `Tab`/`F1`/`?`=next tab/help, `W`=Launch GUI dashboard, `Space`=pause event log, Blocks: `r`=restart `k`=unload `l`=load, Web: `g`/`Enter`/`j`/`k`/`o`/`u`/`d`/`PageUp`/`PageDown`/`b`/`B`/`n`/`Esc`, Network: `n`=edit config `g`=show JSON `s`=refresh store, ↑/↓=Shell history
+
+### Safe Mode
+
+`--safe-mode` boots a minimal, recoverable kernel: third-party disk blocks are not discovered and the bridge server is not started; the header shows `SAFE MODE`. Core blocks, scheduler, watchdog, LLM engine, TUI and Shell remain available.
 
 ### Native WebView Browser (`aios-webview`)
 
@@ -623,7 +605,16 @@ The TUI cannot render real web pages (no CSS/JS engine), so the full-featured br
 
 ### GUI Dashboard (`aios-gui`)
 
-Native egui/eframe dashboard with 7 tabs: Overview, Processes, Blocks, Marketplace, Metrics, Deps, **Browser**. The **Browser** tab (F7) provides an omnibox, Back/Forward buttons and an Open/Close toggle that drive the `aios-webview` native window; the first navigation auto-opens the browser. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`.
+Native egui/eframe dashboard with 7 tabs: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`.
+
+- **System Dashboard (F1)**: stat cards (RAM, blocks, processes, watchdog), system panel (CPU/GPU/storage/HW tier), RAM sparkline, priority distribution, processes table (PID, Name, Priority, State, RAM, CPU ms, Crashes) with Refresh/Kill/Suspend/Resume, activity log
+- **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap
+- **AI Studio (F3)**: async LLM chat — message list, Enter-to-send (focus retained), slash commands `/help /backend /model /key /temp /tokens /clear /history`, status line (backend/model/temp/tokens/busy); requests run on a background tokio task so the UI stays responsive
+- **App Store (F4)**: searchable catalog table with Install/Update/Uninstall
+- **Network Settings (F5)**: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON IPC update to `net_settings`) and Reset, plus a live JSON preview
+- **Deps (F6)**: dependency graph summary, load order chain, depends/depended-by table
+- **Native Browser (F7)**: omnibox, Back/Forward, Open/Close toggle driving the `aios-webview` native window; the first navigation auto-opens the browser
+- **Status bar**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with a live IPC packet counter
 
 ---
 
@@ -1101,25 +1092,26 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 
 ### Modules
 - `hw_probe.rs` — Real hardware detection using sysinfo + platform-specific APIs
-- `orchestrator.rs` — Async initialization of IPC, Scheduler, BlockRegistry, AccessControl, Watchdog, LLM, WASM, Bridge
-- `tui/` — Ratatui interactive dashboard with 4 tabs and event log
+- `orchestrator.rs` — Async initialization of IPC, Scheduler, BlockRegistry, AccessControl, Watchdog, LLM, WASM, Bridge (skips disk blocks + bridge in safe mode)
+- `tui/` — Ratatui interactive dashboard with 7 tabs (System/Blocks/AI Console/Bridge/Network & Store/Web/Shell) and event log
 
 ### Binary Modes
 - `aios` — Interactive TUI mode (default)
 - `aios --daemon` — Headless daemon mode (background server)
+- `aios --safe-mode` — Minimal recoverable kernel (no disk blocks, no bridge, `SAFE MODE` badge)
 
 ### TUI Hotkeys
 | Key | Action |
 |-----|--------|
-| Tab / F1 | Next tab |
-| 1-4 | Direct tab select |
-| Alt+1-4 | Direct tab select even while the browser URL prompt or AI query line is active |
-| q | Quit |
-| g | Open bridge URL in browser |
-| b | Open a URL in the native browser (URL input mode, dispatched to browser block via MessageRouter) |
-| n | Edit network settings (`key=value` input mode, `net_set` over IPC) |
-| r | Reprobe hardware |
+| Tab / F1 / ? | Next tab / help overlay |
+| 1-7 | Direct tab select |
+| Alt+1-7 | Direct tab select even while typing in the Shell / Web URL / AI query / net input line |
+| q / Ctrl+C | Quit |
+| W | Launch the AIOS GUI dashboard (`aios-gui`) |
 | Space | Pause/resume log scroll |
+| r / k / l (Blocks) | Restart / unload / load selected block |
+| g / j / k / o / u / d / b / B / n (Web) | Omnibox / link nav / open / scroll / back / native viewer |
+| n / g / s (Network & Store) | Edit net config / show config JSON / refresh store list |
 
 ### AI Console (Tab 3, Phase 43 / v2.6.0)
 - Interactive LLM chat: `i` enters query mode, `Enter` sends; each query re-applies the current console `LlmConfig` to the shared `BridgeContext.llm` engine, so console settings and the HTTP `/api/v1/llm/query` endpoint stay consistent
@@ -1137,7 +1129,7 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 6. Initialize LLM Engine (cloud backend by default)
 7. Initialize WASM Executor (BlockExecutor)
 8. Create BridgeContext with all subsystems
-9. Spawn Bridge HTTP server (axum, port 8080)
+9. Spawn Bridge HTTP server (axum, port from `--bridge-port`, default 8080) — skipped in safe mode
 10. Start TUI event loop (or enter daemon loop)
 
-The browser works out of the box on a fresh machine: no config file, no installed browser, and no network are required to start — the block is active in the topology, dispatchable over IPC, and the `b` hotkey opens any URL in the OS default browser.
+The browser works out of the box on a fresh machine: no config file, no installed browser, and no network are required to start — the block is active in the topology, dispatchable over IPC, and the Web tab (`B`/`n`/omnibox) opens any URL in the native WebView.

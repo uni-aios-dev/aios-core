@@ -1,7 +1,7 @@
+pub mod ai_studio;
 pub mod blocks;
 pub mod deps;
 pub mod marketplace;
-pub mod metrics;
+pub mod network;
 pub mod overview;
-pub mod processes;
 pub mod web;

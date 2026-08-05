@@ -3,6 +3,7 @@ use crate::theme::AiosTheme;
 
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
+use aios_net_config::config::NetworkConfig;
 
 use std::sync::{Arc, Mutex};
 
@@ -78,6 +79,18 @@ pub struct AiosApp {
     pending_browser_error: Arc<Mutex<Option<String>>>,
 
     pub uptime_secs: u64,
+
+    pub ai_config: aios_llm::LlmConfig,
+    pub ai_input: String,
+    pub ai_output: Vec<String>,
+    pub ai_busy: bool,
+    pub ai_status: String,
+    pending_ai: Arc<Mutex<Option<Result<String, String>>>>,
+
+    pub ipc_traffic: u64,
+
+    pub net_config: NetworkConfig,
+    pub net_status: Option<String>,
 }
 
 impl AiosApp {
@@ -125,6 +138,15 @@ impl AiosApp {
             pending_browser: Arc::new(Mutex::new(None)),
             pending_browser_error: Arc::new(Mutex::new(None)),
             uptime_secs: 0,
+            ai_config: aios_llm::default_config(),
+            ai_input: String::new(),
+            ai_output: Vec::new(),
+            ai_busy: false,
+            ai_status: "ready".into(),
+            pending_ai: Arc::new(Mutex::new(None)),
+            ipc_traffic: 0,
+            net_config: NetworkConfig::default(),
+            net_status: None,
         }
     }
 
@@ -324,14 +346,186 @@ impl AiosApp {
         }
     }
 
+    /// Send the current AI input as a query (or a `/command`) on a background
+    /// thread using its own tokio runtime; the UI stays responsive.
+    pub fn ai_send(&mut self) {
+        let input = self.ai_input.trim().to_string();
+        if input.is_empty() || self.ai_busy {
+            return;
+        }
+        self.ai_input.clear();
+        if let Some(cmd) = input.strip_prefix('/') {
+            self.ai_command(cmd);
+            return;
+        }
+        self.ai_output.push(format!("> {input}"));
+        let config = self.ai_config.clone();
+        let slot = self.pending_ai.clone();
+        self.ai_busy = true;
+        self.ai_status = "thinking...".into();
+        std::thread::spawn(move || {
+            let result = match tokio::runtime::Runtime::new() {
+                Ok(rt) => {
+                    let engine = aios_llm::LlmEngine::from_config(config.clone());
+                    let req = aios_llm::LlmRequest {
+                        system_prompt: "You are a helpful AI assistant.".into(),
+                        user_prompt: input,
+                        max_tokens: config.max_tokens,
+                        temperature: config.temperature,
+                    };
+                    rt.block_on(engine.query(&req))
+                        .map(|r| r.text)
+                        .map_err(|e| e.to_string())
+                }
+                Err(e) => Err(format!("runtime init failed: {e}")),
+            };
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some(result);
+            }
+        });
+    }
+
+    /// Pick up the result of a background AI query, if it has finished.
+    pub fn poll_ai(&mut self) {
+        let got = {
+            let mut slot = self.pending_ai.lock().unwrap_or_else(|p| p.into_inner());
+            slot.take()
+        };
+        if let Some(result) = got {
+            self.ai_busy = false;
+            match result {
+                Ok(text) => {
+                    let chars = text.len();
+                    self.ai_output.push(text);
+                    self.ai_status = "ready".into();
+                    self.add_log(format!("AI: query returned {chars} chars"));
+                }
+                Err(e) => {
+                    self.ai_output.push(format!("[error] {e}"));
+                    self.ai_status = "error".into();
+                    self.add_log(format!("AI: query failed: {e}"));
+                }
+            }
+        }
+    }
+
+    /// Handle a slash command locally (same grammar as the TUI AI Console).
+    pub fn ai_command(&mut self, cmd: &str) {
+        let mut parts = cmd.splitn(2, char::is_whitespace);
+        let name = parts.next().unwrap_or("");
+        let arg = parts.next().unwrap_or("").trim();
+        match name {
+            "help" => {
+                for l in [
+                    "/help            open this panel",
+                    "/status          show backend, model and parameter info",
+                    "/clear           clear the chat output",
+                    "/model <name>    set the model",
+                    "/backend <kind>  groq | openrouter | google | micro | full",
+                    "/key <api-key>   set the API key (no argument clears it)",
+                    "/temp <0.0-2.0>  set sampling temperature",
+                    "/tokens <1-8192> set max output tokens",
+                ] {
+                    self.ai_output.push(format!("  {l}"));
+                }
+            }
+            "clear" => self.ai_output.clear(),
+            "status" => {
+                let backend = match self.ai_config.backend {
+                    aios_llm::BackendKind::Cloud(ref p) => {
+                        format!("cloud/{}", aios_llm::provider_name(p))
+                    }
+                    aios_llm::BackendKind::MicroLocal => "local/micro".into(),
+                    aios_llm::BackendKind::FullLocal => "local/full".into(),
+                };
+                self.ai_output.push(format!(
+                    "  {backend} | {} | temp {} | tokens {}",
+                    self.ai_config.model, self.ai_config.temperature, self.ai_config.max_tokens
+                ));
+            }
+            "model" => {
+                if arg.is_empty() {
+                    self.ai_output
+                        .push(format!("  model: {}", self.ai_config.model));
+                } else {
+                    self.ai_config.model = arg.to_string();
+                    self.ai_output.push(format!("  model set to '{arg}'"));
+                }
+            }
+            "backend" => {
+                match arg {
+                    "groq" => {
+                        self.ai_config.backend =
+                            aios_llm::BackendKind::Cloud(aios_llm::CloudProvider::Groq);
+                    }
+                    "openrouter" => {
+                        self.ai_config.backend =
+                            aios_llm::BackendKind::Cloud(aios_llm::CloudProvider::OpenRouter);
+                    }
+                    "google" => {
+                        self.ai_config.backend =
+                            aios_llm::BackendKind::Cloud(aios_llm::CloudProvider::GoogleAiStudio);
+                    }
+                    "micro" => self.ai_config.backend = aios_llm::BackendKind::MicroLocal,
+                    "full" => self.ai_config.backend = aios_llm::BackendKind::FullLocal,
+                    _ => {
+                        self.ai_output
+                            .push("  backend: groq | openrouter | google | micro | full".into());
+                        return;
+                    }
+                }
+                if let aios_llm::BackendKind::Cloud(ref p) = self.ai_config.backend {
+                    self.ai_config.model = p.default_model().to_string();
+                }
+                self.ai_output.push(format!("  backend set to '{arg}'"));
+            }
+            "key" => {
+                if arg.is_empty() {
+                    self.ai_config.api_key = None;
+                    self.ai_output.push("  api key cleared".into());
+                } else {
+                    self.ai_config.api_key = Some(arg.to_string());
+                    self.ai_output.push("  api key set".into());
+                }
+            }
+            "temp" => match arg.parse::<f32>() {
+                Ok(t) if (0.0..=2.0).contains(&t) => {
+                    self.ai_config.temperature = t;
+                    self.ai_output.push(format!("  temperature set to {t}"));
+                }
+                _ => self.ai_output.push("  temp: usage /temp <0.0-2.0>".into()),
+            },
+            "tokens" => match arg.parse::<u32>() {
+                Ok(n) if (1..=8192).contains(&n) => {
+                    self.ai_config.max_tokens = n;
+                    self.ai_output.push(format!("  max tokens set to {n}"));
+                }
+                _ => self
+                    .ai_output
+                    .push("  tokens: usage /tokens <1-8192>".into()),
+            },
+            _ => {
+                self.ai_output
+                    .push(format!("  unknown command '/{name}' — type /help"));
+            }
+        }
+    }
+
+    pub fn net_save(&mut self) {
+        let json = self.net_config.to_json();
+        self.net_status = Some(format!("Saved: {json}"));
+        self.add_log("Network config saved".into());
+    }
+
+    pub fn net_reset(&mut self) {
+        self.net_config = NetworkConfig::default();
+        self.net_status = Some("Reset to defaults".into());
+        self.add_log("Network config reset".into());
+    }
+
     fn move_selection_up(&mut self) {
         match self.selected_tab {
             1 => {
-                if self.selected_process_idx.is_some_and(|i| i > 0) {
-                    self.selected_process_idx = self.selected_process_idx.map(|i| i - 1);
-                }
-            }
-            2 => {
                 if self.selected_block_idx.is_some_and(|i| i > 0) {
                     self.selected_block_idx = self.selected_block_idx.map(|i| i - 1);
                 }
@@ -346,13 +540,6 @@ impl AiosApp {
     fn move_selection_down(&mut self) {
         match self.selected_tab {
             1 => {
-                let max = self.processes.len();
-                if max > 0 && self.selected_process_idx.is_none_or(|i| i < max - 1) {
-                    self.selected_process_idx =
-                        Some(self.selected_process_idx.map_or(0, |i| i + 1));
-                }
-            }
-            2 => {
                 let max = self.blocks.len();
                 if max > 0 && self.selected_block_idx.is_none_or(|i| i < max - 1) {
                     self.selected_block_idx = Some(self.selected_block_idx.map_or(0, |i| i + 1));
@@ -376,8 +563,10 @@ impl eframe::App for AiosApp {
         theme.apply(ctx);
 
         self.poll_browser_open();
+        self.poll_ai();
 
         self.uptime_secs += 1;
+        self.ipc_traffic = self.ipc_traffic.wrapping_add(1);
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -436,9 +625,10 @@ impl eframe::App for AiosApp {
         egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(
-                        "F1=Overview F2=Processes F3=Blocks F4=Marketplace F5=Metrics F6=Deps F7=Browser",
-                    )
+                    egui::RichText::new(format!(
+                        "HW Tier: {} | IPC: {} pkts | F6=Deps F7=Browser",
+                        self.ai_tier, self.ipc_traffic
+                    ))
                     .color(theme.text_dim)
                     .size(11.0),
                 );
@@ -463,13 +653,13 @@ impl eframe::App for AiosApp {
             .show(ctx, |ui| {
                 ui.add_space(4.0);
                 let tabs = [
-                    ("\u{2302} Overview", 0),
-                    ("\u{25b6} Processes", 1),
-                    ("\u{2b23} Blocks", 2),
-                    ("\u{1f4e6} Marketplace", 3),
-                    ("\u{2630} Metrics", 4),
+                    ("\u{2302} System Dashboard", 0),
+                    ("\u{2b23} WASM Blocks", 1),
+                    ("\u{2728} AI Studio", 2),
+                    ("\u{1f4e6} App Store", 3),
+                    ("\u{1f4e1} Network Settings", 4),
                     ("\u{2913} Deps", 5),
-                    ("\u{1f310} Browser", 6),
+                    ("\u{1f310} Native Browser", 6),
                 ];
 
                 for (label, idx) in tabs {
@@ -545,10 +735,10 @@ impl eframe::App for AiosApp {
             )
             .show(ctx, |ui| match self.selected_tab {
                 0 => tabs::overview::show(ui, self, &theme),
-                1 => tabs::processes::show(ui, self, &theme),
-                2 => tabs::blocks::show(ui, self, &theme),
+                1 => tabs::blocks::show(ui, self, &theme),
+                2 => tabs::ai_studio::show(ui, self, &theme),
                 3 => tabs::marketplace::show(ui, self, &theme),
-                4 => tabs::metrics::show(ui, self, &theme),
+                4 => tabs::network::show(ui, self, &theme),
                 5 => tabs::deps::show(ui, self, &theme),
                 6 => tabs::web::show(ui, self, &theme),
                 _ => tabs::overview::show(ui, self, &theme),

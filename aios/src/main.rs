@@ -11,6 +11,11 @@ use std::sync::{Arc, Mutex};
 struct Cli {
     #[arg(long, help = "Run in headless daemon mode")]
     daemon: bool,
+    #[arg(
+        long,
+        help = "Boot into safe mode (skip third-party blocks, disable bridge)"
+    )]
+    safe_mode: bool,
 }
 
 #[tokio::main]
@@ -20,7 +25,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cli = Cli::parse();
-    let config = AppConfig::default();
+    let config = AppConfig {
+        safe_mode: cli.safe_mode,
+        ..AppConfig::default()
+    };
 
     let state = initialize(&config).await?;
     let state = Arc::new(Mutex::new(state));
@@ -34,6 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         join.await?;
     } else {
+        if cli.safe_mode {
+            log::info!("AIOS SAFE MODE — minimal shell only");
+        }
         log::info!("AIOS TUI mode — starting interactive dashboard");
         tui::run_tui(state)?;
     }

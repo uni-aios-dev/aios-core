@@ -5,7 +5,7 @@ use crate::widgets::status_badge::status_badge;
 pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("Block Marketplace")
+            egui::RichText::new("App Store")
                 .color(theme.accent)
                 .size(14.0)
                 .strong(),

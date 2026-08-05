@@ -2,10 +2,7 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.7.0, all tests pass (82 test targets, 0 failures), clippy reports zero
-warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038)
-are fixed and covered by regression tests. See the Historical Issues section
-and `docs/CHANGELOG.md` v2.7.0.
+As of v2.8.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0.
 
 ### KNOWN LIMITATION: signed-manifest enforcement is opt-in via env
 - **Status:** BY DESIGN

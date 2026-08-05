@@ -1,7 +1,50 @@
 use crate::orchestrator::OrchestratorState;
+use aios_browser::types::Page;
 use aios_llm::{default_config, LlmConfig};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+
+/// Outbox slot for a background web fetch result (generation + outcome).
+pub type FetchOut = Arc<Mutex<Option<(u64, Result<Page, String>)>>>;
+
+/// State of the built-in text web browser tab.
+pub struct WebState {
+    pub current_url: String,
+    pub url_input: String,
+    pub search_query: String,
+    pub page: Option<Page>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub input_focused: bool,
+    pub scroll: usize,
+    pub history: Vec<String>,
+    pub wrap_width: usize,
+    pub history_sel: usize,
+    pub selected_link: usize,
+    pub fetch_gen: u64,
+    pub fetch_out: FetchOut,
+}
+
+impl Default for WebState {
+    fn default() -> Self {
+        Self {
+            current_url: String::new(),
+            url_input: String::new(),
+            search_query: String::new(),
+            page: None,
+            loading: false,
+            error: None,
+            input_focused: false,
+            scroll: 0,
+            history: Vec::new(),
+            wrap_width: 80,
+            history_sel: 0,
+            selected_link: 0,
+            fetch_gen: 0,
+            fetch_out: Arc::new(Mutex::new(None)),
+        }
+    }
+}
 
 pub struct TuiApp {
     pub running: bool,
@@ -12,10 +55,6 @@ pub struct TuiApp {
     pub displayed_logs: VecDeque<String>,
     pub ai_input: String,
     pub ai_mode: bool,
-    pub browser_url: String,
-    pub browser_mode: bool,
-    pub net_input: String,
-    pub net_mode: bool,
     pub ai_output: Arc<Mutex<VecDeque<String>>>,
     pub bridge_port: u16,
     pub ai_system_prompt: String,
@@ -24,6 +63,18 @@ pub struct TuiApp {
     pub ai_history_index: Option<usize>,
     pub ai_show_help: bool,
     pub ai_status: Arc<Mutex<String>>,
+    pub web: WebState,
+    pub shell_input: String,
+    pub shell_output: VecDeque<String>,
+    pub net_input: String,
+    pub net_mode: bool,
+    pub net_status: String,
+    pub show_help: bool,
+    pub blocks_selected: usize,
+    pub store_installed: Vec<String>,
+    pub store_status: String,
+    pub load_mode: bool,
+    pub load_input: String,
 }
 
 impl TuiApp {
@@ -32,7 +83,6 @@ impl TuiApp {
             let s = state.lock().unwrap();
             s.logs.clone()
         };
-        let bridge_port = 8080;
         Self {
             running: true,
             current_tab: 0,
@@ -42,18 +92,26 @@ impl TuiApp {
             displayed_logs: VecDeque::new(),
             ai_input: String::new(),
             ai_mode: false,
-            browser_url: String::new(),
-            browser_mode: false,
-            net_input: String::new(),
-            net_mode: false,
             ai_output: Arc::new(Mutex::new(VecDeque::new())),
-            bridge_port,
+            bridge_port: 8080,
             ai_system_prompt: "You are a helpful AI assistant.".into(),
             ai_config: default_config(),
             ai_history: VecDeque::new(),
             ai_history_index: None,
             ai_show_help: false,
             ai_status: Arc::new(Mutex::new("ready".into())),
+            web: WebState::default(),
+            shell_input: String::new(),
+            shell_output: VecDeque::new(),
+            net_input: String::new(),
+            net_mode: false,
+            net_status: String::new(),
+            show_help: false,
+            blocks_selected: 0,
+            store_installed: Vec::new(),
+            store_status: String::new(),
+            load_mode: false,
+            load_input: String::new(),
         }
     }
 
@@ -112,5 +170,12 @@ impl TuiApp {
         };
         self.ai_history_index = idx;
         self.ai_input = idx.map(|i| self.ai_history[i].clone()).unwrap_or_default();
+    }
+
+    pub fn shell_push(&mut self, line: String) {
+        self.shell_output.push_back(line);
+        while self.shell_output.len() > 300 {
+            self.shell_output.pop_front();
+        }
     }
 }

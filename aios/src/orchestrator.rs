@@ -23,8 +23,8 @@ pub struct OrchestratorState {
     pub hw_profile: HwProfile,
     pub bridge: Arc<BridgeContext>,
     pub router: MessageRouter,
-    pub browser_block_id: BlockId,
     pub net_block_id: BlockId,
+    pub safe_mode: bool,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
     pub logs: Arc<Mutex<Vec<String>>>,
@@ -32,11 +32,15 @@ pub struct OrchestratorState {
 
 pub struct AppConfig {
     pub bridge_port: u16,
+    pub safe_mode: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { bridge_port: 8080 }
+        Self {
+            bridge_port: 8080,
+            safe_mode: false,
+        }
     }
 }
 
@@ -100,7 +104,15 @@ pub async fn initialize(
     let blocks_dir = std::env::var("AIOS_BLOCKS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("blocks"));
-    let disk_results = registry.boot_discover(&blocks_dir);
+    let disk_results = if config.safe_mode {
+        push_log(
+            &logs,
+            "AIOS SAFE MODE: skipping third-party disk blocks (boot_discover disabled)".into(),
+        );
+        Vec::new()
+    } else {
+        registry.boot_discover(&blocks_dir)
+    };
     push_log(
         &logs,
         format!(
@@ -169,22 +181,29 @@ pub async fn initialize(
 
     push_log(&logs, "AIOS: starting bridge server...".into());
     let bridge_running = Arc::new(AtomicBool::new(false));
-    let bridge_clone = bridge.clone();
-    let addr = format!("0.0.0.0:{}", config.bridge_port);
-    let logs_clone = logs.clone();
-    let br_flag = bridge_running.clone();
+    if config.safe_mode {
+        push_log(
+            &logs,
+            "AIOS SAFE MODE: bridge server disabled — shell and local blocks only".into(),
+        );
+    } else {
+        let bridge_clone = bridge.clone();
+        let addr = format!("0.0.0.0:{}", config.bridge_port);
+        let logs_clone = logs.clone();
+        let br_flag = bridge_running.clone();
 
-    tokio::spawn(async move {
-        push_log(&logs_clone, format!("AIOS: Bridge listening on {addr}"));
-        br_flag.store(true, Ordering::SeqCst);
-        if let Err(e) = start_server(bridge_clone, &addr).await {
-            push_log(
-                &logs_clone,
-                format!("AIOS ERROR: Bridge server failed: {e}"),
-            );
-            br_flag.store(false, Ordering::SeqCst);
-        }
-    });
+        tokio::spawn(async move {
+            push_log(&logs_clone, format!("AIOS: Bridge listening on {addr}"));
+            br_flag.store(true, Ordering::SeqCst);
+            if let Err(e) = start_server(bridge_clone, &addr).await {
+                push_log(
+                    &logs_clone,
+                    format!("AIOS ERROR: Bridge server failed: {e}"),
+                );
+                br_flag.store(false, Ordering::SeqCst);
+            }
+        });
+    }
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -194,8 +213,8 @@ pub async fn initialize(
         hw_profile,
         bridge,
         router,
-        browser_block_id,
         net_block_id,
+        safe_mode: config.safe_mode,
         start_time: Instant::now(),
         bridge_running,
         logs,

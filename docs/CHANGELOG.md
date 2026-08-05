@@ -1,5 +1,24 @@
 # AIOS Development Log
 
+## v2.8.0 — 7-tab kernel TUI, safe mode, GUI AI Studio & Network Settings (2026-08-05)
+
+### `aios`: kernel TUI upgraded to the 7-tab spec
+- The `aios` TUI (ratatui) now ships with 7 tabs: **System & HW**, **Blocks & Svc**, **AI Console**, **Studio Bridge**, **Network & Store**, **Web**, **Shell**. Direct selection via `1`-`7`, `Alt`+`1`-`7`, `Tab`/`F1`, help overlay via `?`. The header shows the detected **AI Tier** and the app version (`AIOS v2.8.0`).
+- Blocks tab gained `r`/`k`/`l` (restart / unload / load from disk) in addition to selection. The Web tab implements the full spec keymap (`g` omnibox, `j/k` link selection, `o`/`Enter` open, `u/d` and `PageUp`/`PageDown` text scroll, `b` back, `B` native viewer, `n` open selected link natively). The Shell tab implements `ps`, `blocks`, `kill`, `spawn`, `store list/search/install`, `net get/set`, `status`, `logs`, `restart`, `help`, `clear` and is fully typed inline (every keystroke goes to the input line; `q` quits only from other tabs).
+- The `n`/`g` network keys moved to the Network & Store tab; the old kernel-wide `b`/`r` hotkeys and the `dispatch_open_url` bridge hack were removed.
+- Files: `aios/src/tui/mod.rs`, `aios/src/tui/ui.rs`, `aios/src/tui/app_state.rs`
+
+### `aios`: `--safe-mode` boot flag
+- New `--safe-mode` CLI flag: AIOS boots with a minimal shell only — third-party disk blocks are not discovered, the bridge HTTP/WebSocket server is disabled, the header shows `SAFE MODE`. Core blocks, scheduler, watchdog, LLM engine and TUI/Shell remain available.
+- Files: `aios/src/main.rs`, `aios/src/orchestrator.rs`
+
+### `aios-gui`: AI Studio and Network Settings tabs
+- The GUI was restructured from the 6-tab spec into 7 tabs: **System Dashboard** (merged overview + metrics + processes), **WASM Blocks**, **AI Studio**, **App Store**, **Network Settings**, **Deps**, **Native Browser**. The `processes` and `metrics` tab modules were removed.
+- AI Studio: async LLM chat with slash commands (`/help /backend /model /key /temp /tokens /clear /history`), status line, Enter-to-send with focus retention; requests run on a background tokio task so the UI stays responsive.
+- Network Settings: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON update over IPC to `net_settings`) and Reset, plus a live JSON preview.
+- Status bar now shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with a live IPC packet counter.
+- Files: `aios-gui/src/app.rs`, `aios-gui/src/tabs/mod.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios-gui/src/tabs/network.rs`, `aios-gui/src/tabs/overview.rs`, `aios-gui/Cargo.toml`
+
 ## v2.7.0 — Bug-fix pass: correctness, robustness, UI fixes (2026-08-04)
 
 ### `aios-browser`: `extract_text` returns empty on pages with `<!DOCTYPE html>`

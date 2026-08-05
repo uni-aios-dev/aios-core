@@ -109,11 +109,14 @@ cargo test --workspace
 ### Run
 
 ```bash
-# Interactive TUI dashboard (4 tabs: System & HW, Blocks & Services, AI Console, Studio GUI Bridge)
+# Interactive TUI dashboard (7 tabs: System & HW, Blocks & Services, AI Console, Studio Bridge, Network & Store, Web, Shell)
 ./target/release/aios
 
 # Headless server mode (logs to stdout, Bridge HTTP on :8080)
 ./target/release/aios --daemon
+
+# Safe mode (minimal recoverable kernel: no disk blocks, no bridge)
+./target/release/aios --safe-mode
 
 # Help
 ./target/release/aios --help

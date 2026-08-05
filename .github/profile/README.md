@@ -37,7 +37,7 @@ git clone https://github.com/uni-aios-dev/aios-core.git
 cd aios-core
 cargo build --release --workspace
 cargo test --workspace
-cargo run --release -p aios-tui
+cargo run --release -p aios
 ```
 
 ## License Policy

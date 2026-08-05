@@ -9,7 +9,10 @@ const TITLES: &[&str] = &[
     " System & HW ",
     " Blocks & Svc ",
     " AI Console ",
-    " Studio GUI ",
+    " Studio Bridge ",
+    " Network & Store ",
+    " Web ",
+    " Shell ",
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
@@ -31,6 +34,9 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         1 => draw_blocks_tab(frame, chunks[2], app),
         2 => draw_ai_tab(frame, chunks[2], app),
         3 => draw_bridge_tab(frame, chunks[2], app),
+        4 => draw_net_store_tab(frame, chunks[2], app),
+        5 => draw_web_tab(frame, chunks[2], app),
+        6 => draw_shell_tab(frame, chunks[2], app),
         _ => {}
     }
     draw_logs(frame, chunks[3], app);
@@ -41,23 +47,29 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let s = state.start_time.elapsed().as_secs();
     let uptime = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
 
-    let status_style = Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::BOLD);
     let header = Line::from(vec![
         Span::styled(
-            " AIOS v1.0.0 ",
+            " AIOS v2.8.0 ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" │ Status: "),
-        Span::styled("OK", status_style),
+        Span::styled(
+            if state.safe_mode { "SAFE MODE" } else { "OK" },
+            Style::default()
+                .fg(if state.safe_mode {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" │ Uptime: "),
         Span::styled(uptime, Style::default().fg(Color::Yellow)),
-        Span::raw(" │ CPU: "),
+        Span::raw(" │ AI Tier: "),
         Span::styled(
-            state.hw_profile.cpu.brand.split(' ').next().unwrap_or("?"),
+            state.hw_profile.ai_tier.clone(),
             Style::default().fg(Color::Magenta),
         ),
         Span::raw(" │ RAM: "),
@@ -126,7 +138,7 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let cpu_para = Paragraph::new(Text::from(cpu_lines)).block(cpu_block);
     frame.render_widget(cpu_para, chunks[0]);
 
-    let os_lines = vec![
+    let mut os_lines = vec![
         Line::from(format!("OS: {} {}", hw.os.name, hw.os.os_version)),
         Line::from(format!("Kernel: {}", hw.os.kernel_version)),
         Line::from(format!("Hostname: {}", hw.os.hostname)),
@@ -143,19 +155,21 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
             }
         )),
     ];
-    let mut os_lines = {
-        let mut lines = os_lines;
-        if let Some(ref gpu) = hw.gpu {
-            let gpu_name = if gpu.vram_gb > 0.0 {
-                format!("GPU: {} ({:.1} GB VRAM)", gpu.model, gpu.vram_gb)
-            } else {
-                format!("GPU: {}", gpu.model)
-            };
-            lines.push(Line::from(gpu_name));
-        }
-        lines
-    };
+    if let Some(ref gpu) = hw.gpu {
+        let gpu_name = if gpu.vram_gb > 0.0 {
+            format!("GPU: {} ({:.1} GB VRAM)", gpu.model, gpu.vram_gb)
+        } else {
+            format!("GPU: {}", gpu.model)
+        };
+        os_lines.push(Line::from(gpu_name));
+    }
     os_lines.push(Line::from(format!("AI Tier: {}", hw.ai_tier)));
+    if state.safe_mode {
+        os_lines.push(Line::from(format!(
+            "Boot: {}",
+            "SAFE MODE — third-party blocks and bridge disabled"
+        )));
+    }
 
     let os_block = Block::default()
         .title(" System & AI ")
@@ -175,7 +189,6 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
                 Color::Green
             }))
             .percent((ram_ratio * 100.0) as u16);
-        // overlay gauge on cpu section
         let gauge_area = Rect::new(
             chunks[0].x + 2,
             chunks[0].y + chunks[0].height - 3,
@@ -200,30 +213,45 @@ fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    let block_ids = registry.all_ids();
-    let mut block_items: Vec<ListItem> = block_ids
+    let mut ids = registry.all_ids();
+    ids.sort_by_key(|id| id.0);
+    let mut block_items: Vec<ListItem> = ids
         .iter()
-        .map(|id| match registry.get(*id) {
-            Ok(entry) => {
-                let status = match entry.state {
-                    aios_core::block::BlockState::Active => "Active",
-                    aios_core::block::BlockState::Loaded => "Loaded",
-                    aios_core::block::BlockState::Error => "Error",
-                    _ => "Other",
-                };
-                ListItem::new(Line::from(format!(
-                    "[{}] {} v{} [{}]",
-                    id, entry.manifest.name, entry.manifest.version, status
-                )))
-            }
-            Err(_) => ListItem::new(Line::from(format!("[{}] error", id))),
+        .enumerate()
+        .map(|(i, id)| {
+            let base = match registry.get(*id) {
+                Ok(entry) => {
+                    let status = match entry.state {
+                        aios_core::block::BlockState::Active => "Active",
+                        aios_core::block::BlockState::Loaded => "Loaded",
+                        aios_core::block::BlockState::Error => "Error",
+                        _ => "Other",
+                    };
+                    format!(
+                        "[{}] {} v{} [{}]",
+                        id, entry.manifest.name, entry.manifest.version, status
+                    )
+                }
+                Err(_) => format!("[{}] error", id),
+            };
+            let style = if i == app.blocks_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(Span::styled(base, style)))
         })
         .collect();
     if block_items.is_empty() {
         block_items.push(ListItem::new(Line::from("No blocks loaded.")));
     }
-    let block_list =
-        List::new(block_items).block(Block::default().title(" Blocks ").borders(Borders::ALL));
+    let block_list = List::new(block_items).block(
+        Block::default()
+            .title(" Blocks (j/k select, r restart, k unload, l load) ")
+            .borders(Borders::ALL),
+    );
     frame.render_widget(block_list, chunks[0]);
 
     let proc_count = scheduler.process_count();
@@ -462,6 +490,184 @@ fn draw_bridge_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
     frame.render_widget(para, area);
 }
 
+fn draw_net_store_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6),
+            Constraint::Min(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    let mut net_lines = vec![
+        Line::from("Network Settings (via aios-net-config block / IPC):"),
+        Line::from("  hostname | listen_port | dhcp_enabled | dns_server | gateway"),
+    ];
+    if !app.net_status.is_empty() {
+        net_lines.push(Line::from(vec![
+            Span::raw("  Current: "),
+            Span::styled(app.net_status.clone(), Style::default().fg(Color::Cyan)),
+        ]));
+    }
+    if app.net_mode {
+        net_lines.push(Line::from(Span::styled(
+            format!("  set> {}", app.net_input),
+            Style::default().fg(Color::Green),
+        )));
+    }
+    let net_para = Paragraph::new(Text::from(net_lines))
+        .block(Block::default().title(" Network ").borders(Borders::ALL));
+    frame.render_widget(net_para, chunks[0]);
+
+    let mut store_items: Vec<ListItem> = app
+        .store_installed
+        .iter()
+        .map(|b| ListItem::new(Line::from(format!(" • {b}"))))
+        .collect();
+    if store_items.is_empty() {
+        store_items.push(ListItem::new(Line::from(
+            " No installed blocks. Press 's' to refresh the block store. ",
+        )));
+    }
+    let store_list = List::new(store_items).block(
+        Block::default()
+            .title(" Block Store ")
+            .borders(Borders::ALL),
+    );
+    frame.render_widget(store_list, chunks[1]);
+
+    let status = if app.store_status.is_empty() {
+        " 'n' edit network  'g' show current net config  's' refresh store  (see Shell: store list/search/install) ".to_string()
+    } else {
+        format!(
+            " {}  |  'n' edit net  'g' show net config  's' refresh store ",
+            app.store_status
+        )
+    };
+    let status_para = Paragraph::new(status).style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(status_para, chunks[2]);
+}
+
+fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
+    let sidebar_width = 24.min(area.width / 3).max(10);
+    let content_width = area.width.saturating_sub(sidebar_width);
+    app.web.wrap_width = content_width.saturating_sub(3) as usize;
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(10), Constraint::Length(sidebar_width)])
+        .split(area);
+
+    let mut content_items: Vec<ListItem> = Vec::new();
+    let url_line = if app.web.input_focused {
+        format!("URL/query: {}", app.web.url_input)
+    } else if !app.web.current_url.is_empty() {
+        app.web.current_url.clone()
+    } else {
+        " No page loaded — press 'g' to enter a URL or search query ".into()
+    };
+    content_items.push(ListItem::new(Line::from(Span::styled(
+        url_line,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ))));
+
+    if app.web.loading {
+        content_items.push(ListItem::new(Line::from(Span::styled(
+            " Loading... ",
+            Style::default().fg(Color::Yellow),
+        ))));
+    } else if let Some(ref err) = app.web.error {
+        content_items.push(ListItem::new(Line::from(Span::styled(
+            format!(" Error: {err} "),
+            Style::default().fg(Color::Red),
+        ))));
+    } else if let Some(ref page) = app.web.page {
+        let lines = super::wrap_text(&page.text_content, app.web.wrap_width);
+        for line in lines.iter().skip(app.web.scroll) {
+            content_items.push(ListItem::new(Line::from(line.clone())));
+        }
+    } else {
+        content_items.push(ListItem::new(Line::from(
+            " Text-mode browser. Type 'g' to navigate, j/k to move between links, 'o' to open. ",
+        )));
+    }
+
+    let content = List::new(content_items).block(
+        Block::default()
+            .title(if app.web.input_focused {
+                " Text Browser — Enter URL "
+            } else {
+                " Text Browser "
+            })
+            .borders(Borders::ALL),
+    );
+    frame.render_widget(content, chunks[0]);
+
+    let link_items: Vec<ListItem> = match app.web.page {
+        Some(ref page) => page
+            .links
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let style = if i == app.web.selected_link {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+                ListItem::new(Line::from(Span::styled(l.text.clone(), style)))
+            })
+            .collect(),
+        None => vec![ListItem::new(Line::from(" No links yet "))],
+    };
+    let links =
+        List::new(link_items).block(Block::default().title(" Links ").borders(Borders::ALL));
+    frame.render_widget(links, chunks[1]);
+}
+
+fn draw_shell_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .split(area);
+
+    let height = chunks[0].height.saturating_sub(2) as usize;
+    let start = app.shell_output.len().saturating_sub(height);
+    let mut items: Vec<ListItem> = app
+        .shell_output
+        .iter()
+        .skip(start)
+        .map(|l| {
+            let style = if l.starts_with("$ ") {
+                Style::default().fg(Color::Cyan)
+            } else if l.starts_with("AIOS:") {
+                Style::default().fg(Color::DarkGray)
+            } else if l.contains("ERROR") {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(Span::styled(l.clone(), style)))
+        })
+        .collect();
+    if items.is_empty() {
+        items.push(ListItem::new(Line::from(
+            " Shell ready — type 'help' for the command reference. ",
+        )));
+    }
+    let out_list = List::new(items).block(Block::default().title(" Shell ").borders(Borders::ALL));
+    frame.render_widget(out_list, chunks[0]);
+
+    let input = Paragraph::new(format!("$ {}", app.shell_input))
+        .style(Style::default().fg(Color::Green))
+        .block(Block::default().title(" Input ").borders(Borders::ALL));
+    frame.render_widget(input, chunks[1]);
+}
+
 fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let count = app.displayed_logs.len();
     let start = count.saturating_sub(3);
@@ -494,33 +700,6 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .block(Block::default().title(title).borders(Borders::ALL))
         .style(Style::default().fg(Color::DarkGray));
 
-    let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-4] goto  [g] dashboard  [b] browse  [n] net  [r] reprobe  [Space] pause  [q] quit ",
-    )]);
-    let help_style = Style::default().fg(Color::DarkGray).bg(Color::Black);
-
-    let browser_line = if app.browser_mode {
-        Line::from(vec![
-            Span::styled(
-                " URL/query: ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(app.browser_url.clone(), Style::default().fg(Color::Green)),
-            Span::raw("  [Enter] open/search  [Esc] cancel"),
-        ])
-    } else {
-        Line::from(Span::raw(
-            " [b] Open a URL or search in the native browser (e.g. rust scheduler) ",
-        ))
-    };
-    let browser_style = if app.browser_mode {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::DarkGray).bg(Color::Black)
-    };
-
     let net_line = if app.net_mode {
         Line::from(vec![
             Span::styled(
@@ -543,20 +722,19 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
         Style::default().fg(Color::DarkGray).bg(Color::Black)
     };
 
+    let help = Line::from(vec![Span::raw(
+        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back B native ",
+    )]);
+
     let log_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(1),
         ])
         .split(area);
     frame.render_widget(list, log_chunks[0]);
-    frame.render_widget(
-        Paragraph::new(browser_line).style(browser_style),
-        log_chunks[1],
-    );
-    frame.render_widget(Paragraph::new(net_line).style(net_style), log_chunks[2]);
-    frame.render_widget(Paragraph::new(help).style(help_style), log_chunks[3]);
+    frame.render_widget(Paragraph::new(net_line).style(net_style), log_chunks[1]);
+    frame.render_widget(help, log_chunks[2]);
 }
