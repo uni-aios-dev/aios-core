@@ -209,7 +209,7 @@ At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1
 
 ### AI Console (Tab 3)
 
-The AI Console is an interactive chat with the LLM. Press `i` to enter query mode, type a message (or a `/`-command), press `Enter` to send. The footer shows the live backend/model/temperature/tokens/state. Long responses are word-wrapped to the pane width; user prompts are shown in cyan, errors in red.
+The AI Console is an interactive chat with the LLM. Press `i` to enter query mode, type a message (or a `/`-command), press `Enter` to send. The footer shows the live backend/model/temperature/tokens/state. Responses **stream in live**: the growing answer is rendered in yellow while the request is in flight and the final text is appended to the transcript when done. Long responses are word-wrapped to the pane width; user prompts are shown in cyan, errors in red.
 
 | Key | Action |
 |-----|--------|
@@ -234,8 +234,15 @@ Slash commands are typed at the input line (e.g. `/status`) and executed with `E
 | `/key` | `<api-key>` | Set the API key (no argument clears it) |
 | `/temp` | `<0.0-2.0>` | Set sampling temperature |
 | `/tokens` | `<1-8192>` | Set max output tokens |
+| `/preset` | `<name>` | Apply a prompt template as the system prompt |
+| `/preset` | `<name> <text>` | Define/override a prompt template |
+| `/preset` | `list` / `del <name>` | List templates / delete one |
+| `/save` | — | Persist the chat to disk (`AIOS_DATA_DIR/chat.jsonl`) |
+| `/load` | — | Restore the chat from disk, replacing the current transcript |
 
 Backend/model/key changes rebuild the shared `LlmEngine` asynchronously, so the HTTP `POST /api/v1/llm/query` endpoint uses the same configuration as the console. Cloud backends need an API key (`AIOS_LLM_API_KEY` or `/key`); local backends need a GGUF model (`AIOS_MODEL_PATH`).
+
+The chat is **auto-persisted**: after every completed reply and on quit it is saved as JSON Lines to `AIOS_DATA_DIR/chat.jsonl` (default `aios_data/chat.jsonl`), and restored into the transcript on the next boot. Built-in prompt templates: `assistant`, `code`, `translator`, `explainer` (customize or add your own with `/preset <name> <text>`).
 
 ### Network & Store (Tab 5)
 

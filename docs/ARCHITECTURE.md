@@ -533,7 +533,7 @@ Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
 
 **Tab 2 — Blocks & Svc**: block table (ID, Name, Version, State, Size) with `j`/`k` selection; keybindings `r`=restart, `k`=unload, `l`=load from disk (prompts a path); bottom pane shows the selected block and the process list
 
-**Tab 3 — AI Console**: LLM chat with `i` to enter query mode, `Enter` to send, `Esc` to leave, `Up`/`Down` prompt history (last 50), `h` help panel; slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens`; footer shows backend/model/temperature/tokens/state; word-wrapped output with cyan prompts and red errors; backend/model/key changes rebuild the shared `LlmEngine` asynchronously
+**Tab 3 — AI Console**: LLM chat with `i` to enter query mode, `Enter` to send, `Esc` to leave, `Up`/`Down` prompt history (last 50), `h` help panel; slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`; footer shows backend/model/temperature/tokens/state; word-wrapped output with cyan prompts, red errors and a yellow live-streaming partial line; **responses stream** over `LlmEngine::query_stream`; the chat auto-persists as JSON Lines to `AIOS_DATA_DIR/chat.jsonl` (saved after each reply + on quit, restored at boot); `/preset` manages system-prompt templates; backend/model/key changes rebuild the shared `LlmEngine` asynchronously
 
 **Tab 4 — Studio Bridge**: bridge server state (running/disabled), URL, REST/WebSocket endpoints
 
@@ -1113,11 +1113,14 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 | g / j / k / o / u / d / b / B / n (Web) | Omnibox / link nav / open / scroll / back / native viewer |
 | n / g / s (Network & Store) | Edit net config / show config JSON / refresh store list |
 
-### AI Console (Tab 3, Phase 43 / v2.6.0)
+### AI Console (Tab 3, Phase 43 / v2.6.0, Phase 45 / v2.9.0)
 - Interactive LLM chat: `i` enters query mode, `Enter` sends; each query re-applies the current console `LlmConfig` to the shared `BridgeContext.llm` engine, so console settings and the HTTP `/api/v1/llm/query` endpoint stay consistent
-- Slash-command system handled in `TuiApp::handle_ai_command`: `/help /status /clear /history /system /model /backend /key /temp /tokens`; backend/model/key changes rebuild the engine asynchronously via `apply_config_async`
+- Slash-command system handled in `TuiApp::handle_ai_command`: `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`; backend/model/key changes rebuild the engine asynchronously via `apply_config_async`
 - Built-in help panel (справка) toggled with `h` or `/help`, styled reference of keys + commands; prompt history (last 50) navigable with `Up`/`Down`
-- Status footer `backend | model | temp | tokens | state` (`thinking...` / `done: Nms` / error); `/status` reports config + detected local GGUF models via `aios_llm::local::detect_local_models`
+- Status footer `backend | model | temp | tokens | state` (`streaming...` / `done: Nms` / error); `/status` reports config + detected local GGUF models via `aios_llm::local::detect_local_models`
+- **Streaming (Phase 45)**: `submit_ai_query` spawns `LlmEngine::query_stream(&req, tx)` on a tokio task; deltas accumulate in `TuiApp.ai_stream` (rendered live in yellow) and the final text is appended to the transcript. `aios-llm` streams SSE deltas for cloud backends (`extract_stream_delta`, OpenAI + Google AI Studio shapes) and per-token deltas for local backends (`generate_tokens` callback loop)
+- **Chat persistence (Phase 45)**: the transcript is kept in `TuiApp.ai_log` (`Vec<AiMessage>` where `AiMessage { role, text }`), auto-saved as JSON Lines to `AIOS_DATA_DIR/chat.jsonl` (default `aios_data/chat.jsonl`) after each completed reply and on quit via `save_chat`, restored at boot via `load_chat`; manual control with `/save` / `/load`
+- **Prompt templates (Phase 45)**: `TuiApp.ai_presets` (`BTreeMap<name, text>`) seeded with `assistant`/`code`/`translator`/`explainer`; `/preset <name>` applies a template as the system prompt, `/preset <name> <text>` defines one, `/preset list` / `/preset del <name>` manage the set
 - `aios-llm` exposes `LlmEngine::config()`, `provider_name()`, `backend_label()` for config introspection
 
 ### Startup Sequence

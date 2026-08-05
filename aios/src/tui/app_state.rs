@@ -1,8 +1,15 @@
 use crate::orchestrator::OrchestratorState;
 use aios_browser::types::Page;
 use aios_llm::{default_config, LlmConfig};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+
+/// One persisted chat entry of the AI Console.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AiMessage {
+    pub role: String,
+    pub text: String,
+}
 
 /// Outbox slot for a background web fetch result (generation + outcome).
 pub type FetchOut = Arc<Mutex<Option<(u64, Result<Page, String>)>>>;
@@ -63,6 +70,10 @@ pub struct TuiApp {
     pub ai_history_index: Option<usize>,
     pub ai_show_help: bool,
     pub ai_status: Arc<Mutex<String>>,
+    pub ai_stream: Arc<Mutex<String>>,
+    pub ai_streaming: Arc<Mutex<bool>>,
+    pub ai_presets: BTreeMap<String, String>,
+    pub ai_log: Arc<Mutex<Vec<AiMessage>>>,
     pub web: WebState,
     pub shell_input: String,
     pub shell_output: VecDeque<String>,
@@ -100,6 +111,10 @@ impl TuiApp {
             ai_history_index: None,
             ai_show_help: false,
             ai_status: Arc::new(Mutex::new("ready".into())),
+            ai_stream: Arc::new(Mutex::new(String::new())),
+            ai_streaming: Arc::new(Mutex::new(false)),
+            ai_presets: seed_presets(),
+            ai_log: Arc::new(Mutex::new(Vec::new())),
             web: WebState::default(),
             shell_input: String::new(),
             shell_output: VecDeque::new(),
@@ -178,4 +193,26 @@ impl TuiApp {
             self.shell_output.pop_front();
         }
     }
+}
+
+fn seed_presets() -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    m.insert("assistant".into(), "You are a helpful AI assistant.".into());
+    m.insert(
+        "code".into(),
+        "You are an expert senior software engineer. Give concise, idiomatic \
+         code with brief explanations. Prefer standard library solutions."
+            .into(),
+    );
+    m.insert(
+        "translator".into(),
+        "You translate text between languages accurately, preserving meaning \
+         and tone. Output only the translation."
+            .into(),
+    );
+    m.insert(
+        "explainer".into(),
+        "You explain complex topics in simple terms with concrete examples.".into(),
+    );
+    m
 }

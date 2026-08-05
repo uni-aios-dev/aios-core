@@ -4,6 +4,8 @@ mod ui;
 pub use app_state::TuiApp;
 pub use ui::draw;
 
+use self::app_state::AiMessage;
+
 use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
 use aios_browser::engine::BrowserEngine;
@@ -19,6 +21,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use std::collections::VecDeque;
 use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +37,7 @@ pub fn run_tui(state: Arc<Mutex<OrchestratorState>>) -> Result<(), Box<dyn std::
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     let app = TuiApp::new(state.clone());
+    load_chat(&app);
 
     let res = run(&mut terminal, app);
 
@@ -62,6 +66,7 @@ fn run(
         app.update_logs();
         web_poll(&mut app);
     }
+    save_chat(&app);
     Ok(())
 }
 
@@ -135,13 +140,74 @@ fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> String {
     }
 }
 
-fn push_ai_line(app: &TuiApp, line: String) {
-    let mut ai_guard = app.ai_output.lock().unwrap();
+fn push_out(ai_out: &Arc<Mutex<VecDeque<String>>>, line: String) {
+    let mut ai_guard = ai_out.lock().unwrap();
     ai_guard.push_back(line);
     let len = ai_guard.len();
     if len > 200 {
         ai_guard.drain(0..len - 150);
     }
+}
+
+fn push_ai_line(app: &TuiApp, line: String) {
+    push_out(&app.ai_output, line);
+}
+
+/// Path of the persisted chat log (JSON Lines under AIOS_DATA_DIR).
+fn chat_path() -> PathBuf {
+    PathBuf::from(env_or("AIOS_DATA_DIR", "aios_data")).join("chat.jsonl")
+}
+
+fn save_chat_to(path: &std::path::Path, ai_log: &Arc<Mutex<Vec<AiMessage>>>) {
+    let Ok(guard) = ai_log.lock() else {
+        return;
+    };
+    let mut buf = String::new();
+    for msg in guard.iter() {
+        if let Ok(line) = serde_json::to_string(msg) {
+            buf.push_str(&line);
+            buf.push('\n');
+        }
+    }
+    drop(guard);
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::write(path, buf);
+}
+
+fn save_chat(app: &TuiApp) {
+    save_chat_to(&chat_path(), &app.ai_log);
+}
+
+/// Restores a previously saved chat into the AI Console output at boot.
+fn load_chat(app: &TuiApp) {
+    let path = chat_path();
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let mut messages: Vec<AiMessage> = Vec::new();
+    for line in content.lines() {
+        if let Ok(msg) = serde_json::from_str::<AiMessage>(line) {
+            messages.push(msg);
+        }
+    }
+    if messages.is_empty() {
+        return;
+    }
+    if let Ok(mut guard) = app.ai_log.lock() {
+        guard.extend(messages.clone());
+    }
+    for msg in messages {
+        if msg.role == "user" {
+            push_ai_line(app, format!("> {}", msg.text));
+        } else {
+            push_ai_line(app, msg.text);
+        }
+    }
+    *app.ai_status.lock().unwrap() = "chat restored from disk".into();
 }
 
 fn apply_config_async(app: &TuiApp, config: LlmConfig) {
@@ -161,44 +227,79 @@ fn submit_ai_query(app: &mut TuiApp, prompt: String) {
     let logs = app.logs.clone();
     let ai_out = app.ai_output.clone();
     let status = app.ai_status.clone();
+    let stream = app.ai_stream.clone();
+    let streaming = app.ai_streaming.clone();
+    let ai_log = app.ai_log.clone();
+    let path = chat_path();
     let bridge = state.bridge.clone();
     drop(state);
-    *status.lock().unwrap() = "thinking...".into();
+    if let Ok(mut guard) = ai_log.lock() {
+        guard.push(AiMessage {
+            role: "user".into(),
+            text: prompt.clone(),
+        });
+    }
+    *status.lock().unwrap() = "streaming...".into();
+    *streaming.lock().unwrap() = true;
+    *stream.lock().unwrap() = String::new();
     tokio::spawn(async move {
-        let result = {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let worker = {
             let mut eng = bridge.llm.lock().await;
-            *eng = LlmEngine::from_config(config.clone());
+            let engine = std::mem::replace(
+                &mut *eng,
+                LlmEngine::from_config(aios_llm::default_config()),
+            );
             let req = aios_llm::LlmRequest {
                 system_prompt: system,
                 user_prompt: prompt.clone(),
                 max_tokens: config.max_tokens,
                 temperature: config.temperature,
             };
-            eng.query(&req).await
+            tokio::spawn(async move { engine.query_stream(&req, tx).await })
         };
-        match result {
-            Ok(resp) => {
-                let tokens = if resp.tokens_used > 0 {
-                    format!(", {} tokens", resp.tokens_used)
-                } else {
-                    String::new()
-                };
-                *status.lock().unwrap() = format!("done: {} ms{}", resp.duration_ms, tokens);
-                let mut ai_guard = ai_out.lock().unwrap();
-                ai_guard.push_back(resp.text);
-                let len = ai_guard.len();
-                if len > 200 {
-                    ai_guard.drain(0..len - 150);
+        let start = std::time::Instant::now();
+        let mut full = String::new();
+        while let Some(item) = rx.recv().await {
+            match item {
+                Ok(delta) => {
+                    full.push_str(&delta);
+                    if let Ok(mut s) = stream.lock() {
+                        s.push_str(&delta);
+                    }
+                }
+                Err(e) => {
+                    *streaming.lock().unwrap() = false;
+                    *status.lock().unwrap() = format!("error: {e}");
+                    push_out(&ai_out, format!("[error] {e}"));
+                    save_chat_to(&path, &ai_log);
+                    let mut l = logs.lock().unwrap();
+                    l.push(format!("AI query: {} (error: {e})", prompt));
+                    return;
                 }
             }
-            Err(e) => {
-                *status.lock().unwrap() = format!("error: {e}");
-                let mut ai_guard = ai_out.lock().unwrap();
-                ai_guard.push_back(format!("[error] {e}"));
+        }
+        let _ = worker.await;
+        *streaming.lock().unwrap() = false;
+        let tail = {
+            let mut s = stream.lock().unwrap();
+            let tail = s.clone();
+            s.clear();
+            tail
+        };
+        *status.lock().unwrap() = format!("done: {} ms", start.elapsed().as_millis());
+        if !tail.trim().is_empty() {
+            push_out(&ai_out, tail.clone());
+            if let Ok(mut guard) = ai_log.lock() {
+                guard.push(AiMessage {
+                    role: "assistant".into(),
+                    text: tail,
+                });
             }
         }
+        save_chat_to(&path, &ai_log);
         let mut l = logs.lock().unwrap();
-        l.push(format!("AI query: {} (done)", prompt));
+        l.push(format!("AI query: {} (done, {} chars)", prompt, full.len()));
     });
 }
 
@@ -214,7 +315,8 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
             app.ai_show_help = true;
             replies.push("Help panel opened — press h or Esc to close".into());
             replies.push(
-                "Commands: /help /status /clear /history /system /model /backend /key /temp /tokens"
+                "Commands: /help /status /clear /history /system /model /backend /key /temp \
+                 /tokens /preset /save /load"
                     .into(),
             );
         }
@@ -342,6 +444,71 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
                     replies.push(format!("{:>3}: {}", i + 1, h));
                 }
             }
+        }
+        "preset" => {
+            let (pname, ptext) = match rest.split_once(char::is_whitespace) {
+                Some((n, t)) => (n, t.trim()),
+                None => (rest, ""),
+            };
+            if pname == "list" || pname.is_empty() {
+                if app.ai_presets.is_empty() {
+                    replies.push("No presets defined.".into());
+                } else {
+                    replies.push(format!("Presets ({}):", app.ai_presets.len()));
+                    for (name, text) in app.ai_presets.iter() {
+                        let preview: String = text.chars().take(60).collect();
+                        replies.push(format!("  /preset {name}  —  {preview}"));
+                    }
+                }
+            } else if pname == "del" && !ptext.is_empty() {
+                if app.ai_presets.remove(ptext).is_some() {
+                    replies.push(format!("Preset '{ptext}' deleted."));
+                } else {
+                    replies.push(format!("Preset '{ptext}' not found."));
+                }
+            } else if !ptext.is_empty() {
+                app.ai_presets.insert(pname.to_string(), ptext.to_string());
+                replies.push(format!("Preset '{pname}' saved."));
+            } else if let Some(text) = app.ai_presets.get(pname) {
+                app.ai_system_prompt = text.clone();
+                replies.push(format!("Preset '{pname}' applied as system prompt."));
+            } else {
+                replies.push(format!(
+                    "Preset '{pname}' not found. Define it: /preset {pname} <text>"
+                ));
+            }
+        }
+        "save" => {
+            save_chat(app);
+            replies.push(format!("Chat saved to {}", chat_path().display()));
+        }
+        "load" => {
+            let path = chat_path();
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                replies.push(format!("No saved chat found at {}", path.display()));
+                return;
+            };
+            let mut messages: Vec<AiMessage> = Vec::new();
+            for line in content.lines() {
+                if let Ok(msg) = serde_json::from_str::<AiMessage>(line) {
+                    messages.push(msg);
+                }
+            }
+            if let Ok(mut guard) = app.ai_log.lock() {
+                guard.clear();
+                guard.extend(messages.clone());
+            }
+            if let Ok(mut output) = app.ai_output.lock() {
+                output.clear();
+            }
+            for msg in messages {
+                if msg.role == "user" {
+                    push_ai_line(app, format!("> {}", msg.text));
+                } else {
+                    push_ai_line(app, msg.text);
+                }
+            }
+            replies.push(format!("Chat restored from {}", path.display()));
         }
         _ => {
             replies.push(format!("Unknown command '/{name}'. Type /help for usage."));

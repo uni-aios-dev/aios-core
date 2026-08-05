@@ -43,6 +43,42 @@ impl LocalEngine {
     }
 
     pub async fn query(&self, request: &LlmRequest) -> LlmResult<LlmResponse> {
+        let start = std::time::Instant::now();
+        let mut output_text = String::new();
+        let tokens_used = self.generate_tokens(request, |delta| {
+            output_text.push_str(delta);
+            true
+        })?;
+
+        Ok(LlmResponse {
+            text: output_text,
+            tokens_used: tokens_used as u32,
+            duration_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// Streams generation token-by-token over `tx`. Sends `Err` first on any
+    /// failure; sends nothing on success after the final delta.
+    pub async fn query_stream(&self, request: &LlmRequest, tx: LlmStreamSink) {
+        let result = self.generate_tokens(request, |delta| {
+            if delta.is_empty() {
+                true
+            } else {
+                tx.send(Ok(delta.to_string())).is_ok()
+            }
+        });
+        if let Err(e) = result {
+            let _ = tx.send(Err(e));
+        }
+    }
+
+    /// Runs the generation loop and invokes `on_delta` for each decoded
+    /// token. Returns the number of generated tokens.
+    fn generate_tokens(
+        &self,
+        request: &LlmRequest,
+        mut on_delta: impl FnMut(&str) -> bool,
+    ) -> LlmResult<usize> {
         let model = self.model.as_ref().ok_or_else(|| {
             LlmError::NotAvailable(
                 "Model not loaded. Call load_model() or set AIOS_MODEL_PATH.".into(),
@@ -53,7 +89,6 @@ impl LocalEngine {
             .as_ref()
             .ok_or_else(|| LlmError::NotAvailable("Tokenizer not loaded".into()))?;
 
-        let start = std::time::Instant::now();
         let formatted = format!(
             "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
             request.system_prompt, request.user_prompt
@@ -89,13 +124,14 @@ impl LocalEngine {
             .unsqueeze(0)
             .map_err(|e| LlmError::ApiError(format!("Unsqueeze: {e}")))?;
 
-        let mut output_text = String::new();
         let mut all_tokens = Vec::new();
 
         let mut next_token = self.sample_next(model, &input, 0, &mut logits_processor)?;
         all_tokens.push(next_token);
         if let Ok(decoded) = self.decode_token(tokenizer_lock, next_token) {
-            output_text.push_str(&decoded);
+            if !on_delta(&decoded) {
+                return Ok(all_tokens.len());
+            }
         }
 
         for index in 0..max_tokens.saturating_sub(1) {
@@ -109,18 +145,16 @@ impl LocalEngine {
             all_tokens.push(next_token);
 
             if let Ok(decoded) = self.decode_token(tokenizer_lock, next_token) {
-                output_text.push_str(&decoded);
+                if !on_delta(&decoded) {
+                    return Ok(all_tokens.len());
+                }
             }
             if next_token == eos_token {
                 break;
             }
         }
 
-        Ok(LlmResponse {
-            text: output_text,
-            tokens_used: all_tokens.len() as u32,
-            duration_ms: start.elapsed().as_millis() as u64,
-        })
+        Ok(all_tokens.len())
     }
 
     fn sample_next(

@@ -369,6 +369,22 @@ fn draw_ai_output(frame: &mut Frame, area: Rect, app: &TuiApp) {
             }
         }
     }
+    if *app.ai_streaming.lock().unwrap() {
+        let partial = app.ai_stream.lock().unwrap().clone();
+        if !partial.is_empty() {
+            for wrapped in wrap_line(&partial, width) {
+                items.push(ListItem::new(Line::from(Span::styled(
+                    wrapped,
+                    Style::default().fg(Color::Yellow),
+                ))));
+            }
+        } else {
+            items.push(ListItem::new(Line::from(Span::styled(
+                " …",
+                Style::default().fg(Color::Yellow),
+            ))));
+        }
+    }
     if items.is_empty() {
         items.push(ListItem::new(Line::from(
             " Type a message and press Enter, or type /help for the command reference. ",
@@ -401,12 +417,19 @@ const AI_HELP: &[&str] = &[
     "  /key <api-key>   set the API key (no argument clears it)",
     "  /temp <0.0-2.0>  set sampling temperature",
     "  /tokens <1-8192> set max output tokens",
+    "  /preset <name>    apply a prompt template",
+    "  /preset <name> <text>  save a prompt template",
+    "  /preset list      list templates | /preset del <name> delete",
+    "  /save            persist the chat to disk",
+    "  /load            restore the chat from disk",
     "",
     "Notes:",
     "  * Cloud backends need an API key (AIOS_LLM_API_KEY or /key).",
     "  * Local backends need a GGUF model (AIOS_MODEL_PATH / AIOS_MODELS_DIR).",
     "  * Changes are applied to the shared engine, so the HTTP",
     "    /api/v1/llm/query endpoint uses the same configuration.",
+    "  * Responses stream in live; the chat is auto-saved to disk after",
+    "    each reply and restored on the next boot (AIOS_DATA_DIR/chat.jsonl).",
 ];
 
 fn draw_ai_help(frame: &mut Frame, area: Rect) {

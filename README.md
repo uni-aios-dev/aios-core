@@ -150,6 +150,10 @@ The installers automatically: detect platform, install Rust if missing, build re
 | `Enter` | Submit AI query |
 | `q` / `Ctrl+C` | Quit |
 
+### AI Console (Tab 3)
+
+The AI Console is a streaming LLM chat: press `i`, type a message (or a `/`-command), press `Enter`. Responses stream in live (yellow partial line). The chat auto-persists as JSON Lines to `AIOS_DATA_DIR/chat.jsonl` — saved after each reply and on quit, restored on the next boot (manual control: `/save` / `/load`). Prompt templates are managed with `/preset` (built-ins: `assistant`, `code`, `translator`, `explainer`). Full command list: `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`.
+
 ### Docker
 
 ```bash

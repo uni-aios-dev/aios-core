@@ -36,6 +36,7 @@
 - [x] Docker: Multi-stage production сборка — builder + runtime (debian:bookworm-slim), entrypoint aios-tui
 - [x] Фаза 21: aios-bridge — HTTP/WS API шлюз + Intent engine (RU/EN) + контроль capabilities
 - [x] Фаза 44: TUI ядра из 7 вкладок + `--safe-mode` + GUI AI Studio/Network Settings (v2.8.0)
+- [x] Фаза 45: сохранение чата AI Console + шаблоны `/preset` + стриминг (v2.9.0)
 
 ## Оценка готовности (2026-07-28, обновлено)
 
@@ -406,7 +407,13 @@
   - [x] Встроенная панель справки по `h` или `/help`; история промптов (последние 50) через `Up`/`Down`
   - [x] Строка состояния + отчёт `/status` включая обнаружение локальных GGUF-моделей; перенос ответов по ширине с подсветкой промптов/ошибок
   - [x] Интроспекция конфигурации в `aios-llm`: `LlmEngine::config()`, `provider_name()`, `backend_label()`; 1 новый unit-тест
-  - [ ] Будущее: сохранение чата на диск, шаблоны промптов `/preset`, потоковые ответы
+  - [x] Продолжение в Фазе 45: сохранение чата на диск + шаблоны `/preset` + потоковые ответы (v2.9.0)
+
+- [x] **Фаза 45: AI Console — сохранение чата, шаблоны `/preset`, стриминг — ЗАВЕРШЕНА (v2.9.0)**
+  - [x] Стриминговый API `aios-llm::LlmEngine::query_stream` (SSE-дельты OpenAI + Google AI Studio, локальная генерация по токенам); `extract_stream_delta` + 4 теста
+  - [x] AI Console стримит ответы вживую (жёлтая частичная строка во время запроса)
+  - [x] Чат сохраняется в JSON Lines в `AIOS_DATA_DIR/chat.jsonl`; автосохранение после каждого ответа и при выходе; восстановление при старте; ручное `/save` `/load`
+  - [x] Семейство команд `/preset` со встроенными шаблонами (`assistant`, `code`, `translator`, `explainer`): применить / создать / список / удалить
 
 - [x] **Фаза 44: TUI ядра из 7 вкладок, safe mode, GUI AI Studio + Network Settings — ЗАВЕРШЕНО (v2.8.0)**
   - [x] TUI ядра (`aios`) переструктурирован под спецификацию из 7 вкладок: System & HW / Blocks & Svc / AI Console / Studio Bridge / Network & Store / Web / Shell; `1`-`7` + `Alt`+`1`-`7` + `Tab`/`F1`/`?`; в шапке AI Tier + версия

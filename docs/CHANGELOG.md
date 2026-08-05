@@ -1,5 +1,20 @@
 # AIOS Development Log
 
+## v2.9.0 — AI Console: chat persistence, `/preset` templates, streaming (2026-08-05)
+
+### `aios-llm`: streaming queries
+- New `LlmEngine::query_stream(&LlmRequest, LlmStreamSink)` pushes text deltas over a `tokio` unbounded channel instead of returning a full response.
+- Cloud backend (`cloud.rs`) reads the HTTP body as a byte stream, splits SSE `data:` lines and extracts deltas from both the OpenAI (`choices[0].delta.content` / legacy `choices[0].text`) and Google AI Studio (`candidates[0].content.parts[0].text`) shapes via the new `extract_stream_delta` helper.
+- Local backend (`local.rs`) refactored: `query` and `query_stream` share a `generate_tokens` loop that calls an `on_delta` callback per decoded token, so local models stream per-token as well.
+- 4 new unit tests for `extract_stream_delta`.
+- Files: `aios-llm/src/types.rs`, `aios-llm/src/cloud.rs`, `aios-llm/src/local.rs`, `aios-llm/src/factory.rs`, `aios-llm/Cargo.toml`
+
+### `aios`: AI Console persistence and prompt presets
+- Responses now **stream** into the AI Console: deltas accumulate in `ai_stream` and are rendered live in yellow while the request is in flight; the final text is appended to the transcript when done. `/help` documents the streaming behavior.
+- Chat log persists as JSON Lines to `AIOS_DATA_DIR/chat.jsonl` (default `aios_data/chat.jsonl`): auto-saved after every completed reply and on quit, restored into the transcript at boot; manual control via `/save` and `/load`.
+- New `/preset` command family with four built-in templates (`assistant`, `code`, `translator`, `explainer`): `/preset <name>` applies a template as the system prompt, `/preset <name> <text>` defines/overrides one, `/preset list` lists all, `/preset del <name>` removes one.
+- Files: `aios/src/tui/mod.rs`, `aios/src/tui/app_state.rs`, `aios/src/tui/ui.rs`
+
 ## v2.8.0 — 7-tab kernel TUI, safe mode, GUI AI Studio & Network Settings (2026-08-05)
 
 ### `aios`: kernel TUI upgraded to the 7-tab spec

@@ -1,5 +1,20 @@
 # Журнал разработки AIOS
 
+## v2.9.0 — AI Console: персистентность чата, шаблоны `/preset`, стриминг (2026-08-05)
+
+### `aios-llm`: стриминговые запросы
+- Новый `LlmEngine::query_stream(&LlmRequest, LlmStreamSink)` отправляет дельты текста через unbounded-канал `tokio` вместо полного ответа.
+- Облачный бэкенд (`cloud.rs`) читает тело HTTP-ответа как поток байтов, разбивает SSE-строки `data:` и извлекает дельты из формата OpenAI (`choices[0].delta.content` / устаревший `choices[0].text`) и Google AI Studio (`candidates[0].content.parts[0].text`) через новый помощник `extract_stream_delta`.
+- Локальный бэкенд (`local.rs`) рефакторингован: `query` и `query_stream` используют общий цикл `generate_tokens` с колбэком `on_delta` на каждый декодированный токен, поэтому локальные модели тоже стримятся по токенам.
+- 4 новых unit-теста для `extract_stream_delta`.
+- Файлы: `aios-llm/src/types.rs`, `aios-llm/src/cloud.rs`, `aios-llm/src/local.rs`, `aios-llm/src/factory.rs`, `aios-llm/Cargo.toml`
+
+### `aios`: персистентность и шаблоны промптов AI Console
+- Ответы теперь **стримятся** в AI Console: дельты накапливаются в `ai_stream` и отображаются вживую жёлтым цветом, пока идёт запрос; по завершении итоговый текст добавляется в ленту. `/help` документирует стриминговое поведение.
+- Лог чата сохраняется в JSON Lines в `AIOS_DATA_DIR/chat.jsonl` (по умолчанию `aios_data/chat.jsonl`): автосохранение после каждого завершённого ответа и при выходе, восстановление в ленту при старте; ручное управление через `/save` и `/load`.
+- Новое семейство команд `/preset` с четырьмя встроенными шаблонами (`assistant`, `code`, `translator`, `explainer`): `/preset <name>` применяет шаблон как системный промпт, `/preset <name> <text>` создаёт/перезаписывает шаблон, `/preset list` показывает список, `/preset del <name>` удаляет шаблон.
+- Файлы: `aios/src/tui/mod.rs`, `aios/src/tui/app_state.rs`, `aios/src/tui/ui.rs`
+
 ## v2.8.0 — TUI ядра из 7 вкладок, safe mode, GUI AI Studio и Network Settings (2026-08-05)
 
 ### `aios`: TUI ядра приведён к спецификации из 7 вкладок

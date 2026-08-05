@@ -29,6 +29,16 @@ impl LlmEngine {
         }
     }
 
+    /// Streams a completion over `tx`, sending one message per token/delta.
+    /// Errors are sent as `Err` messages on the channel; the channel is not
+    /// closed by the caller.
+    pub async fn query_stream(&self, request: &LlmRequest, tx: LlmStreamSink) {
+        match self {
+            LlmEngine::Cloud(e) => e.query_stream(request, tx).await,
+            LlmEngine::MicroLocal(e) | LlmEngine::FullLocal(e) => e.query_stream(request, tx).await,
+        }
+    }
+
     /// Returns a clone of the active configuration for introspection.
     pub fn config(&self) -> LlmConfig {
         match self {

@@ -36,6 +36,7 @@
 - [x] Docker: Multi-stage production build — builder + runtime (debian:bookworm-slim), entrypoint aios-tui
 - [x] Phase 21: aios-bridge — HTTP/WS API gateway + Intent engine (RU/EN) + Capability enforcement
 - [x] Phase 44: 7-tab kernel TUI + `--safe-mode` + GUI AI Studio/Network Settings (v2.8.0)
+- [x] Phase 45: AI Console chat persistence + `/preset` templates + streaming (v2.9.0)
 
 ## Readiness Assessment (2026-07-29, updated)
 
@@ -408,7 +409,13 @@
   - [x] Built-in help panel (справка) toggled with `h` or `/help`; prompt history (last 50) via `Up`/`Down`
   - [x] Status footer + `/status` report incl. local GGUF model detection; word-wrapped output with prompt/error coloring
   - [x] `aios-llm` config introspection: `LlmEngine::config()`, `provider_name()`, `backend_label()`; 1 new unit test
-  - [ ] Future: chat persistence to disk, `/preset` prompt templates, streaming responses
+  - [x] Phase 45 follow-up: chat persistence to disk + `/preset` prompt templates + streaming responses (v2.9.0)
+
+- [x] **Phase 45: AI Console — chat persistence, `/preset` templates, streaming — COMPLETE (v2.9.0)**
+  - [x] `aios-llm::LlmEngine::query_stream` streaming API (OpenAI + Google AI Studio SSE deltas, per-token local generation); `extract_stream_delta` + 4 tests
+  - [x] AI Console streams responses live (yellow partial line while in flight)
+  - [x] Chat persisted as JSON Lines to `AIOS_DATA_DIR/chat.jsonl`; auto-save after each reply + on quit; restored at boot; manual `/save` `/load`
+  - [x] `/preset` command family with built-in templates (`assistant`, `code`, `translator`, `explainer`): apply / define / list / delete
 
 - [x] **Phase 44: 7-tab kernel TUI, safe mode, GUI AI Studio + Network Settings — COMPLETE (v2.8.0)**
   - [x] Kernel TUI (`aios`) restructured to the 7-tab spec: System & HW / Blocks & Svc / AI Console / Studio Bridge / Network & Store / Web / Shell; `1`-`7` + `Alt`+`1`-`7` + `Tab`/`F1`/`?`; header shows AI Tier + version

@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt"] }
-reqwest = { version = "0.12", features = ["json"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 thiserror = { workspace = true }
 log = { workspace = true }
 
