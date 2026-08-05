@@ -417,6 +417,12 @@
   - [x] Chat persisted as JSON Lines to `AIOS_DATA_DIR/chat.jsonl`; auto-save after each reply + on quit; restored at boot; manual `/save` `/load`
   - [x] `/preset` command family with built-in templates (`assistant`, `code`, `translator`, `explainer`): apply / define / list / delete
 
+- [x] **Phase 45b: GUI AI Studio parity — streaming, persistence, `/preset` — COMPLETE (v2.9.1)**
+  - [x] GUI AI Studio streams responses live (yellow partial line) via the same `query_stream` channel; requests deduplicated into one worker slot
+  - [x] GUI chat persisted to the shared `AIOS_DATA_DIR/chat.jsonl`; auto-save after each reply + on window close; restored at boot; manual `/save` `/load`
+  - [x] GUI `/preset` templates persisted to `AIOS_DATA_DIR/presets.json`; built-in seeds overlaid by saved presets at boot
+  - [x] New GUI commands: `/system <text>`, `/history`, `/preset`, `/save`, `/load` + updated help panel and hints
+
 - [x] **Phase 44: 7-tab kernel TUI, safe mode, GUI AI Studio + Network Settings — COMPLETE (v2.8.0)**
   - [x] Kernel TUI (`aios`) restructured to the 7-tab spec: System & HW / Blocks & Svc / AI Console / Studio Bridge / Network & Store / Web / Shell; `1`-`7` + `Alt`+`1`-`7` + `Tab`/`F1`/`?`; header shows AI Tier + version
   - [x] Blocks tab `r`/`k`/`l` restart/unload/load; Web tab full spec keymap (`g j k o u d PageUp PageDown b B n`); Shell tab full command set (`ps blocks kill spawn store list/search/install net get/set status logs restart help clear`) typed inline
@@ -425,7 +431,7 @@
   - [x] GUI AI Studio: async LLM chat with slash commands, background tokio task, status line
   - [x] GUI Network Settings: form (hostname/port/timeouts/private-access/DNS/user-agent) with Save/Reset + live JSON preview
   - [x] GUI status bar: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with live IPC packet counter
-  - [ ] Future: chat persistence in GUI AI Studio, `/preset` templates, streaming in GUI
+  - [x] GUI AI Studio parity: streaming + chat/preset persistence (Phase 45b, v2.9.1)
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |

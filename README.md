@@ -154,6 +154,8 @@ The installers automatically: detect platform, install Rust if missing, build re
 
 The AI Console is a streaming LLM chat: press `i`, type a message (or a `/`-command), press `Enter`. Responses stream in live (yellow partial line). The chat auto-persists as JSON Lines to `AIOS_DATA_DIR/chat.jsonl` — saved after each reply and on quit, restored on the next boot (manual control: `/save` / `/load`). Prompt templates are managed with `/preset` (built-ins: `assistant`, `code`, `translator`, `explainer`). Full command list: `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`.
 
+The GUI **AI Studio** tab (F3) offers the same streaming chat with identical commands and persistence (same `AIOS_DATA_DIR/chat.jsonl` / `presets.json` files), so the console and the dashboard stay in sync.
+
 ### Docker
 
 ```bash

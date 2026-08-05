@@ -415,6 +415,12 @@
   - [x] Чат сохраняется в JSON Lines в `AIOS_DATA_DIR/chat.jsonl`; автосохранение после каждого ответа и при выходе; восстановление при старте; ручное `/save` `/load`
   - [x] Семейство команд `/preset` со встроенными шаблонами (`assistant`, `code`, `translator`, `explainer`): применить / создать / список / удалить
 
+- [x] **Фаза 45b: паритет GUI AI Studio — стриминг, персистентность, `/preset` — ЗАВЕРШЕНО (v2.9.1)**
+  - [x] GUI AI Studio стримит ответы вживую (жёлтая частичная строка) через тот же канал `query_stream`; запросы дедуплицируются в один рабочий слот
+  - [x] Чат GUI сохраняется в общий `AIOS_DATA_DIR/chat.jsonl`; автосохранение после каждого ответа и при закрытии окна; восстановление при старте; ручное `/save` `/load`
+  - [x] Шаблоны `/preset` GUI сохраняются в `AIOS_DATA_DIR/presets.json`; встроенные шаблоны при старте перекрываются сохранёнными
+  - [x] Новые команды GUI: `/system <text>`, `/history`, `/preset`, `/save`, `/load` + обновлённая справка и подсказки
+
 - [x] **Фаза 44: TUI ядра из 7 вкладок, safe mode, GUI AI Studio + Network Settings — ЗАВЕРШЕНО (v2.8.0)**
   - [x] TUI ядра (`aios`) переструктурирован под спецификацию из 7 вкладок: System & HW / Blocks & Svc / AI Console / Studio Bridge / Network & Store / Web / Shell; `1`-`7` + `Alt`+`1`-`7` + `Tab`/`F1`/`?`; в шапке AI Tier + версия
   - [x] Вкладка Blocks `r`/`k`/`l` перезапуск/выгрузка/загрузка; вкладка Web полный набор клавиш (`g j k o u d PageUp PageDown b B n`); вкладка Shell полный набор команд (`ps blocks kill spawn store list/search/install net get/set status logs restart help clear`) с вводом инлайном
@@ -423,7 +429,7 @@
   - [x] GUI AI Studio: асинхронный чат с LLM со слэш-командами, фоновая tokio-задача, строка статуса
   - [x] GUI Network Settings: форма (hostname/port/таймауты/private-access/DNS/user-agent) с Save/Reset + живой JSON-предпросмотр
   - [x] Строка состояния GUI: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` с живым счётчиком IPC-пакетов
-  - [ ] Будущее: сохранение чата в GUI AI Studio, шаблоны `/preset`, потоковые ответы в GUI
+  - [x] Паритет GUI AI Studio: стриминг + персистентность чата/шаблонов (Фаза 45b, v2.9.1)
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |

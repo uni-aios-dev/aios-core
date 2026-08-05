@@ -2,7 +2,7 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.9.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, and the v2.9.0 chat persistence / `/preset` / streaming work added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0.
+As of v2.9.1, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, and the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0 / v2.9.1.
 
 ### KNOWN LIMITATION: signed-manifest enforcement is opt-in via env
 - **Status:** BY DESIGN
@@ -29,15 +29,14 @@ As of v2.9.0, all tests pass, clippy reports zero warnings, and the 18 bugs foun
 
 ### KNOWN LIMITATION: AI Console chat log is a single JSONL file, unbounded
 - **Status:** BY DESIGN
-- **Symptom:** `AIOS_DATA_DIR/chat.jsonl` grows without rotation; every message (user + assistant, full text) is appended on each reply and the whole transcript is re-written on quit
+- **Symptom:** `AIOS_DATA_DIR/chat.jsonl` grows without rotation; every message (user + assistant, full text) is appended on each reply and the whole transcript is re-written on quit. The TUI AI Console and the GUI AI Studio share the same default file, so the most recent writer wins on boot
 - **Workaround:** Delete or archive `aios_data/chat.jsonl` when it grows too large; `/clear` clears the on-screen transcript but does not delete the file
 - **Note:** The file is parsed line-by-line so a corrupt trailing line does not break startup
 
-### KNOWN LIMITATION: `/preset` templates are in-memory only
-- **Status:** BY DESIGN
-- **Symptom:** Presets defined with `/preset <name> <text>` (and the four built-ins) live only for the current session; custom templates are lost on exit
-- **Workaround:** Re-define templates each session, or set the prompt via `/system ...`
-- **Note:** Planned follow-up: persist `ai_presets` to `AIOS_DATA_DIR/presets.json` (see TODO)
+### KNOWN LIMITATION: `/preset` templates are session-scoped (TUI vs GUI files)
+- **Status:** RESOLVED in v2.9.1 — presets persist to `AIOS_DATA_DIR/presets.json` in both the TUI and the GUI; custom templates survive restarts
+- **Symptom (resolved):** Presets defined with `/preset <name> <text>` were lost on exit before persistence was wired up
+- **Note:** TUI and GUI share the same `AIOS_DATA_DIR/presets.json` default path, so the most recent writer wins on boot
 
 ## Historical Issues (Fixed)
 

@@ -521,7 +521,7 @@ Ready → Running → Terminated
 Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
 
 **Header zone**:
-- Project title "AIOS v2.8.0"
+- Project title "AIOS v2.9.1"
 - Detected AI tier with color coding: Tier1=Green, Tier2=Yellow, Tier3=Red
 - `SAFE MODE` badge (Yellow) when booted with `--safe-mode`
 - Watchdog state: OK (Green), SUSPENDED (Red), RECOVERING (Yellow), SAFE MODE (Magenta)
@@ -609,7 +609,7 @@ Native egui/eframe dashboard with 7 tabs: System Dashboard, WASM Blocks, AI Stud
 
 - **System Dashboard (F1)**: stat cards (RAM, blocks, processes, watchdog), system panel (CPU/GPU/storage/HW tier), RAM sparkline, priority distribution, processes table (PID, Name, Priority, State, RAM, CPU ms, Crashes) with Refresh/Kill/Suspend/Resume, activity log
 - **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap
-- **AI Studio (F3)**: async LLM chat — message list, Enter-to-send (focus retained), slash commands `/help /backend /model /key /temp /tokens /clear /history`, status line (backend/model/temp/tokens/busy); requests run on a background tokio task so the UI stays responsive
+- **AI Studio (F3)**: async LLM chat — message list, streaming replies (live yellow partial line), Enter-to-send (focus retained), slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`, status line (backend/model/temp/tokens/busy); requests stream over a background tokio task so the UI stays responsive. The chat auto-persists to the shared `AIOS_DATA_DIR/chat.jsonl` and `/preset` templates to `AIOS_DATA_DIR/presets.json` (same files as the TUI AI Console)
 - **App Store (F4)**: searchable catalog table with Install/Update/Uninstall
 - **Network Settings (F5)**: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON IPC update to `net_settings`) and Reset, plus a live JSON preview
 - **Deps (F6)**: dependency graph summary, load order chain, depends/depended-by table

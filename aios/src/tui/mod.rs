@@ -21,7 +21,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,7 +36,8 @@ pub fn run_tui(state: Arc<Mutex<OrchestratorState>>) -> Result<(), Box<dyn std::
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    let app = TuiApp::new(state.clone());
+    let mut app = TuiApp::new(state.clone());
+    load_presets(&mut app);
     load_chat(&app);
 
     let res = run(&mut terminal, app);
@@ -156,6 +157,41 @@ fn push_ai_line(app: &TuiApp, line: String) {
 /// Path of the persisted chat log (JSON Lines under AIOS_DATA_DIR).
 fn chat_path() -> PathBuf {
     PathBuf::from(env_or("AIOS_DATA_DIR", "aios_data")).join("chat.jsonl")
+}
+
+/// Path of the persisted prompt templates (JSON object under AIOS_DATA_DIR).
+fn presets_path() -> PathBuf {
+    PathBuf::from(env_or("AIOS_DATA_DIR", "aios_data")).join("presets.json")
+}
+
+/// Writes the preset map as a JSON object; missing parent dirs are created.
+fn save_presets(app: &TuiApp) {
+    let path = presets_path();
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(json) = serde_json::to_string_pretty(&app.ai_presets) else {
+        return;
+    };
+    let _ = std::fs::write(path, json);
+}
+
+/// Overlays persisted presets over the built-in seeds at boot.
+fn load_presets(app: &mut TuiApp) {
+    let Ok(content) = std::fs::read_to_string(presets_path()) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_str::<BTreeMap<String, String>>(&content) else {
+        return;
+    };
+    for (name, text) in saved {
+        if !name.trim().is_empty() && !text.trim().is_empty() {
+            app.ai_presets.insert(name, text);
+        }
+    }
 }
 
 fn save_chat_to(path: &std::path::Path, ai_log: &Arc<Mutex<Vec<AiMessage>>>) {
@@ -462,12 +498,14 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
                 }
             } else if pname == "del" && !ptext.is_empty() {
                 if app.ai_presets.remove(ptext).is_some() {
+                    save_presets(app);
                     replies.push(format!("Preset '{ptext}' deleted."));
                 } else {
                     replies.push(format!("Preset '{ptext}' not found."));
                 }
             } else if !ptext.is_empty() {
                 app.ai_presets.insert(pname.to_string(), ptext.to_string());
+                save_presets(app);
                 replies.push(format!("Preset '{pname}' saved."));
             } else if let Some(text) = app.ai_presets.get(pname) {
                 app.ai_system_prompt = text.clone();

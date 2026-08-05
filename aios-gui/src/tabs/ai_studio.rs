@@ -34,7 +34,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(if app.ai_busy {
-                "thinking..."
+                "streaming..."
             } else {
                 &app.ai_status
             })
@@ -67,6 +67,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
                             .size(12.0)
                             .monospace(),
                     );
+                }
+                if app.ai_busy {
+                    let partial = app.ai_stream.lock().unwrap().clone();
+                    if partial.is_empty() {
+                        ui.label(egui::RichText::new(" …").color(theme.warning).size(12.0));
+                    } else {
+                        ui.label(
+                            egui::RichText::new(partial)
+                                .color(theme.warning)
+                                .size(12.0)
+                                .monospace(),
+                        );
+                    }
                 }
             });
     });
@@ -103,7 +116,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
 
     ui.label(
         egui::RichText::new(
-            "Commands: /help /status /clear /model <name> /backend <groq|openrouter|google|micro|full> /key <api-key> /temp <0-2> /tokens <1-8192>",
+            "Commands: /help /status /clear /history /system <text> /model <name> /backend <groq|openrouter|google|micro|full> /key <api-key> /temp <0-2> /tokens <1-8192> /preset <name> /save /load",
         )
         .color(theme.muted)
         .size(10.0),

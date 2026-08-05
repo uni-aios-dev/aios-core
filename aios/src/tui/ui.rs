@@ -49,7 +49,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
     let header = Line::from(vec![
         Span::styled(
-            " AIOS v2.8.0 ",
+            " AIOS v2.9.1 ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),

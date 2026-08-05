@@ -310,7 +310,7 @@ cargo run --bin aios-gui
 
 ```
 ┌──────────┬───────────────────────────────────────────┐
-│          │  AIOS v2.8.0 | HW Tier | IPC: 0 pkts      │  ← Top bar
+│          │  AIOS v2.9.1 | HW Tier | IPC: 0 pkts      │  ← Top bar
 │ System   │───────────────────────────────────────────│
 │ WASM     │                                           │
 │ AI Studio│          Central panel                    │
@@ -356,11 +356,12 @@ cargo run --bin aios-gui
 - **Load Dialog**: Step 1 — enter block name, Step 2 — enter version, Enter/Cancel
 
 #### AI Studio (F3)
-- **Chat panel**: message list, streaming replies, error highlights
+- **Chat panel**: message list, **streaming replies** (live yellow partial line while in flight), error highlights
 - **Input**: type a message or a slash command, `Enter` (or the Send button) submits; focus stays in the input
-- **Commands**: `/help /backend /model /key /temp /tokens /clear /history` (same grammar as the kernel TUI AI Console)
+- **Commands**: `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load` (same grammar as the kernel TUI AI Console)
 - **Status line**: backend, model, temperature, token budget, busy/error state
-- **Async model**: responses run on a background tokio task; the UI stays responsive, results appear when ready
+- **Async model**: responses stream over a background tokio task; the UI stays responsive, partial text appears live
+- **Persistence**: the chat auto-saves to `AIOS_DATA_DIR/chat.jsonl` after every completed reply and on window close (restored at boot); `/preset` templates persist to `AIOS_DATA_DIR/presets.json`
 
 #### App Store (F4)
 - **Search box**: filter by name, description, or tags

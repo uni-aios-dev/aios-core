@@ -1,5 +1,15 @@
 # AIOS Development Log
 
+## v2.9.1 — GUI AI Studio: streaming, `/preset`, persistence parity (2026-08-05)
+
+### `aios-gui`: AI Studio matches the TUI AI Console
+- Chat replies now **stream**: deltas arrive over an unbounded channel from a background tokio task and are rendered live (yellow line) while the request is in flight. Requests are deduplicated into a single worker slot (`pending_ai`) so concurrent sends cannot corrupt the transcript.
+- Chat log persists as JSON Lines to the shared `AIOS_DATA_DIR/chat.jsonl` (same schema as the TUI): auto-saved after every completed reply and on window close, restored at boot via `ai_load_persisted`; manual control via `/save` and `/load`.
+- Prompt templates persist to `AIOS_DATA_DIR/presets.json` (pretty JSON, same format as the TUI): `/preset <name>` applies a template as the system prompt, `/preset <name> <text>` defines one, `/preset list` lists all, `/preset del <name>` removes one. Built-in seeds (`assistant`/`code`/`translator`/`explainer`) are overlaid by saved presets at boot.
+- New slash commands: `/system <text>`, `/history`, `/preset`, `/save`, `/load` (added to the AI Studio help panel); UI hints updated.
+- The kernel TUI header version is bumped to `AIOS v2.9.1`.
+- Files: `aios-gui/src/app.rs`, `aios-gui/src/main.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios/src/tui/ui.rs`
+
 ## v2.9.0 — AI Console: chat persistence, `/preset` templates, streaming (2026-08-05)
 
 ### `aios-llm`: streaming queries

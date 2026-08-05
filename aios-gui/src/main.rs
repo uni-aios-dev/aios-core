@@ -32,7 +32,7 @@ fn main() -> eframe::Result<()> {
             let theme = theme::AiosTheme::default();
             theme.apply(&cc.egui_ctx);
 
-            Ok(Box::new(app::AiosApp::new(
+            let mut app = app::AiosApp::new(
                 ai_tier,
                 hardware,
                 dep_blocks,
@@ -40,7 +40,9 @@ fn main() -> eframe::Result<()> {
                 dep_edges,
                 0,
                 4096,
-            )))
+            );
+            app.ai_load_persisted();
+            Ok(Box::new(app))
         }),
     )
 }

@@ -5,7 +5,51 @@ use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_net_config::config::NetworkConfig;
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// One persisted chat entry of the AI Studio (same JSONL schema as the TUI).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AiMessage {
+    pub role: String,
+    pub text: String,
+}
+
+/// Default data directory used when `AIOS_DATA_DIR` is not set.
+fn data_dir() -> PathBuf {
+    PathBuf::from(std::env::var("AIOS_DATA_DIR").unwrap_or_else(|_| "aios_data".into()))
+}
+
+fn chat_path() -> PathBuf {
+    data_dir().join("chat.jsonl")
+}
+
+fn presets_path() -> PathBuf {
+    data_dir().join("presets.json")
+}
+
+fn seed_presets() -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    m.insert("assistant".into(), "You are a helpful AI assistant.".into());
+    m.insert(
+        "code".into(),
+        "You are an expert senior software engineer. Give concise, idiomatic \
+         code with brief explanations. Prefer standard library solutions."
+            .into(),
+    );
+    m.insert(
+        "translator".into(),
+        "You translate text between languages accurately, preserving meaning \
+         and tone. Output only the translation."
+            .into(),
+    );
+    m.insert(
+        "explainer".into(),
+        "You explain complex topics in simple terms with concrete examples.".into(),
+    );
+    m
+}
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
@@ -85,6 +129,10 @@ pub struct AiosApp {
     pub ai_output: Vec<String>,
     pub ai_busy: bool,
     pub ai_status: String,
+    pub ai_system_prompt: String,
+    pub ai_presets: BTreeMap<String, String>,
+    pub ai_log: Vec<AiMessage>,
+    pub ai_stream: Arc<Mutex<String>>,
     pending_ai: Arc<Mutex<Option<Result<String, String>>>>,
 
     pub ipc_traffic: u64,
@@ -143,6 +191,10 @@ impl AiosApp {
             ai_output: Vec::new(),
             ai_busy: false,
             ai_status: "ready".into(),
+            ai_system_prompt: "You are a helpful AI assistant.".into(),
+            ai_presets: seed_presets(),
+            ai_log: Vec::new(),
+            ai_stream: Arc::new(Mutex::new(String::new())),
             pending_ai: Arc::new(Mutex::new(None)),
             ipc_traffic: 0,
             net_config: NetworkConfig::default(),
@@ -347,7 +399,8 @@ impl AiosApp {
     }
 
     /// Send the current AI input as a query (or a `/command`) on a background
-    /// thread using its own tokio runtime; the UI stays responsive.
+    /// thread using its own tokio runtime; the UI stays responsive and the
+    /// answer streams into `ai_stream` token-by-token.
     pub fn ai_send(&mut self) {
         let input = self.ai_input.trim().to_string();
         if input.is_empty() || self.ai_busy {
@@ -359,23 +412,51 @@ impl AiosApp {
             return;
         }
         self.ai_output.push(format!("> {input}"));
+        self.ai_log.push(AiMessage {
+            role: "user".into(),
+            text: input.clone(),
+        });
         let config = self.ai_config.clone();
+        let system = self.ai_system_prompt.clone();
         let slot = self.pending_ai.clone();
+        let stream = self.ai_stream.clone();
         self.ai_busy = true;
-        self.ai_status = "thinking...".into();
+        self.ai_status = "streaming...".into();
+        if let Ok(mut s) = stream.lock() {
+            s.clear();
+        }
         std::thread::spawn(move || {
             let result = match tokio::runtime::Runtime::new() {
                 Ok(rt) => {
                     let engine = aios_llm::LlmEngine::from_config(config.clone());
                     let req = aios_llm::LlmRequest {
-                        system_prompt: "You are a helpful AI assistant.".into(),
+                        system_prompt: system,
                         user_prompt: input,
                         max_tokens: config.max_tokens,
                         temperature: config.temperature,
                     };
-                    rt.block_on(engine.query(&req))
-                        .map(|r| r.text)
-                        .map_err(|e| e.to_string())
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                    rt.spawn(async move { engine.query_stream(&req, tx).await });
+                    let mut full = String::new();
+                    let mut error: Option<String> = None;
+                    while let Some(item) = rx.blocking_recv() {
+                        match item {
+                            Ok(delta) => {
+                                full.push_str(&delta);
+                                if let Ok(mut s) = stream.lock() {
+                                    s.push_str(&delta);
+                                }
+                            }
+                            Err(e) => {
+                                error = Some(e.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    match error {
+                        Some(e) => Err(e),
+                        None => Ok(full),
+                    }
                 }
                 Err(e) => Err(format!("runtime init failed: {e}")),
             };
@@ -393,14 +474,30 @@ impl AiosApp {
         };
         if let Some(result) = got {
             self.ai_busy = false;
+            let tail = {
+                let mut s = self.ai_stream.lock().unwrap();
+                let tail = s.clone();
+                s.clear();
+                tail
+            };
             match result {
                 Ok(text) => {
                     let chars = text.len();
-                    self.ai_output.push(text);
+                    if !tail.trim().is_empty() {
+                        self.ai_output.push(tail.clone());
+                        self.ai_log.push(AiMessage {
+                            role: "assistant".into(),
+                            text: tail,
+                        });
+                        self.ai_save_chat();
+                    }
                     self.ai_status = "ready".into();
                     self.add_log(format!("AI: query returned {chars} chars"));
                 }
                 Err(e) => {
+                    if !tail.trim().is_empty() {
+                        self.ai_output.push(tail);
+                    }
                     self.ai_output.push(format!("[error] {e}"));
                     self.ai_status = "error".into();
                     self.add_log(format!("AI: query failed: {e}"));
@@ -420,16 +517,88 @@ impl AiosApp {
                     "/help            open this panel",
                     "/status          show backend, model and parameter info",
                     "/clear           clear the chat output",
+                    "/history         list the recent prompts",
+                    "/system <text>   set the system prompt",
                     "/model <name>    set the model",
                     "/backend <kind>  groq | openrouter | google | micro | full",
                     "/key <api-key>   set the API key (no argument clears it)",
                     "/temp <0.0-2.0>  set sampling temperature",
                     "/tokens <1-8192> set max output tokens",
+                    "/preset <name>   apply a prompt template",
+                    "/preset <name> <text>  save a template | list | del <name>",
+                    "/save            persist the chat to disk",
+                    "/load            restore the chat from disk",
                 ] {
                     self.ai_output.push(format!("  {l}"));
                 }
             }
             "clear" => self.ai_output.clear(),
+            "history" => {
+                if self.ai_log.is_empty() {
+                    self.ai_output.push("  history is empty".into());
+                } else {
+                    for msg in self.ai_log.iter().filter(|m| m.role == "user") {
+                        self.ai_output.push(format!("  > {}", msg.text));
+                    }
+                }
+            }
+            "system" => {
+                if arg.is_empty() {
+                    self.ai_output
+                        .push(format!("  system prompt: {}", self.ai_system_prompt));
+                } else {
+                    self.ai_system_prompt = arg.to_string();
+                    self.ai_output.push("  system prompt updated".into());
+                }
+            }
+            "preset" => {
+                let (pname, ptext) = match arg.split_once(char::is_whitespace) {
+                    Some((n, t)) => (n, t.trim()),
+                    None => (arg, ""),
+                };
+                if pname == "list" || pname.is_empty() {
+                    if self.ai_presets.is_empty() {
+                        self.ai_output.push("  no presets defined".into());
+                    } else {
+                        self.ai_output
+                            .push(format!("  presets ({}):", self.ai_presets.len()));
+                        for (name, text) in self.ai_presets.iter() {
+                            let preview: String = text.chars().take(60).collect();
+                            self.ai_output
+                                .push(format!("    /preset {name} — {preview}"));
+                        }
+                    }
+                } else if pname == "del" && !ptext.is_empty() {
+                    if self.ai_presets.remove(ptext).is_some() {
+                        self.ai_save_presets();
+                        self.ai_output.push(format!("  preset '{ptext}' deleted"));
+                    } else {
+                        self.ai_output.push(format!("  preset '{ptext}' not found"));
+                    }
+                } else if !ptext.is_empty() {
+                    self.ai_presets.insert(pname.to_string(), ptext.to_string());
+                    self.ai_save_presets();
+                    self.ai_output.push(format!("  preset '{pname}' saved"));
+                } else if let Some(text) = self.ai_presets.get(pname) {
+                    self.ai_system_prompt = text.clone();
+                    self.ai_output
+                        .push(format!("  preset '{pname}' applied as system prompt"));
+                } else {
+                    self.ai_output.push(format!(
+                        "  preset '{pname}' not found — define: /preset {pname} <text>"
+                    ));
+                }
+            }
+            "save" => {
+                self.ai_save_chat();
+                self.ai_output
+                    .push(format!("  chat saved to {}", chat_path().display()));
+            }
+            "load" => {
+                self.ai_restore_chat();
+                self.ai_output
+                    .push(format!("  chat restored from {}", chat_path().display()));
+            }
             "status" => {
                 let backend = match self.ai_config.backend {
                     aios_llm::BackendKind::Cloud(ref p) => {
@@ -511,6 +680,86 @@ impl AiosApp {
         }
     }
 
+    /// Writes the chat log as JSON Lines (same schema as the TUI AI Console).
+    pub fn ai_save_chat(&mut self) {
+        let path = chat_path();
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        let mut buf = String::new();
+        for msg in &self.ai_log {
+            if let Ok(line) = serde_json::to_string(msg) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+        }
+        let _ = std::fs::write(path, buf);
+    }
+
+    /// Writes the prompt templates as a JSON object.
+    pub fn ai_save_presets(&mut self) {
+        let path = presets_path();
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.ai_presets) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// Restores a previously saved chat from disk, replacing the transcript.
+    pub fn ai_restore_chat(&mut self) {
+        let Ok(content) = std::fs::read_to_string(chat_path()) else {
+            return;
+        };
+        let mut messages: Vec<AiMessage> = Vec::new();
+        for line in content.lines() {
+            if let Ok(msg) = serde_json::from_str::<AiMessage>(line) {
+                messages.push(msg);
+            }
+        }
+        if messages.is_empty() {
+            return;
+        }
+        self.ai_log = messages;
+        self.ai_output.clear();
+        for msg in &self.ai_log {
+            if msg.role == "user" {
+                self.ai_output.push(format!("> {}", msg.text));
+            } else {
+                self.ai_output.push(msg.text.clone());
+            }
+        }
+        self.ai_status = "chat restored from disk".into();
+    }
+
+    /// Overlays persisted presets over the built-in seeds at boot.
+    pub fn ai_load_presets(&mut self) {
+        let Ok(content) = std::fs::read_to_string(presets_path()) else {
+            return;
+        };
+        let Ok(saved) = serde_json::from_str::<BTreeMap<String, String>>(&content) else {
+            return;
+        };
+        for (name, text) in saved {
+            if !name.trim().is_empty() && !text.trim().is_empty() {
+                self.ai_presets.insert(name, text);
+            }
+        }
+    }
+
+    /// Loads persisted chat + presets (called once at startup).
+    pub fn ai_load_persisted(&mut self) {
+        self.ai_load_presets();
+        self.ai_restore_chat();
+    }
+
     pub fn net_save(&mut self) {
         let json = self.net_config.to_json();
         self.net_status = Some(format!("Saved: {json}"));
@@ -557,6 +806,14 @@ impl AiosApp {
     }
 }
 
+impl Drop for AiosApp {
+    fn drop(&mut self) {
+        if !self.ai_log.is_empty() {
+            self.ai_save_chat();
+        }
+    }
+}
+
 impl eframe::App for AiosApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let theme = AiosTheme::default();
@@ -564,6 +821,10 @@ impl eframe::App for AiosApp {
 
         self.poll_browser_open();
         self.poll_ai();
+
+        if self.ai_busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         self.uptime_secs += 1;
         self.ipc_traffic = self.ipc_traffic.wrapping_add(1);
@@ -876,7 +1137,7 @@ mod tests {
         });
         app.marketplace_search = "test".into();
         app.search_marketplace();
-        assert!(app.marketplace_status.unwrap().contains("1"));
+        assert!(app.marketplace_status.as_deref().unwrap().contains("1"));
     }
 
     #[test]
