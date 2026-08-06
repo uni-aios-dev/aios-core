@@ -1129,3 +1129,21 @@ User Input (TUI)
 10. Запуск цикла событий TUI (или цикла демона)
 
 Браузер работает «из коробки» на новом компьютере: для запуска не нужны ни конфиг-файлы, ни установленный браузер, ни сеть — блок активен в топологии, доступен по IPC, а вкладка Web (`B`/`n`/омнибокс) открывает любой URL в нативном WebView.
+
+## Слой 7: Live USB развёртывание (`live/`)
+
+### Обзор
+Каталог `live/` собирает гибридный (BIOS+UEFI) ISO-образ, который грузится сразу в TUI `aios` на Linux — без Windows и без предустановленной системы. Образ воспроизводимо собирается в Docker через `live/build.sh` и записывается на флешку.
+
+### Структура и цепочка загрузки
+- `live/build.sh` — сборка в Docker: Alpine 3.24 minirootfs (распаковка, `chroot` apk install), static-musl release сборка `aios` (офлайн-крейты через монтирование registry из `CARGO_HOME`, сборка в `/tmp/target` во избежание I/O-ошибок NTFS bind-mount), squashfs из rootfs, кастомный initramfs, GRUB2
+- `live/init.rs` — init busybox: сканирует блочные устройства, монтирует `/dev/aioslivedata` (iso9660) или `/dev/aiosliveiso` (vfat), loop-mount `boot/aios.squashfs`, `switch_root` в него, запуск `rcS`
+- `live/rcS` — mount proc/sys/dev, DHCP-сеть на всех ethernet/wifi-интерфейсах, запуск TUI AIOS на `tty1`
+- `live/aios-launch` — запускает `aios` на `tty1`, перезапуск при падении, откат в шелл
+- `live/aios-install` — интерактивный установщик: список дисков, выбор цели (например `sda`), разметка GPT (512 МБ EFI + ext4 root), копирование системы, установка GRUB
+- `live/grub.cfg` — меню GRUB: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 с по умолчанию
+- `live/inittab` — без getty: `aios-launch` на tty1, askhell на tty2
+
+### Жизненный цикл
+- Загрузка: BIOS/UEFI → GRUB → initramfs init → squashfs root (только чтение; `/tmp`, `/run`, `/var/log` на tmpfs) → TUI `aios` → `Esc`/`q` в шелл `#` → `aios-install` для постоянной установки на диск
+- Флаги сборки: `aios` собирается с `--no-default-features` для Live-образа (без webview) — см. feature `webview` в `Cargo.toml` (v2.9.4)

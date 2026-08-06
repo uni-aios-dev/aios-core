@@ -1,0 +1,17 @@
+#!/bin/sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+hostname aios
+mount -t tmpfs tmpfs /tmp 2>/dev/null
+mount -t tmpfs tmpfs /var/tmp 2>/dev/null
+mkdir -p /run
+mount -t tmpfs tmpfs /run 2>/dev/null
+mount -t tmpfs tmpfs /var/log 2>/dev/null
+ip link set lo up 2>/dev/null
+for iface in /sys/class/net/e* /sys/class/net/w*; do
+  [ -e "$iface" ] || continue
+  ifname=$(basename "$iface")
+  [ "$ifname" = "lo" ] && continue
+  ip link set "$ifname" up 2>/dev/null
+  udhcpc -i "$ifname" -q -n 2>/dev/null
+done
+echo "AIOS Live: system ready."

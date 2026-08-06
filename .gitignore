@@ -22,3 +22,6 @@ aios_data/
 PHASE-*.txt
 ФАЗА-*.txt
 IMPLEMENTATION-SUMMARY.md
+
+# Prebuilt Windows binaries / installer payloads (built on demand)
+tests/AIOS/

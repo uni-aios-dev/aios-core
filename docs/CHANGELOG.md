@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## v2.9.5 — Live USB bootable image + Linux fixes (2026-08-06)
+
+### Live USB (bootable AIOS stick)
+- Built a fully bootable **hybrid ISO** (BIOS + UEFI) labeled `AIOS-LIVE` (~1.24 GB) that boots a Linux kernel and auto-launches the AIOS kernel TUI.
+- Layout: GRUB menu (AIOS Live / verbose console / installer entry), `/boot/vmlinuz` (Alpine `linux-lts` 6.18), `/boot/initramfs.gz` (custom busybox init that finds and loop-mounts the squashfs), `/boot/aios.squashfs` (compressed rootfs with the static-musl `aios` binary and installer).
+- Rootfs is a minimal Alpine 3.24 minirootfs; system boots into the AIOS TUI on `tty1`; network (DHCP) is brought up at boot; `aios-install` installs AIOS to a local disk (GPT: EFI + ext4, GRUB bootloader).
+- Build is reproducible via `live/build.sh` in Docker (`alpine:latest`, offline crates from the host registry): static-musl kernel without `webview`, alpine minirootfs, squashfs, initramfs, `grub-mkrescue`.
+- Flashed to a 1.9 GB USB stick (PS2) and verified: written byte-for-byte, SHA-256 of the stick equals the ISO (`67596162...`).
+
+### `aios`: Linux build fixes (`hw_probe.rs`)
+- The `#[cfg(target_os = "linux")]` GPU probe called `Command::output()` but forgot `.ok()?.stdout` before `String::from_utf8(...)` (two call sites), so the crate never compiled for Linux. Fixed both Linux sites and the equivalent macOS one.
+- Verified: Linux static-musl release build now compiles; Windows default build and tests unchanged.
+- Files: `aios/src/hw_probe.rs`, `live/*` (new build scripts), `docs/CHANGELOG.md` (+ `.ru`)
+
 ## v2.9.4 — optional webview feature for headless/Live builds (2026-08-06)
 
 ### `aios`: `webview` cargo feature

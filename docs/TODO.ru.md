@@ -37,6 +37,7 @@
 - [x] Фаза 21: aios-bridge — HTTP/WS API шлюз + Intent engine (RU/EN) + контроль capabilities
 - [x] Фаза 44: TUI ядра из 7 вкладок + `--safe-mode` + GUI AI Studio/Network Settings (v2.8.0)
 - [x] Фаза 45: сохранение чата AI Console + шаблоны `/preset` + стриминг (v2.9.0)
+- [x] Фаза 46: загрузочный Live USB образ — гибридный BIOS+UEFI ISO с ядром Linux, автозапуском TUI AIOS, установщиком `aios-install`, воспроизводимой сборкой `live/build.sh` (v2.9.5)
 
 ## Оценка готовности (2026-07-28, обновлено)
 

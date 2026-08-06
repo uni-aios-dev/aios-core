@@ -37,6 +37,7 @@
 - [x] Phase 21: aios-bridge — HTTP/WS API gateway + Intent engine (RU/EN) + Capability enforcement
 - [x] Phase 44: 7-tab kernel TUI + `--safe-mode` + GUI AI Studio/Network Settings (v2.8.0)
 - [x] Phase 45: AI Console chat persistence + `/preset` templates + streaming (v2.9.0)
+- [x] Phase 46: Live USB bootable image — hybrid BIOS+UEFI ISO with Linux kernel, AIOS auto-start TUI, `aios-install` installer, reproducible `live/build.sh` (v2.9.5)
 
 ## Readiness Assessment (2026-07-29, updated)
 

@@ -1136,3 +1136,21 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 10. Start TUI event loop (or enter daemon loop)
 
 The browser works out of the box on a fresh machine: no config file, no installed browser, and no network are required to start — the block is active in the topology, dispatchable over IPC, and the Web tab (`B`/`n`/omnibox) opens any URL in the native WebView.
+
+## Layer 7: Live USB Deployment (`live/`)
+
+### Overview
+The `live/` directory builds a bootable hybrid (BIOS+UEFI) ISO that boots straight into the `aios` TUI on Linux — no Windows, no preinstalled system required. The ISO is built reproducibly in Docker via `live/build.sh` and flashed to a USB stick.
+
+### Layout & Boot Chain
+- `live/build.sh` — Docker-based build: Alpine 3.24 minirootfs (extracted, `chroot` apk install), static-musl `aios` release build (offline crates via host `CARGO_HOME` registry mount, build in `/tmp/target` to avoid NTFS bind-mount I/O errors), squashfs of the rootfs, custom initramfs, GRUB2
+- `live/init.rs` — busybox init: scans block devices, mounts `/dev/aioslivedata` (iso9660) or `/dev/aiosliveiso` (vfat), loop-mounts `boot/aios.squashfs`, `switch_root` into it, starts `rcS`
+- `live/rcS` — mount-proc/sys/dev, network DHCP on all ethernet/wifi ifaces, launch AIOS TUI on `tty1`
+- `live/aios-launch` — runs `aios` on `tty1`, restarts on crash, falls back to shell
+- `live/aios-install` — interactive installer: lists disks, targets one (e.g. `sda`), partitions GPT (512 MB EFI + ext4 root), copies system, installs GRUB
+- `live/grub.cfg` — GRUB menu: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 s default
+- `live/inittab` — getty-free: `aios-launch` on tty1, askshell on tty2
+
+### Lifecycle
+- Boot: BIOS/UEFI → GRUB → initramfs init → squashfs root (read-only; `/tmp`, `/run`, `/var/log` on tmpfs) → `aios` TUI → `Esc`/`q` drops to `#` shell → `aios-install` for persistent install to disk
+- Feature gating: `aios` is built with `--no-default-features` for the Live image (no webview) — see `Cargo.toml` `webview` feature (v2.9.4)

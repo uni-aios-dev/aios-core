@@ -1,0 +1,84 @@
+#!/bin/sh
+# AIOS installer: install the AIOS system to a local disk
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+set -e
+
+echo ""
+echo "============================================="
+echo "  AIOS Installer"
+echo "  Installs AIOS to a local disk (GPT: ESP + root)."
+echo "============================================="
+echo ""
+
+lsblk -o NAME,SIZE,TYPE,MODEL 2>/dev/null || for d in /sys/block/sd* /sys/block/vd* /sys/block/nvme*; do basename "$d"; done
+
+echo ""
+echo -n "Target disk (e.g. sda, nvme0n1): "
+read TARGET
+DEV=/dev/$TARGET
+
+[ -b "$DEV" ] || { echo "ERROR: $DEV is not a block device"; exit 1; }
+
+echo ""
+echo "WARNING: ALL DATA on $DEV will be destroyed!"
+echo -n "Type YES to continue: "
+read CONFIRM
+[ "$CONFIRM" = "YES" ] || { echo "Aborted."; exit 1; }
+
+echo "Unmounting existing partitions..."
+umount "${DEV}"* 2>/dev/null || true
+
+echo "Partitioning $DEV (GPT)..."
+wipefs -a "$DEV" 2>/dev/null || true
+sfdisk --wipe always "$DEV" <<'EOF'
+label: gpt
+size=512M, type=uefi, bootable
+,, type=linux
+EOF
+
+sleep 2
+partprobe "$DEV" 2>/dev/null || true
+sleep 2
+
+echo "Formatting partitions..."
+mkfs.fat -F 32 -n AIOS-EFI "${DEV}1"
+mkfs.ext4 -L AIOS "${DEV}2"
+
+echo "Mounting target..."
+mkdir -p /mnt/target /mnt/esp
+mount "${DEV}2" /mnt/target
+mkdir -p /mnt/target/boot/efi
+mount "${DEV}1" /mnt/target/boot/efi
+
+echo "Copying system (this may take a while)..."
+cd /
+tar cf - --exclude=proc --exclude=sys --exclude=dev --exclude=run --exclude=mnt \
+         --exclude=tmp --exclude=media --exclude='var/tmp' --exclude='var/log' \
+         --exclude='var/cache' --exclude='var/run' . | tar xf - -C /mnt/target
+
+echo "Installing GRUB..."
+if [ -d /usr/lib/grub/i386-pc ]; then
+  grub-install --boot-directory=/mnt/target/boot --target=i386-pc --recheck "$DEV" 2>/dev/null || echo "NOTE: BIOS grub skipped"
+fi
+if [ -d /usr/lib/grub/x86_64-efi ]; then
+  grub-install --boot-directory=/mnt/target/boot --target=x86_64-efi --removable 2>/dev/null || echo "NOTE: EFI grub skipped"
+fi
+
+cat > /mnt/target/boot/grub/grub.cfg <<GRUB
+set timeout=5
+set default=0
+menuentry "AIOS" {
+  linux /boot/vmlinuz root=${DEV}2 quiet
+  initrd /boot/initramfs.gz
+}
+GRUB
+
+sync
+umount /mnt/target/boot/efi
+umount /mnt/target
+
+echo ""
+echo "============================================="
+echo "  AIOS has been installed to $DEV"
+echo "  You can now reboot."
+echo "============================================="

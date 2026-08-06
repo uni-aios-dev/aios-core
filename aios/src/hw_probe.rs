@@ -183,7 +183,9 @@ fn probe_gpu() -> Option<GpuInfo> {
                     "--query-gpu=name,memory.total",
                     "--format=csv,noheader,nounits",
                 ])
-                .output(),
+                .output()
+                .ok()?
+                .stdout,
         ) {
             if let Some(line) = out.lines().next() {
                 let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
@@ -198,7 +200,9 @@ fn probe_gpu() -> Option<GpuInfo> {
                 }
             }
         }
-        if let Ok(out) = String::from_utf8(Command::new("lspci").arg("-v").output()) {
+        if let Ok(out) = String::from_utf8(
+            Command::new("lspci").arg("-v").output().ok()?.stdout,
+        ) {
             for line in out.lines() {
                 if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
                     let clean = line.split(':').nth(1).unwrap_or(line).trim().to_string();
@@ -217,7 +221,9 @@ fn probe_gpu() -> Option<GpuInfo> {
         if let Ok(out) = String::from_utf8(
             Command::new("system_profiler")
                 .args(["SPDisplaysDataType"])
-                .output(),
+                .output()
+                .ok()?
+                .stdout,
         ) {
             let mut model = String::new();
             for line in out.lines() {

@@ -1,5 +1,19 @@
 # Журнал разработки AIOS
 
+## v2.9.5 — загрузочный Live USB образ + исправления для Linux (2026-08-06)
+
+### Live USB (загрузочная флешка AIOS)
+- Собран полноценный **гибридный ISO** (BIOS + UEFI) с меткой `AIOS-LIVE` (~1.24 ГБ), который грузит ядро Linux и автоматически запускает ядро TUI AIOS.
+- Состав: меню GRUB (AIOS Live / подробная консоль / пункт установщика), `/boot/vmlinuz` (Alpine `linux-lts` 6.18), `/boot/initramfs.gz` (кастомный busybox init: находит и монтирует squashfs в loop), `/boot/aios.squashfs` (сжатый rootfs со статическим musl-бинарником `aios` и установщиком).
+- Rootfs — минимальный Alpine 3.24 minirootfs; система грузится прямо в TUI AIOS на `tty1`; сеть (DHCP) поднимается при загрузке; `aios-install` ставит AIOS на локальный диск (GPT: EFI + ext4, загрузчик GRUB).
+- Сборка воспроизводима через `live/build.sh` в Docker (`alpine:latest`, оффлайн-crates из локального registry): статический musl-бинарник без `webview`, alpine minirootfs, squashfs, initramfs, `grub-mkrescue`.
+- Записан на флешку 1.9 ГБ (PS2) и проверен: запись байт-в-байт, SHA-256 флешки совпадает с ISO (`67596162...`).
+
+### `aios`: исправления сборки под Linux (`hw_probe.rs`)
+- В GPU-пробе для `#[cfg(target_os = "linux")]` вызывался `Command::output()`, но забыто `.ok()?.stdout` перед `String::from_utf8(...)` (два места), из-за чего крейт никогда не компилировался под Linux. Исправлены оба Linux-места и эквивалентное macOS-место.
+- Проверено: Linux static-musl release сборка теперь компилируется; Windows-сборка и тесты не изменились.
+- Файлы: `aios/src/hw_probe.rs`, `live/*` (новые скрипты сборки), `docs/CHANGELOG.md` (+ `.ru`)
+
 ## v2.9.4 — опциональная feature `webview` для headless/Live сборок (2026-08-06)
 
 ### `aios`: cargo feature `webview`

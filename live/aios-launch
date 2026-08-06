@@ -1,0 +1,4 @@
+#!/bin/sh
+export TERM=linux
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+exec /usr/local/bin/aios

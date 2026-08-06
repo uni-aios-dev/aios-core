@@ -2,7 +2,14 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.9.3, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, and the v2.9.2 button-contrast fix added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0 / v2.9.1 / v2.9.2 / v2.9.3.
+As of v2.9.5, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, and the v2.9.5 Live USB image added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0 / v2.9.1 / v2.9.2 / v2.9.3 / v2.9.5.
+
+### FIXED: Linux GPU probe did not compile (`hw_probe.rs`)
+- **Status:** FIXED in v2.9.5
+- **Symptom:** `cargo build` for `target_os = "linux"` failed with `E0308` in `aios/src/hw_probe.rs`: `String::from_utf8(Command::new("lspci").arg("-v").output())` — `output()` returns `Result<Output, io::Error>`, the code expected `Vec<u8>` (missing `.ok()?.stdout`)
+- **Root cause:** The Linux GPU-probe branch was never compiled (only Windows/macOS were); two call sites forgot the stdout extraction present in the Windows branch
+- **Fix:** Added `.ok()?.stdout` to the `nvidia-smi` and `lspci` Linux sites and the equivalent macOS `system_profiler` site
+- **Regression coverage:** Linux static-musl release build now compiles (see `live/build.sh`); no CI covers non-Windows targets yet
 
 ### FIXED: GUI TextEdit fields invisible on light system theme
 - **Status:** FIXED in v2.9.3

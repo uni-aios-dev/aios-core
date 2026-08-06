@@ -1,5 +1,19 @@
 # AIOS Interface — Usage Guide
 
+## Live USB (bootable stick)
+
+The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight into the AIOS kernel TUI on `tty1`. There is no login prompt.
+
+- Boot the machine from the USB stick (BIOS/UEFI boot menu → USB). GRUB shows a menu (10 s default):
+  1. **AIOS Live** — quiet boot, auto-launch the AIOS TUI
+  2. **AIOS Live (verbose console)** — same, with kernel messages visible
+  3. **AIOS Installer (install to disk)** — same quiet boot; run `aios-install` afterwards
+- Inside the TUI press `Esc`/`q` to exit to the shell prompt `#`. The system is read-only (squashfs); only `/tmp`, `/run`, `/var/log` are writable (tmpfs). Changes do not persist across reboots.
+- Network: DHCP is attempted on all ethernet/wifi interfaces at boot (see the TUI Network tab for the assigned address).
+- To install AIOS to the machine's disk, type `aios-install`. It will list the disks, ask for the target (e.g. `sda`), require confirmation `YES`, partition the disk (GPT: 512 MB EFI + ext4 root), copy the system, and install GRUB. Reboot after the message.
+
+---
+
 ## Overview
 
 AIOS provides three interfaces for system management:

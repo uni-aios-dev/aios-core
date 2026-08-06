@@ -1,0 +1,4 @@
+::sysinit:/etc/init.d/rcS
+tty1::respawn:/usr/local/bin/aios-launch
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/umount -a -r
