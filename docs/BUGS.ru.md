@@ -332,3 +332,11 @@
 - **Исправление:** фоновый тикер на движок (`EpochTicker`) вызывает `Engine::increment_epoch()` каждые `timeout_ms / 4`; каждый store взводится на `EPOCH_TICKS_PER_TIMEOUT = 4` тика, а `call_func`/`instantiate` (плюс `init`/`start` в executor) перевзводят дедлайн перед каждым вызовом wasm, поэтому долгоживущие store продолжают работать, а каждый вызов ограничен `timeout_ms`
 - **Тесты:** `test_epoch_timeout_interrupts_runaway_wasm` (бесконечный цикл прерывается за ~150 мс при топливе, которого хватило бы на ~10 с) и `test_epoch_deadline_rearmed_between_calls`
 - **Затронутые файлы:** `aios-wasm/src/sandbox.rs`, `aios-wasm/src/executor.rs`
+
+### BUG-039: падение GUI/TUI при определении железа — индекс CSV `wmic` за границей
+- **Статус:** ИСПРАВЛЕНО (v2.9.1)
+- **Симптом:** `aios-gui` (и любой бинарник, вызывающий `HardwareProfile::detect`) падал при старте с `index out of bounds: the len is 2 but the index is 2` в `aios-hal/src/hardware.rs` — окно GUI не открывалось
+- **Причина:** `detect_memory` разбирал `wmic memorychip get Capacity,Speed,DimmLocator /format:csv`, обращаясь к `parts[2]` после проверки только `parts.len() >= 2`; на машинах, где wmic выдаёт короткие строки (например, пустая колонка Speed схлопывается в строку из 2 полей), обращение по индексу паниковало
+- **Исправление:** разбор вынесен в чистый помощник `HardwareProfile::parse_wmic_memory_csv`, требующий `parts.len() >= 3` (Node + Capacity + Speed) до обращения к любому индексу; повреждённые/короткие строки пропускаются вместо падения
+- **Тесты:** `test_parse_wmic_memory_csv_full_rows` (две DIMM суммируются, скорость читается) и `test_parse_wmic_memory_csv_short_rows_no_panic` (короткая строка из 2 полей пропускается, валидная всё ещё разбирается)
+- **Затронутые файлы:** `aios-hal/src/hardware.rs`

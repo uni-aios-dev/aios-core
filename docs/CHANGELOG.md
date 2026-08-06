@@ -10,6 +10,10 @@
 - The kernel TUI header version is bumped to `AIOS v2.9.1`.
 - Files: `aios-gui/src/app.rs`, `aios-gui/src/main.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios/src/tui/ui.rs`
 
+### `aios-hal`: startup crash fixed (BUG-039)
+- `HardwareProfile::detect` panicked on machines where `wmic memorychip /format:csv` emits short rows — `detect_memory` indexed `parts[2]` after only checking `parts.len() >= 2`. Extraction into the pure helper `parse_wmic_memory_csv` (requires `parts.len() >= 3`) makes the GUI and TUI boot reliably. 2 new unit tests.
+- Files: `aios-hal/src/hardware.rs`
+
 ## v2.9.0 — AI Console: chat persistence, `/preset` templates, streaming (2026-08-05)
 
 ### `aios-llm`: streaming queries

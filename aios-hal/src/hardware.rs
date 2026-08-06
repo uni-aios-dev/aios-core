@@ -218,27 +218,7 @@ impl HardwareProfile {
                 .output()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let mut total_bytes: u64 = 0;
-                let mut dimm_count = 0u32;
-                let mut speed = 0u32;
-                for line in stdout.lines().skip(1) {
-                    let parts: Vec<&str> = line.split(',').collect();
-                    if parts.len() >= 2 {
-                        if let Ok(cap) = parts[1].trim().parse::<u64>() {
-                            total_bytes += cap;
-                            dimm_count += 1;
-                        }
-                        if let Ok(s) = parts[2].trim().parse::<u32>() {
-                            speed = s;
-                        }
-                    }
-                }
-                return MemoryInfo {
-                    total_mb: total_bytes / (1024 * 1024),
-                    available_mb: total_bytes / (1024 * 1024),
-                    speed_mhz: speed,
-                    dimm_count,
-                };
+                return Self::parse_wmic_memory_csv(&stdout);
             }
         }
 
@@ -269,6 +249,33 @@ impl HardwareProfile {
             available_mb: 0,
             speed_mhz: 0,
             dimm_count: 0,
+        }
+    }
+
+    /// Parses `wmic memorychip ... /format:csv` output into (total_bytes, speed_mhz, dimm_count).
+    ///
+    /// Rows have a leading Node column; short or malformed lines are skipped instead of panicking.
+    fn parse_wmic_memory_csv(stdout: &str) -> MemoryInfo {
+        let mut total_bytes: u64 = 0;
+        let mut dimm_count = 0u32;
+        let mut speed = 0u32;
+        for line in stdout.lines().skip(1) {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() >= 3 {
+                if let Ok(cap) = parts[1].trim().parse::<u64>() {
+                    total_bytes += cap;
+                    dimm_count += 1;
+                }
+                if let Ok(s) = parts[2].trim().parse::<u32>() {
+                    speed = s;
+                }
+            }
+        }
+        MemoryInfo {
+            total_mb: total_bytes / (1024 * 1024),
+            available_mb: total_bytes / (1024 * 1024),
+            speed_mhz: speed,
+            dimm_count,
         }
     }
 
@@ -1475,6 +1482,24 @@ impl StatefulBlock for HalBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_wmic_memory_csv_full_rows() {
+        let csv = "\nNode,Capacity,Speed,DimmLocator\n\nMYPC,8589934592,3200,DIMM_A\n\nMYPC,8589934592,3200,DIMM_B\n\n";
+        let mem = HardwareProfile::parse_wmic_memory_csv(csv);
+        assert_eq!(mem.total_mb, 16384);
+        assert_eq!(mem.speed_mhz, 3200);
+        assert_eq!(mem.dimm_count, 2);
+    }
+
+    #[test]
+    fn test_parse_wmic_memory_csv_short_rows_no_panic() {
+        let csv =
+            "\nNode,Capacity,Speed,DimmLocator\n\nMYPC,8589934592\n\nMYPC,8589934592,3200,DIMM_A\n";
+        let mem = HardwareProfile::parse_wmic_memory_csv(csv);
+        assert_eq!(mem.dimm_count, 1);
+        assert_eq!(mem.speed_mhz, 3200);
+    }
 
     #[test]
     fn test_gpu_info_new_fields() {

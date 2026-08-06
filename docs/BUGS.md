@@ -330,3 +330,11 @@ As of v2.9.1, all tests pass, clippy reports zero warnings, and the 18 bugs foun
 - **Fix:** a per-engine background ticker (`EpochTicker`) calls `Engine::increment_epoch()` every `timeout_ms / 4`; every store is armed with `EPOCH_TICKS_PER_TIMEOUT = 4` ticks, and `call_func`/`instantiate` (plus the executor's `init`/`start`) re-arm the deadline before each wasm call so long-lived stores keep working while every call is bounded by `timeout_ms`
 - **Tests:** `test_epoch_timeout_interrupts_runaway_wasm` (infinite loop interrupted in ~150 ms with fuel that alone would take ~10 s) and `test_epoch_deadline_rearmed_between_calls`
 - **Affected files:** `aios-wasm/src/sandbox.rs`, `aios-wasm/src/executor.rs`
+
+### BUG-039: GUI/TUI crash on hardware detect — `wmic` CSV rows indexed past bounds
+- **Status:** FIXED (v2.9.1)
+- **Symptom:** `aios-gui` (and any binary running `HardwareProfile::detect`) panicked at startup with `index out of bounds: the len is 2 but the index is 2` in `aios-hal/src/hardware.rs` — the GUI window never opened
+- **Root Cause:** `detect_memory` parsed `wmic memorychip get Capacity,Speed,DimmLocator /format:csv` by indexing `parts[2]` after only checking `parts.len() >= 2`; on machines where wmic emits short rows (e.g. a blank Speed column collapsing to a 2-field line) the indexing panicked
+- **Fix:** extraction into a pure helper `HardwareProfile::parse_wmic_memory_csv` that requires `parts.len() >= 3` (Node + Capacity + Speed) before touching any index; malformed/short rows are skipped instead of crashing
+- **Tests:** `test_parse_wmic_memory_csv_full_rows` (two DIMMs summed, speed read) and `test_parse_wmic_memory_csv_short_rows_no_panic` (short 2-field row skipped, valid row still parsed)
+- **Affected files:** `aios-hal/src/hardware.rs`

@@ -10,6 +10,10 @@
 - Версия в шапке TUI ядра обновлена до `AIOS v2.9.1`.
 - Файлы: `aios-gui/src/app.rs`, `aios-gui/src/main.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios/src/tui/ui.rs`
 
+### `aios-hal`: исправлено падение при старте (BUG-039)
+- `HardwareProfile::detect` паниковал на машинах, где `wmic memorychip /format:csv` выдаёт короткие строки — `detect_memory` обращался к `parts[2]` после проверки только `parts.len() >= 2`. Вынос разбора в чистый помощник `parse_wmic_memory_csv` (требующий `parts.len() >= 3`) делает загрузку GUI и TUI стабильной. 2 новых unit-теста.
+- Файлы: `aios-hal/src/hardware.rs`
+
 ## v2.9.0 — AI Console: персистентность чата, шаблоны `/preset`, стриминг (2026-08-05)
 
 ### `aios-llm`: стриминговые запросы
