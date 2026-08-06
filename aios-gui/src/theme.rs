@@ -7,6 +7,7 @@ pub struct AiosTheme {
     pub muted: egui::Color32,
     pub surface: egui::Color32,
     pub surface_alt: egui::Color32,
+    pub button_bg: egui::Color32,
     pub border: egui::Color32,
     pub text: egui::Color32,
     pub text_dim: egui::Color32,
@@ -20,12 +21,13 @@ impl Default for AiosTheme {
             warning: egui::Color32::from_rgb(240, 180, 30),
             danger: egui::Color32::from_rgb(230, 60, 60),
             info: egui::Color32::from_rgb(100, 160, 255),
-            muted: egui::Color32::from_rgb(120, 120, 140),
+            muted: egui::Color32::from_rgb(165, 165, 185),
             surface: egui::Color32::from_rgb(24, 24, 32),
             surface_alt: egui::Color32::from_rgb(34, 34, 46),
-            border: egui::Color32::from_rgb(55, 55, 70),
-            text: egui::Color32::from_rgb(230, 230, 240),
-            text_dim: egui::Color32::from_rgb(140, 140, 160),
+            button_bg: egui::Color32::from_rgb(46, 46, 62),
+            border: egui::Color32::from_rgb(58, 58, 74),
+            text: egui::Color32::from_rgb(235, 235, 245),
+            text_dim: egui::Color32::from_rgb(155, 155, 175),
         }
     }
 }
@@ -40,11 +42,14 @@ impl AiosTheme {
         visuals.window_fill = self.surface;
         visuals.widgets.noninteractive.bg_fill = self.surface_alt;
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, self.text);
-        visuals.widgets.inactive.bg_fill = self.surface_alt;
+        visuals.widgets.inactive.bg_fill = self.button_bg;
+        visuals.widgets.inactive.weak_bg_fill = self.button_bg;
         visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, self.text);
-        visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(45, 45, 60);
+        visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(58, 58, 78);
+        visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(58, 58, 78);
         visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, self.accent);
-        visuals.widgets.active.bg_fill = egui::Color32::from_rgb(55, 55, 75);
+        visuals.widgets.active.bg_fill = egui::Color32::from_rgb(70, 70, 94);
+        visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(70, 70, 94);
         visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, self.accent);
         visuals.selection.bg_fill = egui::Color32::from_rgba_premultiplied(0, 180, 200, 60);
         visuals.selection.stroke = egui::Stroke::new(1.0_f32, self.accent);

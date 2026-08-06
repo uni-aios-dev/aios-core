@@ -401,9 +401,10 @@ Dark theme with customizable colors in `aios-gui/src/theme.rs`:
 | `warning` (#F0B41E) | Suspended, High priority, warnings |
 | `danger` (#E63C3C) | Crashed, Critical, errors |
 | `info` (#64A0FF) | Low priority, informational |
-| `muted` (#78788C) | Background, dimmed text, Terminated |
+| `muted` (#A5A5B9) | Dimmed text, labels, Terminated |
 | `surface` (#181820) | Main background |
 | `surface_alt` (#22222E) | Card backgrounds, alternating rows |
+| `button_bg` (#2E2E3E) | Button backgrounds, distinct from cards |
 
 ---
 

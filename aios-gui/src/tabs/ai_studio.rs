@@ -105,7 +105,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
                 .color(theme.accent)
                 .size(12.0),
         )
-        .fill(theme.surface_alt)
+        .fill(theme.button_bg)
         .min_size(egui::vec2(90.0, 28.0));
         if ui.add(btn).clicked() && !app.ai_busy {
             app.ai_send();

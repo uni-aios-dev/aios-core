@@ -182,7 +182,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
             ui.add_space(20.0);
             ui.label(
                 egui::RichText::new(format!(
-                    "Selected: {} v{} — {} — {}",
+                    "Selected: {} v{} вЂ” {} вЂ” {}",
                     b.name, b.version, b.state, b.size
                 ))
                 .color(theme.text_dim)
@@ -224,7 +224,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
                             app.load_version_buf.clear();
                         }
                         if ui
-                            .button(egui::RichText::new("Cancel").color(theme.muted))
+                            .button(egui::RichText::new("Cancel").color(theme.text_dim))
                             .clicked()
                         {
                             app.show_load_dialog = false;
@@ -253,7 +253,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
                             }
                         }
                         if ui
-                            .button(egui::RichText::new("Cancel").color(theme.muted))
+                            .button(egui::RichText::new("Cancel").color(theme.text_dim))
                             .clicked()
                         {
                             app.show_load_dialog = false;

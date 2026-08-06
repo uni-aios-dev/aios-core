@@ -1,5 +1,14 @@
 # AIOS Development Log
 
+## v2.9.2 — GUI button contrast fix (2026-08-06)
+
+### `aios-gui`: button text legibility
+- Reported issue: button text and button fill were nearly identical, making buttons hard to read. egui default buttons draw with `visuals.weak_bg_fill` (unset → neutral gray `gray(60)`), while secondary button text used `muted` (#78788C) — a ~2.5:1 contrast ratio.
+- Added a dedicated `button_bg` (#2E2E3E) to `AiosTheme` and wired it into `widgets.inactive/hovered/active.weak_bg_fill` and `bg_fill`, so every button now has a consistent, slightly lighter fill than cards/sections; hover/active states brighten further.
+- Brightened `muted` (#78788C → #A5A5B9) and `text_dim` (#8C8CA0 → #9B9BAF) so dimmed text/labels stay readable.
+- Explicit button fills switched from `surface_alt` to `button_bg` (sidebar Quick Actions in `app.rs`, AI Studio Send); the two Cancel buttons in the Blocks tab switched from `muted` to `text_dim`.
+- Files: `aios-gui/src/theme.rs`, `aios-gui/src/app.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios-gui/src/tabs/blocks.rs`, `docs/INTERFACE.md`, `docs/INTERFACE.ru.md`
+
 ## v2.9.1 — GUI AI Studio: streaming, `/preset`, persistence parity (2026-08-05)
 
 ### `aios-gui`: AI Studio matches the TUI AI Console

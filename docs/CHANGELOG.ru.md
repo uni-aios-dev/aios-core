@@ -1,5 +1,14 @@
 # Журнал разработки AIOS
 
+## v2.9.2 — GUI: исправлена читаемость текста кнопок (2026-08-06)
+
+### `aios-gui`: различимость кнопок
+- Сообщённая проблема: цвет текста кнопок и цвет их фона почти совпадали, кнопки плохо читались. Кнопки egui по умолчанию рисуются цветом `visuals.weak_bg_fill` (не задан → нейтральный серый `gray(60)`), а текст вторичных кнопок использовал `muted` (#78788C) — контраст около 2.5:1.
+- Добавлен отдельный `button_bg` (#2E2E3E) в `AiosTheme` и подключён в `widgets.inactive/hovered/active.weak_bg_fill` и `bg_fill`, поэтому у каждой кнопки теперь единый, чуть более светлый фон, чем у карточек/секций; состояния hover/active дополнительно осветляются.
+- Осветлён `muted` (#78788C → #A5A5B9) и `text_dim` (#8C8CA0 → #9B9BAF), чтобы затемнённый текст и подписи оставались читаемыми.
+- Явные заливки кнопок переведены с `surface_alt` на `button_bg` (Quick Actions в сайдбаре `app.rs`, кнопка Send в AI Studio); две кнопки Cancel на вкладке Blocks переведены с `muted` на `text_dim`.
+- Файлы: `aios-gui/src/theme.rs`, `aios-gui/src/app.rs`, `aios-gui/src/tabs/ai_studio.rs`, `aios-gui/src/tabs/blocks.rs`, `docs/INTERFACE.md`, `docs/INTERFACE.ru.md`
+
 ## v2.9.1 — GUI AI Studio: стриминг, `/preset`, паритет персистентности (2026-08-05)
 
 ### `aios-gui`: AI Studio повторяет функциональность AI Console TUI

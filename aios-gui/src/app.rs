@@ -962,7 +962,7 @@ impl eframe::App for AiosApp {
                                 .color(theme.info)
                                 .size(11.0),
                         )
-                        .fill(theme.surface_alt)
+                        .fill(theme.button_bg)
                         .corner_radius(4.0)
                         .min_size(egui::vec2(130.0, 24.0)),
                     )
@@ -978,7 +978,7 @@ impl eframe::App for AiosApp {
                                 .color(theme.warning)
                                 .size(11.0),
                         )
-                        .fill(theme.surface_alt)
+                        .fill(theme.button_bg)
                         .corner_radius(4.0)
                         .min_size(egui::vec2(130.0, 24.0)),
                     )
