@@ -1,5 +1,13 @@
 # Журнал разработки AIOS
 
+## v2.9.3 — GUI: исправлена утечка светлой системной темы (2026-08-06)
+
+### `aios-gui`: невидимые поля TextEdit при светлой системной теме
+- Сообщённая проблема: поля на вкладке Network Settings (и другие текстовые поля) отображались белым по белому — eframe 0.31 стартует с системной темой ОС (`egui_winit::State::new(..., event_loop.system_theme(), ...)`), которая на этой машине светлая, поэтому `visuals.extreme_bg_color` оставался белым `#FFFFFF`, а `theme.apply()` переопределял только `dark_mode` и часть палитры виджетов. Фон TextEdit рисуется из `extreme_bg_color`, поэтому светлый текст лежал на белом поле.
+- `AiosTheme::apply` теперь задаёт все поля поверхности `Visuals` явно: `override_text_color = None`, `hyperlink_color = accent`, `faint_bg_color = TRANSPARENT`, `extreme_bg_color = #1E1E2A`, `code_bg_color = #242432`, `warn_fg_color = warning`, `error_fg_color = danger`, `panel_fill`/`window_fill = surface`, `window_stroke = border`, `bg_stroke = border` для всех пяти состояний виджетов, плюс ранее отсутствующее состояние `open` (`bg_fill`/`weak_bg_fill`/`fg_stroke`).
+- Проверено по пикселям на запущенном GUI: фон TextEdit теперь `#1E1E2A` с ярким текстом `#D4D4DF` и рамкой `#3A3A4A`; секции, элементы DragValue и кнопки отображаются в тёмной палитре.
+- Файлы: `aios-gui/src/theme.rs`, `docs/INTERFACE.md`, `docs/INTERFACE.ru.md`
+
 ## v2.9.2 — GUI: исправлена читаемость текста кнопок (2026-08-06)
 
 ### `aios-gui`: различимость кнопок

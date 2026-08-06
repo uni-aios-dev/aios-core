@@ -405,6 +405,7 @@ Dark theme with customizable colors in `aios-gui/src/theme.rs`:
 | `surface` (#181820) | Main background |
 | `surface_alt` (#22222E) | Card backgrounds, alternating rows |
 | `button_bg` (#2E2E3E) | Button backgrounds, distinct from cards |
+| `extreme_bg_color` (#1E1E2A) | TextEdit input field backgrounds |
 
 ---
 

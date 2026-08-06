@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.9.3 — GUI dark theme leak fix (2026-08-06)
+
+### `aios-gui`: TextEdit fields invisible on light system theme
+- Reported issue: fields on the Network Settings tab (and other text inputs) rendered white-on-white — eframe 0.31 starts from the OS system theme (`egui_winit::State::new(..., event_loop.system_theme(), ...)`), which is light on this machine, so `visuals.extreme_bg_color` stayed white `#FFFFFF` while `theme.apply()` only overrode `dark_mode` and part of the widget palette. TextEdit draws its background from `extreme_bg_color`, so light text sat on a white field.
+- `AiosTheme::apply` now sets every `Visuals` surface field explicitly: `override_text_color = None`, `hyperlink_color = accent`, `faint_bg_color = TRANSPARENT`, `extreme_bg_color = #1E1E2A`, `code_bg_color = #242432`, `warn_fg_color = warning`, `error_fg_color = danger`, `panel_fill`/`window_fill = surface`, `window_stroke = border`, `bg_stroke = border` for all five widget states, plus the previously missing `open` state (`bg_fill`/`weak_bg_fill`/`fg_stroke`).
+- Verified at the pixel level on the running GUI: TextEdit background now `#1E1E2A` with bright `#D4D4DF` text and a `#3A3A4A` border; sections, DragValue controls and buttons render with the dark palette.
+- Files: `aios-gui/src/theme.rs`, `docs/INTERFACE.md`, `docs/INTERFACE.ru.md`
+
 ## v2.9.2 — GUI button contrast fix (2026-08-06)
 
 ### `aios-gui`: button text legibility

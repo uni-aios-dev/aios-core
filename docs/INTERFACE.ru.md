@@ -406,6 +406,7 @@ cargo run --bin aios-gui
 | `surface` (#181820) | Основной фон |
 | `surface_alt` (#22222E) | Фон карточек, чередующиеся строки |
 | `button_bg` (#2E2E3E) | Фон кнопок, отличим от карточек |
+| `extreme_bg_color` (#1E1E2A) | Фон полей ввода TextEdit |
 
 ---
 

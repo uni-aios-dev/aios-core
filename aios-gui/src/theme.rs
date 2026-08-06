@@ -38,9 +38,29 @@ impl AiosTheme {
         let visuals = &mut style.visuals;
 
         visuals.dark_mode = true;
+        visuals.override_text_color = None;
+        visuals.hyperlink_color = self.accent;
+        visuals.faint_bg_color = egui::Color32::TRANSPARENT;
+        visuals.extreme_bg_color = egui::Color32::from_rgb(30, 30, 42);
+        visuals.code_bg_color = egui::Color32::from_rgb(36, 36, 50);
+        visuals.warn_fg_color = self.warning;
+        visuals.error_fg_color = self.danger;
         visuals.panel_fill = self.surface;
         visuals.window_fill = self.surface;
+        visuals.window_stroke = egui::Stroke::new(1.0_f32, self.border);
+
+        for w in [
+            &mut visuals.widgets.noninteractive,
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+            &mut visuals.widgets.open,
+        ] {
+            w.bg_stroke = egui::Stroke::new(1.0_f32, self.border);
+        }
+
         visuals.widgets.noninteractive.bg_fill = self.surface_alt;
+        visuals.widgets.noninteractive.weak_bg_fill = self.surface_alt;
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, self.text);
         visuals.widgets.inactive.bg_fill = self.button_bg;
         visuals.widgets.inactive.weak_bg_fill = self.button_bg;
@@ -51,10 +71,11 @@ impl AiosTheme {
         visuals.widgets.active.bg_fill = egui::Color32::from_rgb(70, 70, 94);
         visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(70, 70, 94);
         visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, self.accent);
+        visuals.widgets.open.bg_fill = egui::Color32::from_rgb(70, 70, 94);
+        visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(70, 70, 94);
+        visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0_f32, self.accent);
         visuals.selection.bg_fill = egui::Color32::from_rgba_premultiplied(0, 180, 200, 60);
         visuals.selection.stroke = egui::Stroke::new(1.0_f32, self.accent);
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, self.border);
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, self.border);
 
         ctx.set_style(style);
     }

@@ -2,7 +2,14 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.9.1, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, and the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0 / v2.9.1.
+As of v2.9.3, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, and the v2.9.2 button-contrast fix added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0 / v2.9.1 / v2.9.2 / v2.9.3.
+
+### FIXED: GUI TextEdit fields invisible on light system theme
+- **Status:** FIXED in v2.9.3
+- **Symptom:** Input fields on the GUI Network Settings tab (and other `TextEdit` inputs) showed light text on a white background — effectively unreadable
+- **Root cause:** eframe 0.31 seeds `Visuals` from the OS system theme; on a Windows machine in light mode `extreme_bg_color` (the TextEdit background) stayed `#FFFFFF` because `AiosTheme::apply` only overrode `dark_mode` and part of the widget palette
+- **Fix:** `apply` now sets every `Visuals` surface field explicitly (see `docs/CHANGELOG.md` v2.9.3); verified by pixel analysis on the running GUI (`#1E1E2A` field, `#D4D4DF` text)
+- **Regression coverage:** manual pixel-level verification only; no automated GUI test exists yet
 
 ### KNOWN LIMITATION: signed-manifest enforcement is opt-in via env
 - **Status:** BY DESIGN
