@@ -16,6 +16,8 @@ Thumbs.db
 # AIOS specific
 models/
 *.gguf
+# Runtime data dir (chat.jsonl / presets.json written by TUI & GUI)
+aios_data/
 # Temporary phase tracking files (not for public repo)
 PHASE-*.txt
 ФАЗА-*.txt
