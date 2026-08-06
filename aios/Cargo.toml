@@ -4,6 +4,10 @@ version = "1.0.0"
 edition = "2021"
 publish = false
 
+[features]
+default = ["webview"]
+webview = ["dep:aios-webview"]
+
 [dependencies]
 aios-core = { path = "../aios-core" }
 aios-hal = { path = "../aios-hal" }
@@ -23,7 +27,7 @@ aios-search = { path = "../aios-search" }
 aios-browser = { path = "../aios-browser" }
 aios-context = { path = "../aios-context" }
 aios-debug = { path = "../aios-debug" }
-aios-webview = { path = "../aios-webview" }
+aios-webview = { path = "../aios-webview", optional = true }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }

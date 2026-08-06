@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.9.4 — optional webview feature for headless/Live builds (2026-08-06)
+
+### `aios`: `webview` cargo feature
+- The kernel TUI's native browser (key `W`, and `B`/`n` on the Web tab) depends on `aios-webview` → `wry` → WebKitGTK, which is a heavy dependency for Linux. `aios-webview` is now an optional dependency gated behind a new `webview` cargo feature (enabled by default).
+- `cargo build -p aios --no-default-features` produces a kernel without any GTK/WebKit linkage — used for the static-musl Live USB build (see v2.9.4 Live USB below).
+- Verified: both `default` and `--no-default-features` configurations build clean, clippy is clean in both, all 4 `aios` tests pass.
+- Files: `aios/Cargo.toml`, `aios/src/tui/mod.rs`
+
 ## v2.9.3 — GUI dark theme leak fix (2026-08-06)
 
 ### `aios-gui`: TextEdit fields invisible on light system theme

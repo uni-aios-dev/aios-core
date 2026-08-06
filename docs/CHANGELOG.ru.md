@@ -1,5 +1,13 @@
 # Журнал разработки AIOS
 
+## v2.9.4 — опциональная feature `webview` для headless/Live сборок (2026-08-06)
+
+### `aios`: cargo feature `webview`
+- Встроенный браузер ядра TUI (клавиша `W`, а также `B`/`n` на вкладке Web) зависит от `aios-webview` → `wry` → WebKitGTK, что тяжело для Linux. `aios-webview` теперь опциональная зависимость за feature `webview` (включена по умолчанию).
+- `cargo build -p aios --no-default-features` собирает ядро без GTK/WebKit-линковки — используется для статической musl-сборки Live USB (см. Live USB в v2.9.4 ниже).
+- Проверено: обе конфигурации (`default` и `--no-default-features`) собираются чисто, clippy чист в обеих, все 4 теста `aios` проходят.
+- Файлы: `aios/Cargo.toml`, `aios/src/tui/mod.rs`
+
 ## v2.9.3 — GUI: исправлена утечка светлой системной темы (2026-08-06)
 
 ### `aios-gui`: невидимые поля TextEdit при светлой системной теме

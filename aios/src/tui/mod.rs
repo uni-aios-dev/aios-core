@@ -24,8 +24,12 @@ use ratatui::Terminal;
 use std::collections::{BTreeMap, VecDeque};
 use std::io::stdout;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::Ordering;
+#[cfg(feature = "webview")]
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "webview")]
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
@@ -741,17 +745,22 @@ pub(crate) fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
+#[cfg(feature = "webview")]
 static WEB_BROWSER: OnceLock<Mutex<Option<aios_webview::WebBrowser>>> = OnceLock::new();
+#[cfg(feature = "webview")]
 static WEB_BROWSER_SPAWNING: OnceLock<AtomicBool> = OnceLock::new();
 
+#[cfg(feature = "webview")]
 fn web_browser_handle() -> &'static Mutex<Option<aios_webview::WebBrowser>> {
     WEB_BROWSER.get_or_init(|| Mutex::new(None))
 }
 
+#[cfg(feature = "webview")]
 fn web_browser_spawning() -> &'static AtomicBool {
     WEB_BROWSER_SPAWNING.get_or_init(|| AtomicBool::new(false))
 }
 
+#[cfg(feature = "webview")]
 fn web_open_native(app: &mut TuiApp, target: Option<String>) {
     let target = match target {
         Some(t) => t,
@@ -784,6 +793,7 @@ fn web_open_native(app: &mut TuiApp, target: Option<String>) {
     }
 }
 
+#[cfg(feature = "webview")]
 fn web_browser_spawn(logs: &Arc<Mutex<Vec<String>>>, target: String) {
     let handle = web_browser_handle();
     let spawning = web_browser_spawning();
@@ -1250,6 +1260,7 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
             app.web.input_focused = false;
             app.net_mode = false;
         }
+        #[cfg(feature = "webview")]
         KeyCode::Char('W') => match aios_webview::launcher::launch_gui() {
             Ok(path) => push_log(
                 &app.logs,
@@ -1344,7 +1355,9 @@ fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Char('u') | KeyCode::PageUp => web_scroll(app, -1),
         KeyCode::Char('d') | KeyCode::PageDown => web_scroll(app, 1),
         KeyCode::Char('b') => web_back(app),
+        #[cfg(feature = "webview")]
         KeyCode::Char('B') => web_open_native(app, None),
+        #[cfg(feature = "webview")]
         KeyCode::Char('n') => {
             let href = app
                 .web
