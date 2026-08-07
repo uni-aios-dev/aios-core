@@ -1,5 +1,38 @@
 # Журнал разработки AIOS
 
+## v2.10.0 — Виртуальная файловая система + двухпанельный файловый менеджер (2026-08-07)
+
+### `aios-vfs` (новый крейт) — слой виртуальной файловой системы
+- Новый крейт workspace с путями через схемы и асинхронным вводом-выводом:
+  - `VfsScheme::{AIOS, HOST}`, `VfsPath` (URI-стиль: `AIOS:///sandbox`, `HOST:///C:/...`), `VfsEntry`, `VfsMetadata`.
+  - Трейт `VirtualFileSystem`: `list`, `read`, `write`, `create_dir`, `delete`, `rename`, `exists`, `metadata`, `open_seek` (возвращает `Box<dyn AsyncSeekReader + Send + Unpin>`, где `AsyncSeekReader = AsyncRead + AsyncSeek`).
+  - `AiosVfs` (песочница в локальной папке) и `HostVfs` (реальные пути хоста, доступ через capability-токены).
+  - `operations.rs`: `Progress` (атомарные счётчики, `fraction()`/`pressure_fraction()`), `CancellationToken`, асинхронные `copy_recursive` / `move_item` / `delete_item` / `total_bytes` / `read_head` / `read_at`.
+  - `security.rs`: `AclContext` (capability-токены `vfs:host:read`, `vfs:host:write`) + проверка `canonicalize_inside` на вхождение пути в песочницу.
+  - `ai_preview.rs`: `analyze_file` + `AiPreview`/`AiLineKind` — эвристическое AI-превью файлов (разбор WASM name-section, детектор паник в логах, подсказки по исходникам).
+- 29 unit-тестов (в т.ч. отмена копирования, байты секции имён WASM-модуля, проверка canonicalize).
+
+### `aios-fm` (новый крейт) — двухпанельный файловый менеджер (стиль Volkov/Far)
+- `state.rs`: `PanelState` (курсор, `SortRule`, записи), `human_size`.
+- `commands.rs`: `Command` / `Ack` через `tokio::mpsc::unbounded_channel`.
+- `engine.rs`: `FileManager` с фоновым циклом команд; Copy/Move/Delete выполняются как отменяемые `tokio::spawn`-задачи с `Progress` + `JobInfo`; `FmSnapshot { panels, active, jobs, acl }`; помощники `set_cursor` / `set_active`.
+- `ui_tui.rs`: `draw` (шапка + две панели + футер с горячими клавишами), `key_to_action`, `progress_bar`.
+- `ui_gui.rs`: `show` (две колонки, выбор кликом/двойным кликом через `FmClick`, полосы прогресса, панель ACL).
+- 16 unit-тестов (engine, state, keymap, GUI-тема).
+
+### TUI: вкладка Files (8)
+- Новая вкладка `Files` рендерится через `aios_fm::ui_tui::draw`; `FileManager` + `AclContext` запускаются на tokio-рантайме при старте (песочница = `AIOS_DATA_DIR/vfs_sandbox`).
+- Клавиши: Tab / стрелки — навигация, Enter — открыть папку или AI-превью файла, Backspace — родительская папка, F3 — просмотр, F5 — копировать, F6 — переместить, F7 — создать папку, F8 — удалить, F2 — переименовать, F9 — сортировка, `g`/`w` — выдача host read/write, `r` — обновить, Esc — закрыть превью.
+- Канал Ack опрашивается на каждой итерации цикла; превью и логи обновляются вживую.
+
+### GUI: вкладка Files (8)
+- Новая вкладка `Files` (`tabs/files.rs`): панель инструментов (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), две панели, модальный диалог mkdir/rename, сворачиваемое AI-превью, живой прогресс задач; одинарный клик — выбор, двойной — открытие.
+- `AiosApp::fm_init()` запускает движок на отдельном tokio-рантайме; Ack опрашиваются каждый кадр; F3/F5–F9 и стрелки/Enter/Tab/Backspace сопоставлены FM-действиям внутри вкладки.
+
+### Верификация
+- `cargo build --workspace`, clippy и fmt чистые; тесты: `aios-vfs` 29, `aios-fm` 16, `aios-tui` 40, `aios-gui` 10 — все проходят.
+- Файлы: `aios-vfs/*` (новое), `aios-fm/*` (новое), `Cargo.toml`, `aios-tui/src/{main,dashboard}.rs`, `aios-gui/src/{app,main}.rs`, `aios-gui/src/tabs/files.rs`, `aios-gui/src/tabs/mod.rs`, `docs/*`.
+
 ## v2.9.5 — загрузочный Live USB образ + исправления для Linux (2026-08-06)
 
 ### Live USB (загрузочная флешка AIOS)

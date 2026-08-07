@@ -42,6 +42,7 @@ fn main() -> eframe::Result<()> {
                 4096,
             );
             app.ai_load_persisted();
+            app.fm_init();
             Ok(Box::new(app))
         }),
     )

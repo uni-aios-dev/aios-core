@@ -605,7 +605,7 @@ The TUI cannot render real web pages (no CSS/JS engine), so the full-featured br
 
 ### GUI Dashboard (`aios-gui`)
 
-Native egui/eframe dashboard with 7 tabs: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`.
+Native egui/eframe dashboard with 8 tabs: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser, Files. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`.
 
 - **System Dashboard (F1)**: stat cards (RAM, blocks, processes, watchdog), system panel (CPU/GPU/storage/HW tier), RAM sparkline, priority distribution, processes table (PID, Name, Priority, State, RAM, CPU ms, Crashes) with Refresh/Kill/Suspend/Resume, activity log
 - **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap
@@ -614,7 +614,8 @@ Native egui/eframe dashboard with 7 tabs: System Dashboard, WASM Blocks, AI Stud
 - **Network Settings (F5)**: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON IPC update to `net_settings`) and Reset, plus a live JSON preview
 - **Deps (F6)**: dependency graph summary, load order chain, depends/depended-by table
 - **Native Browser (F7)**: omnibox, Back/Forward, Open/Close toggle driving the `aios-webview` native window; the first navigation auto-opens the browser
-- **Status bar**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with a live IPC packet counter
+- **Files (F8)**: two-panel file manager (`aios-fm`) on `aios-vfs` — toolbar (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), panels with click/double-click selection, modal mkdir/rename dialog, collapsible AI preview, live job progress and capability ACL display
+- **Status bar**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files` with a live IPC packet counter
 
 ---
 
@@ -884,6 +885,29 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ---
 
+## Virtual File System (`aios-vfs`) — v2.10.0
+
+- **Crate**: `aios-vfs` v1.0.0 — scheme-addressed async VFS, sandbox for the file manager.
+- **Schemes**: `VfsScheme::{AIOS, HOST}`; `VfsPath` parses URI-style paths (`AIOS:///sandbox`, `HOST:///C:/...`) and exposes `parent()`, `join()`, `file_name()`, `to_uri()`.
+- **Trait** `VirtualFileSystem` (async, `tokio::fs`): `list`, `read`, `write`, `create_dir`, `delete`, `rename`, `exists`, `metadata`, `open_seek`. `open_seek` returns `Box<dyn AsyncSeekReader + Send + Unpin>` where `AsyncSeekReader = AsyncRead + AsyncSeek` (used by AI-preview reads).
+- **Implementations**: `AiosVfs` (sandboxed local dir with `canonicalize_inside` containment check) and `HostVfs` (real host paths, reads/writes gated by ACL tokens `vfs:host:read` / `vfs:host:write`).
+- **Operations** (`operations.rs`): `Progress` (atomic bytes/files counters, `fraction()`, `pressure_fraction()`), `CancellationToken`, `total_bytes`, `copy_recursive`, `move_item`, `delete_item`, `read_head`, `read_at`.
+- **Security** (`security.rs`): `AclContext` — in-memory capability set, thread-safe via `Mutex<HashSet>`; `canonicalize_inside(root, path)`.
+- **AI preview** (`ai_preview.rs`): `analyze_file(name, head)` → `AiPreview { title, headline, lines: Vec<(AiLineKind, String)> }`; parses WASM name sections, detects panics in logs, emits source-level hints.
+- 29 unit tests (cancellation, WASM name-section bytes, path containment, copy/move/delete, preview).
+
+## File Manager (`aios-fm`) — v2.10.0
+
+- **Crate**: `aios-fm` v1.0.0 — two-panel (Volkov/Far style) file manager engine + TUI and GUI renderers.
+- **State** (`state.rs`): `PanelSide::{Left, Right}`, `PanelState` (path, cursor, `SortRule::Name/Size/Date/Type`, entries), `human_size`.
+- **Commands** (`commands.rs`): `Command` (Navigate/Refresh/Copy/Move/Delete/Mkdir/Rename/View/GrantHostRead/GrantHostWrite/Shutdown) and `Ack` over `tokio::mpsc::unbounded_channel`.
+- **Engine** (`engine.rs`): `FileManager::new(fs, acl) -> (FileManager, UnboundedReceiver<Ack>)`; background command loop; Copy/Move/Delete spawn cancellable `tokio::spawn` jobs with `Progress`; `FmSnapshot { panels, active, jobs, acl }`; direct methods `send`, `snapshot`, `switch_panel`, `set_active`, `set_cursor`, `move_cursor`, `toggle_sort`, `selected`, `default_target`, `acl`, `fs`.
+- **TUI renderer** (`ui_tui.rs`): `draw(frame, area, &FmSnapshot, rows)` (header with scheme + ACL, two panels, footer with job progress + hotkeys), `key_to_action`, `progress_bar`.
+- **GUI renderer** (`ui_gui.rs`): `show(ui, &FmSnapshot, &FmTheme) -> Option<FmClick>` (two columns, click/double-click selection, progress bars, ACL panel).
+- 16 unit tests (engine lifecycle, sort/movement, keymap, GUI theme).
+
+---
+
 ## Marketplace (`aios-block-mgr`)
 
 - `BlockMarketplace` — block registry with repository management
@@ -1104,14 +1128,15 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 | Key | Action |
 |-----|--------|
 | Tab / F1 / ? | Next tab / help overlay |
-| 1-7 | Direct tab select |
-| Alt+1-7 | Direct tab select even while typing in the Shell / Web URL / AI query / net input line |
+| 1-8 | Direct tab select |
+| Alt+1-8 | Direct tab select even while typing in the Shell / Web URL / AI query / net input line |
 | q / Ctrl+C | Quit |
 | W | Launch the AIOS GUI dashboard (`aios-gui`) |
 | Space | Pause/resume log scroll |
 | r / k / l (Blocks) | Restart / unload / load selected block |
 | g / j / k / o / u / d / b / B / n (Web) | Omnibox / link nav / open / scroll / back / native viewer |
 | n / g / s (Network & Store) | Edit net config / show config JSON / refresh store list |
+| Files (Tab 8): Tab/↑/↓, Enter, Backspace, F2-F3, F5-F9, g/w, r | Switch panels / navigate, open dir or AI-preview, parent dir, rename, view, copy, move, mkdir, delete, sort, grant host read/write, refresh |
 
 ### AI Console (Tab 3, Phase 43 / v2.6.0, Phase 45 / v2.9.0)
 - Interactive LLM chat: `i` enters query mode, `Enter` sends; each query re-applies the current console `LlmConfig` to the shared `BridgeContext.llm` engine, so console settings and the HTTP `/api/v1/llm/query` endpoint stay consistent

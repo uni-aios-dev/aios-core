@@ -1,9 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use aios_block_mgr::registry::BlockRegistry;
+use aios_fm::commands::Ack;
+use aios_fm::engine::FileManager;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_process_mgr::scheduler::Scheduler;
+use aios_vfs::ai_preview::AiPreview;
 use aios_watchdog::watchdog::WatchdogState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -12,6 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs},
     Frame,
 };
+use tokio::sync::mpsc::UnboundedReceiver;
 
 #[derive(Clone, Debug)]
 pub struct PageContent {
@@ -277,6 +281,16 @@ pub struct DashboardState {
     pub page_cache: WebFetchOutbox,
     pub shell_state: ShellState,
     pub show_help: bool,
+    /// File manager instance (only present when the tokio runtime is active).
+    pub fm: Option<FileManager>,
+    /// Outbox for FM job acknowledgements.
+    pub fm_ack: Option<UnboundedReceiver<Ack>>,
+    /// AI preview of the currently viewed file (Files tab).
+    pub fm_preview: Option<AiPreview>,
+    /// Modal input mode for the Files tab (F7 mkdir / F2 rename).
+    pub fm_input_mode: FmInputMode,
+    /// Buffer for the active Files-tab modal input.
+    pub fm_input_buffer: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +298,13 @@ pub enum BlockInputMode {
     None,
     LoadName,
     LoadVersion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FmInputMode {
+    None,
+    Mkdir,
+    Rename,
 }
 
 impl DashboardState {
@@ -339,6 +360,11 @@ impl DashboardState {
             page_cache: Arc::new(Mutex::new(None)),
             shell_state: ShellState::default(),
             show_help: false,
+            fm: None,
+            fm_ack: None,
+            fm_preview: None,
+            fm_input_mode: FmInputMode::None,
+            fm_input_buffer: String::new(),
         }
     }
 
@@ -346,6 +372,67 @@ impl DashboardState {
         self.log_messages.push(msg);
         if self.log_messages.len() > 100 {
             self.log_messages.remove(0);
+        }
+    }
+
+    /// Drain pending FM acknowledgements, updating the AI preview and log.
+    pub fn poll_fm_acks(&mut self) {
+        loop {
+            let ack = match self.fm_ack.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(ack) => ack,
+                    Err(_) => return,
+                },
+                None => return,
+            };
+            let msg = match &ack {
+                Ack::DirChanged { side } => format!("FM: {} refreshed", side.name()),
+                Ack::Copied(s) => format!("FM: copied {} files ({} B)", s.files, s.bytes),
+                Ack::Moved(s) => format!("FM: moved {} files", s.files),
+                Ack::Deleted(s) => format!("FM: deleted {} files ({} B)", s.files, s.bytes),
+                Ack::CreatedDir { path } => format!("FM: created {}", path.to_uri()),
+                Ack::Renamed { from, to } => {
+                    format!("FM: renamed {} -> {}", from.to_uri(), to.to_uri())
+                }
+                Ack::View { preview, .. } => {
+                    self.fm_preview = Some(preview.clone());
+                    format!("FM: {}", preview.headline())
+                }
+                Ack::Error(e) => format!("FM: error: {e}"),
+            };
+            self.add_log(msg);
+        }
+    }
+
+    /// Confirm the active Files-tab modal input (F7 mkdir / F2 rename).
+    pub fn fm_confirm_input(&mut self) {
+        let name = self.fm_input_buffer.trim().to_string();
+        let mode = self.fm_input_mode;
+        self.fm_input_mode = FmInputMode::None;
+        self.fm_input_buffer.clear();
+        if name.is_empty() {
+            return;
+        }
+        if let Some(fm) = self.fm.as_ref() {
+            let side = fm.active_side();
+            match mode {
+                FmInputMode::Mkdir => {
+                    fm.send(aios_fm::commands::Command::Mkdir {
+                        side,
+                        parent: fm.panel_path(side),
+                        name,
+                    });
+                    self.add_log("FM: creating directory...".into());
+                }
+                FmInputMode::Rename => {
+                    if let Some(from) = fm.selected(side) {
+                        let to = from.parent().join(&name);
+                        fm.send(aios_fm::commands::Command::Rename { side, from, to });
+                        self.add_log("FM: renaming...".into());
+                    }
+                }
+                FmInputMode::None => {}
+            }
         }
     }
 
@@ -648,6 +735,7 @@ fn draw_tabs(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         " Deps ",
         " Web ",
         " Shell ",
+        " Files ",
     ];
 
     let tabs = Tabs::new(titles)
@@ -678,8 +766,70 @@ fn draw_main(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         4 => draw_dependencies(f, area, state),
         5 => draw_web(f, area, state),
         6 => draw_shell(f, area, state),
+        7 => draw_files(f, area, state),
         _ => draw_overview(f, area, state),
     }
+}
+
+fn draw_files(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    match &state.fm {
+        Some(fm) => {
+            let snap = fm.snapshot();
+            let rows = area
+                .height
+                .saturating_sub(aios_fm::ui_tui::HEADER_HEIGHT + aios_fm::ui_tui::FOOTER_HEIGHT)
+                as usize;
+            aios_fm::ui_tui::draw(f, area, &snap, rows);
+            if let Some(preview) = &state.fm_preview {
+                draw_fm_preview(f, f.area(), preview);
+            }
+        }
+        None => {
+            let para = Paragraph::new(
+                " File manager not initialized — start aios-tui with a tokio runtime. ",
+            )
+            .block(Block::default().borders(Borders::ALL).title(" Files "));
+            f.render_widget(para, area);
+        }
+    }
+}
+
+fn draw_fm_preview(f: &mut Frame<'_>, area: Rect, preview: &AiPreview) {
+    let title = format!(" {} ", preview.title);
+    let lines: Vec<Line> = preview
+        .lines
+        .iter()
+        .map(|(kind, text)| {
+            let color = match kind {
+                aios_vfs::ai_preview::AiLineKind::Info => Color::White,
+                aios_vfs::ai_preview::AiLineKind::Success => Color::Green,
+                aios_vfs::ai_preview::AiLineKind::Warning => Color::Yellow,
+                aios_vfs::ai_preview::AiLineKind::Error => Color::Red,
+                aios_vfs::ai_preview::AiLineKind::Muted => Color::DarkGray,
+            };
+            Line::from(Span::styled(text.as_str(), Style::default().fg(color)))
+        })
+        .collect();
+
+    let height = (lines.len() + 2).min(area.height.saturating_sub(2) as usize) as u16;
+    let width = 84.min(area.width.saturating_sub(2) as usize) as u16;
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let modal = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    let para = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .title_alignment(ratatui::layout::Alignment::Left),
+    );
+    f.render_widget(Clear, area);
+    f.render_widget(para, modal);
 }
 
 fn draw_overview(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1693,7 +1843,8 @@ fn draw_shell(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 fn draw_help(f: &mut Frame<'_>, area: Rect) {
     f.render_widget(Clear, area);
 
-    let mut help_text = vec![
+    let mut help_text =
+        vec![
         Line::from(Span::styled(
             " AIOS TUI Help — press F1 or Esc to close ",
             Style::default()
@@ -1710,7 +1861,7 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
         Line::from(Span::raw("  F1 / ?     — Toggle this help screen")),
         Line::from(Span::raw("  q / Esc    — Quit AIOS")),
         Line::from(Span::raw(
-            "  1-7        — Switch tabs (Overview/Processes/Blocks/Metrics/Deps/Web/Shell)",
+            "  1-8        — Switch tabs (Overview/Processes/Blocks/Metrics/Deps/Web/Shell/Files)",
         )),
         Line::from(Span::raw("  j / Down   — Move selection down")),
         Line::from(Span::raw("  k / Up     — Move selection up")),
@@ -1762,6 +1913,25 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
         )),
         Line::from(Span::raw("  Type command and press Enter")),
         Line::from(Span::raw("  ↑/↓       — Command history navigation")),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " Files Tab (8):",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("  Tab / j/k — Switch / navigate panels")),
+        Line::from(Span::raw("  Enter      — Open directory / AI-preview file")),
+        Line::from(Span::raw("  Backspace  — Go to parent directory")),
+        Line::from(Span::raw("  F3 / o     — AI-preview selected file")),
+        Line::from(Span::raw("  F5         — Copy to other panel")),
+        Line::from(Span::raw("  F6         — Move to other panel")),
+        Line::from(Span::raw("  F7         — Create directory (input modal)")),
+        Line::from(Span::raw("  F8         — Delete selected item")),
+        Line::from(Span::raw("  F2         — Rename selected item (input modal)")),
+        Line::from(Span::raw("  F9 / s     — Cycle sort rule")),
+        Line::from(Span::raw("  g / w      — Grant HOST:// read / write capability")),
+        Line::from(Span::raw("  r          — Refresh panels")),
         Line::from(Span::raw("")),
         Line::from(Span::styled(
             " Shell Commands:",

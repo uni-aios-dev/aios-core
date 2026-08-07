@@ -18,6 +18,10 @@ use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::BlockId;
+use aios_fm::commands::Command;
+use aios_fm::engine::FileManager;
+use aios_fm::state::PanelSide;
+use aios_fm::ui_tui::{key_to_action, TuiAction};
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_net_config::block::NetSettingsBlock;
@@ -27,6 +31,8 @@ use aios_process_mgr::task::Priority;
 use aios_store::manager::StoreManager;
 use aios_store::manifest::{sign_manifest, ManifestInfo, ManifestValidator};
 use aios_tui::dashboard::{self, DashboardState, PageContent};
+use aios_vfs::security::AclContext;
+use aios_vfs::vfs::{AiosVfs, VirtualFileSystem};
 use aios_watchdog::heartbeat::Heartbeat;
 use aios_watchdog::safe_mode::SafeModeShell;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig, WatchdogState};
@@ -920,8 +926,98 @@ fn switch_tab(state: &mut DashboardState, tab: usize) {
     if tab == 5 {
         state.web_state.links_scroll = 0;
     }
+    if tab == 7 {
+        if let Some(fm) = state.fm.as_ref() {
+            fm.send(Command::Refresh {
+                side: PanelSide::Left,
+            });
+            fm.send(Command::Refresh {
+                side: PanelSide::Right,
+            });
+        }
+    }
     state.process_kill_result = None;
     state.block_operation_result = None;
+}
+
+fn fm_handle_action(state: &mut DashboardState, fm: &FileManager, action: TuiAction) {
+    match action {
+        TuiAction::MoveUp { side } => fm.move_cursor(side, -1),
+        TuiAction::MoveDown { side } => fm.move_cursor(side, 1),
+        TuiAction::Enter { side } => {
+            if fm.selected_is_dir(side) == Some(true) {
+                if let Some(path) = fm.selected(side) {
+                    fm.send(Command::Navigate { side, path });
+                }
+            } else if fm.selected(side).is_some() {
+                if let Some(path) = fm.selected(side) {
+                    fm.send(Command::View { path });
+                    state.add_log("FM: AI preview...".into());
+                }
+            }
+        }
+        TuiAction::GoUp { side } => {
+            let parent = fm.panel_path(side).parent();
+            fm.send(Command::Navigate { side, path: parent });
+        }
+        TuiAction::SwitchPanel => fm.switch_panel(),
+        TuiAction::CopySelected => {
+            let side = fm.active_side();
+            if let (Some(src), Some(dst)) = (fm.selected(side), fm.default_target(side)) {
+                fm.send(Command::Copy { src, dst });
+                state.add_log("FM: copying...".into());
+            }
+        }
+        TuiAction::MoveSelected => {
+            let side = fm.active_side();
+            if let (Some(src), Some(dst)) = (fm.selected(side), fm.default_target(side)) {
+                fm.send(Command::Move { src, dst });
+                state.add_log("FM: moving...".into());
+            }
+        }
+        TuiAction::DeleteSelected => {
+            let side = fm.active_side();
+            if let Some(path) = fm.selected(side) {
+                fm.send(Command::Delete { path });
+                state.add_log("FM: deleting...".into());
+            }
+        }
+        TuiAction::Mkdir { .. } => {
+            state.fm_input_mode = dashboard::FmInputMode::Mkdir;
+            state.fm_input_buffer.clear();
+            state.add_log("FM: mkdir — enter directory name".into());
+        }
+        TuiAction::Rename { .. } => {
+            let side = fm.active_side();
+            if fm.selected(side).is_some() {
+                state.fm_input_mode = dashboard::FmInputMode::Rename;
+                state.fm_input_buffer.clear();
+                state.add_log("FM: rename — enter new name".into());
+            }
+        }
+        TuiAction::ViewSelected => {
+            let side = fm.active_side();
+            if let Some(path) = fm.selected(side) {
+                fm.send(Command::View { path });
+                state.add_log("FM: AI preview...".into());
+            }
+        }
+        TuiAction::ToggleSort { side } => fm.toggle_sort(side),
+        TuiAction::GrantHostRead => {
+            fm.send(Command::GrantHostRead);
+            state.add_log("FM: granted vfs:host:read".into());
+        }
+        TuiAction::GrantHostWrite => {
+            fm.send(Command::GrantHostWrite);
+            state.add_log("FM: granted vfs:host:write".into());
+        }
+        TuiAction::Refresh { side } => fm.send(Command::Refresh { side }),
+        TuiAction::Close => {
+            if state.fm_preview.is_some() {
+                state.fm_preview = None;
+            }
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1061,6 +1157,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = DashboardState::new(ai_tier, profile, &registry, &scheduler);
 
+    let rt = tokio::runtime::Runtime::new()?;
+    let fm_root = data_dir.join("vfs_sandbox");
+    let (fm, fm_ack) = {
+        let vfs: Arc<dyn VirtualFileSystem> = Arc::new(AiosVfs::new(fm_root.clone())?);
+        rt.block_on(async move { FileManager::new(vfs, Arc::new(AclContext::new())) })
+    };
+    state.fm = Some(fm);
+    state.fm_ack = Some(fm_ack);
+    log::info!("AIOS: file manager started on {}", fm_root.display());
+
     if let Ok((w, _)) = crossterm::terminal::size() {
         state.web_state.wrap_width = dashboard::web_page_width(w as usize);
     }
@@ -1074,6 +1180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(WatchdogState::Monitoring);
         state.update_watchdog(wd_state);
         state.check_page_cache();
+        state.poll_fm_acks();
 
         terminal.draw(|f| {
             state.update_from_scheduler(&scheduler, &registry);
@@ -1090,7 +1197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if key.modifiers.contains(KeyModifiers::ALT) {
                         if let KeyCode::Char(d) = key.code {
                             if let Some(d) = d.to_digit(10) {
-                                if (1..=7).contains(&d) {
+                                if (1..=8).contains(&d) {
                                     switch_tab(&mut state, (d - 1) as usize);
                                     continue;
                                 }
@@ -1291,6 +1398,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
+                    if state.selected_tab == 7 {
+                        if let Some(fm) = state.fm.clone() {
+                            if state.fm_input_mode != dashboard::FmInputMode::None {
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        state.fm_input_mode = dashboard::FmInputMode::None;
+                                        state.fm_input_buffer.clear();
+                                    }
+                                    KeyCode::Enter => {
+                                        state.fm_confirm_input();
+                                    }
+                                    KeyCode::Char(c) => {
+                                        state.fm_input_buffer.push(c);
+                                    }
+                                    KeyCode::Backspace => {
+                                        state.fm_input_buffer.pop();
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
+                            if key.code == KeyCode::Esc && state.fm_preview.is_some() {
+                                state.fm_preview = None;
+                                continue;
+                            }
+                            let side = fm.active_side();
+                            if let Some(action) = key_to_action(key, side) {
+                                fm_handle_action(&mut state, &fm, action);
+                            }
+                        }
+                        continue;
+                    }
+
                     match key.code {
                         KeyCode::F(1) | KeyCode::Char('?') => {
                             state.show_help = true;
@@ -1310,6 +1450,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('5') => switch_tab(&mut state, 4),
                         KeyCode::Char('6') => switch_tab(&mut state, 5),
                         KeyCode::Char('7') => switch_tab(&mut state, 6),
+                        KeyCode::Char('8') => switch_tab(&mut state, 7),
                         KeyCode::Char('j') | KeyCode::Down => {
                             state.move_selection_down();
                             state.process_kill_result = None;

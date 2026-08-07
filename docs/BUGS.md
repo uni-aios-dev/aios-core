@@ -2,7 +2,18 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.9.5, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, and the v2.9.5 Live USB image added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md` v2.8.0 / v2.9.0 / v2.9.1 / v2.9.2 / v2.9.3 / v2.9.5.
+As of v2.10.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, and the v2.10.0 `aios-vfs`/`aios-fm` file manager added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
+
+### KNOWN LIMITATION: `HOST://` access requires capability tokens
+- **Status:** BY DESIGN
+- **Symptom:** The file manager starts both panels on `AIOS://` (sandboxed); navigating to `HOST://` shows an empty listing, and host operations fail with `denied: missing capability`
+- **Workaround:** Grant `vfs:host:read` (`g`) and `vfs:host:write` (`w`) tokens in the Files tab; tokens live in `AclContext` for the current process only and are not persisted
+- **Note:** `HostVfs` still refuses paths outside the host root even with tokens (path-containment via `canonicalize_inside`)
+
+### KNOWN LIMITATION: GUI file manager needs a writable sandbox dir
+- **Status:** BY DESIGN
+- **Symptom:** If `AIOS_DATA_DIR` points to a read-only location, the GUI Files tab shows "FM runtime failed / VFS root init"
+- **Workaround:** Point `AIOS_DATA_DIR` at a writable folder before launching `aios-gui` (default sandbox: `AIOS_DATA_DIR/vfs_sandbox`)
 
 ### FIXED: Linux GPU probe did not compile (`hw_probe.rs`)
 - **Status:** FIXED in v2.9.5

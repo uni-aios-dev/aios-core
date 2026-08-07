@@ -1,9 +1,16 @@
 use crate::tabs;
 use crate::theme::AiosTheme;
 
+use aios_fm::commands::{Ack, Command};
+use aios_fm::engine::FileManager;
+use aios_fm::state::PanelSide;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_net_config::config::NetworkConfig;
+use aios_vfs::ai_preview::AiPreview;
+use aios_vfs::security::AclContext;
+use aios_vfs::vfs::{AiosVfs, VirtualFileSystem};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -139,6 +146,28 @@ pub struct AiosApp {
 
     pub net_config: NetworkConfig,
     pub net_status: Option<String>,
+
+    /// File-manager engine (created with a dedicated tokio runtime).
+    pub fm: Option<FileManager>,
+    /// Runtime hosting the FM engine loop and background jobs.
+    pub fm_rt: Option<tokio::runtime::Runtime>,
+    /// Outbox for FM job acknowledgements.
+    pub fm_ack: Option<UnboundedReceiver<Ack>>,
+    /// AI preview of the currently viewed file (Files tab).
+    pub fm_preview: Option<AiPreview>,
+    /// Error message from the last FM operation, if any.
+    pub fm_error: Option<String>,
+    /// Modal input (mkdir / rename) state for the Files tab.
+    pub fm_input: Option<FmInput>,
+    /// Buffer for the active Files-tab modal input.
+    pub fm_input_buf: String,
+}
+
+/// Active modal input mode of the GUI Files tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmInput {
+    Mkdir,
+    Rename,
 }
 
 impl AiosApp {
@@ -199,6 +228,196 @@ impl AiosApp {
             ipc_traffic: 0,
             net_config: NetworkConfig::default(),
             net_status: None,
+            fm: None,
+            fm_rt: None,
+            fm_ack: None,
+            fm_preview: None,
+            fm_error: None,
+            fm_input: None,
+            fm_input_buf: String::new(),
+        }
+    }
+
+    /// Start the file-manager engine on a dedicated tokio runtime.
+    pub fn fm_init(&mut self) {
+        let fm_root = data_dir().join("vfs_sandbox");
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                let (fm, fm_ack) = {
+                    let vfs: Arc<dyn VirtualFileSystem> =
+                        Arc::new(AiosVfs::new(fm_root.clone()).expect("VFS root init"));
+                    rt.block_on(async move { FileManager::new(vfs, Arc::new(AclContext::new())) })
+                };
+                self.fm = Some(fm);
+                self.fm_rt = Some(rt);
+                self.fm_ack = Some(fm_ack);
+                self.add_log(format!("File manager started on {}", fm_root.display()));
+            }
+            Err(e) => {
+                self.fm_error = Some(format!("FM runtime failed: {e}"));
+                self.add_log(format!("FM runtime failed: {e}"));
+            }
+        }
+    }
+
+    /// Drain pending FM acknowledgements, updating the AI preview and log.
+    pub fn poll_fm_acks(&mut self) {
+        loop {
+            let ack = match self.fm_ack.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(ack) => ack,
+                    Err(_) => return,
+                },
+                None => return,
+            };
+            match ack {
+                Ack::DirChanged { side } => self.add_log(format!("FM: {} refreshed", side.name())),
+                Ack::Copied(s) => {
+                    self.add_log(format!("FM: copied {} files ({} B)", s.files, s.bytes));
+                }
+                Ack::Moved(s) => self.add_log(format!("FM: moved {} files", s.files)),
+                Ack::Deleted(s) => {
+                    self.add_log(format!("FM: deleted {} files ({} B)", s.files, s.bytes));
+                }
+                Ack::CreatedDir { path } => {
+                    self.add_log(format!("FM: created {}", path.to_uri()));
+                }
+                Ack::Renamed { from, to } => {
+                    self.add_log(format!("FM: renamed {} -> {}", from.to_uri(), to.to_uri()));
+                }
+                Ack::View { preview, .. } => {
+                    self.fm_preview = Some(preview);
+                    self.add_log("FM: AI preview ready".into());
+                }
+                Ack::Error(e) => {
+                    self.fm_error = Some(e.clone());
+                    self.add_log(format!("FM: error: {e}"));
+                }
+            }
+        }
+    }
+
+    /// Execute a file-manager action on the active panel.
+    pub fn fm_act(&mut self, action: aios_fm::ui_tui::TuiAction) {
+        let Some(fm) = self.fm.clone() else { return };
+        match action {
+            aios_fm::ui_tui::TuiAction::MoveUp { side } => fm.move_cursor(side, -1),
+            aios_fm::ui_tui::TuiAction::MoveDown { side } => fm.move_cursor(side, 1),
+            aios_fm::ui_tui::TuiAction::Enter { side } => {
+                if fm.selected_is_dir(side) == Some(true) {
+                    if let Some(path) = fm.selected(side) {
+                        fm.send(Command::Navigate { side, path });
+                    }
+                } else if let Some(path) = fm.selected(side) {
+                    fm.send(Command::View { path });
+                }
+            }
+            aios_fm::ui_tui::TuiAction::GoUp { side } => {
+                let parent = fm.panel_path(side).parent();
+                fm.send(Command::Navigate { side, path: parent });
+            }
+            aios_fm::ui_tui::TuiAction::SwitchPanel => fm.switch_panel(),
+            aios_fm::ui_tui::TuiAction::CopySelected => {
+                let side = fm.active_side();
+                if let (Some(src), Some(dst)) = (fm.selected(side), fm.default_target(side)) {
+                    fm.send(Command::Copy { src, dst });
+                    self.add_log("FM: copying...".into());
+                }
+            }
+            aios_fm::ui_tui::TuiAction::MoveSelected => {
+                let side = fm.active_side();
+                if let (Some(src), Some(dst)) = (fm.selected(side), fm.default_target(side)) {
+                    fm.send(Command::Move { src, dst });
+                    self.add_log("FM: moving...".into());
+                }
+            }
+            aios_fm::ui_tui::TuiAction::DeleteSelected => {
+                let side = fm.active_side();
+                if let Some(path) = fm.selected(side) {
+                    fm.send(Command::Delete { path });
+                    self.add_log("FM: deleting...".into());
+                }
+            }
+            aios_fm::ui_tui::TuiAction::Mkdir { .. } => {
+                self.fm_input = Some(FmInput::Mkdir);
+                self.fm_input_buf.clear();
+            }
+            aios_fm::ui_tui::TuiAction::Rename { .. } => {
+                let side = fm.active_side();
+                if fm.selected(side).is_some() {
+                    self.fm_input = Some(FmInput::Rename);
+                    self.fm_input_buf.clear();
+                }
+            }
+            aios_fm::ui_tui::TuiAction::ViewSelected => {
+                let side = fm.active_side();
+                if let Some(path) = fm.selected(side) {
+                    fm.send(Command::View { path });
+                    self.add_log("FM: AI preview...".into());
+                }
+            }
+            aios_fm::ui_tui::TuiAction::ToggleSort { side } => fm.toggle_sort(side),
+            aios_fm::ui_tui::TuiAction::GrantHostRead => {
+                fm.send(Command::GrantHostRead);
+                self.add_log("FM: granted vfs:host:read".into());
+            }
+            aios_fm::ui_tui::TuiAction::GrantHostWrite => {
+                fm.send(Command::GrantHostWrite);
+                self.add_log("FM: granted vfs:host:write".into());
+            }
+            aios_fm::ui_tui::TuiAction::Refresh { side } => fm.send(Command::Refresh { side }),
+            aios_fm::ui_tui::TuiAction::Close => {
+                self.fm_preview = None;
+            }
+        }
+    }
+
+    /// Confirm the active Files-tab modal input (mkdir / rename).
+    pub fn fm_confirm_input(&mut self) {
+        let name = self.fm_input_buf.trim().to_string();
+        let mode = self.fm_input.take();
+        self.fm_input_buf.clear();
+        if name.is_empty() {
+            return;
+        }
+        let Some(fm) = self.fm.clone() else { return };
+        let side = fm.active_side();
+        match mode {
+            Some(FmInput::Mkdir) => fm.send(Command::Mkdir {
+                side,
+                parent: fm.panel_path(side),
+                name,
+            }),
+            Some(FmInput::Rename) => {
+                if let Some(from) = fm.selected(side) {
+                    let to = from.parent().join(&name);
+                    fm.send(Command::Rename { side, from, to });
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Map a GUI key to a file-manager action on the given panel side.
+    fn fm_key_action(k: egui::Key, side: PanelSide) -> Option<aios_fm::ui_tui::TuiAction> {
+        use aios_fm::ui_tui::TuiAction;
+        match k {
+            egui::Key::ArrowUp => Some(TuiAction::MoveUp { side }),
+            egui::Key::ArrowDown => Some(TuiAction::MoveDown { side }),
+            egui::Key::Tab => Some(TuiAction::SwitchPanel),
+            egui::Key::Enter => Some(TuiAction::Enter { side }),
+            egui::Key::Backspace => Some(TuiAction::GoUp { side }),
+            egui::Key::F3 => Some(TuiAction::ViewSelected),
+            egui::Key::F5 => Some(TuiAction::CopySelected),
+            egui::Key::F6 => Some(TuiAction::MoveSelected),
+            egui::Key::F7 => Some(TuiAction::Mkdir { side }),
+            egui::Key::F8 => Some(TuiAction::DeleteSelected),
+            egui::Key::F9 => Some(TuiAction::ToggleSort { side }),
+            egui::Key::R => Some(TuiAction::Refresh { side }),
+            egui::Key::G => Some(TuiAction::GrantHostRead),
+            egui::Key::W => Some(TuiAction::GrantHostWrite),
+            egui::Key::Escape => Some(TuiAction::Close),
+            _ => None,
         }
     }
 
@@ -821,9 +1040,20 @@ impl eframe::App for AiosApp {
 
         self.poll_browser_open();
         self.poll_ai();
+        self.poll_fm_acks();
 
         if self.ai_busy {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        if let Some(fm) = self.fm.as_ref() {
+            if fm
+                .snapshot()
+                .jobs
+                .iter()
+                .any(|j| j.status == aios_fm::engine::JobStatus::Running)
+            {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
         }
 
         self.uptime_secs += 1;
@@ -921,6 +1151,7 @@ impl eframe::App for AiosApp {
                     ("\u{1f4e1} Network Settings", 4),
                     ("\u{2913} Deps", 5),
                     ("\u{1f310} Native Browser", 6),
+                    ("\u{1f4c1} Files", 7),
                 ];
 
                 for (label, idx) in tabs {
@@ -1002,9 +1233,12 @@ impl eframe::App for AiosApp {
                 4 => tabs::network::show(ui, self, &theme),
                 5 => tabs::deps::show(ui, self, &theme),
                 6 => tabs::web::show(ui, self, &theme),
+                7 => tabs::files::show(ui, self, &theme),
                 _ => tabs::overview::show(ui, self, &theme),
             });
 
+        let fm_active = self.selected_tab == 7 && self.fm_input.is_none();
+        let fm_side = self.fm.as_ref().map(|fm| fm.active_side());
         ctx.input(|i| {
             for event in &i.events {
                 if let egui::Event::Key {
@@ -1013,6 +1247,14 @@ impl eframe::App for AiosApp {
                     ..
                 } = event
                 {
+                    if fm_active {
+                        if let Some(side) = fm_side {
+                            if let Some(action) = Self::fm_key_action(*k, side) {
+                                self.fm_act(action);
+                                continue;
+                            }
+                        }
+                    }
                     match k {
                         egui::Key::F1 => self.selected_tab = 0,
                         egui::Key::F2 => self.selected_tab = 1,
@@ -1021,6 +1263,7 @@ impl eframe::App for AiosApp {
                         egui::Key::F5 => self.selected_tab = 4,
                         egui::Key::F6 => self.selected_tab = 5,
                         egui::Key::F7 => self.selected_tab = 6,
+                        egui::Key::F8 => self.selected_tab = 7,
                         egui::Key::J => self.move_selection_down(),
                         egui::Key::K => self.move_selection_up(),
                         _ => {}
@@ -1173,5 +1416,66 @@ mod tests {
         app.close_browser();
         assert!(app.browser_status.is_none());
         assert!(!app.browser_active());
+    }
+
+    #[test]
+    fn test_fm_key_action_mapping() {
+        use aios_fm::ui_tui::TuiAction;
+        assert!(matches!(
+            AiosApp::fm_key_action(egui::Key::F5, PanelSide::Left),
+            Some(TuiAction::CopySelected)
+        ));
+        assert!(matches!(
+            AiosApp::fm_key_action(egui::Key::F7, PanelSide::Right),
+            Some(TuiAction::Mkdir {
+                side: PanelSide::Right
+            })
+        ));
+        assert!(matches!(
+            AiosApp::fm_key_action(egui::Key::Tab, PanelSide::Left),
+            Some(TuiAction::SwitchPanel)
+        ));
+        assert!(AiosApp::fm_key_action(egui::Key::F1, PanelSide::Left).is_none());
+    }
+
+    #[test]
+    fn test_fm_init_and_mkdir() {
+        let mut app = AiosApp::new(
+            AiTier::Tier1,
+            HardwareProfile::mock_modern(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            4096,
+        );
+        app.fm_init();
+        assert!(app.fm.is_some());
+        assert!(app.fm_rt.is_some());
+
+        app.fm_act(aios_fm::ui_tui::TuiAction::Mkdir {
+            side: PanelSide::Left,
+        });
+        app.fm_input_buf = "gui_test_dir".into();
+        app.fm_confirm_input();
+
+        let mut seen_created = false;
+        for _ in 0..200 {
+            app.poll_fm_acks();
+            if app
+                .log_messages
+                .iter()
+                .any(|l| l.contains("created") && l.contains("gui_test_dir"))
+            {
+                seen_created = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            seen_created,
+            "expected mkdir ack in log: {:?}",
+            app.log_messages
+        );
     }
 }

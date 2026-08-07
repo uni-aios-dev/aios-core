@@ -1,5 +1,38 @@
 # AIOS Development Log
 
+## v2.10.0 — Virtual File System + two-panel File Manager (2026-08-07)
+
+### `aios-vfs` (new crate) — virtual file system layer
+- New workspace crate with scheme-addressed paths and async I/O:
+  - `VfsScheme::{AIOS, HOST}`, `VfsPath` (URI style: `AIOS:///sandbox`, `HOST:///C:/...`), `VfsEntry`, `VfsMetadata`.
+  - `VirtualFileSystem` trait: `list`, `read`, `write`, `create_dir`, `delete`, `rename`, `exists`, `metadata`, `open_seek` (returns `Box<dyn AsyncSeekReader + Send + Unpin>`, where `AsyncSeekReader = AsyncRead + AsyncSeek`).
+  - `AiosVfs` (sandboxed local directory) and `HostVfs` (real host paths, gated by capability tokens).
+  - `operations.rs`: `Progress` (atomic counters, `fraction()`/`pressure_fraction()`), `CancellationToken`, async `copy_recursive` / `move_item` / `delete_item` / `total_bytes` / `read_head` / `read_at`.
+  - `security.rs`: `AclContext` (capability tokens `vfs:host:read`, `vfs:host:write`) + `canonicalize_inside` path-containment guard.
+  - `ai_preview.rs`: `analyze_file` + `AiPreview`/`AiLineKind` — heuristic AI-flavored file preview (WASM name-section parse, log panic detector, source hints).
+- 29 unit tests (incl. copy cancellation, WASM module-name section bytes, canonicalize containment).
+
+### `aios-fm` (new crate) — two-panel file manager (Volkov/Far style)
+- `state.rs`: `PanelState` (cursor, `SortRule`, entries), `human_size`.
+- `commands.rs`: `Command` / `Ack` over `tokio::mpsc::unbounded_channel`.
+- `engine.rs`: `FileManager` with a background command loop; Copy/Move/Delete run as cancellable `tokio::spawn` jobs with `Progress` + `JobInfo`; `FmSnapshot { panels, active, jobs, acl }`; helpers `set_cursor` / `set_active`.
+- `ui_tui.rs`: `draw` (header + two panels + footer with hotkeys), `key_to_action`, `progress_bar`.
+- `ui_gui.rs`: `show` (two columns, click/double-click selection via `FmClick`, progress bars, ACL panel).
+- 16 unit tests (engine, state, keymap, GUI theme).
+
+### TUI: Files tab (8)
+- New `Files` tab rendered via `aios_fm::ui_tui::draw`; `FileManager` + `AclContext` start on a tokio runtime at boot (sandbox = `AIOS_DATA_DIR/vfs_sandbox`).
+- Keys: Tab / arrows navigate, Enter opens a directory or AI-previews a file, Backspace = parent, F3 view, F5 copy, F6 move, F7 mkdir, F8 delete, F2 rename, F9 sort, `g`/`w` grant host read/write, `r` refresh, Esc closes the preview modal.
+- Ack channel polled each loop iteration; preview + log messages update live.
+
+### GUI: Files tab (8)
+- New `Files` tab (`tabs/files.rs`): toolbar (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), two panels, modal mkdir/rename dialog, collapsible AI preview, live job progress; single click selects, double-click opens.
+- `AiosApp::fm_init()` starts the engine on a dedicated tokio runtime; acks polled every frame; F3/F5–F9 and arrow/Enter/Tab/Backspace mapped to FM actions inside the tab.
+
+### Verification
+- `cargo build --workspace`, clippy and fmt clean; tests: `aios-vfs` 29, `aios-fm` 16, `aios-tui` 40, `aios-gui` 10 — all pass.
+- Files: `aios-vfs/*` (new), `aios-fm/*` (new), `Cargo.toml`, `aios-tui/src/{main,dashboard}.rs`, `aios-gui/src/{app,main}.rs`, `aios-gui/src/tabs/files.rs`, `aios-gui/src/tabs/mod.rs`, `docs/*`.
+
 ## v2.9.5 — Live USB bootable image + Linux fixes (2026-08-06)
 
 ### Live USB (bootable AIOS stick)

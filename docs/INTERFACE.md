@@ -49,7 +49,7 @@ cargo run --bin aios-tui
 │              Main content area                       │
 │                                                      │
 ├──────────────────────────────────────────────────────┤
-│ q=Quit Alt+1-7=Tab j/k=Nav K=Kill U=Unload L=Load H=HS F1=Help :=Cmd │  ← Footer
+│ q=Quit Alt+1-8=Tab j/k=Nav K=Kill U=Unload L=Load H=HS F1=Help :=Cmd │  ← Footer
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -57,8 +57,8 @@ cargo run --bin aios-tui
 
 | Key | Action |
 |-----|--------|
-| `1`-`7` | Switch tab (Overview / Processes / Blocks / Metrics / Deps / Web / Shell) |
-| `Alt`+`1`-`7` | Switch tab even while typing in the Shell command line or the Web URL bar |
+| `1`-`8` | Switch tab (Overview / Processes / Blocks / Metrics / Deps / Web / Shell / Files) |
+| `Alt`+`1`-`8` | Switch tab even while typing in the Shell command line or the Web URL bar |
 | `j` / `k` | Navigate down / up in current list |
 | `K` | Kill selected process |
 | `U` | Unload selected block |
@@ -83,6 +83,29 @@ cargo run --bin aios-tui
 - **Deps**: Dependency graph table + load order chain
 - **Web**: Omnibox (search query or URL), page text content (headings highlighted), scrollable links list — pages load in the background and up to 20 recent pages are cached, so going back with `b` is instant
 - **Shell**: Interactive command line with command history, fetch, search, open, clear commands
+- **Files**: Two-panel file manager (Volkov/Far style) over the `aios-vfs` virtual file system — navigate `AIOS://` and `HOST://`, copy/move/delete/mkdir/rename with background progress, AI file preview, capability-gated host access
+
+### Files Tab Keys (when Files tab is active)
+
+The Files tab shows two panels (left/right). The active panel is highlighted in the header. Files start in the `AIOS://` sandbox; press `g`/`w` to grant the `HOST://` read/write capabilities, then navigate to `HOST://` for real host paths.
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Switch the active panel |
+| `↑` / `k` / `↓` / `j` | Move selection up / down |
+| `Enter` | Open the selected directory, or AI-preview the selected file |
+| `Backspace` | Go to the parent directory |
+| `F3` / `o` | AI-preview the selected file |
+| `F5` | Copy the selected item to the other panel |
+| `F6` | Move the selected item to the other panel |
+| `F7` | Create a directory (type the name, `Enter` confirms, `Esc` cancels) |
+| `F8` | Delete the selected item |
+| `F2` | Rename the selected item (type the new name, `Enter` confirms) |
+| `F9` / `s` | Cycle the sort rule (Name / Size / Date / Type) |
+| `g` | Grant the `vfs:host:read` capability |
+| `w` | Grant the `vfs:host:write` capability |
+| `r` | Refresh the panels |
+| `Esc` | Close the AI preview / cancel the input dialog |
 
 ### Web Tab Keys (when Web tab is active)
 
@@ -333,7 +356,7 @@ cargo run --bin aios-gui
 │ Deps     │                                           │
 │ Browser  │                                           │
 │ ──────── │───────────────────────────────────────────│
-│ Quick    │  F1-F7 tabs | AIOS Dashboard | Status...  │  ← Bottom bar
+│ Quick    │  F1-F8 tabs | AIOS Dashboard | Status...  │  ← Bottom bar
 │ Actions  │
 └──────────┴───────────────────────────────────────────┘
   Sidebar          Main area
@@ -343,7 +366,7 @@ cargo run --bin aios-gui
 
 | Key | Action |
 |-----|--------|
-| `F1`-`F7` | Switch tab |
+| `F1`-`F8` | Switch tab |
 | `j` | Move selection down |
 | `k` | Move selection up |
 
@@ -400,9 +423,17 @@ cargo run --bin aios-gui
 - **Non-blocking open**: the WebView is spawned on a background thread, so the dashboard stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
 - **Status line**: shows the resolved target or the last action/error
 
+#### Files (F8)
+- **Toolbar**: Refresh, Switch panel, Sort, Up, Mkdir, Rename, View, Copy, Move, Delete, HOST r / HOST w (grant `vfs:host:read` / `vfs:host:write` capabilities)
+- **Two panels**: navigate `AIOS://` (sandbox) and `HOST://` (real paths); single click selects and activates the panel, double-click opens a directory or AI-previews a file
+- **Mkdir / Rename dialog**: text field + OK / Cancel (Enter / Esc)
+- **AI Preview**: collapsible panel with the smart preview of the selected file
+- **Jobs**: background copy/move/delete operations show live progress bars and completion status
+- **ACL line**: shows which HOST capabilities are currently granted
+
 ### Status Bar
 
-The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser`, where N is the live IPC packet counter, plus the last operation result.
+The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files`, where N is the live IPC packet counter, plus the last operation result.
 
 ### Theming
 

@@ -15,6 +15,9 @@ aios-webview = { path = "../aios-webview" }
 aios-store = { path = "../aios-store" }
 aios-net-config = { path = "../aios-net-config" }
 aios-bridge = { path = "../aios-bridge" }
+aios-vfs = { path = "../aios-vfs" }
+aios-fm = { path = "../aios-fm" }
+tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

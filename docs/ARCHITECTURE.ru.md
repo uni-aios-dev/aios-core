@@ -605,7 +605,7 @@ TUI не может отображать настоящие веб-страни�
 
 ### Графический дашборд (`aios-gui`)
 
-Нативный дашборд на egui/eframe с 7 вкладками: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser. Горячая клавиша `W` в обоих TUI запускает дашборд GUI через `aios_webview::launcher::launch_gui()`.
+Нативный дашборд на egui/eframe с 8 вкладками: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser, Files. Горячая клавиша `W` в обоих TUI запускает дашборд GUI через `aios_webview::launcher::launch_gui()`.
 
 - **System Dashboard (F1)**: карточки статистики (RAM, блоки, процессы, watchdog), панель системы (CPU/GPU/хранилище/HW Tier), спарклайн RAM, распределение приоритетов, таблица процессов (PID, Имя, Приоритет, Состояние, RAM, CPU ms, Сбои) с Обновить/Убить/Приостановить/Возобновить, журнал активности
 - **WASM Blocks (F2)**: таблица блоков + Обновить / Загрузить (2-шаговый диалог) / Выгрузить / Горячая замена
@@ -614,7 +614,8 @@ TUI не может отображать настоящие веб-страни�
 - **Network Settings (F5)**: форма hostname/port/таймауты/private-access/DNS/user-agent с Save (частичное JSON-обновление по IPC в `net_settings`) и Reset, плюс живой JSON-предпросмотр
 - **Deps (F6)**: сводка графа зависимостей, цепочка загрузки, таблица зависит/зависят от
 - **Native Browser (F7)**: омнибокс, Back/Forward, переключатель Open/Close, управляющие нативным окном `aios-webview`; первая навигация автоматически открывает браузер
-- **Строка состояния**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` с живым счётчиком IPC-пакетов
+- **Files (F8)**: двухпанельный файловый менеджер (`aios-fm`) на `aios-vfs` — панель инструментов (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), панели с выбором кликом/двойным кликом, модальный диалог mkdir/rename, сворачиваемое AI-превью, живой прогресс задач и показ capability ACL
+- **Строка состояния**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files` с живым счётчиком IPC-пакетов
 
 ---
 
@@ -883,6 +884,29 @@ User Input (TUI)
 
 ---
 
+## Виртуальная файловая система (`aios-vfs`) — v2.10.0
+
+- **Крейт**: `aios-vfs` v1.0.0 — асинхронная VFS со схемами адресации, песочница для файлового менеджера.
+- **Схемы**: `VfsScheme::{AIOS, HOST}`; `VfsPath` разбирает пути URI-стиля (`AIOS:///sandbox`, `HOST:///C:/...`) и даёт `parent()`, `join()`, `file_name()`, `to_uri()`.
+- **Трейт** `VirtualFileSystem` (асинхронный, `tokio::fs`): `list`, `read`, `write`, `create_dir`, `delete`, `rename`, `exists`, `metadata`, `open_seek`. `open_seek` возвращает `Box<dyn AsyncSeekReader + Send + Unpin>`, где `AsyncSeekReader = AsyncRead + AsyncSeek` (используется для AI-превью).
+- **Реализации**: `AiosVfs` (песочница в локальной папке с проверкой `canonicalize_inside`) и `HostVfs` (реальные пути хоста, чтение/запись ограничены ACL-токенами `vfs:host:read` / `vfs:host:write`).
+- **Операции** (`operations.rs`): `Progress` (атомарные счётчики байтов/файлов, `fraction()`, `pressure_fraction()`), `CancellationToken`, `total_bytes`, `copy_recursive`, `move_item`, `delete_item`, `read_head`, `read_at`.
+- **Безопасность** (`security.rs`): `AclContext` — потокобезопасный набор capability-токенов (`Mutex<HashSet>`); `canonicalize_inside(root, path)`.
+- **AI-превью** (`ai_preview.rs`): `analyze_file(name, head)` → `AiPreview { title, headline, lines: Vec<(AiLineKind, String)> }`; разбирает WASM name-section, находит паники в логах, даёт подсказки по исходникам.
+- 29 модульных тестов (отмена, байты WASM name-section, проверка путей, copy/move/delete, превью).
+
+## Файловый менеджер (`aios-fm`) — v2.10.0
+
+- **Крейт**: `aios-fm` v1.0.0 — движок двухпанельного (в стиле Volkov/Far) файлового менеджера + рендеры TUI и GUI.
+- **Состояние** (`state.rs`): `PanelSide::{Left, Right}`, `PanelState` (путь, курсор, `SortRule::Name/Size/Date/Type`, записи), `human_size`.
+- **Команды** (`commands.rs`): `Command` (Navigate/Refresh/Copy/Move/Delete/Mkdir/Rename/View/GrantHostRead/GrantHostWrite/Shutdown) и `Ack` через `tokio::mpsc::unbounded_channel`.
+- **Движок** (`engine.rs`): `FileManager::new(fs, acl) -> (FileManager, UnboundedReceiver<Ack>)`; фоновый цикл команд; Copy/Move/Delete запускаются как отменяемые `tokio::spawn`-задачи с `Progress`; `FmSnapshot { panels, active, jobs, acl }`; прямые методы `send`, `snapshot`, `switch_panel`, `set_active`, `set_cursor`, `move_cursor`, `toggle_sort`, `selected`, `default_target`, `acl`, `fs`.
+- **TUI-рендер** (`ui_tui.rs`): `draw(frame, area, &FmSnapshot, rows)` (шапка со схемой и ACL, две панели, футер с прогрессом задач и горячими клавишами), `key_to_action`, `progress_bar`.
+- **GUI-рендер** (`ui_gui.rs`): `show(ui, &FmSnapshot, &FmTheme) -> Option<FmClick>` (две колонки, выбор кликом/двойным кликом, полосы прогресса, панель ACL).
+- 16 модульных тестов (жизненный цикл движка, сортировка/навигация, keymap, GUI-тема).
+
+---
+
 ## Маркетплейс (`aios-block-mgr`)
 
 - `BlockMarketplace` — реестр блоков с управлением репозиториями
@@ -1097,14 +1121,15 @@ User Input (TUI)
 | Клавиша | Действие |
 |---------|----------|
 | Tab / F1 / ? | Следующая вкладка / оверлей справки |
-| 1-7 | Прямой выбор вкладки |
-| Alt+1-7 | Прямой выбор вкладки даже при вводе в Shell / URL браузера / AI-запросе / сетевой строке |
+| 1-8 | Прямой выбор вкладки |
+| Alt+1-8 | Прямой выбор вкладки даже при вводе в Shell / URL браузера / AI-запросе / сетевой строке |
 | q / Ctrl+C | Выход |
 | W | Запуск дашборда AIOS GUI (`aios-gui`) |
 | Space | Пауза/возобновление прокрутки логов |
 | r / k / l (Blocks) | Перезапуск / выгрузка / загрузка выбранного блока |
 | g / j / k / o / u / d / b / B / n (Web) | Омнибокс / выбор ссылки / открыть / прокрутка / назад / нативный просмотрщик |
 | n / g / s (Network & Store) | Редактор сети / показать JSON конфигурации / обновить список хранилища |
+| Files (вкладка 8): Tab/↑/↓, Enter, Backspace, F2-F3, F5-F9, g/w, r | Переключение панелей / навигация, открыть папку или AI-превью, родительская папка, переименовать, просмотр, копировать, переместить, создать папку, удалить, сортировка, выдать host read/write, обновить |
 
 ### AI Console (вкладка 3, Фаза 43 / v2.6.0, Фаза 45 / v2.9.0)
 - Интерактивный чат с LLM: `i` включает режим запроса, `Enter` отправляет; каждый запрос повторно применяет текущий `LlmConfig` консоли к общему движку `BridgeContext.llm`, поэтому настройки консоли и HTTP-эндпоинт `/api/v1/llm/query` остаются согласованными

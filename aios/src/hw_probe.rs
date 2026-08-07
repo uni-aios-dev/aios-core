@@ -200,9 +200,7 @@ fn probe_gpu() -> Option<GpuInfo> {
                 }
             }
         }
-        if let Ok(out) = String::from_utf8(
-            Command::new("lspci").arg("-v").output().ok()?.stdout,
-        ) {
+        if let Ok(out) = String::from_utf8(Command::new("lspci").arg("-v").output().ok()?.stdout) {
             for line in out.lines() {
                 if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
                     let clean = line.split(':').nth(1).unwrap_or(line).trim().to_string();

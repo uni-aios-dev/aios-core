@@ -24,12 +24,12 @@ use ratatui::Terminal;
 use std::collections::{BTreeMap, VecDeque};
 use std::io::stdout;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 #[cfg(feature = "webview")]
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 #[cfg(feature = "webview")]
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \

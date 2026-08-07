@@ -17,6 +17,8 @@ aios-net = { path = "../aios-net" }
 aios-webview = { path = "../aios-webview" }
 aios-llm = { path = "../aios-llm" }
 aios-net-config = { path = "../aios-net-config" }
+aios-vfs = { path = "../aios-vfs" }
+aios-fm = { path = "../aios-fm" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
