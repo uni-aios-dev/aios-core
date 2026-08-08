@@ -75,18 +75,50 @@ echo "=== [3] squashfs ==="
 mksquashfs "$W/rootfs" "$W/iso/boot/aios.squashfs" -noappend -comp xz
 
 echo "=== [4] initramfs ==="
-mkdir -p "$W/initramfs/bin" "$W/initramfs/dev" "$W/initramfs/proc" "$W/initramfs/sys" "$W/initramfs/lib/modules"
-cp /bin/busybox.static "$W/initramfs/bin/busybox"
-"$W/initramfs/bin/busybox" --install -s "$W/initramfs/bin"
-cd "$W"
-cp -a "$W/rootfs/lib/modules/." "$W/initramfs/lib/modules/"
-cp "/work/init.rs" "$W/initramfs/init"
-chmod +x "$W/initramfs/init"
+mkdir -p "$W/initramfs/bin" "$W/initramfs/dev" "$W/initramfs/proc" "$W/initramfs/sys" "$W/initramfs/tmp" "$W/initramfs/system" "$W/initramfs/lib/modules"
+
+if [ "${USE_AIOS_INIT:-0}" = "1" ]; then
+  echo "=== [4a] aios-init mode: kernel TUI as PID 1 ==="
+  cd /src/aios-init
+  cargo build --release
+  cp "$CARGO_TARGET_DIR/release/aios-init" "$W/initramfs/init"
+  chmod +x "$W/initramfs/init"
+  cp "$W/aios-bin" "$W/initramfs/system/aios-core"
+  chmod +x "$W/initramfs/system/aios-core"
+  cp /bin/busybox.static "$W/initramfs/bin/busybox"
+  chmod +x "$W/initramfs/bin/busybox"
+  ln -sf busybox "$W/initramfs/bin/sh"
+else
+  cp /bin/busybox.static "$W/initramfs/bin/busybox"
+  "$W/initramfs/bin/busybox" --install -s "$W/initramfs/bin"
+  cd "$W"
+  cp -a "$W/rootfs/lib/modules/." "$W/initramfs/lib/modules/"
+  cp "/work/init.rs" "$W/initramfs/init"
+  chmod +x "$W/initramfs/init"
+fi
+
 cd "$W/initramfs"
 find . | cpio -o -H newc 2>/dev/null | gzip -9 > "$W/iso/boot/initramfs.gz"
 
 echo "=== [5] iso ==="
-cp "/work/grub.cfg" "$W/iso/boot/grub/grub.cfg"
+if [ "${USE_AIOS_INIT:-0}" = "1" ]; then
+  cat > "$W/iso/boot/grub/grub.cfg" <<'EOF'
+set timeout=10
+set default=0
+
+menuentry "AIOS (aios-init kernel TUI)" {
+  linux /boot/vmlinuz init=/init console=tty0
+  initrd /boot/initramfs.gz
+}
+
+menuentry "AIOS (verbose)" {
+  linux /boot/vmlinuz init=/init console=tty0
+  initrd /boot/initramfs.gz
+}
+EOF
+else
+  cp "/work/grub.cfg" "$W/iso/boot/grub/grub.cfg"
+fi
 cp "$W/rootfs/boot/vmlinuz-lts" "$W/iso/boot/vmlinuz"
 grub-mkrescue -o "$W/out/aios-live.iso" "$W/iso" -- -volid AIOS-LIVE 2>&1 | tail -5
 

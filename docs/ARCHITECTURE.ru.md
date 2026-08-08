@@ -1203,10 +1203,15 @@ User Input (TUI)
 ### Сборка initramfs
 ```
 rustup target add x86_64-unknown-linux-musl
-./build_initramfs.sh                     # initramfs.cpio.gz
+./build_initramfs.sh                     # initramfs.cpio.gz (ядерный TUI + init)
+./build_initramfs.sh --keep-rootfs       # оставить стейджинг-каталог rootfs/
+./build_initramfs.sh --no-aios-core      # без ядерного бинарника aios (только спасательный шелл)
 BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасательный шелл
 ```
-Скрипт выполняет `cargo build --release --target x86_64-unknown-linux-musl`, формирует структуру в `rootfs/`, копирует бинарник в `/init` и упаковывает `find . | cpio --null -ov --format=newc | gzip -9`.
+Скрипт выполняет `cargo build --release --target x86_64-unknown-linux-musl` для `aios-init` и (если не задан `--no-aios-core`/`SKIP_AIOS_CORE=1`) `cargo build -p aios --release --target x86_64-unknown-linux-musl --no-default-features` для реального ядерного TUI. Он формирует структуру в `rootfs/`, копирует `aios-init` в `/init` и `aios` в `/system/aios-core`, затем упаковывает `find . | cpio --null -ov --format=newc | gzip -9`. Защита очистки отказывается удалять путь за пределами каталога скрипта; `--keep-rootfs` сохраняет стейджинг-каталог. Когда присутствует `/system/aios-core`, `aios-init` сразу загружает полный ядерный TUI; спасательный шелл остаётся только запасным вариантом (v2.13.0).
+
+### Вариант Live-образа (`USE_AIOS_INIT=1`)
+Шаг [4] в `live/build.sh` по умолчанию собирает busybox-initramfs (монтирование squashfs + `switch_root`). При `USE_AIOS_INIT=1` вместо этого упаковывается aios-init-initramfs: `aios-init` как `/init`, бинарник `aios` как `/system/aios-core`, busybox только как спасательный шелл — ядро грузится сразу в ядерный TUI без корня squashfs; затем шаг [5] записывает отдельное GRUB-меню с записями `init=/init console=tty0` (v2.13.0).
 
 ### Параметры ядра Linux
 - GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`

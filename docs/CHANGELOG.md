@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## v2.13.0 — `aios-init` hands over to the real kernel TUI as `/system/aios-core` (2026-08-09)
+
+### `build_initramfs.sh` — stage the full kernel TUI in the initramfs
+- The initramfs now builds and packages the real `aios` static-musl kernel binary (`cargo build -p aios --release --target x86_64-unknown-linux-musl --no-default-features`) as `/system/aios-core`, so `aios-init` boots straight into the full kernel TUI (7 tabs, AI Console, Watchdog, cluster) instead of dropping to the rescue shell. The rescue shell remains the fallback when the aios build is skipped or fails.
+- `--no-aios-core` flag / `SKIP_AIOS_CORE=1` env: skip the aios build/stage (produces the previous rescue-shell-only initramfs).
+- `--keep-rootfs` flag: keep the assembled `rootfs/` staging directory after packing (useful for inspecting the layout).
+- Rootfs cleanup guard: the script refuses to remove any path outside `SCRIPT_DIR` (`${ROOTFS}` must start with `${SCRIPT_DIR}/`) — belt-and-braces against `rm -rf` on a wrong path.
+
+### `live/build.sh` — optional `USE_AIOS_INIT=1` switch
+- New `USE_AIOS_INIT=1` build mode for step [4]: builds `aios-init` (Alpine's rust is already musl), stages the `aios` binary as `/system/aios-core` and `aios-init` as `/init`, and keeps busybox only as the rescue shell — the kernel boots directly into the AIOS kernel TUI without `switch_root` into the squashfs.
+- In that mode step [5] writes a dedicated GRUB menu with `init=/init console=tty0` entries ("AIOS (aios-init kernel TUI)" / "AIOS (verbose)").
+- Default path (busybox `init.rs` + squashfs root) is unchanged; the switch is opt-in via the environment variable.
+- Files: `build_initramfs.sh`, `live/build.sh`, `docs/*`.
+
 ## v2.12.0 — `aios-init`: static-musl PID 1 init process for the initramfs (2026-08-08)
 
 ### `aios-init` (new standalone crate, not in the workspace)

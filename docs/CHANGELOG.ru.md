@@ -1,5 +1,19 @@
 # Журнал разработки AIOS
 
+## v2.13.0 — `aios-init` передаёт управление реальному ядерному TUI как `/system/aios-core` (2026-08-09)
+
+### `build_initramfs.sh` — размещение полноценного ядерного TUI в initramfs
+- Initramfs теперь собирает и упаковывает реальный ядерный бинарник `aios` (статический musl, `cargo build -p aios --release --target x86_64-unknown-linux-musl --no-default-features`) как `/system/aios-core`, поэтому `aios-init` сразу загружает полноценный ядерный TUI (7 вкладок, AI Console, Watchdog, кластер) вместо перехода в спасательный шелл. Спасательный шелл остаётся запасным вариантом, когда сборка aios пропущена или завершилась ошибкой.
+- Флаг `--no-aios-core` / переменная окружения `SKIP_AIOS_CORE=1`: пропустить сборку и размещение aios (получается прежний initramfs только со спасательным шеллом).
+- Флаг `--keep-rootfs`: не удалять стейджинг-каталог `rootfs/` после упаковки (удобно для изучения структуры).
+- Защита очистки rootfs: скрипт отказывается удалять путь за пределами `SCRIPT_DIR` (`${ROOTFS}` должен начинаться с `${SCRIPT_DIR}/`) — страховка от `rm -rf` по неверному пути.
+
+### `live/build.sh` — опциональный переключатель `USE_AIOS_INIT=1`
+- Новый режим сборки `USE_AIOS_INIT=1` для шага [4]: собирает `aios-init` (rust в Alpine уже musl), размещает бинарник `aios` как `/system/aios-core` и `aios-init` как `/init`, а busybox остаётся только спасательным шеллом — ядро грузится сразу в ядерный TUI AIOS без `switch_root` в squashfs.
+- В этом режиме шаг [5] записывает отдельное GRUB-меню с параметрами `init=/init console=tty0` («AIOS (aios-init kernel TUI)» / «AIOS (verbose)»).
+- Обычный путь (busybox `init.rs` + корень squashfs) не меняется; переключатель опционален и включается переменной окружения.
+- Файлы: `build_initramfs.sh`, `live/build.sh`, `docs/*`.
+
 ## v2.12.0 — `aios-init`: статический musl init-процесс PID 1 для initramfs (2026-08-08)
 
 ### `aios-init` (новый автономный крейт, вне workspace)

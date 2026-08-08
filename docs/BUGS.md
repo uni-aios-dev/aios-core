@@ -2,14 +2,20 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.12.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, and the v2.12.0 `aios-init` initramfs init added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
+As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, the v2.12.0 `aios-init` initramfs init, and the v2.13.0 `/system/aios-core` kernel-TUI handover added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
 
 ### RESOLVED: `Kernel panic: No working init found` on initramfs boot
 - **Status:** FIXED in v2.12.0 (design-level)
 - **Symptom:** When the initramfs did not contain a working `/sbin/init` (or the busybox init script was missing/not executable), the kernel aborted with `Kernel panic: No working init found. Try passing init= option to kernel.`
 - **Root cause:** The previous initramfs `/init` was a shell script (`live/init.rs`) that depended on busybox being present and executable; any packaging error left the kernel with nothing valid to run.
 - **Fix:** New `aios-init` crate is a statically linked (`x86_64-unknown-linux-musl`) Rust `/init` binary (see `docs/ARCHITECTURE.md` Layer 8). It never panics: if `/system/aios-core` or `/installer` is missing it drops to a rescue shell (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`), and if no shell exists it parks in an idle `waitpid` reap loop instead of exiting (an exiting PID 1 is what triggers the kernel panic).
-- **Workaround / notes:** pass `init=/init console=tty0` on the kernel command line (GRUB/Syslinux) so the binary is used explicitly; run `./build_initramfs.sh` (optionally `BUSYBOX_PATH=...` for the rescue shell).
+- **Workaround / notes:** pass `init=/init console=tty0` on the kernel command line (GRUB/Syslinux) so the binary is used explicitly; run `./build_initramfs.sh` (optionally `BUSYBOX_PATH=...` for the rescue shell). Since v2.13.0 the script also builds and stages the real `aios` kernel binary as `/system/aios-core`, so the boot lands in the full kernel TUI; the rescue shell is only the fallback.
+
+### KNOWN LIMITATION: `aios` static-musl build needs native TLS libraries on the build host
+- **Status:** BY DESIGN
+- **Symptom:** `build_initramfs.sh` (and `live/build.sh` `USE_AIOS_INIT=1`) build `aios` for `x86_64-unknown-linux-musl`; `reqwest` 0.12 without an explicit `rustls` feature links native-tls/OpenSSL, so the musl cross-build requires system OpenSSL dev/static libraries (the Alpine live container installs `openssl-dev`).
+- **Workaround:** Build on a host that provides OpenSSL for musl (Alpine or an equivalent container); alternatively use `./build_initramfs.sh --no-aios-core` / `SKIP_AIOS_CORE=1` to produce a rescue-shell-only initramfs.
+- **Note:** If the aios build fails or is skipped, the script warns and continues — boot still works via the rescue shell.
 
 
 ### KNOWN LIMITATION: `HOST://` access requires capability tokens

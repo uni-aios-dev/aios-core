@@ -41,12 +41,12 @@
 - [x] Фаза 47: Виртуальная файловая система (`aios-vfs`) + двухпанельный файловый менеджер (`aios-fm`) со вкладкой Files в TUI и GUI — схемы AIOS:// и HOST://, доступ к хосту через capability-токены, отменяемые асинхронные copy/move/delete с прогрессом, AI-превью файлов (v2.10.0)
 - [x] Фаза 48: Многоузловой распределённый кластер (`aios-cluster`) — TCP/in-memory транспорты, обнаружение через heartbeat, размещение по нагрузке/round-robin/tier, удалённые spawn/kill/приоритет, failover-перезапуск, конфигурация из env/JSON (v2.11.0)
 - [x] Фаза 49: `aios-init` — статический musl init PID 1 для initramfs: монтирование базовых VFS, `/dev/console`, супервизор блока с перезапусками и сборкой зомби, запасной спасательный шелл, упаковка `build_initramfs.sh` через cpio/gzip, настройка GRUB/Syslinux `init=/init console=tty0` (v2.12.0)
+- [x] Фаза 50: `aios-init` передаёт управление реальному ядерному TUI — `build_initramfs.sh` собирает и размещает статический musl `aios` как `/system/aios-core` (загрузка сразу в ядерный TUI, спасательный шелл — запасной вариант), добавлены `--keep-rootfs` и защита очистки rootfs; `live/build.sh` получает опциональный режим `USE_AIOS_INIT=1` с отдельным GRUB-меню (v2.13.0)
 
 ## Бэклог
 
-- [ ] Упаковать реальный образ блока `aios` как `/system/aios-core`, чтобы `aios-init` передавал управление полному TUI ядра вместо спасательного шелла
-- [ ] Подключить `aios-init` + `build_initramfs.sh` в `live/build.sh` шаг [4] как `/init` initramfs (опциональный переключатель вместо busybox-скрипта)
-- [ ] Добавить защиту очистки `rootfs` / флаг `--keep-rootfs` в `build_initramfs.sh`
+- [ ] Сделать подключение `aios-init` + `build_initramfs.sh` в `live/build.sh` шаг [4] как `/init` initramfs режимом по умолчанию (сейчас — за опциональным переключателем `USE_AIOS_INIT=1`)
+- [ ] Защита очистки `rootfs` / флаг `--keep-rootfs` в `build_initramfs.sh` — сделано (v2.13.0)
 
 ## Оценка готовности (2026-07-28, обновлено)
 

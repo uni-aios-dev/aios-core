@@ -25,3 +25,8 @@ IMPLEMENTATION-SUMMARY.md
 
 # Prebuilt Windows binaries / installer payloads (built on demand)
 tests/AIOS/
+
+# Live image build artifacts
+live/out/
+initramfs.cpio.gz
+rootfs/
