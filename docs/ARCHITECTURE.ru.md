@@ -1185,3 +1185,30 @@ User Input (TUI)
 ### Жизненный цикл
 - Загрузка: BIOS/UEFI → GRUB → initramfs init → squashfs root (только чтение; `/tmp`, `/run`, `/var/log` на tmpfs) → TUI `aios` → `Esc`/`q` в шелл `#` → `aios-install` для постоянной установки на диск
 - Флаги сборки: `aios` собирается с `--no-default-features` для Live-образа (без webview) — см. feature `webview` в `Cargo.toml` (v2.9.4)
+
+## Слой 8: `aios-init` и автономный initramfs (`aios-init/`, `build_initramfs.sh`)
+
+### Обзор
+`aios-init` — это выделенный Rust `/init` для initramfs AIOS: статически скомпилированный (`x86_64-unknown-linux-musl`) супервизор PID 1, который монтирует базовые VFS, передаёт управление блоку AIOS и никогда не паникует — тем самым устраняя `Kernel panic: No working init found`.
+
+### Обязанности (порядок загрузки)
+1. Установка обработчиков `sigaction`: SIGTERM/SIGINT/SIGHUP выставляют флаг завершения; SIGCHLD (`SA_NOCLDSTOP`) будит цикл сборки зомби; SIGPIPE игнорируется.
+2. Монтирование базовых VFS: `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs; если недоступна — `mknod` для `/dev/console` 5:1, `/dev/null` 1:3, `/dev/tty` 5:0), `/tmp` (tmpfs).
+3. Открытие `/dev/console` и `dup2` в fd 0/1/2, чтобы все журналы загрузки шли на консоль.
+4. Запуск и супервизия `/system/aios-core` (запасной `/installer`), до 3 перезапусков (задержка 300 мс) при падении.
+5. Сборка каждого потомка через `waitpid(-1, WNOHANG)`, чтобы осиротевшие «внуки» не становились вечными зомби.
+6. По SIGTERM/SIGINT: передача сигнала блоку, ожидание до 5 с, затем SIGKILL.
+7. Аварийный запасной вариант: если блок отсутствует или перезапуски исчерпаны — запуск спасательного шелла (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`); если шелла нет — idle-цикл со сборкой зомби, без паники ядра.
+
+### Сборка initramfs
+```
+rustup target add x86_64-unknown-linux-musl
+./build_initramfs.sh                     # initramfs.cpio.gz
+BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасательный шелл
+```
+Скрипт выполняет `cargo build --release --target x86_64-unknown-linux-musl`, формирует структуру в `rootfs/`, копирует бинарник в `/init` и упаковывает `find . | cpio --null -ov --format=newc | gzip -9`.
+
+### Параметры ядра Linux
+- GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`
+- Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
+- `init=/init` указывает ядру запускать этот бинарник вместо `/sbin/init`; `console=tty0` направляет вывод ядра и init на основную консоль.

@@ -1192,3 +1192,30 @@ The `live/` directory builds a bootable hybrid (BIOS+UEFI) ISO that boots straig
 ### Lifecycle
 - Boot: BIOS/UEFI → GRUB → initramfs init → squashfs root (read-only; `/tmp`, `/run`, `/var/log` on tmpfs) → `aios` TUI → `Esc`/`q` drops to `#` shell → `aios-install` for persistent install to disk
 - Feature gating: `aios` is built with `--no-default-features` for the Live image (no webview) — see `Cargo.toml` `webview` feature (v2.9.4)
+
+## Layer 8: `aios-init` & standalone initramfs (`aios-init/`, `build_initramfs.sh`)
+
+### Overview
+`aios-init` is the dedicated Rust `/init` for the AIOS initramfs: a statically compiled (`x86_64-unknown-linux-musl`) PID 1 supervisor that mounts the core VFS, hands over to the AIOS block, and never panics — eliminating `Kernel panic: No working init found`.
+
+### Responsibilities (boot order)
+1. Install `sigaction` handlers: SIGTERM/SIGINT/SIGHUP set a shutdown flag; SIGCHLD (`SA_NOCLDSTOP`) wakes the reap loop; SIGPIPE ignored.
+2. Mount core VFS: `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs; if unavailable, `mknod` `/dev/console` 5:1, `/dev/null` 1:3, `/dev/tty` 5:0), `/tmp` (tmpfs).
+3. Open `/dev/console` and `dup2` it to fd 0/1/2 so all boot logs reach the console.
+4. Spawn and supervise `/system/aios-core` (fallback `/installer`), restarting up to 3 times (300 ms backoff) on crash.
+5. Reap every child with `waitpid(-1, WNOHANG)` so orphaned grandchildren never become permanent zombies.
+6. On SIGTERM/SIGINT: forward to the block, wait up to 5 s, then SIGKILL.
+7. Emergency fallback: if no block exists or restarts are exhausted, start a rescue shell (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`); if no shell is present, park in an idle reap loop — never a kernel panic.
+
+### Building the initramfs
+```
+rustup target add x86_64-unknown-linux-musl
+./build_initramfs.sh                     # initramfs.cpio.gz
+BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + rescue shell
+```
+The script runs `cargo build --release --target x86_64-unknown-linux-musl`, stages the layout under `rootfs/`, copies the binary to `/init`, and packs `find . | cpio --null -ov --format=newc | gzip -9`.
+
+### Kernel command line
+- GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`
+- Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
+- `init=/init` tells the kernel to run the binary instead of `/sbin/init`; `console=tty0` routes kernel + init output to the primary console.

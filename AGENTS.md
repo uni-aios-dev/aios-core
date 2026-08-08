@@ -110,7 +110,8 @@ aios-context/       — Context store: telemetry, workflows, stability scores
 aios-exec-compat/    — Multi-binary compatibility: POSIX/Win32 translation, dependency healing
 aios-wasm/           — WebAssembly runtime: Wasmtime embedding, WASI filtering, sandbox isolation
 aios-webview/        — Native browser engine: wry/winit WebView window, persistent profile, GUI launcher
-aios-tui/           — User interface: intent engine, ratatui dashboard
+aios-init/           — Standalone (NOT a workspace member) static-musl PID 1 `/init` for the initramfs: core VFS mounts, block supervisor, zombie reaping, rescue-shell fallback
+aios-tui/            — User interface: intent engine, ratatui dashboard
 aios-daemon/        — Headless server: aiosd binary for Docker/background
 aios-gui/           — Native GUI dashboard: egui/eframe, 6 tabs, dark theme
 tests/              — Integration tests (28 tests covering full lifecycle)

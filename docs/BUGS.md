@@ -2,7 +2,15 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.10.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, and the v2.10.0 `aios-vfs`/`aios-fm` file manager added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
+As of v2.12.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, and the v2.12.0 `aios-init` initramfs init added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
+
+### RESOLVED: `Kernel panic: No working init found` on initramfs boot
+- **Status:** FIXED in v2.12.0 (design-level)
+- **Symptom:** When the initramfs did not contain a working `/sbin/init` (or the busybox init script was missing/not executable), the kernel aborted with `Kernel panic: No working init found. Try passing init= option to kernel.`
+- **Root cause:** The previous initramfs `/init` was a shell script (`live/init.rs`) that depended on busybox being present and executable; any packaging error left the kernel with nothing valid to run.
+- **Fix:** New `aios-init` crate is a statically linked (`x86_64-unknown-linux-musl`) Rust `/init` binary (see `docs/ARCHITECTURE.md` Layer 8). It never panics: if `/system/aios-core` or `/installer` is missing it drops to a rescue shell (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`), and if no shell exists it parks in an idle `waitpid` reap loop instead of exiting (an exiting PID 1 is what triggers the kernel panic).
+- **Workaround / notes:** pass `init=/init console=tty0` on the kernel command line (GRUB/Syslinux) so the binary is used explicitly; run `./build_initramfs.sh` (optionally `BUSYBOX_PATH=...` for the rescue shell).
+
 
 ### KNOWN LIMITATION: `HOST://` access requires capability tokens
 - **Status:** BY DESIGN

@@ -1,5 +1,22 @@
 # AIOS Development Log
 
+## v2.12.0 — `aios-init`: static-musl PID 1 init process for the initramfs (2026-08-08)
+
+### `aios-init` (new standalone crate, not in the workspace)
+- New Rust `/init` for the AIOS initramfs — a minimal, statically linked (`x86_64-unknown-linux-musl`) PID 1 process that eliminates `Kernel panic: No working init found`: it never panics and always lands on a shell or an idle loop.
+- Only dependency is `libc`; release profile uses `panic = "abort"`, `lto`, `opt-level = "z"` and `strip` for a tiny static binary.
+- Boot sequence: mounts `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs with `mknod` fallback for `/dev/console`, `/dev/null`, `/dev/tty`), `/tmp` (tmpfs) → opens `/dev/console` and redirects stdin/stdout/stderr → supervises the AIOS block.
+- Block handover: spawns and supervises `/system/aios-core` (then `/installer`), up to 3 automatic restarts with a 300 ms backoff; on clean exit the exit code is propagated to the boot log.
+- PID 1 compliance: `sigaction` handlers for SIGTERM/SIGINT/SIGHUP (forwarded to the child, SIGTERM → wait 5 s → SIGKILL) and SIGCHLD (`SA_NOCLDSTOP`); continuous `waitpid(-1, WNOHANG)` zombie reaping, so orphaned grandchildren never accumulate.
+- Emergency fallback: if no block is found or all restarts are exhausted, a rescue shell is started (`/bin/sh`, then `/bin/busybox sh`, then `/bin/ash`); if no shell exists the init parks in an idle reap loop instead of panicking.
+- Verified: `cargo check` and `cargo clippy` (zero warnings) for `x86_64-unknown-linux-musl`, `cargo fmt` clean.
+
+### `build_initramfs.sh` + boot wiring
+- New `build_initramfs.sh` assembles the initramfs: builds the binary for the musl target, creates the `/bin /dev /proc /sys /tmp /system` layout, copies it to `/init`, `chmod +x`, and packs `initramfs.cpio.gz` via `find | cpio --format=newc | gzip -9`. Optional `BUSYBOX_PATH=/usr/bin/busybox.static` bundles a busybox shell for the emergency fallback.
+- Workspace integration: `aios-init` is excluded from the root workspace (unix-only sys code) so `cargo build --workspace` on Windows is unaffected.
+- Kernel command line (GRUB): `linux /boot/vmlinuz init=/init console=tty0`; Syslinux: `APPEND init=/init console=tty0 quiet`. See `docs/ARCHITECTURE.md` Layer 8.
+- Files: `aios-init/*` (new), `build_initramfs.sh` (new), `Cargo.toml`, `docs/*`.
+
 ## v2.11.0 — Multi-node distributed cluster (`aios-cluster`) (2026-08-08)
 
 ### `aios-cluster` (new crate) — distributed scheduling layer

@@ -1,5 +1,22 @@
 # Журнал разработки AIOS
 
+## v2.12.0 — `aios-init`: статический musl init-процесс PID 1 для initramfs (2026-08-08)
+
+### `aios-init` (новый автономный крейт, вне workspace)
+- Новый Rust `/init` для initramfs AIOS — минимальный, статически слинкованный (`x86_64-unknown-linux-musl`) процесс PID 1, который полностью устраняет `Kernel panic: No working init found`: он никогда не паникует и всегда приземляется в шелл или в idle-цикл.
+- Единственная зависимость — `libc`; release-профиль использует `panic = "abort"`, `lto`, `opt-level = "z"` и `strip` для крошечного статического бинарника.
+- Последовательность загрузки: монтирование `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs с запасным `mknod` для `/dev/console`, `/dev/null`, `/dev/tty`), `/tmp` (tmpfs) → открытие `/dev/console` и перенаправление stdin/stdout/stderr → супервизор блока AIOS.
+- Передача управления блоку: запуск и супервизия `/system/aios-core` (затем `/installer`), до 3 автоматических перезапусков с задержкой 300 мс; при чистом выходе код возврата попадает в журнал загрузки.
+- Соответствие PID 1: обработчики `sigaction` для SIGTERM/SIGINT/SIGHUP (передаются потомку, SIGTERM → ожидание 5 с → SIGKILL) и SIGCHLD (`SA_NOCLDSTOP`); непрерывная сборка зомби через `waitpid(-1, WNOHANG)`, поэтому осиротевшие «внуки» не накапливаются.
+- Аварийный запасной вариант: если блок не найден или все перезапуски исчерпаны, запускается спасательный шелл (`/bin/sh`, затем `/bin/busybox sh`, затем `/bin/ash`); если шелла нет — init остаётся в idle-цикле со сборкой зомби вместо паники.
+- Верификация: `cargo check` и `cargo clippy` (ноль предупреждений) для `x86_64-unknown-linux-musl`, `cargo fmt` чистый.
+
+### `build_initramfs.sh` + загрузочная обвязка
+- Новый `build_initramfs.sh` собирает initramfs: компилирует бинарник под musl-таргет, создаёт структуру `/bin /dev /proc /sys /tmp /system`, копирует его в `/init`, `chmod +x` и упаковывает `initramfs.cpio.gz` через `find | cpio --format=newc | gzip -9`. Опциональный `BUSYBOX_PATH=/usr/bin/busybox.static` добавляет busybox-шелл для аварийного режима.
+- Интеграция с workspace: `aios-init` исключён из корневого workspace (unix-only системный код), поэтому `cargo build --workspace` на Windows не затрагивается.
+- Параметры ядра (GRUB): `linux /boot/vmlinuz init=/init console=tty0`; Syslinux: `APPEND init=/init console=tty0 quiet`. См. `docs/ARCHITECTURE.md`, слой 8.
+- Файлы: `aios-init/*` (новое), `build_initramfs.sh` (новое), `Cargo.toml`, `docs/*`.
+
 ## v2.11.0 — Многоузловой распределённый кластер (`aios-cluster`) (2026-08-08)
 
 ### `aios-cluster` (новый крейт) — распределённое планирование

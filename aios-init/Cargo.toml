@@ -1,0 +1,17 @@
+[package]
+name = "aios-init"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS PID 1 init process for the initramfs — mounts core VFS, supervises AIOS blocks, emergency shell fallback"
+license = "MIT"
+publish = false
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

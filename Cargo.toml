@@ -46,6 +46,7 @@ hex = "0.4"
 
 [workspace]
 resolver = "2"
+exclude = ["aios-init"]
 members = [
     "aios-core",
     "aios-ipc",
