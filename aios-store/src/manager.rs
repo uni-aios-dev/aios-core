@@ -64,6 +64,63 @@ impl StoreManager {
         }
     }
 
+    /// Add trusted public keys to a source. Keys already present are ignored.
+    ///
+    /// After a source has trusted keys, every manifest installed from it must
+    /// be signed by one of them (see [`StoreManager::verify_source_manifest`]).
+    pub fn trust_source(&mut self, source_name: &str, keys: &[String]) -> Result<(), String> {
+        let source = self
+            .sources
+            .iter_mut()
+            .find(|s| s.name == source_name)
+            .ok_or_else(|| format!("Source '{source_name}' not found"))?;
+        for key in keys {
+            if !source.trusted_public_keys.iter().any(|k| k == key) {
+                source.trusted_public_keys.push(key.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all trusted keys from a source, returning how many were removed.
+    /// An empty key list re-allows unsigned manifests from that source.
+    pub fn clear_source_trust(&mut self, source_name: &str) -> Result<usize, String> {
+        let source = self
+            .sources
+            .iter_mut()
+            .find(|s| s.name == source_name)
+            .ok_or_else(|| format!("Source '{source_name}' not found"))?;
+        let removed = source.trusted_public_keys.len();
+        source.trusted_public_keys.clear();
+        Ok(removed)
+    }
+
+    /// Persist the configured sources (including trusted keys) as JSON so a
+    /// fresh [`StoreManager`] can be rebuilt with the same trust policy.
+    pub fn save_config(&self, path: &std::path::Path) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(&self.sources)
+            .map_err(|e| format!("Serialize failed: {e}"))?;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::write(path, json).map_err(|e| format!("Write failed: {e}"))
+    }
+
+    /// Rebuild a manager from a config file written by
+    /// [`StoreManager::save_config`]. Falls back to the default source set on
+    /// any error (missing file, corrupt JSON).
+    pub fn load_config(
+        path: &std::path::Path,
+        blocks_dir: impl Into<PathBuf>,
+    ) -> Result<Self, String> {
+        let data = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let sources: Vec<StoreSource> =
+            serde_json::from_str(&data).map_err(|e| format!("Parse failed: {e}"))?;
+        Ok(Self::with_sources(sources, blocks_dir))
+    }
+
     fn client(&self) -> reqwest::Client {
         reqwest::Client::new()
     }
@@ -333,6 +390,74 @@ mod tests {
         assert_eq!(manager.source(None).unwrap().base, "C:/a");
         assert_eq!(manager.source(Some("local:C:/b")).unwrap().base, "C:/b");
         assert!(manager.source(Some("nope")).is_err());
+    }
+
+    #[test]
+    fn test_trust_and_clear_source_keys() {
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let key = hex::encode(SigningKey::generate(&mut OsRng).verifying_key().to_bytes());
+        let mut manager = StoreManager::new(tempfile::tempdir().unwrap().path());
+        let name = manager.sources[0].name.clone();
+
+        manager.trust_source(&name, &[key.clone()]).unwrap();
+        assert_eq!(
+            manager.source(Some(&name)).unwrap().trusted_public_keys,
+            vec![key.clone()]
+        );
+
+        manager.trust_source(&name, &[key.clone()]).unwrap();
+        assert_eq!(
+            manager
+                .source(Some(&name))
+                .unwrap()
+                .trusted_public_keys
+                .len(),
+            1
+        );
+
+        manager.trust_source(&name, &["deadbeef".into()]).unwrap();
+        assert_eq!(
+            manager
+                .source(Some(&name))
+                .unwrap()
+                .trusted_public_keys
+                .len(),
+            2
+        );
+
+        assert!(manager.trust_source("nope", &[key]).is_err());
+        assert_eq!(manager.clear_source_trust(&name).unwrap(), 2);
+        assert!(manager
+            .source(Some(&name))
+            .unwrap()
+            .trusted_public_keys
+            .is_empty());
+        assert!(manager.clear_source_trust("nope").is_err());
+    }
+
+    #[test]
+    fn test_save_and_load_config_roundtrip() {
+        use ed25519_dalek::SigningKey;
+        use rand_core::OsRng;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("store_config.json");
+        let key = hex::encode(SigningKey::generate(&mut OsRng).verifying_key().to_bytes());
+
+        let mut manager = StoreManager::new(dir.path());
+        let name = manager.sources[0].name.clone();
+        manager.trust_source(&name, &[key.clone()]).unwrap();
+        manager.save_config(&cfg).unwrap();
+
+        let reloaded = StoreManager::load_config(&cfg, dir.path()).unwrap();
+        assert_eq!(reloaded.sources.len(), 1);
+        assert_eq!(reloaded.sources[0].name, name);
+        assert_eq!(reloaded.sources[0].trusted_public_keys, vec![key]);
+        assert!(reloaded.installer.blocks_dir.exists());
+
+        assert!(StoreManager::load_config(&dir.path().join("missing.json"), dir.path()).is_err());
     }
 
     #[test]

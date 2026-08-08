@@ -467,7 +467,12 @@ fn execute_shell_cmd(
         }
         Some("store") => {
             let blocks_dir = env_or("AIOS_BLOCKS_DIR", "/app/blocks");
-            let mut manager = StoreManager::new(blocks_dir);
+            let store_cfg =
+                PathBuf::from(env_or("AIOS_DATA_DIR", "/app/data")).join("store_config.json");
+            let mut manager = match StoreManager::load_config(&store_cfg, &blocks_dir) {
+                Ok(m) => m,
+                Err(_) => StoreManager::new(&blocks_dir),
+            };
             let sub = parts.get(1).copied().unwrap_or("");
             match sub {
                 "list" => {
@@ -488,7 +493,11 @@ fn execute_shell_cmd(
                 }
                 "sources" => {
                     for s in &manager.sources {
-                        state.shell_state.add_output(format!("  {}", s.display()));
+                        state.shell_state.add_output(format!(
+                            "  {} — {} trusted key(s)",
+                            s.display(),
+                            s.trusted_public_keys.len()
+                        ));
                     }
                 }
                 "add-source" => {
@@ -502,12 +511,115 @@ fn execute_shell_cmd(
                     }
                     match StoreManager::parse_source_spec(spec) {
                         Ok(source) => match manager.add_source(source) {
-                            Ok(()) => state
-                                .shell_state
-                                .add_output(format!("Added source: {spec}")),
+                            Ok(()) => {
+                                let _ = manager.save_config(&store_cfg);
+                                state
+                                    .shell_state
+                                    .add_output(format!("Added source: {spec}"))
+                            }
                             Err(e) => state.shell_state.add_output(format!("Error: {e}")),
                         },
                         Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                    }
+                }
+                "trust" => {
+                    let mut source_name = None;
+                    let mut key_hex = None;
+                    let mut clear = false;
+                    let mut i = 2;
+                    while i < parts.len() {
+                        match parts[i] {
+                            "--key" => {
+                                key_hex = parts.get(i + 1).map(|s| s.to_string());
+                                i += 2;
+                            }
+                            "--clear" => {
+                                clear = true;
+                                i += 1;
+                            }
+                            _ if source_name.is_none() => {
+                                source_name = Some(parts[i].to_string());
+                                i += 1;
+                            }
+                            _ => {
+                                i += 1;
+                            }
+                        }
+                    }
+                    let source_name = match source_name {
+                        Some(s) => s,
+                        None => {
+                            state.shell_state.add_output(
+                                "Usage: store trust <source> [--key <public_hex>] [--clear]".into(),
+                            );
+                            return;
+                        }
+                    };
+                    if clear {
+                        match manager.clear_source_trust(&source_name) {
+                            Ok(removed) => {
+                                let _ = manager.save_config(&store_cfg);
+                                state.shell_state.add_output(format!(
+                                    "Cleared {removed} trusted key(s) from '{source_name}'"
+                                ));
+                            }
+                            Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                        }
+                        return;
+                    }
+                    match key_hex {
+                        Some(key) => {
+                            let bytes = match hex::decode(&key) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    state
+                                        .shell_state
+                                        .add_output(format!("Invalid key hex: {e}"));
+                                    return;
+                                }
+                            };
+                            let arr: [u8; 32] = match <[u8; 32]>::try_from(bytes.as_slice()) {
+                                Ok(a) => a,
+                                Err(_) => {
+                                    state.shell_state.add_output(
+                                        "Trusted key must be 32 bytes (64 hex chars)".into(),
+                                    );
+                                    return;
+                                }
+                            };
+                            if ed25519_dalek::VerifyingKey::from_bytes(&arr).is_err() {
+                                state
+                                    .shell_state
+                                    .add_output("Invalid Ed25519 public key".into());
+                                return;
+                            }
+                            match manager.trust_source(&source_name, &[key.clone()]) {
+                                Ok(()) => {
+                                    let _ = manager.save_config(&store_cfg);
+                                    state.shell_state.add_output(format!(
+                                        "Trusted key {key} for source '{source_name}'"
+                                    ));
+                                }
+                                Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                            }
+                        }
+                        None => match manager.source(Some(&source_name)) {
+                            Ok(src) => {
+                                if src.trusted_public_keys.is_empty() {
+                                    state.shell_state.add_output(format!(
+                                        "Source '{source_name}' trusts no keys (unsigned allowed)"
+                                    ));
+                                } else {
+                                    state
+                                        .shell_state
+                                        .add_output(format!("Trusted keys for '{source_name}':"));
+                                    for k in &src.trusted_public_keys {
+                                        state.shell_state.add_output(format!("  {k}"));
+                                    }
+                                }
+                            }
+                            Err(e) => state.shell_state.add_output(format!("Error: {e}")),
+                        },
                     }
                 }
                 "search" => {
@@ -626,14 +738,39 @@ fn execute_shell_cmd(
                     }
                 }
                 "publish" => {
-                    let file = parts.get(2).copied().unwrap_or("");
-                    if file.is_empty() {
-                        state
-                            .shell_state
-                            .add_output("Usage: store publish <file.wasm> [name] [version]".into());
-                        return;
+                    let mut file = None;
+                    let mut name = None;
+                    let mut version = None;
+                    let mut key_hex = std::env::var("AIOS_STORE_SIGNING_KEY").ok();
+                    let mut i = 2;
+                    while i < parts.len() {
+                        if parts[i] == "--key" {
+                            key_hex = parts.get(i + 1).map(|s| s.to_string());
+                            i += 2;
+                        } else if file.is_none() {
+                            file = Some(parts[i].to_string());
+                            i += 1;
+                        } else if name.is_none() {
+                            name = Some(parts[i].to_string());
+                            i += 1;
+                        } else if version.is_none() {
+                            version = Some(parts[i].to_string());
+                            i += 1;
+                        } else {
+                            i += 1;
+                        }
                     }
-                    let path = std::path::Path::new(file);
+                    let file = match file {
+                        Some(f) => f,
+                        None => {
+                            state.shell_state.add_output(
+                                "Usage: store publish <file.wasm> [name] [version] [--key <secret_hex>]"
+                                    .into(),
+                            );
+                            return;
+                        }
+                    };
+                    let path = std::path::Path::new(&file);
                     let binary = match std::fs::read(path) {
                         Ok(b) => b,
                         Err(e) => {
@@ -641,19 +778,48 @@ fn execute_shell_cmd(
                             return;
                         }
                     };
-                    let name = parts
-                        .get(3)
-                        .map(|n| n.to_string())
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| {
-                            path.file_stem()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| "block".to_string())
-                        });
-                    let version = parts.get(4).copied().unwrap_or("1.0.0").to_string();
+                    let default_name = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "block".to_string());
+                    let name = name.unwrap_or(default_name);
+                    let version = version.unwrap_or_else(|| "1.0.0".to_string());
                     let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&binary));
                     let wasm_base64 =
                         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &binary);
+                    let mut signature = None;
+                    if let Some(key_hex) = key_hex {
+                        let secret = match hex::decode(&key_hex) {
+                            Ok(bytes) => match <[u8; 32]>::try_from(bytes.as_slice()) {
+                                Ok(arr) => arr,
+                                Err(_) => {
+                                    state.shell_state.add_output(
+                                        "Signing key must be 32 bytes (64 hex chars)".into(),
+                                    );
+                                    return;
+                                }
+                            },
+                            Err(e) => {
+                                state
+                                    .shell_state
+                                    .add_output(format!("Invalid key hex: {e}"));
+                                return;
+                            }
+                        };
+                        let manifest = ManifestInfo {
+                            name: name.clone(),
+                            version: version.clone(),
+                            description: "Published from TUI shell".into(),
+                            author: "local-user".into(),
+                            capabilities: std::collections::HashSet::new(),
+                            wasm_size_bytes: binary.len() as u64,
+                            wasm_sha256: sha.clone(),
+                            signature: None,
+                            store_url: None,
+                        };
+                        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+                        signature = Some(sign_manifest(&manifest, &signing_key));
+                    }
                     let req = StorePublishRequest {
                         name: name.clone(),
                         version: version.clone(),
@@ -662,6 +828,7 @@ fn execute_shell_cmd(
                         capabilities: Vec::new(),
                         checksum_sha256: sha,
                         wasm_base64,
+                        signature,
                     };
                     let port = env_or("AIOS_BRIDGE_PORT", "8080");
                     let url = format!("http://localhost:{port}/api/v1/store/publish");
@@ -860,8 +1027,11 @@ fn execute_shell_cmd(
                 }
                 _ => state.shell_state.add_output(
                     "Usage: store list | sources | search <q> [--source N] | \
+                     add-source <github:owner/repo|local:path|http://url> | \
+                     trust <source> [--key <public_hex>] [--clear] | \
                      install <name> [--source N] | update [name] [--source N] | \
-                     uninstall <name> | rollback <name> | publish <file.wasm> [name] [version] | \
+                     uninstall <name> | rollback <name> | \
+                     publish <file.wasm> [name] [version] [--key <secret_hex>] | \
                      sign <file.wasm> [name] [version] [--key <secret_hex>] | verify <name>"
                         .into(),
                 ),

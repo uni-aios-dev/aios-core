@@ -805,11 +805,36 @@ async fn store_publish_handler(
             .map(|c| c.to_lowercase())
             .collect(),
         wasm_size_bytes: wasm.len() as u64,
-        signature: None,
+        signature: req.signature.clone(),
         store_url: Some(format!("http://127.0.0.1:4242/blocks/{}.wasm", req.name)),
     };
 
-    let mut installer = BlockInstaller::new(&state.blocks_dir);
+    if manifest.signature.is_some() {
+        match aios_store::ManifestValidator::verify_signature(&manifest) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Json(StorePublishResponse {
+                    success: false,
+                    name: req.name,
+                    version: req.version,
+                    error: Some("invalid Ed25519 signature".to_string()),
+                });
+            }
+            Err(e) => {
+                return Json(StorePublishResponse {
+                    success: false,
+                    name: req.name,
+                    version: req.version,
+                    error: Some(format!("signature verification failed: {e}")),
+                });
+            }
+        }
+    }
+
+    // `from_env` honors `AIOS_TRUSTED_PUBLIC_KEYS`, so a signed publish is
+    // still gated by the local trust policy; unsigned publishes stay allowed
+    // unless trusted keys are configured.
+    let mut installer = BlockInstaller::from_env(&state.blocks_dir);
     match installer.install_from_bytes(manifest, &wasm) {
         Ok(installed) => Json(StorePublishResponse {
             success: true,

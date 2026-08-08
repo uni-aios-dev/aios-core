@@ -1,3 +1,4 @@
+use aios_store::manifest::SignatureInfo;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -188,6 +189,12 @@ pub struct StorePublishRequest {
     pub capabilities: Vec<String>,
     pub checksum_sha256: String,
     pub wasm_base64: String,
+    /// Optional Ed25519 signature over the canonical manifest bytes (see
+    /// `aios-store::manifest::sign_manifest`). When present, the bridge
+    /// verifies it before installing; when absent the install follows the
+    /// installer's trust policy (`AIOS_TRUSTED_PUBLIC_KEYS`).
+    #[serde(default)]
+    pub signature: Option<SignatureInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

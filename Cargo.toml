@@ -72,6 +72,7 @@ members = [
     "aios-net-config",
     "aios-vfs",
     "aios-fm",
+    "aios-cluster",
 ]
 
 [workspace.dependencies]

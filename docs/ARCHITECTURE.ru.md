@@ -907,6 +907,19 @@ User Input (TUI)
 
 ---
 
+## Многоузловой распределённый кластер (`aios-cluster`) — v2.11.0
+
+- **Крейт**: `aios-cluster` v1.0.0 — распределённое планирование поверх `aios-process-mgr`. Узел запускает `DistributedScheduler` за `Arc<Mutex<...>>`; подключённый `ProcessExecutor` делает его **воркером** (может размещать удалённые процессы), узел без executor'а — чистый **координатор**.
+- **Типы** (`types.rs`): `NodeId` (u64), `NodeStatus {Unknown, Online, Offline, Leaving}`, `NodeMetrics` (доля CPU, используемая/общая RAM, число процессов, `load_fraction()`), `NodeInfo` (id, имя, адрес, аппаратный `tier` 1–3), `RemoteProcessId { node, pid }` (глобально уникальная удалённая идентичность), `RemoteProcessSpec` (приоритет 0–4, квота RAM, опциональные block id / init payload / фильтры `[min_tier..=max_tier]`), `RemoteProcessStatus`, `PlacementStrategy {RoundRobin, LeastLoaded, ByTier}`.
+- **Сетевой протокол** (`protocol.rs`): enum `ClusterMessage`, сериализуемый bincode и упакованный в кадры `[u32 LE длина][payload]`. Запросы несут `request_id` + `from`, чтобы ответы (SpawnAck/KillAck/SetPriorityAck) можно было сопоставить с ожидающей операцией.
+- **Транспорты** (`transport.rs`): трейт `ClusterTransport` (`addr`, `send`, `start`, `shutdown`). `TcpClusterTransport` — реальный `std::net::TcpListener` на узел, подключается к пирам по требованию, один кадр на поток. `InMemoryClusterTransport` + `MemoryRegistry` маршрутизируют сообщения внутри процесса (детерминированные тесты / несколько планировщиков на одной машине).
+- **Планировщик** (`scheduler.rs`): `DistributedScheduler` — фоновый **heartbeat-поток** рассылает `Hello(self_info)` пирам с заданным интервалом; пиры отвечают `Metrics`, так что каждый узел сходится к актуальной картине кластера. Живость: `last_contact` на узел; узел, молчащий дольше `failover_threshold`, переходит в `Offline` внутри `tick()`. Размещение фильтрует онлайн-узлы по диапазону tier, затем применяет стратегию (LeastLoaded по `load_fraction`, при равенстве — младший id). `spawn`/`kill`/`set_priority` — блокирующие вызовы, которые дренируют inbox до подходящего ack или `ack_timeout`. При потере узла `tick()` перезапускает отслеживаемые процессы узла в другом месте (`failover_respawn`). **Авторитет метрик**: нагрузка известного узла обновляется только из отдельного сообщения `Metrics` — снимок из `Hello` используется только при первом появлении узла, поэтому устаревший idle-снимок не затирает живую нагрузку. Журнал событий ограничен (`events()`, последние 100).
+- **Исполнители** (`executor.rs`): трейт `ProcessExecutor` (spawn/kill/set_priority/status/metrics). `MockProcessExecutor` — детерминированный, моделирует 16 GiB RAM для осмысленных долей нагрузки. `SchedulerProcessExecutor` — адаптер поверх реального `aios-process-mgr::scheduler::Scheduler`.
+- **Конфигурация** (`config.rs`): `ClusterConfig` из переменных окружения `AIOS_CLUSTER_*` или JSON (`node_id`, `node_name`, `addr`, `tier`, `peers`, `heartbeat_ms`, `failover_threshold_ms`, `failover_respawn`, `strategy`). Возвращает `None`, если кластеризация не запрошена.
+- **Тесты**: 16 unit (протокол 4, транспорт 2, исполнитель 1, планировщик 8, конфиг 2) + 7 интеграционных (`tests/scheduling.rs`: двухузловой spawn/kill, round-robin, least-loaded, TCP loopback, failover-перезапуск, управление приоритетом, пути ошибок) + 1 doc-тест.
+
+---
+
 ## Маркетплейс (`aios-block-mgr`)
 
 - `BlockMarketplace` — реестр блоков с управлением репозиториями

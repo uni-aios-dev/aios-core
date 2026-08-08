@@ -1,0 +1,14 @@
+[package]
+name = "aios-cluster"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+aios-process-mgr = { path = "../aios-process-mgr" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+portpicker = "0.1"

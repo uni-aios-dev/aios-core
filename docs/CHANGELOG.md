@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## v2.11.0 — Multi-node distributed cluster (`aios-cluster`) (2026-08-08)
+
+### `aios-cluster` (new crate) — distributed scheduling layer
+- New workspace crate: nodes discover each other over a pluggable transport, exchange load snapshots on heartbeats, place processes by strategy and fail over when a node goes silent.
+- `types.rs`: `NodeId`, `NodeStatus {Unknown, Online, Offline, Leaving}`, `NodeMetrics` (CPU/RAM/process-count + `load_fraction()`), `NodeInfo` (id, name, addr, hardware `tier`), `RemoteProcessId` (`node:pid`), `RemoteProcessSpec` (priority 0–4, RAM quota, optional block id / payload / tier range), `RemoteProcessStatus`, `PlacementStrategy {RoundRobin, LeastLoaded, ByTier}`, `now_ms()`.
+- `protocol.rs`: `ClusterMessage` enum (`Hello`, `Metrics`, `Spawn`/`SpawnAck`, `Kill`/`KillAck`, `SetPriority`/`SetPriorityAck`, `StatusRequest`/`StatusReply`), bincode `encode`/`decode_frame` with `[u32 LE len]` framing; 4 unit tests.
+- `transport.rs`: `ClusterTransport` trait; `InMemoryClusterTransport` + shared `MemoryRegistry` (single-process, deterministic); `TcpClusterTransport` (real loopback listener, length-prefixed frames); 2 unit tests.
+- `executor.rs`: `ProcessExecutor` trait; `MockProcessExecutor` (deterministic, 16 GiB RAM model for meaningful load); `SchedulerProcessExecutor` bridging to the real `aios-process-mgr` scheduler; 1 unit test.
+- `scheduler.rs`: `DistributedScheduler` — coordinator + worker roles; discovery via heartbeat Hello, liveness tracking with `failover_threshold`, placement (`LeastLoaded`/`RoundRobin`/`ByTier` + tier filters), blocking `spawn`/`kill`/`set_priority` with ack timeout, `tick()` failover detection + respawn of a failed node's processes, bounded event log. Metrics from a known node are trusted only from the dedicated `Metrics` message (a Hello snapshot would overwrite live load with stale idle). 8 unit tests.
+- `config.rs`: `ClusterConfig` from env (`AIOS_CLUSTER_*`) or JSON; 2 unit tests.
+- Integration tests (`tests/scheduling.rs`, 7): two-node discovery/spawn/kill, round-robin alternation, least-loaded placement, failover respawn onto a survivor, remote priority change, real TCP loopback spawn/kill, error paths (unknown node / no peers).
+- Verification: `cargo build --workspace`, clippy and fmt clean; `aios-cluster` 16 unit + 7 integration + 1 doc test all pass.
+- Files: `aios-cluster/*` (new), `Cargo.toml`, `docs/*`.
+
 ## v2.10.0 — Virtual File System + two-panel File Manager (2026-08-07)
 
 ### `aios-vfs` (new crate) — virtual file system layer

@@ -1,5 +1,19 @@
 # Журнал разработки AIOS
 
+## v2.11.0 — Многоузловой распределённый кластер (`aios-cluster`) (2026-08-08)
+
+### `aios-cluster` (новый крейт) — распределённое планирование
+- Новый крейт workspace: узлы обнаруживают друг друга через сменный транспорт, обмениваются снимками нагрузки на heartbeat'ах, размещают процессы по стратегии и выполняют failover, когда узел замолкает.
+- `types.rs`: `NodeId`, `NodeStatus {Unknown, Online, Offline, Leaving}`, `NodeMetrics` (CPU/RAM/число процессов + `load_fraction()`), `NodeInfo` (id, имя, адрес, аппаратный `tier`), `RemoteProcessId` (`node:pid`), `RemoteProcessSpec` (приоритет 0–4, квота RAM, опциональные block id / payload / диапазон tier), `RemoteProcessStatus`, `PlacementStrategy {RoundRobin, LeastLoaded, ByTier}`, `now_ms()`.
+- `protocol.rs`: enum `ClusterMessage` (`Hello`, `Metrics`, `Spawn`/`SpawnAck`, `Kill`/`KillAck`, `SetPriority`/`SetPriorityAck`, `StatusRequest`/`StatusReply`), bincode `encode`/`decode_frame` с фреймингом `[u32 LE len]`; 4 unit-теста.
+- `transport.rs`: трейт `ClusterTransport`; `InMemoryClusterTransport` + общий `MemoryRegistry` (однопроцессный, детерминированный); `TcpClusterTransport` (настоящий loopback-listener, кадры с длиной); 2 unit-теста.
+- `executor.rs`: трейт `ProcessExecutor`; `MockProcessExecutor` (детерминированный, модель RAM 16 GiB для осмысленной нагрузки); `SchedulerProcessExecutor` — мост к реальному планировщику `aios-process-mgr`; 1 unit-тест.
+- `scheduler.rs`: `DistributedScheduler` — роли координатора и воркера; обнаружение через heartbeat Hello, отслеживание живости с `failover_threshold`, размещение (`LeastLoaded`/`RoundRobin`/`ByTier` + фильтры по tier), блокирующие `spawn`/`kill`/`set_priority` с таймаутом подтверждения, `tick()` — детект отказа и перезапуск процессов упавшего узла, ограниченный журнал событий. Метрики известного узла берутся только из отдельного сообщения `Metrics` (снимок в Hello перезаписывал бы живую нагрузку устаревшим idle). 8 unit-тестов.
+- `config.rs`: `ClusterConfig` из окружения (`AIOS_CLUSTER_*`) или JSON; 2 unit-теста.
+- Интеграционные тесты (`tests/scheduling.rs`, 7): discovery/spawn/kill двух узлов, чередование round-robin, размещение по наименьшей загрузке, failover-перезапуск на выживший узел, удалённая смена приоритета, реальный TCP loopback spawn/kill, пути ошибок (неизвестный узел / нет пиров).
+- Верификация: `cargo build --workspace`, clippy и fmt чистые; `aios-cluster` — 16 unit + 7 integration + 1 doc-тест, все проходят.
+- Файлы: `aios-cluster/*` (новое), `Cargo.toml`, `docs/*`.
+
 ## v2.10.0 — Виртуальная файловая система + двухпанельный файловый менеджер (2026-08-07)
 
 ### `aios-vfs` (новый крейт) — слой виртуальной файловой системы

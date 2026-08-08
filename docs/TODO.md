@@ -39,6 +39,7 @@
 - [x] Phase 45: AI Console chat persistence + `/preset` templates + streaming (v2.9.0)
 - [x] Phase 46: Live USB bootable image — hybrid BIOS+UEFI ISO with Linux kernel, AIOS auto-start TUI, `aios-install` installer, reproducible `live/build.sh` (v2.9.5)
 - [x] Phase 47: Virtual File System (`aios-vfs`) + two-panel File Manager (`aios-fm`) with Files tab in TUI and GUI — AIOS:// and HOST:// schemes, capability-gated host access, cancellable async copy/move/delete with progress, AI file preview (v2.10.0)
+- [x] Phase 48: Multi-node distributed cluster (`aios-cluster`) — TCP/in-memory transports, discovery via heartbeats, load-aware/round-robin/tier placement, remote spawn/kill/priority, failover respawn, config from env/JSON (v2.11.0)
 
 ## Readiness Assessment (2026-07-29, updated)
 

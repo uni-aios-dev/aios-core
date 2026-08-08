@@ -908,6 +908,19 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ---
 
+## Multi-Node Distributed Cluster (`aios-cluster`) — v2.11.0
+
+- **Crate**: `aios-cluster` v1.0.0 — distributed scheduling layer on top of `aios-process-mgr`. A node runs a `DistributedScheduler` behind an `Arc<Mutex<...>>`; an attached `ProcessExecutor` turns it into a **worker** (can host remote processes), a node without one is a pure **coordinator**.
+- **Types** (`types.rs`): `NodeId` (u64), `NodeStatus {Unknown, Online, Offline, Leaving}`, `NodeMetrics` (CPU fraction, RAM used/total, process count, `load_fraction()`), `NodeInfo` (id, name, addr, hardware `tier` 1–3), `RemoteProcessId { node, pid }` (globally unique remote identity), `RemoteProcessSpec` (priority 0–4, RAM quota, optional block id / init payload / `[min_tier..=max_tier]` filters), `RemoteProcessStatus`, `PlacementStrategy {RoundRobin, LeastLoaded, ByTier}`.
+- **Wire protocol** (`protocol.rs`): `ClusterMessage` enum serialized with bincode and framed as `[u32 LE length][payload]`. Requests carry `request_id` + `from` so replies (SpawnAck/KillAck/SetPriorityAck) can be matched to a pending operation.
+- **Transports** (`transport.rs`): `ClusterTransport` trait (`addr`, `send`, `start`, `shutdown`). `TcpClusterTransport` — real `std::net::TcpListener` per node, connects to peers on demand, one frame per stream. `InMemoryClusterTransport` + `MemoryRegistry` route messages inside one process (deterministic tests / single-machine multi-scheduler).
+- **Scheduler** (`scheduler.rs`): `DistributedScheduler` — a background **heartbeat thread** announces `Hello(self_info)` to peers on an interval; peers reply `Metrics`, so every node converges on a live view of the cluster. Liveness: `last_contact` per node; a node silent longer than `failover_threshold` flips to `Offline` in `tick()`. Placement filters online nodes by tier range then applies the strategy (LeastLoaded uses `load_fraction`, tie → lowest node id). `spawn`/`kill`/`set_priority` are blocking calls that drain the inbox until the matching ack or `ack_timeout`. On node loss `tick()` respawns that node's tracked processes elsewhere (`failover_respawn`). **Metrics authority**: a known node's load is updated only by the dedicated `Metrics` message — the `Hello` snapshot is used only for first join, so a stale idle snapshot cannot overwrite live load. Bounded event log (`events()`, last 100).
+- **Executors** (`executor.rs`): `ProcessExecutor` trait (spawn/kill/set_priority/status/metrics). `MockProcessExecutor` — deterministic, models 16 GiB RAM for meaningful load fractions. `SchedulerProcessExecutor` — adapter over the real `aios-process-mgr::scheduler::Scheduler`.
+- **Config** (`config.rs`): `ClusterConfig` read from `AIOS_CLUSTER_*` env vars or JSON (`node_id`, `node_name`, `addr`, `tier`, `peers`, `heartbeat_ms`, `failover_threshold_ms`, `failover_respawn`, `strategy`). Returns `None` when clustering is not requested.
+- **Tests**: 16 unit (protocol 4, transport 2, executor 1, scheduler 8, config 2) + 7 integration (`tests/scheduling.rs`: two-node spawn/kill, round-robin, least-loaded, TCP loopback, failover respawn, priority control, error paths) + 1 doc test.
+
+---
+
 ## Marketplace (`aios-block-mgr`)
 
 - `BlockMarketplace` — block registry with repository management
