@@ -22,6 +22,7 @@ use aios_telemetry::flight_recorder::{EventKind, FlightRecorder};
 use aios_telemetry::MetricCollector;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 const SECRET: &[u8] = b"e2e_test_secret_key_32bytes!";
@@ -195,7 +196,13 @@ async fn test_e2e_bridge_http_endpoints() {
         secret: SECRET.to_vec(),
     };
     let watchdog = Watchdog::new(watchdog_config);
-    let state = Arc::new(BridgeContext::new(scheduler, registry, acl, watchdog, 42));
+    let state = Arc::new(BridgeContext::new(
+        Arc::new(Mutex::new(scheduler)),
+        registry,
+        acl,
+        watchdog,
+        42,
+    ));
 
     let port = portpicker::pick_unused_port().expect("No free port");
     let addr = format!("127.0.0.1:{port}");

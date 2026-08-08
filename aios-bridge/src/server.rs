@@ -33,7 +33,7 @@ use tower_http::services::ServeDir;
 
 pub struct BridgeContext {
     pub intent_parser: IntentParser,
-    pub scheduler: Mutex<Scheduler>,
+    pub scheduler: Arc<Mutex<Scheduler>>,
     pub registry: Mutex<BlockRegistry>,
     pub access_control: Mutex<AccessControlLayer>,
     pub telemetry: Mutex<TelemetryStore>,
@@ -54,7 +54,7 @@ pub struct BridgeContext {
 
 impl BridgeContext {
     pub fn new(
-        scheduler: Scheduler,
+        scheduler: Arc<Mutex<Scheduler>>,
         registry: BlockRegistry,
         access_control: AccessControlLayer,
         watchdog: Watchdog,
@@ -62,7 +62,7 @@ impl BridgeContext {
     ) -> Self {
         Self {
             intent_parser: IntentParser::new(),
-            scheduler: Mutex::new(scheduler),
+            scheduler,
             registry: Mutex::new(registry),
             access_control: Mutex::new(access_control),
             telemetry: Mutex::new(TelemetryStore::new()),

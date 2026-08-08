@@ -4,6 +4,11 @@ use aios_block_mgr::router::MessageRouter;
 use aios_bridge::server::{start_server, BridgeContext};
 use aios_browser::block::BrowserBlock;
 use aios_browser::types::BrowserConfig;
+use aios_cluster::config::ClusterConfig;
+use aios_cluster::executor::SchedulerProcessExecutor;
+use aios_cluster::scheduler::DistributedScheduler;
+use aios_cluster::transport::TcpClusterTransport;
+use aios_cluster::types::{NodeInfo, NodeMetrics, NodeStatus};
 use aios_core::block::BlockId;
 use aios_core::block::StatefulBlock;
 use aios_llm::{default_config, LlmEngine};
@@ -79,10 +84,12 @@ pub async fn initialize(
 
     push_log(&logs, "AIOS: initializing scheduler...".into());
     let total_ram_mb = hw_profile.memory.total_bytes / 1_048_576;
-    let scheduler = Scheduler::new(total_ram_mb)
-        .with_aging_threshold(5000)
-        .with_time_slice(100)
-        .with_max_restarts(5);
+    let scheduler = Arc::new(Mutex::new(
+        Scheduler::new(total_ram_mb)
+            .with_aging_threshold(5000)
+            .with_time_slice(100)
+            .with_max_restarts(5),
+    ));
 
     push_log(&logs, "AIOS: initializing block registry...".into());
     let mut registry = BlockRegistry::new();
@@ -173,6 +180,70 @@ pub async fn initialize(
             push_log(&logs, format!("AIOS WARN: WASM executor init failed: {e}"));
             push_log(&logs, "AIOS: creating fallback executor...".into());
             BlockExecutor::with_default_config().map_err(|e| format!("WASM init failed: {e}"))?
+        }
+    };
+
+    push_log(&logs, "AIOS: initializing cluster node...".into());
+    let _cluster = match ClusterConfig::from_env() {
+        Some(cfg) => {
+            push_log(
+                &logs,
+                format!(
+                    "AIOS: cluster node {} ({}) starting, {} peers",
+                    cfg.node_id,
+                    cfg.addr,
+                    cfg.peers.len()
+                ),
+            );
+            let mut node = DistributedScheduler::new(
+                NodeInfo {
+                    id: cfg.node_id,
+                    name: cfg.node_name.clone(),
+                    addr: cfg.addr.clone(),
+                    tier: cfg.tier,
+                    status: NodeStatus::Online,
+                    metrics: NodeMetrics::idle(),
+                },
+                Arc::new(TcpClusterTransport::new(&cfg.addr)),
+                cfg.strategy,
+            )
+            .with_heartbeat(std::time::Duration::from_millis(cfg.heartbeat_ms))
+            .with_failover_threshold(std::time::Duration::from_millis(cfg.failover_threshold_ms))
+            .with_failover_respawn(cfg.failover_respawn);
+            node.set_executor(Arc::new(SchedulerProcessExecutor::new(
+                cfg.node_id,
+                scheduler.clone(),
+            )));
+            if let Err(e) = node.start(&cfg.peers) {
+                push_log(&logs, format!("AIOS ERROR: cluster start failed: {e}"));
+                None
+            } else {
+                let node = Arc::new(Mutex::new(node));
+                let node_loop = node.clone();
+                let logs_loop = logs.clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    let events = node_loop.lock().map(|mut n| n.tick()).unwrap_or_default();
+                    for event in events {
+                        push_log(&logs_loop, format!("AIOS cluster: {event}"));
+                    }
+                });
+                push_log(
+                    &logs,
+                    format!(
+                        "AIOS: cluster node {} listening on {}",
+                        cfg.node_id, cfg.addr
+                    ),
+                );
+                Some(node)
+            }
+        }
+        None => {
+            push_log(
+                &logs,
+                "AIOS: clustering disabled (set AIOS_CLUSTER_PEERS to enable)".into(),
+            );
+            None
         }
     };
 

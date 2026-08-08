@@ -58,7 +58,35 @@ pub enum Payload {
         intent: String,
         context: serde_json::Value,
     },
+    ClusterSpawn {
+        name: String,
+        priority: u8,
+        ram_mb: u64,
+        target_node: Option<u64>,
+    },
+    ClusterKill {
+        node: u64,
+        pid: u64,
+    },
+    ClusterStatus,
+    ClusterStatusReply(Vec<ClusterProcessInfo>),
     Custom(String, Vec<u8>),
+}
+
+/// Snapshot of a process scheduled by the distributed cluster, carried over
+/// the kernel IPC bus so the TUI shell can inspect remote processes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClusterProcessInfo {
+    /// Node hosting the process.
+    pub node: u64,
+    /// Local process id on that node.
+    pub pid: u64,
+    /// Process name.
+    pub name: String,
+    /// Coarse state (`Running`, `Suspended`, `Terminated`, `Crashed`).
+    pub state: String,
+    /// RAM quota in MiB.
+    pub ram_mb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,6 +117,9 @@ pub enum CommandId {
     HotSwap = 0x0040,
     Rollback = 0x0041,
     IntentCommand = 0x0050,
+    ClusterSpawn = 0x0060,
+    ClusterKill = 0x0061,
+    ClusterStatus = 0x0062,
     Custom = 0x00FF,
 }
 
@@ -278,5 +309,40 @@ mod tests {
             per_us < threshold,
             "Deserialization too slow: {per_us} us (threshold: {threshold})"
         );
+    }
+
+    #[test]
+    fn test_cluster_payload_roundtrip() {
+        let pkt = IpcPacket::new(
+            0,
+            1,
+            CommandId::ClusterSpawn,
+            Payload::ClusterSpawn {
+                name: "worker".into(),
+                priority: 2,
+                ram_mb: 128,
+                target_node: Some(3),
+            },
+        );
+        assert_eq!(pkt.header.command_id, CommandId::ClusterSpawn as u16);
+        let bytes = pkt.serialize().unwrap();
+        let restored = IpcPacket::deserialize(&bytes).unwrap();
+        assert_eq!(pkt.payload, restored.payload);
+
+        let reply = IpcPacket::new(
+            0,
+            1,
+            CommandId::ClusterStatus,
+            Payload::ClusterStatusReply(vec![ClusterProcessInfo {
+                node: 3,
+                pid: 7,
+                name: "gateway".into(),
+                state: "Running".into(),
+                ram_mb: 256,
+            }]),
+        );
+        let restored_reply = IpcPacket::deserialize(&reply.serialize().unwrap()).unwrap();
+        assert_eq!(reply.payload, restored_reply.payload);
+        assert!(reply.verify_checksum());
     }
 }

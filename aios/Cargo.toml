@@ -28,6 +28,7 @@ aios-browser = { path = "../aios-browser" }
 aios-context = { path = "../aios-context" }
 aios-debug = { path = "../aios-debug" }
 aios-webview = { path = "../aios-webview", optional = true }
+aios-cluster = { path = "../aios-cluster" }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }
