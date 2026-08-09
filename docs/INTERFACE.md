@@ -293,7 +293,7 @@ The same network commands are available from the Shell as `net get` / `net set`.
 
 ### Web Tab (6)
 
-The built-in text-mode browser loads pages in the background (the TUI stays responsive). The omnibox accepts a full URL, a bare host (`example.com`), or a plain search query (searched via DuckDuckGo). A sidebar lists the links of the current page; the page text wraps to the pane width and can be scrolled. The current page can be saved as a **bookmark** (`a`) and managed in the **bookmarks panel** (`m`); bookmarks persist in `AIOS_DATA_DIR/web_bookmarks.json`.
+The built-in text-mode browser loads pages in the background (the TUI stays responsive). The omnibox accepts a full URL, a bare host (`example.com`), or a plain search query (searched via DuckDuckGo). A sidebar lists the links of the current page; the page text wraps to the pane width and can be scrolled. The current page can be saved as a **bookmark** (`a`) and managed in the **bookmarks panel** (`m`); bookmarks persist in `AIOS_DATA_DIR/web_bookmarks.json`. Multiple pages can be open as **browser tabs** (`t` opens a new one, `x` closes the active one, `[`/`]` switch); each tab keeps its own page, scroll, link selection and back-history.
 
 | Key | Action |
 |-----|--------|
@@ -304,6 +304,9 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `u` / `d` | Scroll page text up / down by 1 line |
 | `PageUp` / `PageDown` | Scroll page text up / down by 20 lines |
 | `b` | Go back to the previously visited page |
+| `t` | Open a new browser tab |
+| `x` | Close the active browser tab (the last one cannot be closed) |
+| `[` / `]` | Switch to the previous / next browser tab |
 | `B` | Open the current page in the full native browser window (WebView2) |
 | `n` | Open the selected link in the native browser window |
 | `a` | Save the current page as a bookmark (name prefilled with the page title) |

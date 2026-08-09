@@ -583,6 +583,34 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         .split(area);
 
     let mut content_items: Vec<ListItem> = Vec::new();
+    if app.web.tabs.len() > 1 {
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            " Tabs: ",
+            Style::default().fg(Color::DarkGray),
+        ));
+        for (i, tab) in app.web.tabs.iter().enumerate() {
+            let label = if tab.url.is_empty() {
+                "new".to_string()
+            } else {
+                compact_label(&tab.url, 16)
+            };
+            let txt = format!("[{}] {} ", i + 1, label);
+            let style = if i == app.web.active_tab {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            spans.push(Span::styled(txt, style));
+        }
+        spans.push(Span::styled(
+            "t=new x=close [ ]=switch ",
+            Style::default().fg(Color::DarkGray),
+        ));
+        content_items.push(ListItem::new(Line::from(spans)));
+    }
     if app.web.bookmark_naming {
         content_items.push(ListItem::new(Line::from(Span::styled(
             format!("Bookmark name: {}", app.web.bookmark_name),
@@ -636,11 +664,17 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     let content = List::new(content_items).block(
         Block::default()
             .title(if app.web.bookmark_naming {
-                " Text Browser — New Bookmark "
+                " Text Browser — New Bookmark ".to_string()
             } else if app.web.input_focused {
-                " Text Browser — Enter URL "
+                " Text Browser — Enter URL ".to_string()
+            } else if app.web.tabs.len() > 1 {
+                format!(
+                    " Text Browser — Tab {}/{} ",
+                    app.web.active_tab + 1,
+                    app.web.tabs.len()
+                )
             } else {
-                " Text Browser "
+                " Text Browser ".to_string()
             })
             .borders(Borders::ALL),
     );
@@ -807,7 +841,7 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
     };
 
     let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back a bkmk m list B native ",
+        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back t tab x close [ ] switch a bkmk m list B native ",
     )]);
 
     let log_chunks = Layout::default()

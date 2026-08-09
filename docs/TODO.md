@@ -381,7 +381,7 @@
   - [x] Sidebar focus via `\`: `j`/`k`/`Up`/`Down` move the selection, `Enter`/`o` open it, `Esc` back to links; selection wraps around
   - [x] `web_page_width()` — page wrap width derived from terminal width minus sidebar/borders/prefix; applied at startup and on resize (proportional pane rendering completed)
 - [x] Future: bookmarks with persistence in the Web tab — `a` add (name prefilled from page title), `m` open panel, `j`/`k`/`o`/`d`/`Esc` manage, persisted to `AIOS_DATA_DIR/web_bookmarks.json` (v2.14.1)
-  - [ ] Future: tabs (multiple open pages) in the Web tab
+- [x] Future: tabs (multiple open pages) in the Web tab — `t` new tab, `x` close active, `[`/`]` switch; per-tab page/scroll/selection/history/error state, background fetches routed to their origin tab (v2.15.0)
 
 - [x] **Phase 39: Full Native Browser from the Web Tab — COMPLETE**
   - [x] `B` opens the current page in the full native browser (`aios-webview` WebView2 — JS/CSS/images); the window is reused and auto-recreated, opened on a background thread

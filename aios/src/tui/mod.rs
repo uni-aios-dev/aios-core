@@ -4,7 +4,7 @@ mod ui;
 pub use app_state::TuiApp;
 pub use ui::draw;
 
-use self::app_state::{AiMessage, WebBookmark};
+use self::app_state::{AiMessage, WebBookmark, WebTab};
 
 use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
@@ -602,11 +602,79 @@ fn is_url_input(s: &str) -> bool {
         || (s.contains('.') && !s.contains(|c: char| c.is_whitespace()))
 }
 
+fn web_sync_tab(app: &mut TuiApp) {
+    if let Some(tab) = app.web.tabs.get_mut(app.web.active_tab) {
+        tab.url = app.web.current_url.clone();
+        tab.page = app.web.page.clone();
+        tab.scroll = app.web.scroll;
+        tab.selected_link = app.web.selected_link;
+        tab.history.clone_from(&app.web.history);
+        tab.error.clone_from(&app.web.error);
+    }
+}
+
+fn web_load_tab(app: &mut TuiApp, idx: usize) {
+    if let Some(tab) = app.web.tabs.get(idx) {
+        app.web.current_url = tab.url.clone();
+        app.web.page = tab.page.clone();
+        app.web.scroll = tab.scroll;
+        app.web.selected_link = tab.selected_link;
+        app.web.history.clone_from(&tab.history);
+        app.web.error.clone_from(&tab.error);
+        app.web.loading = false;
+        app.web.history_sel = 0;
+    }
+}
+
+fn web_new_tab(app: &mut TuiApp) {
+    web_sync_tab(app);
+    app.web.tabs.push(WebTab::default());
+    app.web.active_tab = app.web.tabs.len() - 1;
+    app.web.current_url.clear();
+    app.web.page = None;
+    app.web.loading = false;
+    app.web.error = None;
+    app.web.scroll = 0;
+    app.web.selected_link = 0;
+    app.web.history.clear();
+    push_log(&app.logs, "AIOS: web: opened a new tab".into());
+}
+
+fn web_close_tab(app: &mut TuiApp) {
+    if app.web.tabs.len() <= 1 {
+        push_log(&app.logs, "AIOS: web: cannot close the last tab".into());
+        return;
+    }
+    web_sync_tab(app);
+    app.web.tabs.remove(app.web.active_tab);
+    if app.web.active_tab >= app.web.tabs.len() {
+        app.web.active_tab = app.web.tabs.len() - 1;
+    }
+    web_load_tab(app, app.web.active_tab);
+    push_log(
+        &app.logs,
+        format!("AIOS: web: closed tab, {} left", app.web.tabs.len()),
+    );
+}
+
+fn web_switch_tab(app: &mut TuiApp, dir: isize) {
+    if app.web.tabs.len() < 2 {
+        return;
+    }
+    web_sync_tab(app);
+    let len = app.web.tabs.len() as isize;
+    let next = (app.web.active_tab as isize + dir).rem_euclid(len) as usize;
+    app.web.active_tab = next;
+    web_load_tab(app, next);
+}
+
 fn web_load(app: &mut TuiApp, url: &str, push_history: bool) {
     let url = url.trim().to_string();
     if url.is_empty() {
         return;
     }
+    web_sync_tab(app);
+    let tab = app.web.active_tab;
     let prev = app.web.current_url.clone();
     if push_history && !prev.is_empty() && prev != url && !app.web.history.iter().any(|h| h == &url)
     {
@@ -622,6 +690,7 @@ fn web_load(app: &mut TuiApp, url: &str, push_history: bool) {
     let out = app.web.fetch_out.clone();
     let logs = app.logs.clone();
     let target = url.clone();
+    web_sync_tab(app);
     push_log(&logs, format!("AIOS: web: navigating to {url}"));
     let handle = match tokio::runtime::Handle::try_current() {
         Ok(h) => h,
@@ -639,7 +708,7 @@ fn web_load(app: &mut TuiApp, url: &str, push_history: bool) {
         });
         let result = engine.navigate(&target).await.map_err(|e| e.to_string());
         if let Ok(mut slot) = out.lock() {
-            *slot = Some((gen, result));
+            *slot = Some((gen, tab, result));
         }
     });
 }
@@ -671,20 +740,33 @@ fn web_poll(app: &mut TuiApp) {
         let mut slot = app.web.fetch_out.lock().unwrap();
         slot.take()
     };
-    if let Some((gen, result)) = got {
+    if let Some((gen, tab_idx, result)) = got {
         if gen != app.web.fetch_gen {
             return;
         }
         app.web.loading = false;
-        match result {
-            Ok(page) => {
-                let url = page.url.clone();
-                app.web.page = Some(page);
-                app.web.current_url = url;
-                app.web.history_sel = 0;
-            }
-            Err(e) => {
-                app.web.error = Some(e);
+        if let Some(tab) = app.web.tabs.get_mut(tab_idx) {
+            match result {
+                Ok(page) => {
+                    let url = page.url.clone();
+                    let is_active = tab_idx == app.web.active_tab;
+                    tab.url = url.clone();
+                    tab.page = Some(page);
+                    tab.scroll = 0;
+                    tab.selected_link = 0;
+                    tab.error = None;
+                    if is_active {
+                        app.web.page = tab.page.clone();
+                        app.web.current_url = url;
+                        app.web.history_sel = 0;
+                    }
+                }
+                Err(e) => {
+                    tab.error = Some(e.clone());
+                    if tab_idx == app.web.active_tab {
+                        app.web.error = Some(e);
+                    }
+                }
             }
         }
     }
@@ -1495,6 +1577,10 @@ fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
                 .map(|l| l.href.clone());
             web_open_native(app, href);
         }
+        KeyCode::Char('t') => web_new_tab(app),
+        KeyCode::Char('x') => web_close_tab(app),
+        KeyCode::Char(']') => web_switch_tab(app, 1),
+        KeyCode::Char('[') => web_switch_tab(app, -1),
         KeyCode::Esc => app.web.input_focused = false,
         _ => {}
     }

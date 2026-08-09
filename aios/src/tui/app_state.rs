@@ -11,14 +11,25 @@ pub struct AiMessage {
     pub text: String,
 }
 
-/// Outbox slot for a background web fetch result (generation + outcome).
-pub type FetchOut = Arc<Mutex<Option<(u64, Result<Page, String>)>>>;
+/// Outbox slot for a background web fetch result (generation, target tab, outcome).
+pub type FetchOut = Arc<Mutex<Option<(u64, usize, Result<Page, String>)>>>;
 
 /// A single persisted Web tab bookmark: a display name plus the target URL.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WebBookmark {
     pub name: String,
     pub url: String,
+}
+
+/// A single open Web tab: URL, loaded page and the per-tab view state.
+#[derive(Debug, Clone, Default)]
+pub struct WebTab {
+    pub url: String,
+    pub page: Option<Page>,
+    pub scroll: usize,
+    pub selected_link: usize,
+    pub history: Vec<String>,
+    pub error: Option<String>,
 }
 
 /// State of the built-in text web browser tab.
@@ -47,6 +58,10 @@ pub struct WebState {
     pub bookmark_naming: bool,
     /// Buffer for the bookmark name being typed.
     pub bookmark_name: String,
+    /// Open Web tabs; index `active_tab` is the one currently rendered.
+    pub tabs: Vec<WebTab>,
+    /// Index of the rendered tab inside `tabs`.
+    pub active_tab: usize,
 }
 
 impl Default for WebState {
@@ -71,6 +86,8 @@ impl Default for WebState {
             show_bookmarks: false,
             bookmark_naming: false,
             bookmark_name: String::new(),
+            tabs: vec![WebTab::default()],
+            active_tab: 0,
         }
     }
 }

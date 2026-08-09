@@ -1,5 +1,15 @@
 # AIOS Development Log
 
+## v2.15.0 — Web tab browser tabs (multiple open pages) (2026-08-09)
+
+### Kernel TUI (`aios`) Web tab
+- The text-mode browser now supports multiple open pages as tabs: `t` opens a new tab, `x` closes the active tab (the last tab cannot be closed), `[`/`]` switch to the previous/next tab (wrapping).
+- Each tab keeps its own URL, loaded page, scroll offset, selected link, error state and back-history; switching tabs restores that state instantly without refetching.
+- While a page is loading in a background tab the active tab keeps working — the fetch result is routed to the tab that started it (`FetchOut` now carries the target tab index) and `web_poll` applies it only there.
+- The content pane draws a tab bar (active tab highlighted in yellow) when more than one tab is open; the pane title becomes `Text Browser — Tab N/M`.
+- The bottom help line now lists `t tab x close [ ] switch`.
+- Files: `aios/src/tui/app_state.rs`, `aios/src/tui/mod.rs`, `aios/src/tui/ui.rs`, `docs/*`.
+
 ## v2.14.1 — Web tab bookmarks with persistence (2026-08-09)
 
 ### Kernel TUI (`aios`) Web tab
