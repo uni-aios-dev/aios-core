@@ -172,7 +172,8 @@ The block store fetches blocks from three kinds of sources: GitHub (`github:owne
 | `store update` | `[name] [--source NAME]` | Check for and apply updates (auto-rollback on failure) |
 | `store uninstall` | `<name>` | Remove every installed version of a block |
 | `store rollback` | `<name>` | Restore the previous version from backup |
-| `store publish` | `<file.wasm> [name] [version]` | Publish a local wasm file to the running update service via `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); the file's SHA-256 is verified server-side |
+| `store publish` | `<file.wasm> [name] [version] [--key <secret_hex>]` | Publish a local wasm file to the running update service via `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); the file's SHA-256 is verified server-side. With `--key` (or `AIOS_STORE_SIGNING_KEY`) the manifest is Ed25519-signed before upload and the bridge verifies the signature (and its local trust policy) before installing |
+| `store trust` | `<source> [--key <public_hex>] [--clear]` | Manage a source's trusted keys: `--key` adds a 32-byte public key, `--clear` removes all of them; with no flags prints the current trusted keys. A source with trusted keys only accepts manifests signed by one of them (persisted via `store add-source` config) |
 | `store sign` | `<file.wasm> [name] [version] [--key <secret_hex>]` | Sign a local wasm file with Ed25519: computes SHA-256, builds the manifest and writes the signed sidecar JSON (`{name}_{version}.json`) next to the file; the key comes from `--key` or `AIOS_STORE_SIGNING_KEY` (32 bytes, 64 hex chars); prints the public key |
 | `store verify` | `<name>` | Verify an installed block: recompute the SHA-256 of the installed binary and check the Ed25519 signature of its sidecar manifest; reports `SHA-256: OK/MISMATCH` and `Signature: OK/INVALID/none` |
 

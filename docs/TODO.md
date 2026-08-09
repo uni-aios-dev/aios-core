@@ -412,7 +412,7 @@
   - [x] Enforcement in `BlockInstaller`: `trusted_keys`, `with_trusted_keys`/`from_env`, `Default` reads `AIOS_TRUSTED_PUBLIC_KEYS`; sidecar persists the full manifest incl. signature (16 tests)
   - [x] Per-source trust policy: `StoreSource.trusted_public_keys`, `StoreManager::verify_source_manifest` in `install()`/`update()`, official GitHub key via `AIOS_OFFICIAL_PUBLIC_KEY` (2 manager tests)
   - [x] TUI shell `store sign <file.wasm> [name] [version] [--key <hex>]` + `store verify <name>`
-  - [ ] Future: signed `store publish` (manifest signed before the bridge installs it) and `store trust <source>` command to set a source's trusted keys from the shell
+  - [x] Future: signed `store publish` (manifest signed before the bridge installs it) — `store publish --key` signs the manifest Ed25519 and the bridge verifies it (plus its local trust policy) before installing — and `store trust <source> [--key <public_hex>] [--clear]` to set a source's trusted keys from the shell, persisted via the source config (implemented, documented in v2.16.0)
 
 - [x] **Phase 43: AI Console — slash commands, help panel, runtime reconfiguration — COMPLETE (v2.6.0)**
   - [x] Kernel TUI AI Console (tab 3): slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens`

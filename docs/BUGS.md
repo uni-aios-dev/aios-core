@@ -47,7 +47,7 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
 - **Status:** BY DESIGN
 - **Symptom:** `store install` / `store update` reject unsigned or un-trusted blocks when `AIOS_TRUSTED_PUBLIC_KEYS` (or a source's `trusted_public_keys`) is set, while the same install succeeds without it
 - **Workaround:** Only set `AIOS_TRUSTED_PUBLIC_KEYS` on systems that require verified-only installs; leave it unset (default) to allow unsigned blocks while still verifying signatures against the embedded key
-- **Note:** The bridge `store publish` path uses `BlockInstaller::new` (no env keys), so publishing unsigned blocks keeps working regardless of the environment
+- **Note:** The bridge `store publish` path uses `BlockInstaller::from_env` (honours `AIOS_TRUSTED_PUBLIC_KEYS`), so a *signed* publish is gated by the local trust policy while *unsigned* publishes stay allowed unless trusted keys are configured (see `docs/ARCHITECTURE.md`, Phase 42)
 
 ### KNOWN LIMITATION: `store publish` needs a running update service
 - **Status:** BY DESIGN

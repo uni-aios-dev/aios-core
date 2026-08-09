@@ -1,5 +1,12 @@
 # AIOS Development Log
 
+## v2.16.0 — Signed `store publish` and `store trust` documented (2026-08-09)
+
+### Block Store trust tooling
+- The signed `store publish` and `store trust` workflow (code landed earlier in v2.11.0) is now fully documented: `store publish <file.wasm> [name] [version] [--key <secret_hex>]` signs the manifest with Ed25519 before upload; the bridge verifies the signature via `ManifestValidator::verify_signature` and applies its local trust policy (`AIOS_TRUSTED_PUBLIC_KEYS` via `BlockInstaller::from_env`) before installing.
+- `store trust <source> [--key <public_hex>] [--clear]` manages `StoreSource.trusted_public_keys` from the `aios-tui` shell: `--key` adds a validated 32-byte Ed25519 public key, `--clear` removes all of them, no flags prints the current keys; persisted through `StoreManager::save_config`.
+- Docs updated: `docs/INTERFACE.md`, `docs/ARCHITECTURE.md`, `docs/TODO.md`; the stale BUGS note about the bridge using `BlockInstaller::new` was corrected to `from_env`.
+
 ## v2.15.0 — Web tab browser tabs (multiple open pages) (2026-08-09)
 
 ### Kernel TUI (`aios`) Web tab

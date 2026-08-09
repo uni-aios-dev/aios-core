@@ -1,5 +1,12 @@
 # Журнал разработки AIOS
 
+## v2.16.0 — Задокументированы подписанный `store publish` и `store trust` (2026-08-09)
+
+### Инструменты доверия Block Store
+- Рабочий процесс подписанного `store publish` и `store trust` (код появился ещё в v2.11.0) теперь полностью задокументирован: `store publish <file.wasm> [name] [version] [--key <secret_hex>]` подписывает манифест по Ed25519 до загрузки; мост проверяет подпись через `ManifestValidator::verify_signature` и применяет свою локальную политику доверия (`AIOS_TRUSTED_PUBLIC_KEYS` через `BlockInstaller::from_env`) перед установкой.
+- `store trust <source> [--key <public_hex>] [--clear]` управляет `StoreSource.trusted_public_keys` из шелла `aios-tui`: `--key` добавляет проверенный 32-байтовый публичный ключ Ed25519, `--clear` удаляет все, без флагов — печатает текущие ключи; сохраняется через `StoreManager::save_config`.
+- Обновлены доки: `docs/INTERFACE.md`, `docs/ARCHITECTURE.md`, `docs/TODO.md`; исправлена устаревшая заметка в BUGS о том, что мост использует `BlockInstaller::new`, — теперь корректно `from_env`.
+
 ## v2.15.0 — Вкладки Web-браузера (несколько открытых страниц) (2026-08-09)
 
 ### Ядерный TUI (`aios`), вкладка Web

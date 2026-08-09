@@ -410,7 +410,7 @@
   - [x] Enforcement в `BlockInstaller`: `trusted_keys`, `with_trusted_keys`/`from_env`, `Default` читает `AIOS_TRUSTED_PUBLIC_KEYS`; sidecar сохраняет полный манифест включая подпись (16 тестов)
   - [x] Политика доверия по источникам: `StoreSource.trusted_public_keys`, `StoreManager::verify_source_manifest` в `install()`/`update()`, официальный ключ GitHub через `AIOS_OFFICIAL_PUBLIC_KEY` (2 теста менеджера)
   - [x] TUI-шелл `store sign <file.wasm> [name] [version] [--key <hex>]` + `store verify <name>`
-  - [ ] Будущее: подписанный `store publish` (манифест подписывается до установки мостом) и команда `store trust <source>` для задания доверенных ключей источника из шелла
+  - [x] Будущее: подписанный `store publish` (манифест подписывается до установки мостом) — `store publish --key` подписывает манифест по Ed25519, и мост проверяет подпись (плюс свою локальную политику доверия) перед установкой — и команда `store trust <source> [--key <public_hex>] [--clear]` для задания доверенных ключей источника из шелла, сохраняется через конфиг источников (реализовано, задокументировано в v2.16.0)
 
 - [x] **Фаза 43: AI Console — слэш-команды, панель справки, смена бэкенда на лету — ЗАВЕРШЕНА (v2.6.0)**
   - [x] AI Console ядра (вкладка 3): слэш-команды `/help /status /clear /history /system /model /backend /key /temp /tokens`
