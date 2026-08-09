@@ -389,7 +389,7 @@
   - [x] Browser handle in a module-level `OnceLock<Mutex<Option<WebBrowser>>>` — kernel untouched
   - [x] `http_client()`: desktop User-Agent + `Accept: text/html` + 15s timeout for text fetches (fewer bot-blocks, no hangs)
   - [ ] Future: embed the webview as an in-window child of the GUI Browser tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
-  - [ ] Future: headless render-to-text fallback (chromium/WebDriver) for JS-heavy sites in the TUI text view
+  - [x] Future: headless render-to-text fallback for JS-heavy sites — `aios-browser::headless` dumps the DOM in a headless Chromium-class browser (`msedge`/`chromium`/`google-chrome`, override via `AIOS_HEADLESS_BROWSER`, `--no-sandbox` via `AIOS_HEADLESS_NO_SANDBOX`) when the plain fetch yields no readable text; adopted only when the rendered text is substantially richer (v2.17.0)
 
 - [x] **Phase 40: Block Store — Sources, Catalog, Installer, Update Service — COMPLETE**
   - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), local (`local:path`), HTTP update service (`http://host:port`)

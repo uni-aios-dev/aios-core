@@ -1,5 +1,14 @@
 # AIOS Development Log
 
+## v2.17.0 — Headless render-to-text fallback for JS-heavy sites (2026-08-09)
+
+### `aios-browser`
+- New `headless` module: when a plain HTTP fetch returns no meaningful text (the signature of a client-side rendered SPA shell), the engine launches a headless Chromium-class browser with `--dump-dom` and re-parses the fully rendered DOM, so the TUI text view now shows real content on JS-heavy sites.
+- Browser detection probes `msedge`, `microsoft-edge`, `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable`, `chrome`, `brave-browser` plus well-known Windows (Edge/Chrome under `Program Files`) and macOS app paths; override the binary with `AIOS_HEADLESS_BROWSER`, add `--no-sandbox` with `AIOS_HEADLESS_NO_SANDBOX=1`.
+- The dump uses `--virtual-time-budget=5000` (fast-forwarding virtual time so scripts run quickly), is capped at 4 MiB, runs on a blocking thread with a 30 s timeout, and is adopted only when the rendered text is substantially richer than the plain fetch (`has_more_content`, +60 non-whitespace chars); otherwise the original HTML stays authoritative.
+- Gated by `BrowserConfig::headless_fallback` (default on); new unit tests cover the CLI construction, the shell/richer-content heuristics, the missing-binary error path and the engine fallback decisions (5 new tests).
+- Files: `aios-browser/src/headless.rs` (new), `aios-browser/src/engine.rs`, `aios-browser/src/types.rs`, `aios-browser/src/lib.rs`, `docs/*`.
+
 ## v2.16.0 — Signed `store publish` and `store trust` documented (2026-08-09)
 
 ### Block Store trust tooling

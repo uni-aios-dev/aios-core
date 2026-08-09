@@ -1015,7 +1015,8 @@ User Input (TUI)
   - `NetworkClient`: настраиваемые user-agent, таймаут, лимит редиректов; изолированный сетевой доступ
   - `Renderer`: DOM → markdown-подобный текст (заголовки `#`, ссылки `[text](url)`, списки `•`)
   - `Page`: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
-  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
+  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`, `headless_fallback` (включён по умолчанию)
+  - **Headless render-to-text fallback** (модуль `headless`, v2.17.0): когда обычная загрузка не даёт читаемого текста (`looks_like_js_shell`, < 80 непробельных символов), движок запускает headless-браузер класса Chromium (`msedge`/`chromium`/`google-chrome`/`brave-browser`, переопределение `AIOS_HEADLESS_BROWSER`, `--no-sandbox` через `AIOS_HEADLESS_NO_SANDBOX`) с флагами `--headless --dump-dom --virtual-time-budget=5000`, лимит 4 МиБ, выполнение на блокирующем потоке с таймаутом 30 с; отрендеренный DOM принимается только когда `has_more_content` находит на 60+ непробельных символов больше, чем обычная загрузка, иначе исходный HTML остаётся авторитетным
   - **28 unit-тестов**: извлечение текста, парсинг ссылок, заголовков, URL-резолвинг, удаление head/комментариев, структура макета
 - **`BrowserBlock` (интеграция блока в ядро)**: `BrowserBlock` реализует `StatefulBlock` в `aios-browser/src/block.rs` и регистрируется при загрузке во всех бинарниках (`aios`, `aios-tui`, `aiosd`)
   - IPC-команды: `browse` (загрузка и парсинг страницы, возвращает bincode-сериализованный `Page`), `open_native` (открыть URL в системном браузере через крейт `open`), `browser_status` (конфиг + состояние в JSON); поддерживается `HealthCheck`

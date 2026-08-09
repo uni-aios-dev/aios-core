@@ -1,5 +1,14 @@
 # Журнал разработки AIOS
 
+## v2.17.0 — Headless render-to-text fallback для JS-тяжёлых сайтов (2026-08-09)
+
+### `aios-browser`
+- Новый модуль `headless`: когда обычный HTTP-запрос не возвращает читаемого текста (признак SPA-страницы, рендерящейся на клиенте), движок запускает headless-браузер класса Chromium с `--dump-dom` и повторно разбирает полностью отрендеренный DOM, так что текстовый вид TUI теперь показывает реальный контент на JS-сайтах.
+- Поиск браузера перебирает `msedge`, `microsoft-edge`, `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable`, `chrome`, `brave-browser` плюс известные пути Windows (Edge/Chrome в `Program Files`) и macOS; бинарник можно переопределить через `AIOS_HEADLESS_BROWSER`, добавить `--no-sandbox` — через `AIOS_HEADLESS_NO_SANDBOX=1`.
+- Дамп использует `--virtual-time-budget=5000` (ускорение виртуального времени, чтобы скрипты выполнялись быстро), ограничен 4 МиБ, выполняется на блокирующем потоке с таймаутом 30 с и принимается только если отрендеренный текст заметно богаче обычной загрузки (`has_more_content`, +60 непробельных символов); иначе исходный HTML остаётся авторитетным.
+- Управляется флагом `BrowserConfig::headless_fallback` (включён по умолчанию); новые unit-тесты покрывают построение CLI, эвристики «оболочка/богаче контент», путь ошибки при отсутствии бинарника и решения фолбэка в движке (5 новых тестов).
+- Файлы: `aios-browser/src/headless.rs` (новый), `aios-browser/src/engine.rs`, `aios-browser/src/types.rs`, `aios-browser/src/lib.rs`, `docs/*`.
+
 ## v2.16.0 — Задокументированы подписанный `store publish` и `store trust` (2026-08-09)
 
 ### Инструменты доверия Block Store

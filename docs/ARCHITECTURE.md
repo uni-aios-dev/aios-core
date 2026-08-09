@@ -1021,7 +1021,8 @@ Three adaptive AI modes depending on hardware resources:
   - `NetworkClient`: configurable user-agent, timeout, redirect limit; capability-based sandboxed network
   - `Renderer`: DOM → markdown-like text output (headings `#`, links `[text](url)`, lists `•`)
   - `Page` type: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
-  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`
+  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`, `headless_fallback` (default on)
+  - **Headless render-to-text fallback** (`headless` module, v2.17.0): when the plain fetch yields no readable text (`looks_like_js_shell`, < 80 non-whitespace chars), the engine runs a headless Chromium-class browser (`msedge`/`chromium`/`google-chrome`/`brave-browser`, override `AIOS_HEADLESS_BROWSER`, `--no-sandbox` via `AIOS_HEADLESS_NO_SANDBOX`) with `--headless --dump-dom --virtual-time-budget=5000`, capped at 4 MiB on a blocking thread with a 30 s timeout; the rendered DOM is adopted only when `has_more_content` finds +60 more non-whitespace chars than the plain fetch, otherwise the original HTML stays authoritative
   - **28 unit tests**: text extraction, link parsing, title extraction, URL resolution, head/comment stripping, structured layout
 - **`BrowserBlock` (kernel block integration)**: `BrowserBlock` implements `StatefulBlock` in `aios-browser/src/block.rs` and is registered at boot in all binaries (`aios`, `aios-tui`, `aiosd`)
   - IPC commands: `browse` (fetch + parse a page, returns bincode-serialized `Page`), `open_native` (open URL in the OS default browser via the `open` crate), `browser_status` (config + state as JSON); `HealthCheck` supported

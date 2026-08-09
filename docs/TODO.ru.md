@@ -387,7 +387,7 @@
   - [x] Handle браузера в модульном `OnceLock<Mutex<Option<WebBrowser>>>` — ядро не тронуто
   - [x] `http_client()`: десктопный User-Agent + `Accept: text/html` + таймаут 15с для текстовых загрузок (меньше бот-блокировок, нет зависаний)
   - [ ] Будущее: встроить webview как дочернее окно вкладки Browser в GUI через `build_as_child` (Windows/macOS/X11), заменив companion window
-  - [ ] Будущее: headless render-to-text fallback (chromium/WebDriver) для JS-тяжёлых сайтов в текстовом виде TUI
+  - [x] Будущее: headless render-to-text fallback для JS-тяжёлых сайтов — `aios-browser::headless` дампит DOM в headless-браузере класса Chromium (`msedge`/`chromium`/`google-chrome`, переопределение через `AIOS_HEADLESS_BROWSER`, `--no-sandbox` через `AIOS_HEADLESS_NO_SANDBOX`), когда обычная загрузка не даёт читаемого текста; принимается только если отрендеренный текст заметно богаче (v2.17.0)
 
 - [x] **Фаза 40: Хранилище блоков — источники, каталог, установщик, сервис обновлений — ЗАВЕРШЕНА**
   - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), локально (`local:path`), HTTP-сервис обновлений (`http://host:port`)

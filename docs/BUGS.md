@@ -65,6 +65,7 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
 - **Status:** BY DESIGN
 - **Symptom:** The terminal Web tab cannot render CSS/JS/images — pages are shown as structured text (headings `#`, lists `•`/`1.`, tables `|`, `hr`, images as `[alt]`)
 - **Note:** This is an inherent terminal limitation, not a regression. For full-fidelity browsing use the native browser: press `W` in any TUI or open the GUI **Browser** tab (F7)
+- **Note (v2.17.0):** For JS-heavy sites the text view falls back to a headless Chromium-class render (`--dump-dom`) when the plain fetch yields no readable text. This requires a Chromium-class browser (`msedge`/`chromium`/`google-chrome`) installed and reachable; override the binary with `AIOS_HEADLESS_BROWSER`, add `--no-sandbox` (containers) with `AIOS_HEADLESS_NO_SANDBOX=1`. Without a browser the page is shown as fetched.
 
 ### KNOWN LIMITATION: AI Console chat log is a single JSONL file, unbounded
 - **Status:** BY DESIGN

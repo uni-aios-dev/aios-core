@@ -6,6 +6,9 @@ pub struct BrowserConfig {
     pub timeout_secs: u64,
     pub max_redirects: usize,
     pub sandbox_enabled: bool,
+    /// Fall back to a headless Chromium-class browser when a page's plain
+    /// text fetch returns no meaningful content (JS-rendered SPA shells).
+    pub headless_fallback: bool,
 }
 
 impl Default for BrowserConfig {
@@ -15,6 +18,7 @@ impl Default for BrowserConfig {
             timeout_secs: 30,
             max_redirects: 5,
             sandbox_enabled: true,
+            headless_fallback: true,
         }
     }
 }
