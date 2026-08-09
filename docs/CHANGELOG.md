@@ -1,5 +1,14 @@
 # AIOS Development Log
 
+## v2.20.0 — Stateful process migration in the distributed cluster (2026-08-09)
+
+### `aios-cluster`
+- Process state snapshots are now first-class: `ProcessExecutor` gains `extract_state(pid)` / `restore_state(pid, bytes)`; a spawn seeds the snapshot from `spec.payload` so tests can inject state through the spawn spec. `MockProcessExecutor` and `SchedulerProcessExecutor` store opaque per-process snapshots.
+- Wire protocol: `Spawn` carries an optional `state: Option<Vec<u8>>` that the destination restores right after spawn; new `GetState` / `GetStateReply` messages fetch a snapshot from the hosting node.
+- `DistributedScheduler::migrate` is now stateful: it fetches the source snapshot via `get_state`, spawns the copy on the destination with the snapshot restored, and only then kills the source. A failure to fetch state or spawn leaves the source untouched and tracked.
+- New tests: unit `mock_state_roundtrip` (executor state lifecycle: seed, restore, errors, drop on kill) and `test_get_state_roundtrip` (protocol round-trip); integration `migrate_carries_process_state` (3-node cluster, spawn with payload on node b, migrate to c, asserts the snapshot is restored on c and dropped on b). (18 unit + 10 integration + 1 doc).
+- Files: `aios-cluster/src/protocol.rs`, `aios-cluster/src/executor.rs`, `aios-cluster/src/scheduler.rs`, `aios-cluster/tests/scheduling.rs`, `docs/*`.
+
 ## v2.19.0 — Cluster management in the kernel TUI Shell (2026-08-09)
 
 ### `aios` kernel TUI

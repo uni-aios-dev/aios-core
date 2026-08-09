@@ -332,7 +332,7 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `cluster nodes` | — | List cluster peer nodes with status, tier and load |
 | `cluster spawn` | `<name> [ram_mb] [priority] [target_node]` | Run a process on the cluster (placement strategy or explicit target node) |
 | `cluster kill` | `<node> <pid>` | Terminate a remote process |
-| `cluster migrate` | `<node> <pid> [target_node]` | Relocate a remote process to another node (spawn-then-kill) |
+| `cluster migrate` | `<node> <pid> [target_node]` | Relocate a remote process to another node, carrying its state snapshot (stateful spawn-then-kill) |
 | `status` | — | Uptime, bridge state, AI tier, RAM, block count |
 | `logs` | — | Show the last 20 event log entries |
 | `restart` | — | Re-probe hardware and re-initialize subsystems |

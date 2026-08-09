@@ -27,6 +27,7 @@ enum PendingKind {
     Spawn { node: NodeId },
     Kill,
     SetPriority,
+    GetState,
 }
 
 #[derive(Clone)]
@@ -48,6 +49,7 @@ pub struct DistributedScheduler {
     pending: Option<PendingRequest>,
     spawn_result: Option<Result<RemoteProcessId, String>>,
     ctrl_result: Option<Result<(), String>>,
+    get_state_result: Option<Result<Vec<u8>, String>>,
     transport: Arc<dyn ClusterTransport>,
     inbox: mpsc::Receiver<ClusterMessage>,
     inbox_tx: mpsc::Sender<ClusterMessage>,
@@ -83,6 +85,7 @@ impl DistributedScheduler {
             pending: None,
             spawn_result: None,
             ctrl_result: None,
+            get_state_result: None,
             transport,
             inbox,
             inbox_tx,
@@ -287,6 +290,17 @@ impl DistributedScheduler {
         spec: RemoteProcessSpec,
         target: Option<NodeId>,
     ) -> Result<RemoteProcessId, String> {
+        self.spawn_with_state(spec, target, None)
+    }
+
+    /// Like [`Self::spawn`] but restores `state` into the process on the target
+    /// node right after spawn; used by [`Self::migrate`] to relocate state.
+    fn spawn_with_state(
+        &mut self,
+        spec: RemoteProcessSpec,
+        target: Option<NodeId>,
+        state: Option<Vec<u8>>,
+    ) -> Result<RemoteProcessId, String> {
         self.process_events();
         self.spawn_result = None;
         let node = match target {
@@ -314,6 +328,7 @@ impl DistributedScheduler {
                     request_id,
                     from,
                     spec: spec.clone(),
+                    state,
                 },
             )
             .map_err(|e| format!("send spawn to {peer} failed: {e}"))?;
@@ -459,7 +474,9 @@ impl DistributedScheduler {
                 return Err(format!("migrate target {t} is the source node of {rid}"));
             }
         }
-        let new_rid = self.spawn(spec, target)?;
+        // Fetch the source state snapshot so it can be restored on the target.
+        let state = self.get_state(rid)?;
+        let new_rid = self.spawn_with_state(spec, target, Some(state))?;
         if new_rid.node == rid.node {
             let _ = self.kill(new_rid);
             let msg = format!("no other node available to host {rid}; relocation aborted");
@@ -468,7 +485,7 @@ impl DistributedScheduler {
         }
         match self.kill(rid) {
             Ok(()) => {
-                let msg = format!("migrated {rid} to {new_rid}");
+                let msg = format!("migrated {rid} to {new_rid} (state carried)");
                 self.log_event(&msg);
                 Ok(new_rid)
             }
@@ -478,6 +495,49 @@ impl DistributedScheduler {
                 Err(msg)
             }
         }
+    }
+
+    /// Fetch the opaque state snapshot of a remote process, used by
+    /// [`Self::migrate`]. Blocks until the reply or the ack timeout.
+    pub fn get_state(&mut self, rid: RemoteProcessId) -> Result<Vec<u8>, String> {
+        self.process_events();
+        self.get_state_result = None;
+        let peer = self
+            .nodes
+            .get(&rid.node)
+            .map(|n| n.addr.clone())
+            .ok_or_else(|| format!("unknown node {}", rid.node))?;
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
+        self.pending = Some(PendingRequest {
+            request_id,
+            kind: PendingKind::GetState,
+        });
+        let from = self.self_info.addr.clone();
+        self.transport
+            .send(
+                &peer,
+                ClusterMessage::GetState {
+                    request_id,
+                    from,
+                    pid: rid.pid,
+                },
+            )
+            .map_err(|e| format!("send get_state to {peer} failed: {e}"))?;
+        let deadline = Instant::now() + self.ack_timeout;
+        while self.get_state_result.is_none() && Instant::now() < deadline {
+            match self.inbox.recv_timeout(Duration::from_millis(10)) {
+                Ok(msg) => self.dispatch_incoming(msg),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("cluster transport disconnected".into());
+                }
+            }
+        }
+        self.pending = None;
+        self.get_state_result
+            .take()
+            .unwrap_or_else(|| Err(format!("get_state of {rid} timed out")))
     }
 
     /// Pick a target node for `spec` under the active placement strategy.
@@ -546,15 +606,33 @@ impl DistributedScheduler {
                 request_id,
                 from,
                 spec,
+                state,
             } => {
                 let reply = match &self.executor {
                     Some(exec) => match exec.spawn(&spec) {
-                        Ok(pid) => ClusterMessage::SpawnAck {
-                            request_id,
-                            pid,
-                            ok: true,
-                            error: None,
-                        },
+                        Ok(pid) => {
+                            let restored = match &state {
+                                Some(bytes) => exec.restore_state(pid, bytes),
+                                None => Ok(()),
+                            };
+                            match restored {
+                                Ok(()) => ClusterMessage::SpawnAck {
+                                    request_id,
+                                    pid,
+                                    ok: true,
+                                    error: None,
+                                },
+                                Err(e) => {
+                                    let _ = exec.kill(pid);
+                                    ClusterMessage::SpawnAck {
+                                        request_id,
+                                        pid: 0,
+                                        ok: false,
+                                        error: Some(format!("state restore failed: {e}")),
+                                    }
+                                }
+                            }
+                        }
                         Err(e) => ClusterMessage::SpawnAck {
                             request_id,
                             pid: 0,
@@ -570,6 +648,43 @@ impl DistributedScheduler {
                     },
                 };
                 let _ = self.transport.send(&from, reply);
+            }
+            ClusterMessage::GetState {
+                request_id,
+                from,
+                pid,
+            } => {
+                let reply = match &self.executor {
+                    Some(exec) => match exec.extract_state(pid) {
+                        Ok(state) => ClusterMessage::GetStateReply {
+                            request_id,
+                            ok: true,
+                            state,
+                            error: None,
+                        },
+                        Err(e) => ClusterMessage::GetStateReply {
+                            request_id,
+                            ok: false,
+                            state: Vec::new(),
+                            error: Some(e),
+                        },
+                    },
+                    None => ClusterMessage::GetStateReply {
+                        request_id,
+                        ok: false,
+                        state: Vec::new(),
+                        error: Some("node has no process executor".into()),
+                    },
+                };
+                let _ = self.transport.send(&from, reply);
+            }
+            ClusterMessage::GetStateReply {
+                request_id,
+                ok,
+                state,
+                error,
+            } => {
+                self.complete_get_state(request_id, ok, state, error);
             }
             ClusterMessage::SpawnAck {
                 request_id,
@@ -725,6 +840,27 @@ impl DistributedScheduler {
                 } else {
                     Some(Err(
                         error.unwrap_or_else(|| "request rejected by node".into())
+                    ))
+                };
+                self.pending = None;
+            }
+        }
+    }
+
+    fn complete_get_state(
+        &mut self,
+        request_id: u64,
+        ok: bool,
+        state: Vec<u8>,
+        error: Option<String>,
+    ) {
+        if let Some(pending) = &self.pending {
+            if pending.request_id == request_id {
+                self.get_state_result = if ok {
+                    Some(Ok(state))
+                } else {
+                    Some(Err(
+                        error.unwrap_or_else(|| "state request rejected by node".into())
                     ))
                 };
                 self.pending = None;

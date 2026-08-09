@@ -21,6 +21,10 @@ pub trait ProcessExecutor: Send + Sync {
     fn status(&self) -> Vec<RemoteProcessStatus>;
     /// Load snapshot for node metrics.
     fn metrics(&self) -> NodeMetrics;
+    /// Extract an opaque state snapshot of process `pid` for migration.
+    fn extract_state(&self, pid: u64) -> Result<Vec<u8>, String>;
+    /// Restore an extracted state snapshot into process `pid`.
+    fn restore_state(&self, pid: u64, state: &[u8]) -> Result<(), String>;
 }
 
 /// Deterministic in-memory executor for tests and mock deployments.
@@ -28,6 +32,7 @@ pub trait ProcessExecutor: Send + Sync {
 pub struct MockProcessExecutor {
     node_id: NodeId,
     processes: Arc<Mutex<HashMap<u64, MockProcess>>>,
+    states: Arc<Mutex<HashMap<u64, Vec<u8>>>>,
     next_pid: AtomicU64,
 }
 
@@ -45,6 +50,7 @@ impl MockProcessExecutor {
         Self {
             node_id,
             processes: Arc::new(Mutex::new(HashMap::new())),
+            states: Arc::new(Mutex::new(HashMap::new())),
             next_pid: AtomicU64::new(1),
         }
     }
@@ -62,12 +68,21 @@ impl ProcessExecutor for MockProcessExecutor {
                 state: "Running".into(),
             },
         );
+        // The init payload seeds the process state snapshot, so tests can
+        // inject migration state through the spawn spec.
+        self.states
+            .lock()
+            .unwrap()
+            .insert(pid, spec.payload.clone());
         Ok(pid)
     }
 
     fn kill(&self, pid: u64) -> Result<(), String> {
         match self.processes.lock().unwrap().remove(&pid) {
-            Some(_) => Ok(()),
+            Some(_) => {
+                self.states.lock().unwrap().remove(&pid);
+                Ok(())
+            }
             None => Err(format!("no process with pid {pid}")),
         }
     }
@@ -106,12 +121,33 @@ impl ProcessExecutor for MockProcessExecutor {
         let ram_used: u64 = guard.values().map(|p| p.ram_mb).sum();
         NodeMetrics::new(0.0, ram_used, 16384, guard.len() as u64)
     }
+
+    fn extract_state(&self, pid: u64) -> Result<Vec<u8>, String> {
+        let guard = self.states.lock().unwrap();
+        match guard.get(&pid) {
+            Some(state) => Ok(state.clone()),
+            None => Err(format!("no process with pid {pid}")),
+        }
+    }
+
+    fn restore_state(&self, pid: u64, state: &[u8]) -> Result<(), String> {
+        let mut guard = self.states.lock().unwrap();
+        match guard.get_mut(&pid) {
+            Some(slot) => {
+                slot.clear();
+                slot.extend_from_slice(state);
+                Ok(())
+            }
+            None => Err(format!("no process with pid {pid}")),
+        }
+    }
 }
 
 /// Executor bridging to the real `aios-process-mgr` scheduler.
 pub struct SchedulerProcessExecutor {
     node_id: NodeId,
     scheduler: Arc<Mutex<aios_process_mgr::scheduler::Scheduler>>,
+    states: Arc<Mutex<HashMap<u64, Vec<u8>>>>,
 }
 
 impl SchedulerProcessExecutor {
@@ -120,7 +156,11 @@ impl SchedulerProcessExecutor {
         node_id: NodeId,
         scheduler: Arc<Mutex<aios_process_mgr::scheduler::Scheduler>>,
     ) -> Self {
-        Self { node_id, scheduler }
+        Self {
+            node_id,
+            scheduler,
+            states: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 }
 
@@ -136,6 +176,10 @@ impl ProcessExecutor for SchedulerProcessExecutor {
                 spec.ram_mb,
             )
             .map_err(|e| e.to_string())?;
+        self.states
+            .lock()
+            .unwrap()
+            .insert(pid.0, spec.payload.clone());
         Ok(pid.0)
     }
 
@@ -144,7 +188,9 @@ impl ProcessExecutor for SchedulerProcessExecutor {
             .lock()
             .unwrap()
             .kill_process(aios_process_mgr::task::ProcessId(pid))
-            .map(|_| ())
+            .map(|_| {
+                self.states.lock().unwrap().remove(&pid);
+            })
             .map_err(|e| e.to_string())
     }
 
@@ -182,6 +228,26 @@ impl ProcessExecutor for SchedulerProcessExecutor {
         let (used, total) = sched.ram_usage();
         NodeMetrics::new(0.0, used, total, sched.process_count() as u64)
     }
+
+    fn extract_state(&self, pid: u64) -> Result<Vec<u8>, String> {
+        let guard = self.states.lock().unwrap();
+        match guard.get(&pid) {
+            Some(state) => Ok(state.clone()),
+            None => Err(format!("no process with pid {pid}")),
+        }
+    }
+
+    fn restore_state(&self, pid: u64, state: &[u8]) -> Result<(), String> {
+        let mut guard = self.states.lock().unwrap();
+        match guard.get_mut(&pid) {
+            Some(slot) => {
+                slot.clear();
+                slot.extend_from_slice(state);
+                Ok(())
+            }
+            None => Err(format!("no process with pid {pid}")),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -207,5 +273,29 @@ mod tests {
         exec.kill(pid).unwrap();
         assert!(exec.status().is_empty());
         assert_eq!(exec.kill(pid), Err("no process with pid 1".into()));
+    }
+
+    #[test]
+    fn mock_state_roundtrip() {
+        let exec = MockProcessExecutor::new(7);
+        let pid = exec
+            .spawn(&RemoteProcessSpec::new("db", 2, 64).with_payload(b"seed-state".to_vec()))
+            .unwrap();
+        assert_eq!(exec.extract_state(pid).unwrap(), b"seed-state");
+
+        exec.restore_state(pid, b"migrated-state").unwrap();
+        assert_eq!(exec.extract_state(pid).unwrap(), b"migrated-state");
+
+        assert_eq!(
+            exec.extract_state(999),
+            Err("no process with pid 999".into())
+        );
+        assert_eq!(
+            exec.restore_state(999, b"x"),
+            Err("no process with pid 999".into())
+        );
+
+        exec.kill(pid).unwrap();
+        assert_eq!(exec.extract_state(pid), Err("no process with pid 1".into()));
     }
 }

@@ -44,6 +44,7 @@
 - [x] Фаза 50: `aios-init` передаёт управление реальному ядерному TUI — `build_initramfs.sh` собирает и размещает статический musl `aios` как `/system/aios-core` (загрузка сразу в ядерный TUI, спасательный шелл — запасной вариант), добавлены `--keep-rootfs` и защита очистки rootfs; `live/build.sh` получает опциональный режим `USE_AIOS_INIT=1` с отдельным GRUB-меню (v2.13.0)
 - [x] Фаза 51: `aios-init` — `/init` initramfs по умолчанию в Live ISO — `live/build.sh` шаг [4] упаковывает initramfs на базе `aios-init` по умолчанию (`aios-init` как `/init`, `aios` как `/system/aios-core`, busybox только как спасательный шелл), шаг [5] записывает GRUB-меню `init=/init console=tty0`; прежний путь busybox `switch_root` сохранён за `USE_BUSYBOX_INIT=1`, переключатель `USE_AIOS_INIT=1` удалён (v2.14.0)
 - [x] Фаза 52: Управление кластером из Shell ядерного TUI — команды `cluster status/nodes/spawn/kill/migrate` управляют `DistributedScheduler` на реальных потоках `SchedulerProcessExecutor`; `OrchestratorState` удерживает handle планировщика; миграция процессов между узлами (спавн-затем-убийство) (v2.18.0–v2.19.0)
+- [x] Фаза 53: Миграция процессов с переносом состояния — `ProcessExecutor::extract_state`/`restore_state`, `Spawn` несёт снимок состояния по сети (`GetState`/`GetStateReply`), `migrate` восстанавливает его на узле назначения до убийства исходника (v2.20.0)
 
 ## Бэклог
 

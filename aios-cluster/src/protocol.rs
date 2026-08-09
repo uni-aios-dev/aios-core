@@ -18,6 +18,8 @@ pub enum ClusterMessage {
         request_id: u64,
         from: String,
         spec: RemoteProcessSpec,
+        /// Optional process state snapshot to restore after spawn (migration).
+        state: Option<Vec<u8>>,
     },
     /// Result of a spawn request.
     SpawnAck {
@@ -49,6 +51,19 @@ pub enum ClusterMessage {
     SetPriorityAck {
         request_id: u64,
         ok: bool,
+        error: Option<String>,
+    },
+    /// Ask a node for the persisted state snapshot of process `pid`.
+    GetState {
+        request_id: u64,
+        from: String,
+        pid: u64,
+    },
+    /// Reply carrying the process state snapshot.
+    GetStateReply {
+        request_id: u64,
+        ok: bool,
+        state: Vec<u8>,
         error: Option<String>,
     },
     /// Ask a node for its hosted process list.
@@ -117,6 +132,7 @@ mod tests {
             request_id: 9,
             from: "10.0.0.1:9000".into(),
             spec,
+            state: Some(vec![1, 2, 3]),
         };
         let frame = encode(&msg).unwrap();
         let (decoded, _) = decode_frame(&frame).unwrap();
@@ -125,13 +141,61 @@ mod tests {
                 request_id,
                 from,
                 spec,
+                state,
             } => {
                 assert_eq!(request_id, 9);
                 assert_eq!(from, "10.0.0.1:9000");
                 assert_eq!(spec.name, "net");
                 assert_eq!(spec.block_id, Some(42));
+                assert_eq!(state, Some(vec![1, 2, 3]));
             }
             other => panic!("expected Spawn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_get_state_roundtrip() {
+        let msg = ClusterMessage::GetState {
+            request_id: 5,
+            from: "10.0.0.1:9000".into(),
+            pid: 7,
+        };
+        let frame = encode(&msg).unwrap();
+        let (decoded, _) = decode_frame(&frame).unwrap();
+        match decoded {
+            ClusterMessage::GetState {
+                request_id,
+                from,
+                pid,
+            } => {
+                assert_eq!(request_id, 5);
+                assert_eq!(from, "10.0.0.1:9000");
+                assert_eq!(pid, 7);
+            }
+            other => panic!("expected GetState, got {other:?}"),
+        }
+
+        let reply = ClusterMessage::GetStateReply {
+            request_id: 5,
+            ok: true,
+            state: vec![9, 9, 9],
+            error: None,
+        };
+        let frame = encode(&reply).unwrap();
+        let (decoded, _) = decode_frame(&frame).unwrap();
+        match decoded {
+            ClusterMessage::GetStateReply {
+                request_id,
+                ok,
+                state,
+                error,
+            } => {
+                assert_eq!(request_id, 5);
+                assert!(ok);
+                assert_eq!(state, vec![9, 9, 9]);
+                assert!(error.is_none());
+            }
+            other => panic!("expected GetStateReply, got {other:?}"),
         }
     }
 

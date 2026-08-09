@@ -429,6 +429,67 @@ fn migrate_rejects_same_node_or_unknown() {
 }
 
 #[test]
+fn migrate_carries_process_state() {
+    let (_registry, schedulers, executors) = memory_cluster(
+        &[(1, "a"), (2, "b"), (3, "c")],
+        PlacementStrategy::LeastLoaded,
+    );
+    let a = &schedulers[0];
+    let exec_b = &executors[1];
+    let exec_c = &executors[2];
+    let addrs = vec![
+        "mem://a".to_string(),
+        "mem://b".to_string(),
+        "mem://c".to_string(),
+    ];
+    let _stops = start_mem_nodes(&schedulers, &addrs);
+    wait_peers_online(a, 2, Duration::from_secs(5));
+
+    // A spawn whose payload seeds the process state snapshot on node b.
+    let payload = b"checkpoint-v7".to_vec();
+    let rid = a
+        .lock()
+        .unwrap()
+        .spawn(
+            RemoteProcessSpec::new("db", 2, 128).with_payload(payload),
+            Some(2),
+        )
+        .expect("spawn on b");
+    assert_eq!(rid.node, 2);
+    assert_eq!(exec_b.extract_state(rid.pid).unwrap(), b"checkpoint-v7");
+
+    // Migrate b -> c: the snapshot must be restored on c and dropped on b.
+    let new_rid = a
+        .lock()
+        .unwrap()
+        .migrate(rid, Some(3))
+        .expect("migrate to c should succeed");
+    assert_eq!(new_rid.node, 3);
+    wait_until(
+        || {
+            let on_c = exec_c
+                .extract_state(new_rid.pid)
+                .ok()
+                .filter(|s| s.as_slice() == b"checkpoint-v7")?;
+            let on_b = exec_b.extract_state(rid.pid);
+            (on_b.is_err()).then_some(on_c)
+        },
+        "state carried from b to c",
+        Duration::from_secs(3),
+    );
+
+    // The source process is gone from b.
+    wait_until(
+        || {
+            let on_b = exec_b.status().into_iter().filter(|p| p.id == rid).count();
+            (on_b == 0).then_some(())
+        },
+        "source process removed from b",
+        Duration::from_secs(3),
+    );
+}
+
+#[test]
 fn tcp_transport_spawn_kill() {
     let pa = portpicker::pick_unused_port().expect("no free port for a");
     let pb = portpicker::pick_unused_port().expect("no free port for b");
