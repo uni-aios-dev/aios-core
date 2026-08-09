@@ -1,5 +1,14 @@
 # AIOS Development Log
 
+## v2.14.0 — `aios-init` is the default initramfs `/init` in the Live ISO (2026-08-09)
+
+### `live/build.sh` — aios-init mode is now the default
+- Step [4] packs the aios-init initramfs by default: `aios-init` as `/init`, the `aios` binary as `/system/aios-core`, busybox only as the rescue shell — the kernel boots directly into the kernel TUI without `switch_root` into the squashfs.
+- The legacy busybox initramfs path (`init.rs` + squashfs root + `switch_root`) is preserved behind the opt-out `USE_BUSYBOX_INIT=1`.
+- Step [5] writes the dedicated `init=/init console=tty0` GRUB menu by default ("AIOS (aios-init kernel TUI)" / "AIOS (verbose)"); `USE_BUSYBOX_INIT=1` restores the legacy `/work/grub.cfg`.
+- The `USE_AIOS_INIT=1` switch is removed — aios-init is now the only default and always-on behaviour.
+- Files: `live/build.sh`, `docs/*`.
+
 ## v2.13.0 — `aios-init` hands over to the real kernel TUI as `/system/aios-core` (2026-08-09)
 
 ### `build_initramfs.sh` — stage the full kernel TUI in the initramfs

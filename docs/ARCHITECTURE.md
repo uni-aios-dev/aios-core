@@ -1217,8 +1217,8 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + rescue shell
 ```
 The script runs `cargo build --release --target x86_64-unknown-linux-musl` for `aios-init`, and (unless `--no-aios-core`/`SKIP_AIOS_CORE=1`) `cargo build -p aios --release --target x86_64-unknown-linux-musl --no-default-features` for the real kernel TUI. It stages the layout under `rootfs/`, copies `aios-init` to `/init` and `aios` to `/system/aios-core`, then packs `find . | cpio --null -ov --format=newc | gzip -9`. A cleanup guard refuses to remove any path outside the script directory; `--keep-rootfs` retains the staging dir. When `/system/aios-core` is present, `aios-init` boots straight into the full kernel TUI; the rescue shell remains the fallback only (v2.13.0).
 
-### Live image variant (`USE_AIOS_INIT=1`)
-`live/build.sh` step [4] builds the busybox initramfs by default (mounts the squashfs + `switch_root`). Setting `USE_AIOS_INIT=1` instead packs an aios-init initramfs: `aios-init` as `/init`, the `aios` binary as `/system/aios-core`, busybox only as the rescue shell — the kernel boots directly into the kernel TUI without a squashfs root; step [5] then writes a dedicated GRUB menu with `init=/init console=tty0` entries (v2.13.0).
+### Live image variant (aios-init default)
+`live/build.sh` step [4] packs the aios-init initramfs by default: `aios-init` as `/init`, the `aios` binary as `/system/aios-core`, busybox only as the rescue shell — the kernel boots directly into the kernel TUI without a squashfs root; step [5] writes a dedicated GRUB menu with `init=/init console=tty0` entries. The legacy busybox initramfs (mounts the squashfs + `switch_root`, `init.rs`) is preserved behind the `USE_BUSYBOX_INIT=1` opt-out (v2.14.0; aios-init was opt-in via `USE_AIOS_INIT=1` in v2.13.0).
 
 ### Kernel command line
 - GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`

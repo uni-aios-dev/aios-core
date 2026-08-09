@@ -42,11 +42,12 @@
 - [x] Phase 48: Multi-node distributed cluster (`aios-cluster`) — TCP/in-memory transports, discovery via heartbeats, load-aware/round-robin/tier placement, remote spawn/kill/priority, failover respawn, config from env/JSON (v2.11.0)
 - [x] Phase 49: `aios-init` — static-musl PID 1 init for the initramfs: core VFS mounts, `/dev/console`, block supervisor with restarts + zombie reaping, rescue-shell fallback, `build_initramfs.sh` cpio/gzip packaging, GRUB/Syslinux `init=/init console=tty0` wiring (v2.12.0)
 - [x] Phase 50: `aios-init` hands over to the real kernel TUI — `build_initramfs.sh` builds/stages the static-musl `aios` as `/system/aios-core` (boot straight into the kernel TUI, rescue shell as fallback), adds `--keep-rootfs` + rootfs cleanup guard; `live/build.sh` gains the optional `USE_AIOS_INIT=1` mode with a dedicated GRUB menu (v2.13.0)
+- [x] Phase 51: `aios-init` is the default initramfs `/init` in the Live ISO — `live/build.sh` step [4] packs the aios-init initramfs by default (`aios-init` as `/init`, `aios` as `/system/aios-core`, busybox only as rescue shell), step [5] writes the `init=/init console=tty0` GRUB menu; the legacy busybox `switch_root` path is preserved behind `USE_BUSYBOX_INIT=1`, the `USE_AIOS_INIT=1` switch is removed (v2.14.0)
 
 ## Backlog
 
-- [ ] Wire `aios-init` + `build_initramfs.sh` into `live/build.sh` step [4] as the initramfs `/init` by default (currently behind the optional `USE_AIOS_INIT=1` switch)
-- [ ] Add a `rootfs` cleanup guard / `--keep-rootfs` flag to `build_initramfs.sh` — done (v2.13.0)
+- [x] Wire `aios-init` + `build_initramfs.sh` into `live/build.sh` step [4] as the initramfs `/init` by default (done in v2.14.0; legacy busybox path kept behind `USE_BUSYBOX_INIT=1`)
+- [x] Add a `rootfs` cleanup guard / `--keep-rootfs` flag to `build_initramfs.sh` — done (v2.13.0)
 
 ## Readiness Assessment (2026-07-29, updated)
 

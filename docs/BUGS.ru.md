@@ -15,7 +15,7 @@
 
 ### ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ: статическая сборка `aios` для musl требует native-TLS библиотек на сборочном хосте
 - **Статус:** ПО ЗАМЫСЛУ
-- **Симптом:** `build_initramfs.sh` (и `live/build.sh` при `USE_AIOS_INIT=1`) собирают `aios` для `x86_64-unknown-linux-musl`; `reqwest` 0.12 без явной фичи `rustls` линкует native-tls/OpenSSL, поэтому кросс-сборка для musl требует системных dev/static библиотек OpenSSL (в Alpine-контейнере Live ставится `openssl-dev`).
+- **Симптом:** `build_initramfs.sh` (и `live/build.sh` в режиме aios-init по умолчанию) собирают `aios` для `x86_64-unknown-linux-musl`; `reqwest` 0.12 без явной фичи `rustls` линкует native-tls/OpenSSL, поэтому кросс-сборка для musl требует системных dev/static библиотек OpenSSL (в Alpine-контейнере Live ставится `openssl-dev`).
 - **Обходной путь:** собирать на хосте, где OpenSSL доступен для musl (Alpine или эквивалентный контейнер); либо использовать `./build_initramfs.sh --no-aios-core` / `SKIP_AIOS_CORE=1`, чтобы получить initramfs только со спасательным шеллом.
 - **Примечание:** если сборка aios завершилась ошибкой или была пропущена, скрипт предупреждает и продолжает — загрузка всё равно работает через спасательный шелл.
 

@@ -13,7 +13,7 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
 
 ### KNOWN LIMITATION: `aios` static-musl build needs native TLS libraries on the build host
 - **Status:** BY DESIGN
-- **Symptom:** `build_initramfs.sh` (and `live/build.sh` `USE_AIOS_INIT=1`) build `aios` for `x86_64-unknown-linux-musl`; `reqwest` 0.12 without an explicit `rustls` feature links native-tls/OpenSSL, so the musl cross-build requires system OpenSSL dev/static libraries (the Alpine live container installs `openssl-dev`).
+- **Symptom:** `build_initramfs.sh` (and `live/build.sh` in the default aios-init mode) build `aios` for `x86_64-unknown-linux-musl`; `reqwest` 0.12 without an explicit `rustls` feature links native-tls/OpenSSL, so the musl cross-build requires system OpenSSL dev/static libraries (the Alpine live container installs `openssl-dev`).
 - **Workaround:** Build on a host that provides OpenSSL for musl (Alpine or an equivalent container); alternatively use `./build_initramfs.sh --no-aios-core` / `SKIP_AIOS_CORE=1` to produce a rescue-shell-only initramfs.
 - **Note:** If the aios build fails or is skipped, the script warns and continues — boot still works via the rescue shell.
 

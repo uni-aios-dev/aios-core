@@ -1,5 +1,14 @@
 # Журнал разработки AIOS
 
+## v2.14.0 — `aios-init` становится `/init` initramfs по умолчанию в Live ISO (2026-08-09)
+
+### `live/build.sh` — режим aios-init теперь по умолчанию
+- Шаг [4] теперь упаковывает initramfs на базе `aios-init` по умолчанию: `aios-init` как `/init`, бинарник `aios` как `/system/aios-core`, busybox только как спасательный шелл — ядро грузится сразу в ядерный TUI без `switch_root` в squashfs.
+- Прежний путь busybox-initramfs (`init.rs` + squashfs-корень + `switch_root`) сохранён за флагом-отключением `USE_BUSYBOX_INIT=1`.
+- Шаг [5] записывает отдельное GRUB-меню с параметрами `init=/init console=tty0` по умолчанию («AIOS (aios-init kernel TUI)» / «AIOS (verbose)»); при `USE_BUSYBOX_INIT=1` используется прежний `/work/grub.cfg`.
+- Переключатель `USE_AIOS_INIT=1` удалён — aios-init теперь единственный и всегда активный режим по умолчанию.
+- Файлы: `live/build.sh`, `docs/*`.
+
 ## v2.13.0 — `aios-init` передаёт управление реальному ядерному TUI как `/system/aios-core` (2026-08-09)
 
 ### `build_initramfs.sh` — размещение полноценного ядерного TUI в initramfs
