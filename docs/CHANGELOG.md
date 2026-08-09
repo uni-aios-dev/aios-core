@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.18.0 — Process migration in the distributed cluster (2026-08-09)
+
+### `aios-cluster`
+- New `DistributedScheduler::migrate(rid, target)` relocates a tracked remote process to another node: the copy is spawned on the destination (explicit `target` node or the active placement strategy, never the source node) and only then the original is killed, so a spawn failure leaves the source untouched and tracked.
+- Edge cases handled: migrating onto the source node is rejected, migrating an untracked/unknown process errors early, and if the strategy picks the same node the extra copy is re-killed before erroring.
+- New integration tests in `tests/scheduling.rs`: `migrate_moves_process_between_nodes` (explicit node move verifies host hand-off on the executors plus strategy-based relocation that never returns the source) and `migrate_rejects_same_node_or_unknown` (error paths, process stays intact after rejected attempts). 2 new integration tests (16 unit + 9 integration + 1 doc).
+- Files: `aios-cluster/src/scheduler.rs`, `aios-cluster/tests/scheduling.rs`, `docs/*`.
+
 ## v2.17.0 — Headless render-to-text fallback for JS-heavy sites (2026-08-09)
 
 ### `aios-browser`

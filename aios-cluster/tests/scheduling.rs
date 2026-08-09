@@ -334,6 +334,101 @@ fn set_priority_remote() {
 }
 
 #[test]
+fn migrate_moves_process_between_nodes() {
+    let (_registry, schedulers, executors) = memory_cluster(
+        &[(1, "a"), (2, "b"), (3, "c")],
+        PlacementStrategy::LeastLoaded,
+    );
+    let a = &schedulers[0];
+    let exec_b = &executors[1];
+    let exec_c = &executors[2];
+    let addrs = vec![
+        "mem://a".to_string(),
+        "mem://b".to_string(),
+        "mem://c".to_string(),
+    ];
+    let _stops = start_mem_nodes(&schedulers, &addrs);
+    wait_peers_online(a, 2, Duration::from_secs(5));
+
+    let rid = a
+        .lock()
+        .unwrap()
+        .spawn(RemoteProcessSpec::new("migrator", 2, 128), Some(2))
+        .expect("spawn on b");
+    assert_eq!(rid.node, 2);
+
+    // Explicit migration to node c: source terminated, destination hosts it.
+    let new_rid = a
+        .lock()
+        .unwrap()
+        .migrate(rid, Some(3))
+        .expect("migrate to c should succeed");
+    assert_eq!(new_rid.node, 3);
+    assert_ne!(new_rid, rid);
+    assert_eq!(a.lock().unwrap().processes().len(), 1);
+    assert!(a.lock().unwrap().processes()[0].id == new_rid);
+    wait_until(
+        || {
+            let on_b = exec_b.status().into_iter().filter(|p| p.id == rid).count();
+            let on_c = exec_c
+                .status()
+                .into_iter()
+                .filter(|p| p.id == new_rid)
+                .count();
+            (on_b == 0 && on_c == 1).then_some(())
+        },
+        "process moved from b to c",
+        Duration::from_secs(3),
+    );
+
+    // Migration without a target also works and never returns the source node.
+    let moved = a
+        .lock()
+        .unwrap()
+        .migrate(new_rid, None)
+        .expect("placement-based migrate should succeed");
+    assert_ne!(moved.node, 3);
+    assert_ne!(moved.node, 1);
+}
+
+#[test]
+fn migrate_rejects_same_node_or_unknown() {
+    let (_registry, schedulers, executors) =
+        memory_cluster(&[(1, "a"), (2, "b")], PlacementStrategy::LeastLoaded);
+    let a = &schedulers[0];
+    let _exec_b = &executors[1];
+    let addrs = vec!["mem://a".to_string(), "mem://b".to_string()];
+    let _stops = start_mem_nodes(&schedulers, &addrs);
+    wait_peers_online(a, 1, Duration::from_secs(5));
+
+    let rid = a
+        .lock()
+        .unwrap()
+        .spawn(RemoteProcessSpec::new("svc", 1, 128), Some(2))
+        .expect("spawn on b");
+
+    let err = a
+        .lock()
+        .unwrap()
+        .migrate(rid, Some(2))
+        .expect_err("migrating onto the source node must fail");
+    assert!(err.contains("source node"), "unexpected error: {err}");
+
+    let err = a
+        .lock()
+        .unwrap()
+        .migrate(RemoteProcessId { node: 9, pid: 99 }, Some(2))
+        .expect_err("migrating an untracked process must fail");
+    assert!(
+        err.contains("no tracked process"),
+        "unexpected error: {err}"
+    );
+
+    // The process is still intact on b after the rejected attempts.
+    assert_eq!(a.lock().unwrap().processes().len(), 1);
+}
+
+#[test]
 fn tcp_transport_spawn_kill() {
     let pa = portpicker::pick_unused_port().expect("no free port for a");
     let pb = portpicker::pick_unused_port().expect("no free port for b");

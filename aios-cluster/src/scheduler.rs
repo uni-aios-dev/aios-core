@@ -438,6 +438,48 @@ impl DistributedScheduler {
             .unwrap_or_else(|| Err(format!("priority change on node {} timed out", rid.node)))
     }
 
+    /// Relocate a tracked process to another node. When `target` is `None` the
+    /// placement strategy picks the destination, excluding the source node. The
+    /// process is spawned on the destination first and only then is the
+    /// original copy terminated, so a failure to spawn leaves the source
+    /// untouched. Returns the id of the relocated process.
+    pub fn migrate(
+        &mut self,
+        rid: RemoteProcessId,
+        target: Option<NodeId>,
+    ) -> Result<RemoteProcessId, String> {
+        self.process_events();
+        let spec = self
+            .spawned_specs
+            .get(&rid)
+            .cloned()
+            .ok_or_else(|| format!("no tracked process {rid} to migrate"))?;
+        if let Some(t) = target {
+            if t == rid.node {
+                return Err(format!("migrate target {t} is the source node of {rid}"));
+            }
+        }
+        let new_rid = self.spawn(spec, target)?;
+        if new_rid.node == rid.node {
+            let _ = self.kill(new_rid);
+            let msg = format!("no other node available to host {rid}; relocation aborted");
+            self.log_event(&msg);
+            return Err(msg);
+        }
+        match self.kill(rid) {
+            Ok(()) => {
+                let msg = format!("migrated {rid} to {new_rid}");
+                self.log_event(&msg);
+                Ok(new_rid)
+            }
+            Err(e) => {
+                let msg = format!("spawned {new_rid} but failed to kill source {rid}: {e}");
+                self.log_event(&msg);
+                Err(msg)
+            }
+        }
+    }
+
     /// Pick a target node for `spec` under the active placement strategy.
     fn select_node(&mut self, spec: &RemoteProcessSpec) -> Option<NodeId> {
         let mut candidates: Vec<&NodeInfo> = self
