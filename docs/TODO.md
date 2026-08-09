@@ -43,6 +43,7 @@
 - [x] Phase 49: `aios-init` — static-musl PID 1 init for the initramfs: core VFS mounts, `/dev/console`, block supervisor with restarts + zombie reaping, rescue-shell fallback, `build_initramfs.sh` cpio/gzip packaging, GRUB/Syslinux `init=/init console=tty0` wiring (v2.12.0)
 - [x] Phase 50: `aios-init` hands over to the real kernel TUI — `build_initramfs.sh` builds/stages the static-musl `aios` as `/system/aios-core` (boot straight into the kernel TUI, rescue shell as fallback), adds `--keep-rootfs` + rootfs cleanup guard; `live/build.sh` gains the optional `USE_AIOS_INIT=1` mode with a dedicated GRUB menu (v2.13.0)
 - [x] Phase 51: `aios-init` is the default initramfs `/init` in the Live ISO — `live/build.sh` step [4] packs the aios-init initramfs by default (`aios-init` as `/init`, `aios` as `/system/aios-core`, busybox only as rescue shell), step [5] writes the `init=/init console=tty0` GRUB menu; the legacy busybox `switch_root` path is preserved behind `USE_BUSYBOX_INIT=1`, the `USE_AIOS_INIT=1` switch is removed (v2.14.0)
+- [x] Phase 52: Cluster management in the kernel TUI Shell — `cluster status/nodes/spawn/kill/migrate` commands drive `DistributedScheduler` on real `SchedulerProcessExecutor` threads; `OrchestratorState` keeps the scheduler handle alive; process migration between nodes (spawn-then-kill) (v2.18.0–v2.19.0)
 
 ## Backlog
 
@@ -243,7 +244,7 @@
 ## Deferred
 
 - [ ] GUI interface
-- [ ] Multi-node distributed scheduling
+- [x] Multi-node distributed scheduling — cluster built (v2.11.0) and manageable from the kernel TUI Shell (v2.19.0)
 - [ ] Formal verification of safety properties
 
 ## Runtime Transition Checklist (Mock → Real)

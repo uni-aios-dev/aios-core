@@ -33,6 +33,8 @@ pub struct OrchestratorState {
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
     pub logs: Arc<Mutex<Vec<String>>>,
+    /// Distributed cluster scheduler when `AIOS_CLUSTER_PEERS` is configured.
+    pub cluster: Option<Arc<Mutex<DistributedScheduler>>>,
 }
 
 pub struct AppConfig {
@@ -184,7 +186,7 @@ pub async fn initialize(
     };
 
     push_log(&logs, "AIOS: initializing cluster node...".into());
-    let _cluster = match ClusterConfig::from_env() {
+    let cluster = match ClusterConfig::from_env() {
         Some(cfg) => {
             push_log(
                 &logs,
@@ -289,6 +291,7 @@ pub async fn initialize(
         start_time: Instant::now(),
         bridge_running,
         logs,
+        cluster,
     })
 }
 

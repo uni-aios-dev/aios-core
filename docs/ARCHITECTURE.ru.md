@@ -548,8 +548,9 @@ TUI ядра на базе Ratatui с компоновкой из 7 вкладо
 - История команд через ↑/↓; `Esc` очищает текущую строку
 - На вкладке Shell все нажатия идут в строку ввода, поэтому `q` выходит только с других вкладок
 - `ShellState`: input_buffer, output (Vec<String>), command_history, history_pos
-- Команды: `ps`, `blocks`, `kill <pid>`, `spawn <путь-wasm>`, `store list|search|install`, `net get|set`, `status`, `logs`, `restart`, `help`/`?`, `clear`
+- Команды: `ps`, `blocks`, `kill <pid>`, `spawn <путь-wasm>`, `store list|search|install`, `net get|set`, `cluster status|nodes|spawn|kill|migrate`, `status`, `logs`, `restart`, `help`/`?`, `clear`
 - Поток выполнения: TUI → `shell_execute()` → `SafeModeShell::parse_command` / store manager / IPC в блок `net_settings`
+- Команды кластера: `cluster status`/`cluster nodes` показывают представление пиров (статус/tier/нагрузка) плюс удалённые и локально размещённые процессы; `cluster spawn <name> [ram_mb] [priority] [target_node]`, `cluster kill <node> <pid>` и `cluster migrate <node> <pid> [target_node]` управляют `DistributedScheduler` напрямую (spawn/kill/migrate блокирующие, до ack-таймаута). Без `AIOS_CLUSTER_PEERS` обработчик отвечает `clustering disabled`
 
 **Справка F1**:
 - Включение по F1 или '?', закрытие по F1/Esc/'?'
@@ -569,6 +570,7 @@ TUI ядра на базе Ratatui с компоновкой из 7 вкладо
 - Состоянием справки (показана/скрыта)
 - Состоянием Shell: input_buffer, output (Vec<String>), command_history, history_pos
 - Флагом `safe_mode` из `--safe-mode`
+- Handle планировщика кластера (`cluster: Option<Arc<Mutex<DistributedScheduler>>>`), удерживаемый живым при заданном `AIOS_CLUSTER_PEERS`; tick-поток кластера пушит события failover в журнал ядра
 
 ### Точка входа (`aios/src/main.rs`)
 

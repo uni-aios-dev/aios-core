@@ -10,6 +10,8 @@ use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
 use aios_browser::engine::BrowserEngine;
 use aios_browser::types::BrowserConfig;
+use aios_cluster::scheduler::DistributedScheduler;
+use aios_cluster::types::{RemoteProcessId, RemoteProcessSpec};
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 use aios_llm::{provider_name, BackendKind, CloudProvider, LlmConfig, LlmEngine};
 use aios_process_mgr::task::ProcessId;
@@ -1045,7 +1047,7 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
     let mut out: Vec<String> = Vec::new();
     match command {
         "help" | "?" => {
-            out.push("Commands: ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | status | logs | restart | clear".into());
+            out.push("Commands: ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | cluster status | cluster spawn <name> | cluster kill <node> <pid> | cluster migrate <node> <pid> [target] | status | logs | restart | clear".into());
         }
         "clear" | "cls" => {
             app.shell_output.clear();
@@ -1175,6 +1177,9 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
                 _ => out.push("Usage: net get | net set key=value ...".into()),
             }
         }
+        "cluster" => {
+            cluster_execute(app, &parts, &mut out);
+        }
         "status" => {
             let state = app.state.lock().unwrap();
             let up = state.start_time.elapsed().as_secs();
@@ -1216,6 +1221,122 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
     for l in out {
         app.shell_push(l);
     }
+}
+
+fn cluster_execute(app: &TuiApp, parts: &[&str], out: &mut Vec<String>) {
+    let cluster = app.state.lock().unwrap().cluster.clone();
+    out.extend(cluster_run(cluster, parts));
+}
+
+fn cluster_run(cluster: Option<Arc<Mutex<DistributedScheduler>>>, parts: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let Some(cluster) = cluster else {
+        out.push("  clustering disabled (set AIOS_CLUSTER_PEERS to enable)".into());
+        return out;
+    };
+    let sub = parts.get(1).copied().unwrap_or("");
+    match sub {
+        "" | "help" => {
+            out.push("Usage: cluster status | cluster nodes | cluster spawn <name> [ram_mb] [priority] [target_node] | cluster kill <node> <pid> | cluster migrate <node> <pid> [target_node]".into());
+        }
+        "status" => {
+            let s = cluster.lock().unwrap();
+            out.push(format!(
+                "  self: [{}] {} tier={}",
+                s.self_info().id,
+                s.self_info().name,
+                s.self_info().tier
+            ));
+            for n in s.nodes() {
+                out.push(format!(
+                    "  [{}] {} tier={} {:?} load={:.1}%",
+                    n.id,
+                    n.name,
+                    n.tier,
+                    n.status,
+                    n.metrics.load_fraction() * 100.0
+                ));
+            }
+            let remote = s.processes();
+            if remote.is_empty() {
+                out.push("  remote processes: none".into());
+            } else {
+                out.push(format!("  remote processes ({}):", remote.len()));
+                for p in remote {
+                    out.push(format!(
+                        "    {} {} [{}] {}MB",
+                        p.id, p.name, p.state, p.ram_mb
+                    ));
+                }
+            }
+            out.push(format!(
+                "  local processes hosted: {}",
+                s.local_processes().len()
+            ));
+        }
+        "nodes" => {
+            let s = cluster.lock().unwrap();
+            for n in s.nodes() {
+                out.push(format!(
+                    "  [{}] {} tier={} {:?} load={:.1}%",
+                    n.id,
+                    n.name,
+                    n.tier,
+                    n.status,
+                    n.metrics.load_fraction() * 100.0
+                ));
+            }
+        }
+        "spawn" => {
+            let name = parts.get(2).copied().unwrap_or("");
+            if name.is_empty() {
+                out.push("Usage: cluster spawn <name> [ram_mb] [priority] [target_node]".into());
+                return out;
+            }
+            let ram = parts
+                .get(3)
+                .and_then(|p| p.parse::<u64>().ok())
+                .unwrap_or(128);
+            let prio = parts.get(4).and_then(|p| p.parse::<u8>().ok()).unwrap_or(2);
+            let target = parts.get(5).and_then(|p| p.parse::<u64>().ok());
+            let spec = RemoteProcessSpec::new(name, prio, ram);
+            match cluster.lock().unwrap().spawn(spec, target) {
+                Ok(rid) => out.push(format!("  spawned {rid} on node {}", rid.node)),
+                Err(e) => out.push(format!("  spawn failed: {e}")),
+            }
+        }
+        "kill" => {
+            let node = parts.get(2).and_then(|p| p.parse::<u64>().ok());
+            let pid = parts.get(3).and_then(|p| p.parse::<u64>().ok());
+            let (Some(node), Some(pid)) = (node, pid) else {
+                out.push("Usage: cluster kill <node> <pid>".into());
+                return out;
+            };
+            let rid = RemoteProcessId { node, pid };
+            match cluster.lock().unwrap().kill(rid) {
+                Ok(()) => out.push(format!("  killed {rid}")),
+                Err(e) => out.push(format!("  kill failed: {e}")),
+            }
+        }
+        "migrate" => {
+            let node = parts.get(2).and_then(|p| p.parse::<u64>().ok());
+            let pid = parts.get(3).and_then(|p| p.parse::<u64>().ok());
+            let (Some(node), Some(pid)) = (node, pid) else {
+                out.push("Usage: cluster migrate <node> <pid> [target_node]".into());
+                return out;
+            };
+            let rid = RemoteProcessId { node, pid };
+            let target = parts.get(4).and_then(|p| p.parse::<u64>().ok());
+            match cluster.lock().unwrap().migrate(rid, target) {
+                Ok(new_rid) => out.push(format!("  migrated {rid} -> {new_rid}")),
+                Err(e) => out.push(format!("  migrate failed: {e}")),
+            }
+        }
+        _ => {
+            out.push("Usage: cluster status | cluster nodes | cluster spawn ... | cluster kill <node> <pid> | cluster migrate <node> <pid> [target_node]".into());
+        }
+    }
+    out
 }
 
 fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
@@ -1583,5 +1704,147 @@ fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Char('[') => web_switch_tab(app, -1),
         KeyCode::Esc => app.web.input_focused = false,
         _ => {}
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aios_cluster::executor::MockProcessExecutor;
+    use aios_cluster::scheduler::DistributedScheduler;
+    use aios_cluster::transport::{ClusterTransport, InMemoryClusterTransport, MemoryRegistry};
+    use aios_cluster::types::{NodeInfo, NodeMetrics, NodeStatus, PlacementStrategy};
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    fn test_node(id: u64, name: &str, addr: &str) -> NodeInfo {
+        NodeInfo {
+            id,
+            name: name.to_string(),
+            addr: addr.to_string(),
+            tier: 2,
+            status: NodeStatus::Online,
+            metrics: NodeMetrics::idle(),
+        }
+    }
+
+    #[test]
+    fn cluster_disabled_prints_hint() {
+        let out = cluster_run(None, &["cluster", "status"]);
+        assert!(out[0].contains("clustering disabled"), "got {out:?}");
+    }
+
+    #[test]
+    fn cluster_shell_spawn_kill_migrate() {
+        let registry = MemoryRegistry::new();
+        let transports: Vec<Arc<dyn ClusterTransport>> = ["mem://sh1", "mem://sh2", "mem://sh3"]
+            .iter()
+            .map(|addr| {
+                Arc::from(InMemoryClusterTransport::new(addr, registry.clone_arc()))
+                    as Arc<dyn ClusterTransport>
+            })
+            .collect();
+        let addrs: Vec<String> = transports.iter().map(|t| t.addr().to_string()).collect();
+
+        let mut schedulers = Vec::new();
+        for (idx, id) in [1u64, 2, 3].iter().enumerate() {
+            let mut s = DistributedScheduler::new(
+                test_node(*id, &format!("s{id}"), &addrs[idx]),
+                transports[idx].clone(),
+                PlacementStrategy::LeastLoaded,
+            )
+            .with_heartbeat(Duration::from_millis(20))
+            .with_failover_threshold(Duration::from_millis(500))
+            .with_ack_timeout(Duration::from_secs(2));
+            s.set_executor(Arc::new(MockProcessExecutor::new(*id)));
+            schedulers.push(Arc::new(Mutex::new(s)));
+        }
+
+        let stops: Vec<Arc<AtomicBool>> =
+            (0..3).map(|_| Arc::new(AtomicBool::new(false))).collect();
+        for (idx, s) in schedulers.iter().enumerate() {
+            let peers: Vec<String> = addrs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, a)| a.clone())
+                .collect();
+            s.lock().unwrap().start(&peers).unwrap();
+            let s = s.clone();
+            let stop = stops[idx].clone();
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = s.lock().unwrap().process_events();
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            });
+        }
+
+        // Wait until the coordinator discovers both peers.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while schedulers[0].lock().unwrap().nodes().len() < 2
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(schedulers[0].lock().unwrap().nodes().len(), 2);
+
+        // Spawn through the shell handler onto node 2.
+        let out = cluster_run(
+            Some(schedulers[0].clone()),
+            &["cluster", "spawn", "svc", "256", "2", "2"],
+        );
+        assert!(
+            out.iter().any(|l| l.contains("spawned")),
+            "spawn output: {out:?}"
+        );
+        let rid = schedulers[0].lock().unwrap().processes()[0].id;
+        assert_eq!(rid.node, 2);
+
+        let out = cluster_run(Some(schedulers[0].clone()), &["cluster", "status"]);
+        assert!(
+            out.iter().any(|l| l.contains("remote processes (1)")),
+            "status output: {out:?}"
+        );
+
+        // Migrate to node 3 through the shell handler.
+        let out = cluster_run(
+            Some(schedulers[0].clone()),
+            &[
+                "cluster",
+                "migrate",
+                &rid.node.to_string(),
+                &rid.pid.to_string(),
+                "3",
+            ],
+        );
+        assert!(
+            out.iter().any(|l| l.contains("migrated")),
+            "migrate output: {out:?}"
+        );
+        let new_rid = schedulers[0].lock().unwrap().processes()[0].id;
+        assert_eq!(new_rid.node, 3);
+
+        // Kill through the shell handler.
+        let out = cluster_run(
+            Some(schedulers[0].clone()),
+            &[
+                "cluster",
+                "kill",
+                &new_rid.node.to_string(),
+                &new_rid.pid.to_string(),
+            ],
+        );
+        assert!(
+            out.iter().any(|l| l.contains("killed")),
+            "kill output: {out:?}"
+        );
+        assert!(schedulers[0].lock().unwrap().processes().is_empty());
+
+        for stop in &stops {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        for s in &schedulers {
+            s.lock().unwrap().shutdown();
+        }
     }
 }

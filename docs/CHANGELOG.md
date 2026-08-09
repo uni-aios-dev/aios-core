@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.19.0 — Cluster management in the kernel TUI Shell (2026-08-09)
+
+### `aios` kernel TUI
+- `OrchestratorState` now keeps the cluster scheduler alive (`cluster: Option<Arc<Mutex<DistributedScheduler>>>`); previously the cluster node was created and immediately dropped, so nothing could drive it from the TUI.
+- New Shell commands: `cluster status` (self node + peers with status/tier/load, plus remote and locally hosted processes), `cluster nodes`, `cluster spawn <name> [ram_mb] [priority] [target_node]`, `cluster kill <node> <pid>` and `cluster migrate <node> <pid> [target_node]`. spawn/kill/migrate reuse the blocking `DistributedScheduler` API and run on real `aios-process-mgr` scheduler threads via `SchedulerProcessExecutor`. Without `AIOS_CLUSTER_PEERS` the handler prints `clustering disabled`.
+- New unit tests in `aios/src/tui/mod.rs`: `cluster_disabled_prints_hint` and `cluster_shell_spawn_kill_migrate` (a 3-node in-memory cluster driven through the shell handler: spawn on node 2, migrate to node 3, kill). The `aios` crate now has 6 unit tests.
+- Files: `aios/src/orchestrator.rs`, `aios/src/tui/mod.rs`, `docs/*`.
+
 ## v2.18.0 — Process migration in the distributed cluster (2026-08-09)
 
 ### `aios-cluster`

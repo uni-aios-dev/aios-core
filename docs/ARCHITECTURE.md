@@ -548,8 +548,9 @@ Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
 - Command history navigation with ↑/↓; `Esc` clears the current input line
 - Every keystroke on the Shell tab goes to the input line, so `q` quits only from other tabs
 - `ShellState`: input_buffer, output (Vec<String>), command_history, history_pos
-- Available commands: `ps`, `blocks`, `kill <pid>`, `spawn <wasm-path>`, `store list|search|install`, `net get|set`, `status`, `logs`, `restart`, `help`/`?`, `clear`
+- Available commands: `ps`, `blocks`, `kill <pid>`, `spawn <wasm-path>`, `store list|search|install`, `net get|set`, `cluster status|nodes|spawn|kill|migrate`, `status`, `logs`, `restart`, `help`/`?`, `clear`
 - Execution flow: TUI → `shell_execute()` → `SafeModeShell::parse_command` / store manager / net block IPC
+- Cluster commands: `cluster status`/`cluster nodes` print the peer view (status/tier/load) plus remote and locally hosted processes; `cluster spawn <name> [ram_mb] [priority] [target_node]`, `cluster kill <node> <pid>` and `cluster migrate <node> <pid> [target_node]` drive `DistributedScheduler` directly (spawn/kill/migrate are blocking up to the ack timeout). Without `AIOS_CLUSTER_PEERS` the handler replies `clustering disabled`
 
 **F1 Help Overlay**:
 - Toggled with F1 or '?', dismissed with F1/Esc/'?'
@@ -569,6 +570,7 @@ Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
 - Help overlay visibility (shown/hidden)
 - Shell state: input_buffer, output (Vec<String>), command_history, history_pos
 - `safe_mode` flag from `--safe-mode`
+- Cluster scheduler handle (`cluster: Option<Arc<Mutex<DistributedScheduler>>>`) kept alive when `AIOS_CLUSTER_PEERS` is configured; the cluster tick thread pushes failover events into the kernel log
 
 ### Entry Point (`aios/src/main.rs`)
 

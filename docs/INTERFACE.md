@@ -328,6 +328,11 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `store install` | `<name>` | Install a block from the store |
 | `net get` | — | Show the current network configuration (JSON) |
 | `net set` | `key=value [key2=value2 ...]` | Apply a partial network update |
+| `cluster status` | — | Cluster overview: self node, peers (status/tier/load), remote and local processes |
+| `cluster nodes` | — | List cluster peer nodes with status, tier and load |
+| `cluster spawn` | `<name> [ram_mb] [priority] [target_node]` | Run a process on the cluster (placement strategy or explicit target node) |
+| `cluster kill` | `<node> <pid>` | Terminate a remote process |
+| `cluster migrate` | `<node> <pid> [target_node]` | Relocate a remote process to another node (spawn-then-kill) |
 | `status` | — | Uptime, bridge state, AI tier, RAM, block count |
 | `logs` | — | Show the last 20 event log entries |
 | `restart` | — | Re-probe hardware and re-initialize subsystems |
@@ -335,6 +340,8 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `clear` | — | Clear the shell output |
 
 `Esc` clears the current input line. Every keystroke on the Shell tab is captured by the input line, so `q` quits only from other tabs.
+
+Clustering is enabled by configuring `AIOS_CLUSTER_*` env vars (see `docs/ARCHITECTURE.md`); without `AIOS_CLUSTER_PEERS` the `cluster` commands reply `clustering disabled (set AIOS_CLUSTER_PEERS to enable)`. Remote process spawns run on real `aios-process-mgr` scheduler threads via `SchedulerProcessExecutor`.
 
 ### Safe Mode
 

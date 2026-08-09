@@ -1,5 +1,13 @@
 # Журнал разработки AIOS
 
+## v2.19.0 — Управление кластером из Shell ядерного TUI (2026-08-09)
+
+### Ядерный TUI (`aios`)
+- `OrchestratorState` теперь удерживает планировщик кластера живым (`cluster: Option<Arc<Mutex<DistributedScheduler>>>`); раньше узел кластера создавался и сразу отбрасывался, поэтому управлять им из TUI было невозможно.
+- Новые команды Shell: `cluster status` (собственный узел + пиры со статусом/tier/нагрузкой, плюс удалённые и локально размещённые процессы), `cluster nodes`, `cluster spawn <name> [ram_mb] [priority] [target_node]`, `cluster kill <node> <pid>` и `cluster migrate <node> <pid> [target_node]`. spawn/kill/migrate переиспользуют блокирующее API `DistributedScheduler` и запускаются на реальных потоках планировщика `aios-process-mgr` через `SchedulerProcessExecutor`. Без `AIOS_CLUSTER_PEERS` обработчик отвечает `clustering disabled`.
+- Новые unit-тесты в `aios/src/tui/mod.rs`: `cluster_disabled_prints_hint` и `cluster_shell_spawn_kill_migrate` (кластер из 3 узлов на in-memory транспорте через shell-обработчик: spawn на узел 2, migrate на узел 3, kill). Крейт `aios` теперь имеет 6 unit-тестов.
+- Файлы: `aios/src/orchestrator.rs`, `aios/src/tui/mod.rs`, `docs/*`.
+
 ## v2.18.0 — Миграция процессов в распределённом кластере (2026-08-09)
 
 ### `aios-cluster`
