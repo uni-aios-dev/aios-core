@@ -593,7 +593,7 @@ fn execute_shell_cmd(
                                     .add_output("Invalid Ed25519 public key".into());
                                 return;
                             }
-                            match manager.trust_source(&source_name, &[key.clone()]) {
+                            match manager.trust_source(&source_name, std::slice::from_ref(&key)) {
                                 Ok(()) => {
                                     let _ = manager.save_config(&store_cfg);
                                     state.shell_state.add_output(format!(

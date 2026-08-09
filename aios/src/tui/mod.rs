@@ -4,7 +4,7 @@ mod ui;
 pub use app_state::TuiApp;
 pub use ui::draw;
 
-use self::app_state::AiMessage;
+use self::app_state::{AiMessage, WebBookmark};
 
 use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
@@ -43,6 +43,7 @@ pub fn run_tui(state: Arc<Mutex<OrchestratorState>>) -> Result<(), Box<dyn std::
     let mut app = TuiApp::new(state.clone());
     load_presets(&mut app);
     load_chat(&app);
+    load_bookmarks(&mut app);
 
     let res = run(&mut terminal, app);
 
@@ -72,6 +73,7 @@ fn run(
         web_poll(&mut app);
     }
     save_chat(&app);
+    save_bookmarks(&app);
     Ok(())
 }
 
@@ -196,6 +198,38 @@ fn load_presets(app: &mut TuiApp) {
             app.ai_presets.insert(name, text);
         }
     }
+}
+
+/// Path of the persisted Web tab bookmarks (JSON array under AIOS_DATA_DIR).
+fn bookmarks_path() -> PathBuf {
+    PathBuf::from(env_or("AIOS_DATA_DIR", "aios_data")).join("web_bookmarks.json")
+}
+
+/// Writes the bookmark list as a JSON array; missing parent dirs are created.
+fn save_bookmarks(app: &TuiApp) {
+    let path = bookmarks_path();
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(json) = serde_json::to_string_pretty(&app.web.bookmarks) else {
+        return;
+    };
+    let _ = std::fs::write(path, json);
+}
+
+/// Restores previously saved Web tab bookmarks at boot.
+fn load_bookmarks(app: &mut TuiApp) {
+    let Ok(content) = std::fs::read_to_string(bookmarks_path()) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_str::<Vec<WebBookmark>>(&content) else {
+        return;
+    };
+    app.web.bookmarks = saved;
+    app.web.bookmarks_sel = 0;
 }
 
 fn save_chat_to(path: &std::path::Path, ai_log: &Arc<Mutex<Vec<AiMessage>>>) {
@@ -1344,10 +1378,104 @@ fn handle_net_store_key(app: &mut TuiApp, key: event::KeyEvent) {
 }
 
 fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
+    if app.web.bookmark_naming {
+        match key.code {
+            KeyCode::Esc => app.web.bookmark_naming = false,
+            KeyCode::Enter if !app.web.bookmark_name.trim().is_empty() => {
+                let name = app.web.bookmark_name.trim().to_string();
+                let url = app.web.current_url.clone();
+                app.web.bookmark_naming = false;
+                app.web.bookmark_name.clear();
+                if !url.is_empty() {
+                    if let Some(b) = app.web.bookmarks.iter_mut().find(|b| b.url == url) {
+                        b.name = name;
+                    } else {
+                        app.web.bookmarks.push(WebBookmark {
+                            name,
+                            url: url.clone(),
+                        });
+                    }
+                    save_bookmarks(app);
+                    push_log(&app.logs, format!("AIOS: web: bookmarked {url}"));
+                }
+            }
+            KeyCode::Char(c) => app.web.bookmark_name.push(c),
+            KeyCode::Backspace => {
+                app.web.bookmark_name.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if app.web.show_bookmarks {
+        match key.code {
+            KeyCode::Esc => app.web.show_bookmarks = false,
+            KeyCode::Char('j') | KeyCode::Down => {
+                if !app.web.bookmarks.is_empty() {
+                    app.web.bookmarks_sel = (app.web.bookmarks_sel + 1) % app.web.bookmarks.len();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if !app.web.bookmarks.is_empty() {
+                    app.web.bookmarks_sel = app
+                        .web
+                        .bookmarks_sel
+                        .checked_sub(1)
+                        .unwrap_or(app.web.bookmarks.len() - 1);
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('o') => {
+                let url = app
+                    .web
+                    .bookmarks
+                    .get(app.web.bookmarks_sel)
+                    .map(|b| b.url.clone());
+                if let Some(url) = url {
+                    web_load(app, &url, true);
+                }
+            }
+            KeyCode::Char('d') if app.web.bookmarks_sel < app.web.bookmarks.len() => {
+                let removed = app.web.bookmarks.remove(app.web.bookmarks_sel);
+                if app.web.bookmarks_sel >= app.web.bookmarks.len() && !app.web.bookmarks.is_empty()
+                {
+                    app.web.bookmarks_sel = app.web.bookmarks.len() - 1;
+                }
+                save_bookmarks(app);
+                push_log(
+                    &app.logs,
+                    format!("AIOS: web: removed bookmark '{}'", removed.name),
+                );
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('g') => {
             app.web.url_input.clear();
             app.web.input_focused = true;
+        }
+        KeyCode::Char('a') => {
+            if app.web.current_url.is_empty() {
+                push_log(&app.logs, "AIOS: web: no page loaded to bookmark".into());
+            } else {
+                app.web.bookmark_name = app
+                    .web
+                    .page
+                    .as_ref()
+                    .map(|p| p.title.clone())
+                    .unwrap_or_default();
+                app.web.bookmark_naming = true;
+            }
+        }
+        KeyCode::Char('m') => {
+            app.web.show_bookmarks = !app.web.show_bookmarks;
+            app.web.bookmarks_sel = app
+                .web
+                .bookmarks_sel
+                .min(app.web.bookmarks.len().saturating_sub(1));
         }
         KeyCode::Char('j') | KeyCode::Down => web_link_move(app, 1),
         KeyCode::Char('k') | KeyCode::Up => web_link_move(app, -1),

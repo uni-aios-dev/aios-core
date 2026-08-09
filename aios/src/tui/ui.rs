@@ -583,6 +583,12 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         .split(area);
 
     let mut content_items: Vec<ListItem> = Vec::new();
+    if app.web.bookmark_naming {
+        content_items.push(ListItem::new(Line::from(Span::styled(
+            format!("Bookmark name: {}", app.web.bookmark_name),
+            Style::default().fg(Color::Green),
+        ))));
+    }
     let url_line = if app.web.input_focused {
         format!("URL/query: {}", app.web.url_input)
     } else if !app.web.current_url.is_empty() {
@@ -617,10 +623,21 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
             " Text-mode browser. Type 'g' to navigate, j/k to move between links, 'o' to open. ",
         )));
     }
+    if !app.web.bookmark_naming && !app.web.current_url.is_empty() && app.web.page.is_some() {
+        content_items.push(ListItem::new(Line::from(Span::styled(
+            format!(
+                " 'a' bookmark  'm' bookmarks ({}) ",
+                app.web.bookmarks.len()
+            ),
+            Style::default().fg(Color::DarkGray),
+        ))));
+    }
 
     let content = List::new(content_items).block(
         Block::default()
-            .title(if app.web.input_focused {
+            .title(if app.web.bookmark_naming {
+                " Text Browser — New Bookmark "
+            } else if app.web.input_focused {
                 " Text Browser — Enter URL "
             } else {
                 " Text Browser "
@@ -629,27 +646,71 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     );
     frame.render_widget(content, chunks[0]);
 
-    let link_items: Vec<ListItem> = match app.web.page {
-        Some(ref page) => page
-            .links
-            .iter()
-            .enumerate()
-            .map(|(i, l)| {
-                let style = if i == app.web.selected_link {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-                } else {
-                    Style::default().fg(Color::Cyan)
-                };
-                ListItem::new(Line::from(Span::styled(l.text.clone(), style)))
-            })
-            .collect(),
-        None => vec![ListItem::new(Line::from(" No links yet "))],
+    let right_items: Vec<ListItem> = if app.web.show_bookmarks {
+        if app.web.bookmarks.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                " No bookmarks yet — press 'a' to add ",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            app.web
+                .bookmarks
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let label: String = if b.name.is_empty() {
+                        compact_label(&b.url, sidebar_width.saturating_sub(4) as usize)
+                    } else {
+                        compact_label(&b.name, sidebar_width.saturating_sub(4) as usize)
+                    };
+                    let style = if i == app.web.bookmarks_sel {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    };
+                    ListItem::new(Line::from(Span::styled(label, style)))
+                })
+                .collect()
+        }
+    } else {
+        match app.web.page {
+            Some(ref page) => page
+                .links
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let style = if i == app.web.selected_link {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    };
+                    ListItem::new(Line::from(Span::styled(l.text.clone(), style)))
+                })
+                .collect(),
+            None => vec![ListItem::new(Line::from(" No links yet "))],
+        }
+    };
+    let right_title = if app.web.show_bookmarks {
+        " Bookmarks — j/k o d Esc "
+    } else {
+        " Links "
     };
     let links =
-        List::new(link_items).block(Block::default().title(" Links ").borders(Borders::ALL));
+        List::new(right_items).block(Block::default().title(right_title).borders(Borders::ALL));
     frame.render_widget(links, chunks[1]);
+}
+
+/// Truncate `s` to at most `width` characters (by chars, not bytes).
+fn compact_label(s: &str, width: usize) -> String {
+    let mut out: String = s.chars().take(width).collect();
+    if s.chars().count() > width {
+        out.push('…');
+    }
+    out
 }
 
 fn draw_shell_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
@@ -746,7 +807,7 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
     };
 
     let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back B native ",
+        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back a bkmk m list B native ",
     )]);
 
     let log_chunks = Layout::default()

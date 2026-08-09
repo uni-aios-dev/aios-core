@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.14.1 — Web tab bookmarks with persistence (2026-08-09)
+
+### Kernel TUI (`aios`) Web tab
+- New bookmarks feature in the Web tab (tab 6): `a` adds the current page to the bookmarks (name prefilled with the page title), `m` opens the bookmarks panel; inside the panel `j`/`k` move the selection, `o`/`Enter` open a bookmark, `d` deletes it, `Esc` closes it.
+- Bookmarks persist as a JSON array in `AIOS_DATA_DIR/web_bookmarks.json` (same directory as `chat.jsonl`/`presets.json`), saved on add/delete/rename and on quit, restored at boot.
+- The bookmarks panel replaces the Links panel while open; a `'a' bookmark  'm' bookmarks (N)` hint line is shown under the loaded page.
+- Files: `aios/src/tui/app_state.rs`, `aios/src/tui/mod.rs`, `aios/src/tui/ui.rs`, `docs/*`.
+
 ## v2.14.0 — `aios-init` is the default initramfs `/init` in the Live ISO (2026-08-09)
 
 ### `live/build.sh` — aios-init mode is now the default

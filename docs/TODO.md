@@ -380,7 +380,7 @@
   - [x] Compact URL labels (`compact_url_label`) truncated to the pane width
   - [x] Sidebar focus via `\`: `j`/`k`/`Up`/`Down` move the selection, `Enter`/`o` open it, `Esc` back to links; selection wraps around
   - [x] `web_page_width()` — page wrap width derived from terminal width minus sidebar/borders/prefix; applied at startup and on resize (proportional pane rendering completed)
-  - [ ] Future: bookmarks with persistence in the Web tab
+- [x] Future: bookmarks with persistence in the Web tab — `a` add (name prefilled from page title), `m` open panel, `j`/`k`/`o`/`d`/`Esc` manage, persisted to `AIOS_DATA_DIR/web_bookmarks.json` (v2.14.1)
   - [ ] Future: tabs (multiple open pages) in the Web tab
 
 - [x] **Phase 39: Full Native Browser from the Web Tab — COMPLETE**

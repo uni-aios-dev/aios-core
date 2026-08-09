@@ -14,6 +14,13 @@ pub struct AiMessage {
 /// Outbox slot for a background web fetch result (generation + outcome).
 pub type FetchOut = Arc<Mutex<Option<(u64, Result<Page, String>)>>>;
 
+/// A single persisted Web tab bookmark: a display name plus the target URL.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebBookmark {
+    pub name: String,
+    pub url: String,
+}
+
 /// State of the built-in text web browser tab.
 pub struct WebState {
     pub current_url: String,
@@ -30,6 +37,16 @@ pub struct WebState {
     pub selected_link: usize,
     pub fetch_gen: u64,
     pub fetch_out: FetchOut,
+    /// Persisted bookmarks (name + URL), shown in the `m` panel.
+    pub bookmarks: Vec<WebBookmark>,
+    /// Selected bookmark index in the bookmarks panel.
+    pub bookmarks_sel: usize,
+    /// Whether the bookmarks panel is open instead of the links list.
+    pub show_bookmarks: bool,
+    /// Whether the bookmark-name input line is active (`a` after a page load).
+    pub bookmark_naming: bool,
+    /// Buffer for the bookmark name being typed.
+    pub bookmark_name: String,
 }
 
 impl Default for WebState {
@@ -49,6 +66,11 @@ impl Default for WebState {
             selected_link: 0,
             fetch_gen: 0,
             fetch_out: Arc::new(Mutex::new(None)),
+            bookmarks: Vec::new(),
+            bookmarks_sel: 0,
+            show_bookmarks: false,
+            bookmark_naming: false,
+            bookmark_name: String::new(),
         }
     }
 }
