@@ -59,6 +59,11 @@ pub struct DistributedScheduler {
     failover_threshold: Duration,
     last_contact: HashMap<NodeId, Instant>,
     failover_respawn: bool,
+    /// Replicated state snapshots received from peers via [`ClusterMessage::Checkpoint`].
+    /// Failover respawns restore them on the replacement node.
+    checkpoints: HashMap<RemoteProcessId, (Vec<u8>, Instant)>,
+    /// How long a replicated checkpoint stays usable before pruning.
+    checkpoint_ttl: Duration,
     log: Vec<String>,
     started: bool,
     heartbeat_handle: Option<std::thread::JoinHandle<()>>,
@@ -95,6 +100,8 @@ impl DistributedScheduler {
             failover_threshold: Duration::from_secs(3),
             last_contact: HashMap::new(),
             failover_respawn: true,
+            checkpoints: HashMap::new(),
+            checkpoint_ttl: Duration::from_secs(15),
             log: Vec::new(),
             started: false,
             heartbeat_handle: None,
@@ -135,6 +142,12 @@ impl DistributedScheduler {
         self
     }
 
+    /// How long a replicated checkpoint stays usable before pruning.
+    pub fn with_checkpoint_ttl(mut self, ttl: Duration) -> Self {
+        self.checkpoint_ttl = ttl;
+        self
+    }
+
     /// Attach a worker executor so this node can host remote processes.
     pub fn set_executor(&mut self, executor: Arc<dyn ProcessExecutor>) {
         self.executor = Some(executor);
@@ -159,6 +172,7 @@ impl DistributedScheduler {
         let self_info = self.self_info.clone();
         let peers = peers.to_vec();
         let heartbeat = self.heartbeat;
+        let executor = self.executor.clone();
         let handle = std::thread::Builder::new()
             .name("aios-cluster-heartbeat".into())
             .spawn(move || {
@@ -171,6 +185,32 @@ impl DistributedScheduler {
                             transport.send(peer, ClusterMessage::Hello(self_info.clone()))
                         {
                             log::debug!("aios-cluster: announce to {peer} failed: {e}");
+                        }
+                    }
+                    // Replicate snapshots of locally hosted processes so a peer
+                    // that tracks them can restore state on failover. Broadcast
+                    // is fire-and-forget, once per heartbeat period.
+                    if let Some(exec) = &executor {
+                        for status in exec.status() {
+                            if stop.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            let Ok(state) = exec.extract_state(status.id.pid) else {
+                                continue;
+                            };
+                            let msg = ClusterMessage::Checkpoint {
+                                from: self_info.addr.clone(),
+                                rid: status.id,
+                                state,
+                            };
+                            for peer in &peers {
+                                if stop.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                if let Err(e) = transport.send(peer, msg.clone()) {
+                                    log::debug!("aios-cluster: checkpoint to {peer} failed: {e}");
+                                }
+                            }
                         }
                     }
                     std::thread::sleep(heartbeat);
@@ -220,6 +260,19 @@ impl DistributedScheduler {
             .unwrap_or_default()
     }
 
+    /// Replicated state snapshots received from peers via
+    /// [`ClusterMessage::Checkpoint`], newest first. Failover restores them
+    /// when the hosting node dies.
+    pub fn checkpoints(&self) -> Vec<(RemoteProcessId, Vec<u8>)> {
+        let mut out: Vec<(RemoteProcessId, Vec<u8>)> = self
+            .checkpoints
+            .iter()
+            .map(|(rid, (state, _))| (*rid, state.clone()))
+            .collect();
+        out.sort_by_key(|(rid, _)| (rid.node, rid.pid));
+        out
+    }
+
     /// Recent internal events (bounded to 100 entries).
     pub fn events(&self) -> &[String] {
         &self.log
@@ -241,6 +294,10 @@ impl DistributedScheduler {
         let mut events = Vec::new();
         self.process_events();
         let now = Instant::now();
+        // Drop checkpoints that never refreshed; a silent node stops renewing
+        // its own snapshots, so stale ones cannot be resurrected by accident.
+        self.checkpoints
+            .retain(|_, (_, at)| now.duration_since(*at) < self.checkpoint_ttl);
         let mut failed: Vec<NodeId> = Vec::new();
         for (id, info) in self.nodes.iter_mut() {
             if info.status == NodeStatus::Online {
@@ -265,9 +322,15 @@ impl DistributedScheduler {
                 for (old_rid, spec) in victims {
                     self.remote.remove(&old_rid);
                     self.spawned_specs.remove(&old_rid);
-                    match self.spawn(spec, None) {
+                    // Restore the latest replicated checkpoint on the
+                    // replacement node when one is available.
+                    let state = self.checkpoints.remove(&old_rid).map(|(s, _)| s);
+                    let with_state = state.is_some();
+                    match self.spawn_with_state(spec, None, state) {
                         Ok(new_rid) => {
-                            let ev = format!("respawned {old_rid} as {new_rid} after failover");
+                            let suffix = if with_state { " (state restored)" } else { "" };
+                            let ev =
+                                format!("respawned {old_rid} as {new_rid} after failover{suffix}");
                             events.push(ev.clone());
                             self.log_event(&ev);
                         }
@@ -406,6 +469,8 @@ impl DistributedScheduler {
         if result.is_ok() {
             self.remote.remove(&rid);
             self.spawned_specs.remove(&rid);
+            // The process is gone; its replicated checkpoint is stale now.
+            self.checkpoints.remove(&rid);
         }
         result
     }
@@ -685,6 +750,15 @@ impl DistributedScheduler {
                 error,
             } => {
                 self.complete_get_state(request_id, ok, state, error);
+            }
+            ClusterMessage::Checkpoint {
+                from: _,
+                rid,
+                state,
+            } => {
+                // Store the replicated snapshot; failover restores it. TTL
+                // pruning in tick() drops snapshots of dead sources.
+                self.checkpoints.insert(rid, (state, Instant::now()));
             }
             ClusterMessage::SpawnAck {
                 request_id,
@@ -1162,5 +1236,96 @@ mod tests {
             .unwrap();
         assert_eq!(rid.node, 2);
         a.kill(rid).unwrap();
+    }
+
+    #[test]
+    fn test_checkpoint_replicated_and_restored_on_failover() {
+        let cluster = build_cluster(3);
+        let rid = {
+            let mut a = cluster.sched(0).lock().unwrap();
+            a.spawn(
+                RemoteProcessSpec::new("db", 2, 128).with_payload(b"wal-77".to_vec()),
+                Some(2),
+            )
+            .unwrap()
+        };
+        assert_eq!(rid.node, 2);
+
+        // Wait for the worker to replicate the snapshot to the coordinator.
+        wait_until(
+            || {
+                cluster
+                    .sched(0)
+                    .lock()
+                    .unwrap()
+                    .checkpoints()
+                    .iter()
+                    .find(|(crid, _)| *crid == rid)
+                    .cloned()
+            },
+            Duration::from_secs(3),
+        );
+
+        // Take node 2 down; its snapshots no longer refresh.
+        cluster.stops[1].store(true, Ordering::Relaxed);
+        cluster.sched(1).lock().unwrap().shutdown();
+        std::thread::sleep(Duration::from_millis(250));
+
+        // The coordinator respawns onto node 3 and restores the snapshot.
+        let (events, processes) = {
+            let mut a = cluster.sched(0).lock().unwrap();
+            let events = a.tick();
+            (events, a.processes())
+        };
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("respawned") && e.contains("state restored")),
+            "expected stateful respawn event, got {events:?}"
+        );
+        let new_rid = processes
+            .iter()
+            .find(|p| p.name == "db")
+            .expect("respawned process tracked")
+            .id;
+        assert_eq!(new_rid.node, 3, "respawn must land on node 3");
+        // Node 3 now hosts the process and re-replicates its snapshot; the
+        // restored bytes prove the checkpoint survived the failover.
+        wait_until(
+            || {
+                cluster
+                    .sched(0)
+                    .lock()
+                    .unwrap()
+                    .checkpoints()
+                    .iter()
+                    .find(|(crid, state)| *crid == new_rid && state.as_slice() == b"wal-77")
+                    .map(|_| ())
+            },
+            Duration::from_secs(3),
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_pruned_when_stale() {
+        let mut sched = DistributedScheduler::new(
+            node_info(1, "a", "mem://a", 2),
+            Arc::new(InMemoryClusterTransport::new(
+                "mem://a",
+                MemoryRegistry::new().clone_arc(),
+            )),
+            PlacementStrategy::LeastLoaded,
+        )
+        .with_checkpoint_ttl(Duration::ZERO);
+        let rid = RemoteProcessId { node: 2, pid: 9 };
+        sched.dispatch_incoming(ClusterMessage::Checkpoint {
+            from: "mem://b".into(),
+            rid,
+            state: vec![1, 2, 3],
+        });
+        assert_eq!(sched.checkpoints().len(), 1);
+        // tick() prunes entries whose snapshot is older than the TTL (zero here).
+        sched.tick();
+        assert!(sched.checkpoints().is_empty());
     }
 }

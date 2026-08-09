@@ -66,6 +66,13 @@ pub enum ClusterMessage {
         state: Vec<u8>,
         error: Option<String>,
     },
+    /// Periodic snapshot of a hosted process, replicated to peers so failover
+    /// can restore the state after the hosting node dies. Fire-and-forget.
+    Checkpoint {
+        from: String,
+        rid: RemoteProcessId,
+        state: Vec<u8>,
+    },
     /// Ask a node for its hosted process list.
     StatusRequest { from: String },
     /// Process list of a node.
@@ -196,6 +203,25 @@ mod tests {
                 assert!(error.is_none());
             }
             other => panic!("expected GetStateReply, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_checkpoint_roundtrip() {
+        let msg = ClusterMessage::Checkpoint {
+            from: "10.0.0.2:9000".into(),
+            rid: RemoteProcessId { node: 2, pid: 11 },
+            state: vec![7, 7, 8],
+        };
+        let frame = encode(&msg).unwrap();
+        let (decoded, _) = decode_frame(&frame).unwrap();
+        match decoded {
+            ClusterMessage::Checkpoint { from, rid, state } => {
+                assert_eq!(from, "10.0.0.2:9000");
+                assert_eq!(rid, RemoteProcessId { node: 2, pid: 11 });
+                assert_eq!(state, vec![7, 7, 8]);
+            }
+            other => panic!("expected Checkpoint, got {other:?}"),
         }
     }
 

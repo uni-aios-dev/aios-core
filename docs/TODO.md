@@ -45,6 +45,7 @@
 - [x] Phase 51: `aios-init` is the default initramfs `/init` in the Live ISO — `live/build.sh` step [4] packs the aios-init initramfs by default (`aios-init` as `/init`, `aios` as `/system/aios-core`, busybox only as rescue shell), step [5] writes the `init=/init console=tty0` GRUB menu; the legacy busybox `switch_root` path is preserved behind `USE_BUSYBOX_INIT=1`, the `USE_AIOS_INIT=1` switch is removed (v2.14.0)
 - [x] Phase 52: Cluster management in the kernel TUI Shell — `cluster status/nodes/spawn/kill/migrate` commands drive `DistributedScheduler` on real `SchedulerProcessExecutor` threads; `OrchestratorState` keeps the scheduler handle alive; process migration between nodes (spawn-then-kill) (v2.18.0–v2.19.0)
 - [x] Phase 53: Stateful process migration — `ProcessExecutor::extract_state`/`restore_state`, `Spawn` carries the state snapshot on the wire (`GetState`/`GetStateReply`), `migrate` restores it on the destination before killing the source (v2.20.0)
+- [x] Phase 54: Checkpoint replication — workers broadcast a per-process state snapshot to all peers each heartbeat; `tick()` restores the newest replicated checkpoint when a hosting node is lost and prunes stale snapshots by `checkpoint_ttl` (builder + `AIOS_CLUSTER_CHECKPOINT_TTL_MS`, default 15 s) (v2.21.0)
 
 ## Backlog
 

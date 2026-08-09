@@ -211,7 +211,8 @@ pub async fn initialize(
             )
             .with_heartbeat(std::time::Duration::from_millis(cfg.heartbeat_ms))
             .with_failover_threshold(std::time::Duration::from_millis(cfg.failover_threshold_ms))
-            .with_failover_respawn(cfg.failover_respawn);
+            .with_failover_respawn(cfg.failover_respawn)
+            .with_checkpoint_ttl(std::time::Duration::from_millis(cfg.checkpoint_ttl_ms));
             node.set_executor(Arc::new(SchedulerProcessExecutor::new(
                 cfg.node_id,
                 scheduler.clone(),

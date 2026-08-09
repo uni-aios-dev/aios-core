@@ -23,6 +23,13 @@ pub struct ClusterConfig {
     pub failover_respawn: bool,
     /// Placement strategy.
     pub strategy: PlacementStrategy,
+    /// How long replicated checkpoints stay usable before pruning (ms).
+    #[serde(default = "default_checkpoint_ttl_ms")]
+    pub checkpoint_ttl_ms: u64,
+}
+
+fn default_checkpoint_ttl_ms() -> u64 {
+    15000
 }
 
 impl Default for ClusterConfig {
@@ -37,6 +44,7 @@ impl Default for ClusterConfig {
             failover_threshold_ms: 3000,
             failover_respawn: true,
             strategy: PlacementStrategy::LeastLoaded,
+            checkpoint_ttl_ms: default_checkpoint_ttl_ms(),
         }
     }
 }
@@ -50,7 +58,7 @@ impl ClusterConfig {
     /// - `AIOS_CLUSTER_TIER` — hardware tier
     /// - `AIOS_CLUSTER_STRATEGY` — `roundrobin|leastloaded|bytier`
     /// - `AIOS_CLUSTER_HEARTBEAT_MS`, `AIOS_CLUSTER_FAILOVER_MS`,
-    ///   `AIOS_CLUSTER_FAILOVER_RESPAWN`
+    ///   `AIOS_CLUSTER_FAILOVER_RESPAWN`, `AIOS_CLUSTER_CHECKPOINT_TTL_MS`
     ///
     /// Returns `None` when clustering is not requested (`AIOS_CLUSTER_PEERS`
     /// is unset) or the node address is missing.
@@ -98,6 +106,10 @@ impl ClusterConfig {
                 .map(|v| v != "0" && v.to_lowercase() != "false")
                 .unwrap_or(true),
             strategy,
+            checkpoint_ttl_ms: env_u64(
+                "AIOS_CLUSTER_CHECKPOINT_TTL_MS",
+                default_checkpoint_ttl_ms(),
+            ),
         })
     }
 
@@ -131,6 +143,7 @@ mod tests {
         assert_eq!(cfg.tier, 3);
         assert_eq!(cfg.peers.len(), 2);
         assert_eq!(cfg.strategy, PlacementStrategy::RoundRobin);
+        assert_eq!(cfg.checkpoint_ttl_ms, default_checkpoint_ttl_ms());
     }
 
     #[test]

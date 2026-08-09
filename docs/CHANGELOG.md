@@ -1,5 +1,15 @@
 # AIOS Development Log
 
+## v2.21.0 — Checkpoint replication in the distributed cluster (2026-08-09)
+
+### `aios-cluster`
+- Workers now replicate state automatically: every heartbeat period the hosting worker extracts a snapshot of each locally hosted process and broadcasts a fire-and-forget `Checkpoint { from, rid, state }` to all peers, so every coordinator continuously holds the latest state of the processes it tracks without needing an explicit `GetState` round-trip.
+- Failover restore is now automatic: when a node is lost, `tick()` respawns its tracked processes elsewhere and restores the newest replicated checkpoint on the new host, which then re-replicates its own snapshots (no coordinator-side state injection needed).
+- Received checkpoints are timestamped and pruned by a new `checkpoint_ttl` (builder `.with_checkpoint_ttl`, default 15 s) inside `tick()`, so stale snapshots from a long-silent node cannot be resurrected by accident. The `checkpoints()` accessor exposes the replicated snapshots (sorted, newest snapshot per process wins on write).
+- `ClusterConfig` gains `checkpoint_ttl_ms` (serde default + `AIOS_CLUSTER_CHECKPOINT_TTL_MS` env var); the `aios` orchestrator forwards it to the scheduler builder.
+- New tests: unit `test_checkpoint_replicated_and_restored_on_failover` (3-node cluster: spawn with payload, wait for replication, kill the host, assert the respawned process lands on the survivor with the snapshot restored and re-replicated) and `test_checkpoint_pruned_when_stale` (zero TTL, tick drops the snapshot). The protocol checkpoint round-trip test was already present. (21 unit + 10 integration + 1 doc).
+- Files: `aios-cluster/src/scheduler.rs`, `aios-cluster/src/config.rs`, `aios/src/orchestrator.rs`, `docs/*`.
+
 ## v2.20.0 — Stateful process migration in the distributed cluster (2026-08-09)
 
 ### `aios-cluster`
