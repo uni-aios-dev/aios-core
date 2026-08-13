@@ -894,6 +894,12 @@ User Input (TUI)
 - `HardwarePanel` (egui) — таблица устройств (VID/PID, источник драйвера, цветные статусы), прогресс-бары скачивания/компиляции, интерактивная матрица прав безопасности (checkbox'ы) и кнопки [Update Driver]/[Rollback to Generic]/[Uninstall]/[Rescan].
 - Оба рендерят одни и те же данные `DeviceView`/`Toast`, выдаваемые движком.
 
+### Живая интеграция (kernel TUI + GUI)
+
+- `aios-gui` (`AiosApp`): движок создаётся при старте (`hw_init`) с первичным проходом обеспечения; вкладка **Hardware & Drivers (F9)** (`tabs/hardware.rs`) рендерит общую панель `HardwarePanel` по обновляемым снимкам `hw_views`/`hw_toasts` и возвращает `GuiAction` (`Rescan`/`Update`/`Rollback`/`Uninstall`/`SetCapabilities`) движку через `apply_hw_actions`.
+- Kernel `aios` (`TuiApp`): `hw_engine`/`hw_views`/`hw_toasts` инициализируются в `new()` через `init_hw_engine` (инертен в safe mode), обновляются каждый тик (`hw_refresh`) и пере-сканируются при аппаратном re-probe по `F10` (`refresh_hw`); `draw_system_tab` рендерит `HardwareInspector` третьим блоком вкладки System & HW.
+- Таким образом, TUI и GUI показывают идентичное содержимое `DeviceView`/тостов для одной машины.
+
 ---
 
 ## Сетевой стек (`aios-net`)

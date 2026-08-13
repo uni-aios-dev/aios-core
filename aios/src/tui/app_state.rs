@@ -1,5 +1,7 @@
 use crate::orchestrator::OrchestratorState;
+use aios_autohal::engine::{AutohalEngine, DeviceView, Toast};
 use aios_browser::types::Page;
+use aios_hal::hardware::HardwareProfile;
 use aios_llm::{default_config, LlmConfig};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -125,6 +127,9 @@ pub struct TuiApp {
     pub store_status: String,
     pub load_mode: bool,
     pub load_input: String,
+    pub hw_engine: Option<AutohalEngine>,
+    pub hw_views: Vec<DeviceView>,
+    pub hw_toasts: Vec<Toast>,
 }
 
 impl TuiApp {
@@ -133,6 +138,7 @@ impl TuiApp {
             let s = state.lock().unwrap();
             s.logs.clone()
         };
+        let (hw_engine, hw_views, hw_toasts) = init_hw_engine(&state);
         Self {
             running: true,
             current_tab: 0,
@@ -166,6 +172,26 @@ impl TuiApp {
             store_status: String::new(),
             load_mode: false,
             load_input: String::new(),
+            hw_engine,
+            hw_views,
+            hw_toasts,
+        }
+    }
+
+    /// Refresh the hardware views and toast strip from the engine, keeping the
+    /// in-memory snapshot small so the TUI renders fast.
+    pub fn hw_refresh(&mut self) {
+        let Some(engine) = &mut self.hw_engine else {
+            return;
+        };
+        self.hw_views = engine.device_views();
+        let fresh = engine.pop_toasts(8);
+        if !fresh.is_empty() {
+            self.hw_toasts.extend(fresh);
+            if self.hw_toasts.len() > 16 {
+                let excess = self.hw_toasts.len() - 16;
+                self.hw_toasts.drain(0..excess);
+            }
         }
     }
 
@@ -191,6 +217,10 @@ impl TuiApp {
             state.hw_profile = new_profile;
             let mut logs = state.logs.lock().unwrap();
             logs.push("AIOS: hardware re-probed.".into());
+        }
+        if let Some(engine) = &mut self.hw_engine {
+            engine.rescan(&HardwareProfile::detect());
+            self.hw_refresh();
         }
     }
 
@@ -254,4 +284,23 @@ fn seed_presets() -> BTreeMap<String, String> {
         "You explain complex topics in simple terms with concrete examples.".into(),
     );
     m
+}
+
+/// Create the aios-autohal engine from the current hardware profile and run an
+/// initial provisioning pass so the Hardware Inspector tab has data on first
+/// render. In safe mode the engine stays inert (no provisioning).
+fn init_hw_engine(
+    state: &Arc<Mutex<OrchestratorState>>,
+) -> (Option<AutohalEngine>, Vec<DeviceView>, Vec<Toast>) {
+    let safe_mode = state.lock().unwrap().safe_mode;
+    if safe_mode {
+        return (None, Vec::new(), Vec::new());
+    }
+    let Ok(mut engine) = AutohalEngine::new(Default::default()) else {
+        return (None, Vec::new(), Vec::new());
+    };
+    engine.rescan(&HardwareProfile::detect());
+    let toasts = engine.pop_toasts(8);
+    let views = engine.device_views();
+    (Some(engine), views, toasts)
 }

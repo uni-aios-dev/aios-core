@@ -217,7 +217,7 @@ At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1
 
 | # | Tab | Content |
 |---|-----|---------|
-| 1 | System & HW | CPU, RAM, OS/kernel, GPU, AI Tier, RAM gauge |
+| 1 | System & HW | CPU, RAM, OS/kernel, GPU, AI Tier, RAM gauge, **Hardware Inspector** |
 | 2 | Blocks & Svc | Block list (select/restart/unload/load) + process list |
 | 3 | AI Console | LLM chat with slash commands |
 | 4 | Studio Bridge | Bridge server status, URL, REST/WebSocket endpoints |
@@ -371,8 +371,10 @@ cargo run --bin aios-gui
 │ Network  │                                           │
 │ Deps     │                                           │
 │ Browser  │                                           │
+│ Files    │                                           │
+│ Hardware │                                           │
 │ ──────── │───────────────────────────────────────────│
-│ Quick    │  F1-F8 tabs | AIOS Dashboard | Status...  │  ← Bottom bar
+│ Quick    │  F1-F9 tabs | AIOS Dashboard | Status...  │  ← Bottom bar
 │ Actions  │
 └──────────┴───────────────────────────────────────────┘
   Sidebar          Main area
@@ -382,7 +384,7 @@ cargo run --bin aios-gui
 
 | Key | Action |
 |-----|--------|
-| `F1`-`F8` | Switch tab |
+| `F1`-`F9` | Switch tab |
 | `j` | Move selection down |
 | `k` | Move selection up |
 
@@ -456,7 +458,7 @@ cargo run --bin aios-gui
 
 ### Status Bar
 
-The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files`, where N is the live IPC packet counter, plus the last operation result.
+The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files F9=Hardware`, where N is the live IPC packet counter, plus the last operation result.
 
 ### Theming
 

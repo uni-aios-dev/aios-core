@@ -461,6 +461,8 @@
   - [x] `ui_gui.rs` — egui Hardware & Drivers panel: device table with icons, VID/PID, driver source; download/compile progress; interactive capability matrix (checkboxes); [Update Driver]/[Rollback to Generic]/[Uninstall] buttons
   - [x] Tests: unit tests per module (57 total); speed test with dual debug/release thresholds (debug 50us / release 8us per fingerprint op)
   - [x] Docs: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
+  - [x] Live integration: `aios-gui` Hardware & Drivers tab (F9) wired to `AutohalEngine` (`hw_init`/`hw_refresh`/`apply_hw_actions`, `tabs/hardware.rs`); kernel TUI `aios` embeds `HardwareInspector` in System & HW tab (`TuiApp` `hw_engine`/`hw_views`/`hw_toasts`, `init_hw_engine` inert in safe mode, tick refresh, `F10` rescan)
+  - [ ] Remaining: hot-plug event loop daemon (kernel) that feeds the engine on live `udev`/device arrival instead of periodic re-probe
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |

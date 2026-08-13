@@ -58,6 +58,26 @@ fn seed_presets() -> BTreeMap<String, String> {
     m
 }
 
+/// Create the aios-autohal engine for a hardware snapshot and run the initial
+/// provisioning pass so the Hardware & Drivers tab has data on first render.
+fn init_hw_engine(
+    hardware: &HardwareProfile,
+) -> (
+    Option<aios_autohal::AutohalEngine>,
+    Vec<aios_autohal::DeviceView>,
+    Vec<aios_autohal::Toast>,
+) {
+    let Ok(mut engine) = aios_autohal::AutohalEngine::new(aios_autohal::EngineConfig::default())
+    else {
+        log::warn!("AUTOHAL: engine init failed");
+        return (None, Vec::new(), Vec::new());
+    };
+    engine.rescan(hardware);
+    let toasts = engine.pop_toasts(16);
+    let views = engine.device_views();
+    (Some(engine), views, toasts)
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u64,
@@ -161,6 +181,13 @@ pub struct AiosApp {
     pub fm_input: Option<FmInput>,
     /// Buffer for the active Files-tab modal input.
     pub fm_input_buf: String,
+
+    /// Hardware auto-provisioning engine (aios-autohal), created at startup.
+    pub hw_engine: Option<aios_autohal::AutohalEngine>,
+    /// Latest `DeviceView` snapshots for the Hardware & Drivers tab (F9).
+    pub hw_views: Vec<aios_autohal::DeviceView>,
+    /// Recent provisioning toasts (hot-plug strip).
+    pub hw_toasts: Vec<aios_autohal::Toast>,
 }
 
 /// Active modal input mode of the GUI Files tab.
@@ -180,6 +207,7 @@ impl AiosApp {
         block_count: usize,
         ram_total: u64,
     ) -> Self {
+        let hw_init = init_hw_engine(&hardware);
         Self {
             ai_tier,
             hardware,
@@ -235,6 +263,9 @@ impl AiosApp {
             fm_error: None,
             fm_input: None,
             fm_input_buf: String::new(),
+            hw_engine: hw_init.0,
+            hw_views: hw_init.1,
+            hw_toasts: hw_init.2,
         }
     }
 
@@ -368,6 +399,56 @@ impl AiosApp {
             aios_fm::ui_tui::TuiAction::Refresh { side } => fm.send(Command::Refresh { side }),
             aios_fm::ui_tui::TuiAction::Close => {
                 self.fm_preview = None;
+            }
+        }
+    }
+
+    /// Refresh Hardware & Drivers tab data from the engine (views + toasts).
+    pub fn hw_refresh(&mut self) {
+        let Some(engine) = &mut self.hw_engine else {
+            return;
+        };
+        self.hw_views = engine.device_views();
+        let fresh = engine.pop_toasts(10);
+        if !fresh.is_empty() {
+            self.hw_toasts.extend(fresh);
+            if self.hw_toasts.len() > 24 {
+                let excess = self.hw_toasts.len() - 24;
+                self.hw_toasts.drain(0..excess);
+            }
+        }
+    }
+
+    /// Apply actions emitted by the Hardware & Drivers panel (F9).
+    pub fn apply_hw_actions(&mut self, actions: Vec<aios_autohal::ui_gui::GuiAction>) {
+        let Some(engine) = &mut self.hw_engine else {
+            return;
+        };
+        for action in actions {
+            match action {
+                aios_autohal::ui_gui::GuiAction::Rescan => {
+                    engine.rescan(&self.hardware);
+                }
+                aios_autohal::ui_gui::GuiAction::Update { index } => {
+                    if let Some(dev) = self.hw_views.get(index) {
+                        engine.provision_blocking(dev.fingerprint.clone());
+                    }
+                }
+                aios_autohal::ui_gui::GuiAction::Rollback { index } => {
+                    if let Some(dev) = self.hw_views.get(index) {
+                        engine.rollback_to_generic(&dev.fingerprint);
+                    }
+                }
+                aios_autohal::ui_gui::GuiAction::Uninstall { index } => {
+                    if let Some(dev) = self.hw_views.get(index) {
+                        engine.uninstall_driver(&dev.driver_id);
+                    }
+                }
+                aios_autohal::ui_gui::GuiAction::SetCapabilities { index, caps } => {
+                    if let Some(dev) = self.hw_views.get(index) {
+                        engine.set_cap_override(&dev.driver_id, caps);
+                    }
+                }
             }
         }
     }
@@ -1042,6 +1123,10 @@ impl eframe::App for AiosApp {
         self.poll_ai();
         self.poll_fm_acks();
 
+        if self.selected_tab == 8 {
+            self.hw_refresh();
+        }
+
         if self.ai_busy {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -1117,7 +1202,7 @@ impl eframe::App for AiosApp {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(format!(
-                        "HW Tier: {} | IPC: {} pkts | F6=Deps F7=Browser",
+                        "HW Tier: {} | IPC: {} pkts | F6=Deps F7=Browser F8=Files F9=Hardware",
                         self.ai_tier, self.ipc_traffic
                     ))
                     .color(theme.text_dim)
@@ -1152,6 +1237,7 @@ impl eframe::App for AiosApp {
                     ("\u{2913} Deps", 5),
                     ("\u{1f310} Native Browser", 6),
                     ("\u{1f4c1} Files", 7),
+                    ("\u{1f527} Hardware", 8),
                 ];
 
                 for (label, idx) in tabs {
@@ -1234,6 +1320,7 @@ impl eframe::App for AiosApp {
                 5 => tabs::deps::show(ui, self, &theme),
                 6 => tabs::web::show(ui, self, &theme),
                 7 => tabs::files::show(ui, self, &theme),
+                8 => tabs::hardware::show(ui, self, &theme),
                 _ => tabs::overview::show(ui, self, &theme),
             });
 
@@ -1264,6 +1351,7 @@ impl eframe::App for AiosApp {
                         egui::Key::F6 => self.selected_tab = 5,
                         egui::Key::F7 => self.selected_tab = 6,
                         egui::Key::F8 => self.selected_tab = 7,
+                        egui::Key::F9 => self.selected_tab = 8,
                         egui::Key::J => self.move_selection_down(),
                         egui::Key::K => self.move_selection_up(),
                         _ => {}

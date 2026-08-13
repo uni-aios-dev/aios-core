@@ -114,7 +114,11 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Min(10),
+        ])
         .split(area);
 
     let cpu_lines = vec![
@@ -198,6 +202,30 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
         if gauge_area.width > 10 {
             frame.render_widget(gauge, gauge_area);
         }
+    }
+
+    if app.hw_engine.is_some() {
+        frame.render_widget(
+            aios_autohal::ui_tui::HardwareInspector {
+                devices: &app.hw_views,
+                toasts: &app.hw_toasts,
+                selected: None,
+                title: aios_autohal::ui_tui::HARDWARE_INSPECTOR_TITLE,
+            },
+            chunks[2],
+        );
+    } else {
+        let empty_block = Block::default()
+            .title(" Hardware Inspector ")
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::Yellow));
+        let empty = Paragraph::new(if state.safe_mode {
+            "Safe mode — hardware provisioning disabled. Press F10 to re-probe."
+        } else {
+            "Hardware engine unavailable."
+        })
+        .block(empty_block);
+        frame.render_widget(empty, chunks[2]);
     }
 }
 

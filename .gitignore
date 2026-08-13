@@ -18,6 +18,8 @@ models/
 *.gguf
 # Runtime data dir (chat.jsonl / presets.json written by TUI & GUI)
 aios_data/
+# DriverStore cache (aios-autohal) — created at runtime under the CWD
+drivers/
 # Temporary phase tracking files (not for public repo)
 PHASE-*.txt
 ФАЗА-*.txt

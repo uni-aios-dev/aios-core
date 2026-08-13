@@ -92,8 +92,10 @@ mod tests {
     #[tokio::test]
     async fn test_build_page_shell_no_crash_with_fallback_disabled() {
         let html = "<html><body><div id=\"app\">Loading...</div></body></html>";
-        let mut cfg = BrowserConfig::default();
-        cfg.headless_fallback = false;
+        let cfg = BrowserConfig {
+            headless_fallback: false,
+            ..Default::default()
+        };
         let engine = BrowserEngine::new(cfg);
         let page = engine
             .build_page("https://example.com/", html.to_string())

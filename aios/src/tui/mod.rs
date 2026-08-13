@@ -73,6 +73,7 @@ fn run(
 
         app.update_logs();
         web_poll(&mut app);
+        app.hw_refresh();
     }
     save_chat(&app);
     save_bookmarks(&app);

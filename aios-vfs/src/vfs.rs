@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(child.to_uri(), "AIOS:///sandbox/app.log");
         assert_eq!(child.parent(), base);
         assert_eq!(child.file_name().as_deref(), Some("app.log"));
-        assert!(base.is_root() == false);
+        assert!(!base.is_root());
     }
 
     #[test]

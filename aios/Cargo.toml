@@ -29,6 +29,7 @@ aios-context = { path = "../aios-context" }
 aios-debug = { path = "../aios-debug" }
 aios-webview = { path = "../aios-webview", optional = true }
 aios-cluster = { path = "../aios-cluster" }
+aios-autohal = { path = "../aios-autohal", features = ["tui"] }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }

@@ -1,5 +1,15 @@
 # AIOS Development Log
 
+## v2.23.0 — Live integration of aios-autohal into the kernel TUI and GUI (2026-08-14)
+
+### Live integration (TUI + GUI parity per Master Brief)
+- `aios-gui` gains the **Hardware & Drivers tab (F9)**: `AiosApp` creates the `AutohalEngine` at startup (`hw_init`), runs an initial provisioning pass over the detected `HardwareProfile`, and while the tab is open refreshes `DeviceView`/toast snapshots (`hw_refresh`). Panel actions — `Rescan`, `Update`, `Rollback to Generic`, `Uninstall`, capability overrides — are routed back to the engine via `apply_hw_actions` (`tabs/hardware.rs` renders the shared `HardwarePanel`).
+- The kernel TUI (`aios`) embeds the same **Hardware Inspector** in the System & HW tab (`draw_system_tab`): `TuiApp` now holds `hw_engine`/`hw_views`/`hw_toasts`, initialized in `new()` via `init_hw_engine` (inert in safe mode), refreshed every tick (`hw_refresh`) and re-probed on `F10` (`refresh_hw` reuses `HardwareProfile::detect()`).
+- UI parity is data-level: both surfaces render the same `DeviceView` snapshots and toast strip produced by the single shared engine.
+- Tests: workspace suite unchanged count but `aios` and `aios-gui` binaries now build with the shared engine; clippy zero warnings; `cargo fmt` clean.
+- Clippy hygiene for `--all-targets`: fixed a pre-existing test-target warning in `aios-browser` (`headless_fallback` moved into the `BrowserConfig` literal), three `&[key.clone()]` slice-clones in `aios-store` test code (now `std::slice::from_ref`), and an `== false` comparison in `aios-vfs` tests (now `!is_root()`).
+- Files: `aios-gui/Cargo.toml`, `aios-gui/src/app.rs`, `aios-gui/src/tabs/hardware.rs`, `aios-gui/src/tabs/mod.rs`, `aios/Cargo.toml`, `aios/src/tui/app_state.rs`, `aios/src/tui/ui.rs`, `aios/src/tui/mod.rs`, `docs/*`.
+
 ## v2.22.0 — Hardware auto-provisioning & driver store (aios-autohal) (2026-08-14)
 
 ### New crate `aios-autohal`

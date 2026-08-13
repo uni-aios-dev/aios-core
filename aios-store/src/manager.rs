@@ -401,13 +401,17 @@ mod tests {
         let mut manager = StoreManager::new(tempfile::tempdir().unwrap().path());
         let name = manager.sources[0].name.clone();
 
-        manager.trust_source(&name, &[key.clone()]).unwrap();
+        manager
+            .trust_source(&name, std::slice::from_ref(&key))
+            .unwrap();
         assert_eq!(
             manager.source(Some(&name)).unwrap().trusted_public_keys,
             vec![key.clone()]
         );
 
-        manager.trust_source(&name, &[key.clone()]).unwrap();
+        manager
+            .trust_source(&name, std::slice::from_ref(&key))
+            .unwrap();
         assert_eq!(
             manager
                 .source(Some(&name))
@@ -448,7 +452,9 @@ mod tests {
 
         let mut manager = StoreManager::new(dir.path());
         let name = manager.sources[0].name.clone();
-        manager.trust_source(&name, &[key.clone()]).unwrap();
+        manager
+            .trust_source(&name, std::slice::from_ref(&key))
+            .unwrap();
         manager.save_config(&cfg).unwrap();
 
         let reloaded = StoreManager::load_config(&cfg, dir.path()).unwrap();

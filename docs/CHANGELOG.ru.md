@@ -1,5 +1,15 @@
 # Журнал разработки AIOS
 
+## v2.23.0 — Живая интеграция aios-autohal в kernel TUI и GUI (2026-08-14)
+
+### Живая интеграция (паритет TUI/GUI по Master Brief)
+- `aios-gui` получает вкладку **Hardware & Drivers (F9)**: `AiosApp` создаёт `AutohalEngine` при старте (`hw_init`), запускает первичный проход обеспечения по обнаруженному `HardwareProfile`, а пока вкладка открыта — обновляет снимки `DeviceView`/тостов (`hw_refresh`). Действия панели — `Rescan`, `Update`, `Rollback to Generic`, `Uninstall`, переопределения прав — возвращаются в движок через `apply_hw_actions` (`tabs/hardware.rs` рендерит общую панель `HardwarePanel`).
+- Kernel TUI (`aios`) встраивает тот же **Hardware Inspector** во вкладку System & HW (`draw_system_tab`): `TuiApp` теперь хранит `hw_engine`/`hw_views`/`hw_toasts`, инициализируется в `new()` через `init_hw_engine` (инертен в safe mode), обновляется каждый тик (`hw_refresh`) и пере-скан при `F10` (`refresh_hw` использует `HardwareProfile::detect()`).
+- Паритет интерфейсов — на уровне данных: обе поверхности рендерят одни и те же снимки `DeviceView` и ленту тостов из единого движка.
+- Тесты: состав workspace-набора не изменился, но бинарники `aios` и `aios-gui` теперь собираются с общим движком; clippy — ноль предупреждений; `cargo fmt` чист.
+- Гигиена clippy для `--all-targets`: исправлено предварительно существовавшее предупреждение в тестах `aios-browser` (`headless_fallback` перенесён в литерал `BrowserConfig`), три среза `&[key.clone()]` в тестах `aios-store` (теперь `std::slice::from_ref`) и сравнение `== false` в тестах `aios-vfs` (теперь `!is_root()`).
+- Файлы: `aios-gui/Cargo.toml`, `aios-gui/src/app.rs`, `aios-gui/src/tabs/hardware.rs`, `aios-gui/src/tabs/mod.rs`, `aios/Cargo.toml`, `aios/src/tui/app_state.rs`, `aios/src/tui/ui.rs`, `aios/src/tui/mod.rs`, `docs/*`.
+
 ## v2.22.0 — Автоматическое обеспечение оборудованием и хранилище драйверов (aios-autohal) (2026-08-14)
 
 ### Новый крате `aios-autohal`

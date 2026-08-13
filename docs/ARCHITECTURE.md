@@ -894,6 +894,12 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - `HardwarePanel` (egui) — device table (VID/PID, driver source, status colors), download/compile progress bars, interactive security capability matrix (checkboxes) and [Update Driver]/[Rollback to Generic]/[Uninstall]/[Rescan] buttons.
 - Both render the same `DeviceView`/`Toast` data produced by the engine.
 
+### Live integration (kernel TUI + GUI)
+
+- `aios-gui` (`AiosApp`): the engine is created at startup (`hw_init`) with an initial provisioning pass; the **Hardware & Drivers tab (F9)** (`tabs/hardware.rs`) renders the shared `HardwarePanel` over refreshed `hw_views`/`hw_toasts` snapshots and routes `GuiAction`s (`Rescan`/`Update`/`Rollback`/`Uninstall`/`SetCapabilities`) back to the engine via `apply_hw_actions`.
+- Kernel `aios` (`TuiApp`): `hw_engine`/`hw_views`/`hw_toasts` initialized in `new()` through `init_hw_engine` (inert in safe mode), refreshed each tick (`hw_refresh`) and re-scanned on the `F10` hardware re-probe (`refresh_hw`); `draw_system_tab` renders the `HardwareInspector` as the third block of the System & HW tab.
+- TUI and GUI therefore show identical `DeviceView`/toast content for the same machine.
+
 ---
 
 ## Network Stack (`aios-net`)

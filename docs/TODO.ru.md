@@ -459,6 +459,8 @@
   - [x] `ui_gui.rs` — egui-панель Hardware & Drivers: таблица устройств с иконками, VID/PID, источником драйвера; прогресс скачивания/компиляции; интерактивная матрица прав (checkbox'ы); кнопки [Update Driver]/[Rollback to Generic]/[Uninstall]
   - [x] Тесты: unit-тесты каждого модуля (всего 57); speed-тест с двойными порогами debug/release (debug 50 мкс / release 8 мкс на операцию fingerprint)
   - [x] Доки: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
+  - [x] Живая интеграция: вкладка `aios-gui` Hardware & Drivers (F9) подключена к `AutohalEngine` (`hw_init`/`hw_refresh`/`apply_hw_actions`, `tabs/hardware.rs`); kernel TUI `aios` встраивает `HardwareInspector` во вкладку System & HW (`TuiApp` `hw_engine`/`hw_views`/`hw_toasts`, `init_hw_engine` инертен в safe mode, обновление по тику, рескан по `F10`)
+  - [ ] Осталось: демон hot-plug (kernel), который питает движок при реальном появлении устройств (`udev`) вместо периодического re-probe
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |
