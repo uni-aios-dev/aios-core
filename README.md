@@ -190,6 +190,7 @@ User ──► aiosctl search "browser" ──► GitHub API ──► uni-aios-
 - **EasyLang:** 10 keywords — `spawn`, `load`, `unload`, `kill`, `timer`, `query`, `compact`, `status`, `pipe`, `wait`
 - **Linux OCI Compatibility:** WASM blocks can be wrapped in OCI containers via `wasmtime serve` for Chrome OS integration
 - **Binary Compatibility:** POSIX / Win32 translation layer (`aios-exec-compat`) heals missing `.dll` / `.so` at runtime
+- **Hardware Auto-Provisioning:** `aios-autohal` detects devices by fingerprint, fetches/adapts open-source drivers into sandboxed `.wasm`, grants Capability tokens, caches locally, and auto-rolls back to a Generic Fallback Driver after 3 consecutive failures — with 100% TUI/GUI parity
 
 ---
 

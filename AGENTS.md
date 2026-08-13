@@ -109,6 +109,7 @@ aios-security/      — Security: capability tokens, access control, sandboxing
 aios-context/       — Context store: telemetry, workflows, stability scores
 aios-exec-compat/    — Multi-binary compatibility: POSIX/Win32 translation, dependency healing
 aios-wasm/           — WebAssembly runtime: Wasmtime embedding, WASI filtering, sandbox isolation
+aios-autohal/        — Hardware auto-provisioning & driver store: fingerprint, manifest, fetcher, adapter, engine with self-healing, DriverStore registry, TUI/GUI parity
 aios-webview/        — Native browser engine: wry/winit WebView window, persistent profile, GUI launcher
 aios-init/           — Standalone (NOT a workspace member) static-musl PID 1 `/init` for the initramfs: core VFS mounts, block supervisor, zombie reaping, rescue-shell fallback
 aios-tui/            — User interface: intent engine, ratatui dashboard

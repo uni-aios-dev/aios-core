@@ -1,5 +1,17 @@
 # Журнал разработки AIOS
 
+## v2.22.0 — Автоматическое обеспечение оборудованием и хранилище драйверов (aios-autohal) (2026-08-14)
+
+### Новый крате `aios-autohal`
+- Полный конвейер автоматического обеспечения по Master Brief: определение оборудования (`extract_fingerprints` из `aios-hal::HardwareProfile` — USB/PCI/NVMe/Bluetooth/ACPI), поиск/скачивание драйвера (`DriverFetcher`: builtin-каталог → реестр custom store → Redox Tree → зеркало Linux Core, WASM или исходники C/Rust), адаптация исходников (`SourceAdapter` переписывает вызовы `inb/outb/readl/writel/ioread*` на host-импорты `hal_*` и компилирует в `wasm32-wasi`), проверка SHA-256, инстанцирование с выдачей прав и локальное кэширование в `DriverStore` в `AIOS_DATA_DIR/drivers`.
+- `engine.rs` — `AutohalEngine`: асинхронный конвейер из 5 шагов (`rescan`/`provision`/`provision_blocking`/`provision_dedicated`) + self-healing: после 3 сбоев подряд устройство автоматически переходит на Generic Fallback Driver (`GENERIC_FALLBACK_ID`) с предупреждающим тостом; поддержаны явные `rollback_to_generic`, `uninstall_driver` (generic защищён) и override прав на устройство (`set_cap_override`).
+- `ui_tui.rs` — ratatui-виджет `HardwareInspector`: таблица устройств по шинам (USB/PCI/NVMe/Bluetooth/ACPI), бейджи статуса ([Active]/[Downloading...]/[Compiling]/[Generic]/[Failed]/[Rolled Back]), сводка прав и лента hot-plug тостов (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`).
+- `ui_gui.rs` — egui-панель `HardwarePanel` со 100% паритетом данных: таблица устройств (VID/PID, источник драйвера, цветные статусы), прогресс-бары скачивания/компиляции, интерактивная матрица прав безопасности (checkbox'ы) и кнопки [Update Driver]/[Rollback to Generic]/[Uninstall]/[Rescan].
+- `manifest.rs` — JSON-схема `DriverManifest` с `required_capabilities` (через имена `Capability`) + валидация; `registry.rs` — `DriverStore`/`DriverIndex` персистентно хранят маппинг fingerprint→driver, счётчики сбоев и override прав (bincode/serde).
+- Исправления при доведении крате до чистой сборки: `rewrite_register_access` смешивал типы `&str`/`String` (переписан на `Vec<(&str, String)>`, сигнатура `rewrite_idents` обновлена), `?` над `Option` в функциях, возвращающих `Result<Option<_>>` (`fetch_from_registry`/`fetch_from_catalog` теперь возвращают `Ok(None)` при промахе), частичный перенос `fetched` в `engine.rs` (состояние источника зафиксировано через `matches!` до match), неиспользуемый импорт `Deserialize` в `manifest.rs` и лишний `&` у `ProgressBar` в `ui_gui.rs`.
+- 57 unit-тестов (fingerprint, manifest, fetcher, registry, engine, ui_tui, ui_gui), включая speed-тест с двойными порогами (debug 50 мкс / release 8 мкс на операцию extract+key+driver_id) — проходят в debug и release; clippy без предупреждений; `cargo fmt` чист.
+- Файлы: `aios-autohal/src/{lib,adapter,catalog,engine,fetcher,fingerprint,manifest,registry,ui_tui,ui_gui}.rs`, `aios-autohal/Cargo.toml`, `aios-autohal/src/fetcher.rs`, `Cargo.toml` (член workspace), `docs/*`.
+
 ## v2.21.0 — Репликация контрольных точек в распределённом кластере (2026-08-09)
 
 ### `aios-cluster`

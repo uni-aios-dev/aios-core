@@ -445,6 +445,21 @@
   - [x] Строка состояния GUI: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` с живым счётчиком IPC-пакетов
   - [x] Паритет GUI AI Studio: стриминг + персистентность чата/шаблонов (Фаза 45b, v2.9.1)
 
+- [ ] **Фаза 46: aios-autohal — автоматическое обеспечение оборудованием и хранилище драйверов (Master Brief)**
+  - **Роль**: автоматическое определение подключённого оборудования по слепку; поиск, скачивание и адаптация открытых драйверов в изолированные `.wasm`-модули; безопасный запуск в WASM-песочнице с выдачей Capability-токенов; локальное кэширование со 100% паритетом TUI/GUI.
+  - [x] `fingerprint.rs` — `HardwareFingerprint`/`BusType` (USB/PCI/Bluetooth/ACPI/NVMe), извлечение из `aios-hal::HardwareProfile`
+  - [x] `manifest.rs` — `DriverManifest` (id, name, version, supported_hardware, required_capabilities, hash_sha256, entry_point), JSON-схема + валидация, `DriverSource` (Redox Tree / Linux Core / Custom Store / Builtin / Generic)
+  - [x] `catalog.rs` — офлайн-каталог встроенных драйверов + generic fallback `GENERIC_WAT`
+  - [x] `fetcher.rs` — конвейер `DriverFetcher`: builtin → реестр custom store → Redox tree → зеркало Linux Core; WASM или исходники C/Rust, проверка хэша SHA-256
+  - [x] `adapter.rs` — `SourceAdapter`: переписывание вызовов `inb/outb/readl/writel/ioread*` на host-импорты `hal_*`, компиляция C/Rust в `wasm32-wasi`
+  - [x] `registry.rs` — `DriverStore`/`DriverIndex`: кэш `AIOS://store/drivers/`, маппинг fingerprint→driver, счётчики сбоев, override прав
+  - [x] `engine.rs` — асинхронный конвейер из 5 шагов: детекция (HAL event loop) → локальный поиск в store → сетевой поиск/адаптация → проверка SHA-256 + выдача прав (`CapabilityToken`) + инстанцирование в Wasmtime → кэширование и регистрация
+  - [x] `engine.rs` self-healing: после 3 сбоев подряд автопереход на Generic Fallback Driver с предупреждением в UI
+  - [x] `ui_tui.rs` — ratatui-виджет Hardware Inspector: дерево устройств по шинам (USB/PCI/NVMe), бейджи статуса ([Active]/[Downloading...]/[Fallback/Generic]), отображение прав, hot-plug тосты `[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`
+  - [x] `ui_gui.rs` — egui-панель Hardware & Drivers: таблица устройств с иконками, VID/PID, источником драйвера; прогресс скачивания/компиляции; интерактивная матрица прав (checkbox'ы); кнопки [Update Driver]/[Rollback to Generic]/[Uninstall]
+  - [x] Тесты: unit-тесты каждого модуля (всего 57); speed-тест с двойными порогами debug/release (debug 50 мкс / release 8 мкс на операцию fingerprint)
+  - [x] Доки: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
+
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |
 |------|-------------------|-----------------|

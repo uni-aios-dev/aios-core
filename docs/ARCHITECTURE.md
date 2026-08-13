@@ -862,6 +862,40 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ---
 
+## Hardware Auto-Provisioning & Driver Store (`aios-autohal`)
+
+`aios-autohal` implements the Master Brief "Hardware Auto-Provisioning & Driver Store": it detects devices by fingerprint, fetches/adapts open-source drivers into isolated `.wasm` modules, grants Capability tokens and instantiates them in the Wasmtime sandbox, caches them locally, and surfaces everything with 100% TUI/GUI parity.
+
+### Fingerprint & Manifest (`fingerprint.rs`, `manifest.rs`)
+
+- `HardwareFingerprint { bus, vendor_id, device_id, class_code, serial_or_acpi }` with `BusType` (USB/PCI/Bluetooth/ACPI/NVMe); `extract_fingerprints(&HardwareProfile)` maps `aios-hal` snapshots (USB VID/PID, PCI class/subclass folded into `class_code`, NVMe mass-storage class) into lookup keys (`usb.046d.0825`) and driver ids (`driver.usb.046d.0825`).
+- `DriverManifest` — JSON schema (id, name, version, `supported_hardware`, `required_capabilities`, `hash_sha256`, `entry_point`) with `can_serve(fp)` matching (exact or wildcard bus) and strict validation (unknown capabilities rejected, bad hashes rejected). `DriverSource`: Redox Tree / Linux Core / Custom Store / Builtin / Generic.
+
+### Catalog & Fetcher (`catalog.rs`, `fetcher.rs`)
+
+- `catalog.rs` — offline builtin catalog (`BuiltinDriver` with WAT sources) plus the Generic Fallback Driver (`GENERIC_FALLBACK_ID`, zero capabilities).
+- `DriverFetcher` pipeline: builtin catalog → custom store registry (`{root}/drivers/{id}/driver.{json,wasm}`) → Redox Tree → Linux Core mirror (`index.json`). Returns `FetchedDriver::Wasm` or `FetchedDriver::Source` (C/Rust); SHA-256 validated on every fetch.
+
+### Adapter (`adapter.rs`)
+
+`SourceAdapter` rewrites port/MMIO call sites (`inb/outb/inw/outw/readl/writel/ioread*`) to `hal_*` host imports declared in a WASI-preamble and compiles C/Rust to `wasm32-wasi`.
+
+### Engine & Self-Healing (`engine.rs`)
+
+`AutohalEngine` — 5-step async pipeline: (1) detection via HAL event loop → (2) local `DriverStore` lookup → (3) network fetch/adapt/compile → (4) SHA-256 validation + `CapabilityToken` grant + Wasmtime instantiation → (5) cache & register. `provision_blocking`/`provision_dedicated` serve IPC/UI paths. **Self-healing:** after 3 consecutive failures a device auto-rolls back to the Generic Fallback Driver with a warning toast (`record_failure` → `rollback_to_generic`); `uninstall_driver` (generic protected) and per-device capability overrides (`set_cap_override`) are supported.
+
+### Store & Registry (`registry.rs`)
+
+`DriverStore`/`DriverIndex` persist under `AIOS_DATA_DIR/drivers` (bincode/serde): fingerprint→driver mapping, failure counters and capability overrides.
+
+### UI Parity (`ui_tui.rs`, `ui_gui.rs`)
+
+- `HardwareInspector` (ratatui) — per-bus device table with status badges ([Active]/[Downloading...]/[Compiling]/[Generic]/[Failed]/[Rolled Back]), capability summary and hot-plug toast strip.
+- `HardwarePanel` (egui) — device table (VID/PID, driver source, status colors), download/compile progress bars, interactive security capability matrix (checkboxes) and [Update Driver]/[Rollback to Generic]/[Uninstall]/[Rescan] buttons.
+- Both render the same `DeviceView`/`Toast` data produced by the engine.
+
+---
+
 ## Network Stack (`aios-net`)
 
 - **Crate**: `aios-net` v1.0.0 — TCP/UDP blocks for network communication

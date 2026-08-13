@@ -447,6 +447,21 @@
   - [x] GUI status bar: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with live IPC packet counter
   - [x] GUI AI Studio parity: streaming + chat/preset persistence (Phase 45b, v2.9.1)
 
+- [ ] **Phase 46: aios-autohal — Hardware Auto-Provisioning & Driver Store (Master Brief)**
+  - **Role**: automatic device detection by fingerprint; search/download/adapt open-source drivers into isolated `.wasm` modules; safe launch in the WASM sandbox with Capability tokens; local caching with 100% TUI/GUI parity.
+  - [x] `fingerprint.rs` — `HardwareFingerprint`/`BusType` (USB/PCI/Bluetooth/ACPI/NVMe), extraction from `aios-hal::HardwareProfile`
+  - [x] `manifest.rs` — `DriverManifest` (id, name, version, supported_hardware, required_capabilities, hash_sha256, entry_point), JSON schema + validation, `DriverSource` (Redox Tree / Linux Core / Custom Store / Builtin / Generic)
+  - [x] `catalog.rs` — offline builtin catalog + `GENERIC_WAT` generic fallback driver
+  - [x] `fetcher.rs` — `DriverFetcher` pipeline: builtin → custom store registry → Redox tree → Linux Core mirror; WASM or C/Rust source, SHA-256 hash validation
+  - [x] `adapter.rs` — `SourceAdapter`: rewrite `inb/outb/readl/writel/ioread*` call sites to `hal_*` host imports, compile C/Rust to `wasm32-wasi`
+  - [x] `registry.rs` — `DriverStore`/`DriverIndex`: `AIOS://store/drivers/` cache, fingerprint→driver mapping, failure counters, capability overrides
+  - [x] `engine.rs` — 5-step async pipeline: detection (HAL event loop) → local store lookup → network fetch/adapt → SHA-256 validation + capability grant (`CapabilityToken`) + Wasmtime instantiation → cache & register
+  - [x] `engine.rs` self-healing: after 3 consecutive failures auto-rollback to Generic Fallback Driver with a UI warning toast
+  - [x] `ui_tui.rs` — ratatui Hardware Inspector widget: device tree by bus (USB/PCI/NVMe), driver status badges ([Active]/[Downloading...]/[Fallback/Generic]), capability display, hot-plug toasts `[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`
+  - [x] `ui_gui.rs` — egui Hardware & Drivers panel: device table with icons, VID/PID, driver source; download/compile progress; interactive capability matrix (checkboxes); [Update Driver]/[Rollback to Generic]/[Uninstall] buttons
+  - [x] Tests: unit tests per module (57 total); speed test with dual debug/release thresholds (debug 50us / release 8us per fingerprint op)
+  - [x] Docs: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
+
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |
 |-----------|-----------------|---------|

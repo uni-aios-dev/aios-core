@@ -1,5 +1,17 @@
 # AIOS Development Log
 
+## v2.22.0 — Hardware auto-provisioning & driver store (aios-autohal) (2026-08-14)
+
+### New crate `aios-autohal`
+- Full auto-provisioning pipeline per Master Brief: fingerprint detection (`extract_fingerprints` from `aios-hal::HardwareProfile` — USB/PCI/NVMe/Bluetooth/ACPI), driver lookup/fetch (`DriverFetcher` chain: builtin catalog → custom store registry → Redox Tree → Linux Core mirror, WASM or C/Rust source), source adaptation (`SourceAdapter` rewrites `inb/outb/readl/writel/ioread*` call sites to `hal_*` host imports and compiles to `wasm32-wasi`), SHA-256 validation, capability-gated instantiation, and local caching in `DriverStore` under `AIOS_DATA_DIR/drivers`.
+- `engine.rs` — `AutohalEngine` 5-step async pipeline (`rescan`/`provision`/`provision_blocking`/`provision_dedicated`) + self-healing: after 3 consecutive failures a device auto-rolls back to the Generic Fallback Driver (`GENERIC_FALLBACK_ID`) with a warning toast; explicit `rollback_to_generic`, `uninstall_driver` (generic protected) and per-device capability overrides (`set_cap_override`) are supported.
+- `ui_tui.rs` — ratatui `HardwareInspector` widget: per-bus (USB/PCI/NVMe/Bluetooth/ACPI) device table, status badges ([Active]/[Downloading...]/[Compiling]/[Generic]/[Failed]/[Rolled Back]), capability summary and hot-plug toast strip (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`).
+- `ui_gui.rs` — egui `HardwarePanel` with 100% data parity: device table (VID:PID, driver source, status colors), download/compile progress bars, interactive security capability matrix (checkboxes) and [Update Driver]/[Rollback to Generic]/[Uninstall]/[Rescan] buttons.
+- `manifest.rs` — `DriverManifest` JSON schema with `required_capabilities` (via `Capability` names) + validation; `registry.rs` — `DriverStore`/`DriverIndex` persist fingerprint→driver mapping, failure counters and capability overrides (bincode/serde).
+- Fixes while bringing the crate to a clean build: `rewrite_register_access` mixed `&str`/`String` tuple types (rewritten to a `Vec<(&str, String)>` with `rewrite_idents` signature updated), `?` on `Option` inside `Result<Option<_>>` fetcher paths (`fetch_from_registry`/`fetch_from_catalog` now return `Ok(None)` on miss), partial-move of `fetched` in `engine.rs` (source-state captured via `matches!` before the match), unused `Deserialize` import in `manifest.rs`, and a needless `&` on `ProgressBar` in `ui_gui.rs`.
+- 57 unit tests (fingerprint, manifest, fetcher, registry, engine, ui_tui, ui_gui) incl. a dual-threshold speed test (debug 50us / release 8us per extract+key+driver_id op) — all pass in debug and release; clippy zero warnings; `cargo fmt` clean.
+- Files: `aios-autohal/src/{lib,adapter,catalog,engine,fetcher,fingerprint,manifest,registry,ui_tui,ui_gui}.rs`, `aios-autohal/Cargo.toml`, `aios-autohal/src/fetcher.rs`, `Cargo.toml` (workspace member), `docs/*`.
+
 ## v2.21.0 — Checkpoint replication in the distributed cluster (2026-08-09)
 
 ### `aios-cluster`

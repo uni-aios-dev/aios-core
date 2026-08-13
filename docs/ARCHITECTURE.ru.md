@@ -862,6 +862,40 @@ User Input (TUI)
 
 ---
 
+## Автоматическое обеспечение оборудованием и хранилище драйверов (`aios-autohal`)
+
+`aios-autohal` реализует Master Brief «Hardware Auto-Provisioning & Driver Store»: определяет устройства по fingerprint, скачивает/адаптирует открытые драйверы в изолированные `.wasm`-модули, выдаёт Capability-токены и инстанцирует их в песочнице Wasmtime, кэширует локально и отображает всё со 100% паритетом TUI/GUI.
+
+### Fingerprint и манифест (`fingerprint.rs`, `manifest.rs`)
+
+- `HardwareFingerprint { bus, vendor_id, device_id, class_code, serial_or_acpi }` с `BusType` (USB/PCI/Bluetooth/ACPI/NVMe); `extract_fingerprints(&HardwareProfile)` превращает слепки `aios-hal` (USB VID/PID, PCI class/subclass в `class_code`, класс NVMe-масс-хранилища) в ключи поиска (`usb.046d.0825`) и id драйверов (`driver.usb.046d.0825`).
+- `DriverManifest` — JSON-схема (id, name, version, `supported_hardware`, `required_capabilities`, `hash_sha256`, `entry_point`) с сопоставлением `can_serve(fp)` (точное или wildcard-совпадение шины) и строгой валидацией (неизвестные права отклоняются, плохие хэши отклоняются). `DriverSource`: Redox Tree / Linux Core / Custom Store / Builtin / Generic.
+
+### Каталог и загрузчик (`catalog.rs`, `fetcher.rs`)
+
+- `catalog.rs` — офлайн-каталог встроенных драйверов (`BuiltinDriver` с исходниками WAT) плюс Generic Fallback Driver (`GENERIC_FALLBACK_ID`, без прав).
+- Конвейер `DriverFetcher`: builtin-каталог → реестр custom store (`{root}/drivers/{id}/driver.{json,wasm}`) → Redox Tree → зеркало Linux Core (`index.json`). Возвращает `FetchedDriver::Wasm` или `FetchedDriver::Source` (C/Rust); SHA-256 проверяется при каждой загрузке.
+
+### Адаптер (`adapter.rs`)
+
+`SourceAdapter` переписывает вызовы портов/MMIO (`inb/outb/inw/outw/readl/writel/ioread*`) на host-импорты `hal_*`, объявленные в WASI-преамбуле, и компилирует C/Rust в `wasm32-wasi`.
+
+### Движок и self-healing (`engine.rs`)
+
+`AutohalEngine` — асинхронный конвейер из 5 шагов: (1) детекция через HAL event loop → (2) локальный поиск в `DriverStore` → (3) сетевой поиск/адаптация/компиляция → (4) проверка SHA-256 + выдача `CapabilityToken` + инстанцирование в Wasmtime → (5) кэширование и регистрация. `provision_blocking`/`provision_dedicated` обслуживают пути IPC/UI. **Self-healing:** после 3 сбоев подряд устройство автоматически переходит на Generic Fallback Driver с предупреждающим тостом (`record_failure` → `rollback_to_generic`); поддержаны `uninstall_driver` (generic защищён) и override прав на устройство (`set_cap_override`).
+
+### Хранилище и реестр (`registry.rs`)
+
+`DriverStore`/`DriverIndex` персистентно хранятся в `AIOS_DATA_DIR/drivers` (bincode/serde): маппинг fingerprint→driver, счётчики сбоев и override прав.
+
+### Паритет UI (`ui_tui.rs`, `ui_gui.rs`)
+
+- `HardwareInspector` (ratatui) — таблица устройств по шинам с бейджами статуса ([Active]/[Downloading...]/[Compiling]/[Generic]/[Failed]/[Rolled Back]), сводкой прав и лентой hot-plug тостов.
+- `HardwarePanel` (egui) — таблица устройств (VID/PID, источник драйвера, цветные статусы), прогресс-бары скачивания/компиляции, интерактивная матрица прав безопасности (checkbox'ы) и кнопки [Update Driver]/[Rollback to Generic]/[Uninstall]/[Rescan].
+- Оба рендерят одни и те же данные `DeviceView`/`Toast`, выдаваемые движком.
+
+---
+
 ## Сетевой стек (`aios-net`)
 
 - **Крейт**: `aios-net` v1.0.0 — TCP/UDP блоки для сетевого взаимодействия

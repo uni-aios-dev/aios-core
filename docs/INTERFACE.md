@@ -225,6 +225,8 @@ At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1
 | 6 | Web | Text-mode browser (omnibox, links, history, native viewer) |
 | 7 | Shell | Command line (`ps`, `blocks`, `store`, `net`, ...) |
 
+The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per-bus device table (USB/PCI/NVMe/Bluetooth/ACPI) with driver status badges (`[Active]` / `[Downloading...]` / `[Compiling]` / `[Generic]` / `[Failed]` / `[Rolled Back]`), the granted capability summary per device, and a hot-plug toast strip (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`). After 3 consecutive failures a device auto-rolls back to the Generic Fallback Driver and a warning toast explains the switch.
+
 ### Keyboard Shortcuts
 
 | Key | Action |
@@ -444,6 +446,13 @@ cargo run --bin aios-gui
 - **AI Preview**: collapsible panel with the smart preview of the selected file
 - **Jobs**: background copy/move/delete operations show live progress bars and completion status
 - **ACL line**: shows which HOST capabilities are currently granted
+
+#### Hardware & Drivers (F9)
+- **Toast strip**: hot-plug / provisioning events (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`) in color-coded Info/Success/Warn/Error
+- **Summary table**: Bus, Device, VID:PID, Driver, Source, Status (color-coded badge), Capabilities — 100% parity with the TUI Hardware Inspector
+- **Progress bars**: per-device Downloading / Compiling progress rendered inline
+- **Per-device details**: driver id, last error, and the interactive **security capability matrix** (checkboxes per `Capability`; any change applies immediately as a per-device override)
+- **Actions**: `Rescan` (re-detect hardware), `Update Driver` (re-fetch/re-provision), `Rollback to Generic`, `Uninstall` (disabled for the protected Generic Fallback Driver)
 
 ### Status Bar
 

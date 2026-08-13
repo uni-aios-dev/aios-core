@@ -2,7 +2,7 @@
 
 ## Current: No known defects (Clean Build)
 
-As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, the v2.12.0 `aios-init` initramfs init, the v2.13.0 `/system/aios-core` kernel-TUI handover, the v2.20.0 stateful process migration (executor state snapshots + `GetState`/`GetStateReply` + state-carried `migrate`), and the v2.21.0 checkpoint replication (heartbeat broadcast + TTL pruning + automatic failover restore) added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
+As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, the v2.12.0 `aios-init` initramfs init, the v2.13.0 `/system/aios-core` kernel-TUI handover, the v2.20.0 stateful process migration (executor state snapshots + `GetState`/`GetStateReply` + state-carried `migrate`), the v2.21.0 checkpoint replication (heartbeat broadcast + TTL pruning + automatic failover restore), and the v2.22.0 `aios-autohal` hardware auto-provisioning added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
 
 ### RESOLVED: `Kernel panic: No working init found` on initramfs boot
 - **Status:** FIXED in v2.12.0 (design-level)
@@ -28,6 +28,11 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
 - **Status:** BY DESIGN
 - **Symptom:** If `AIOS_DATA_DIR` points to a read-only location, the GUI Files tab shows "FM runtime failed / VFS root init"
 - **Workaround:** Point `AIOS_DATA_DIR` at a writable folder before launching `aios-gui` (default sandbox: `AIOS_DATA_DIR/vfs_sandbox`)
+
+### KNOWN LIMITATION: `aios-autohal` Bluetooth/ACPI fingerprints are lookup-ready but not yet sourced
+- **Status:** BY DESIGN
+- **Symptom:** `HardwareFingerprint`/`BusType` include Bluetooth and ACPI, but `aios-hal::HardwareProfile` does not yet surface such devices, so `extract_fingerprints` currently returns only USB/PCI/NVMe entries.
+- **Workaround:** None needed — the variants exist so the inspector tree and driver lookup keys (`bt.*`, `acpi.*`) already cover them; a future `aios-hal` update plugs them in without changes to `aios-autohal`.
 
 ### FIXED: Linux GPU probe did not compile (`hw_probe.rs`)
 - **Status:** FIXED in v2.9.5

@@ -34,6 +34,7 @@ aios-telemetry = { path = "aios-telemetry" }
 aios-debug = { path = "aios-debug" }
 aios-llm = { path = "aios-llm" }
 aios-builder = { path = "aios-builder" }
+aios-autohal = { path = "aios-autohal" }
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 serde_json = { workspace = true }
 bincode = "1"
@@ -74,6 +75,7 @@ members = [
     "aios-vfs",
     "aios-fm",
     "aios-cluster",
+    "aios-autohal",
 ]
 
 [workspace.dependencies]

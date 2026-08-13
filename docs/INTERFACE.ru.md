@@ -225,6 +225,8 @@ cargo run --bin aios -- --safe-mode
 | 6 | Web | Текстовый браузер (омнибокс, ссылки, история, нативный просмотрщик) |
 | 7 | Shell | Командная строка (`ps`, `blocks`, `store`, `net`, ...) |
 
+Вкладка **System & HW (1)** также встраивает виджет **Hardware Inspector**: таблицу устройств по шинам (USB/PCI/NVMe/Bluetooth/ACPI) с бейджами статуса драйвера (`[Active]` / `[Downloading...]` / `[Compiling]` / `[Generic]` / `[Failed]` / `[Rolled Back]`), сводку выданных прав по каждому устройству и ленту hot-plug тостов (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`). После 3 сбоев подряд устройство автоматически переходит на Generic Fallback Driver, а предупреждающий тост объясняет переключение.
+
 ### Горячие клавиши
 
 | Клавиша | Действие |
@@ -445,6 +447,13 @@ cargo run --bin aios-gui
 - **AI Превью**: сворачиваемая панель с умным превью выбранного файла
 - **Операции**: фоновые копирование/перенос/удаление с живыми прогресс-барами и статусом завершения
 - **Строка ACL**: показывает, какие capabilities хоста выданы в данный момент
+
+#### Hardware & Drivers (F9)
+- **Лента тостов**: hot-plug / события обеспечения (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`) в цветах Info/Success/Warn/Error
+- **Сводная таблица**: Bus, Device, VID:PID, Driver, Source, Status (цветной бейдж), Capabilities — 100% паритет с TUI Hardware Inspector
+- **Прогресс-бары**: прогресс Downloading / Compiling по каждому устройству в строке таблицы
+- **Детали устройства**: id драйвера, последняя ошибка и интерактивная **матрица прав безопасности** (checkbox'ы по каждому `Capability`; любое изменение сразу применяется как override для устройства)
+- **Действия**: `Rescan` (повторное определение железа), `Update Driver` (повторная загрузка/обеспечение), `Rollback to Generic`, `Uninstall` (отключена для защищённого Generic Fallback Driver)
 
 ### Строка состояния
 
