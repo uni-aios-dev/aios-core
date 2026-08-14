@@ -1,5 +1,6 @@
 use crate::orchestrator::OrchestratorState;
 use aios_autohal::engine::{AutohalEngine, DeviceView, Toast};
+use aios_autohal::hotplug::{HotplugEvent, HotplugMonitor};
 use aios_browser::types::Page;
 use aios_hal::hardware::HardwareProfile;
 use aios_llm::{default_config, LlmConfig};
@@ -130,6 +131,8 @@ pub struct TuiApp {
     pub hw_engine: Option<AutohalEngine>,
     pub hw_views: Vec<DeviceView>,
     pub hw_toasts: Vec<Toast>,
+    /// Live device hot-plug monitor (absent in safe mode, like the engine).
+    pub hw_hotplug: Option<HotplugMonitor>,
 }
 
 impl TuiApp {
@@ -139,6 +142,11 @@ impl TuiApp {
             s.logs.clone()
         };
         let (hw_engine, hw_views, hw_toasts) = init_hw_engine(&state);
+        let hw_hotplug = if hw_engine.is_some() {
+            Some(HotplugMonitor::start(Default::default()))
+        } else {
+            None
+        };
         Self {
             running: true,
             current_tab: 0,
@@ -175,7 +183,31 @@ impl TuiApp {
             hw_engine,
             hw_views,
             hw_toasts,
+            hw_hotplug,
         }
+    }
+
+    /// Drain hot-plug events reported by the background monitor and apply them
+    /// to the engine (provision on arrival, unload on removal). Called every UI
+    /// tick; cheap when no device changed.
+    pub fn hw_poll_hotplug(&mut self) {
+        let events = match &self.hw_hotplug {
+            Some(monitor) => monitor.drain(),
+            None => return,
+        };
+        if events.is_empty() {
+            return;
+        }
+        let Some(engine) = &mut self.hw_engine else {
+            return;
+        };
+        for event in events {
+            match event {
+                HotplugEvent::Added(fp) => engine.provision_blocking(fp),
+                HotplugEvent::Removed(fp) => engine.remove_device(&fp),
+            }
+        }
+        self.hw_refresh();
     }
 
     /// Refresh the hardware views and toast strip from the engine, keeping the

@@ -225,7 +225,7 @@ At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1
 | 6 | Web | Text-mode browser (omnibox, links, history, native viewer) |
 | 7 | Shell | Command line (`ps`, `blocks`, `store`, `net`, ...) |
 
-The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per-bus device table (USB/PCI/NVMe/Bluetooth/ACPI) with driver status badges (`[Active]` / `[Downloading...]` / `[Compiling]` / `[Generic]` / `[Failed]` / `[Rolled Back]`), the granted capability summary per device, and a hot-plug toast strip (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`). After 3 consecutive failures a device auto-rolls back to the Generic Fallback Driver and a warning toast explains the switch.
+The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per-bus device table (USB/PCI/NVMe/Bluetooth/ACPI) with driver status badges (`[Active]` / `[Downloading...]` / `[Compiling]` / `[Generic]` / `[Failed]` / `[Rolled Back]`), the granted capability summary per device, and a hot-plug toast strip (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`). After 3 consecutive failures a device auto-rolls back to the Generic Fallback Driver and a warning toast explains the switch. A background hot-plug monitor (see `docs/ARCHITECTURE.md`) reflects live unplug/replug without manual action: a removed device shows `[Hardware] ... removed -> driver cached, re-provisions on replug`, and re-plugging it provisions instantly from the cached driver. `F10` remains available for a manual full re-probe.
 
 ### Keyboard Shortcuts
 

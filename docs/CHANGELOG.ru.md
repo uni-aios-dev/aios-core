@@ -1,5 +1,16 @@
 # Журнал разработки AIOS
 
+## v2.24.0 — Живой hot-plug цикл событий для обеспечения оборудованием (2026-08-14)
+
+### Hot-plug демон (aios-autohal + kernel TUI + GUI)
+- Новый `hotplug.rs` — фоновый `HotplugMonitor`: отдельный поток периодически пере-определяет подключённый `HardwareProfile` (интервал `HotplugConfig::poll_ms`, по умолчанию 1000 мс), извлекает набор отпечатков (`extract_fingerprints`) и сравнивает его с предыдущим опросом, отдавая `HotplugEvent::Added/Removed(HardwareFingerprint)` через канал `mpsc`. Первый опрос лишь фиксирует базовую линию, чтобы старт не выглядел как массовое подключение. Монитор корректно останавливается в `Drop` (общий флаг `AtomicBool` + `join`).
+- `engine.rs` — новый `AutohalEngine::remove_device(&HardwareFingerprint)`: выгружает WASM-инстанс и запись `DeviceDriver` для физически удалённого устройства, но сохраняет закэшированный драйвер в `DriverStore` (запись индекса удаляется, индекс персистится), поэтому повторное подключение обеспечивается мгновенно без сетевого запроса; добавляет info-тост (`[Hardware] USB 046D:0825 removed -> driver cached, re-provisions on replug`).
+- Kernel TUI (`aios`): `TuiApp` запускает монитор вместе с движком (`hw_hotplug`, инертен в safe mode) и разгребает его каждый тик (`hw_poll_hotplug` перед `hw_refresh` в цикле `run`): `Added` → `provision_blocking`, `Removed` → `remove_device`. Периодический пере-скан по `F10` остаётся ручным полным rescan.
+- GUI (`aios-gui`): `AiosApp` зеркально запускает тот же монитор (`hw_hotplug` вместе с движком) и разгребает его в каждом кадре `update`, так что вкладка Hardware & Drivers отражает живое отключение/подключение без ручных действий.
+- Поток монитора никогда не трогает движок напрямую (`AutohalEngine` владеет не-`Send` инстансами Wasmtime); он лишь выдаёт события отпечатков, которые применяет поток UI.
+- Тесты: unit-тесты `hotplug.rs` (`diff_fingerprints` добавление/удаление, отчёт при первом скане, пропуск warm-up, неизменный набор, хелперы событий) + тест `engine::remove_device` (устройство выпадает, тост, повторное подключение из кэша). Workspace: 1323 теста проходят, clippy — ноль предупреждений, `cargo fmt` чист.
+- Файлы: `aios-autohal/src/{lib,hotplug,engine}.rs`, `aios/src/tui/{app_state,mod}.rs`, `aios-gui/src/app.rs`, `docs/*`.
+
 ## v2.23.0 — Живая интеграция aios-autohal в kernel TUI и GUI (2026-08-14)
 
 ### Живая интеграция (паритет TUI/GUI по Master Brief)

@@ -320,6 +320,31 @@ impl AutohalEngine {
         }
     }
 
+    /// Drop the WASM instance and tracking entry for a device that was
+    /// physically removed (hot-plug). The cached driver stays in the store, so
+    /// a later replug provisions instantly without a network fetch.
+    pub fn remove_device(&mut self, fp: &HardwareFingerprint) {
+        let driver_id = self
+            .devices
+            .iter()
+            .find(|d| &d.fingerprint == fp)
+            .map(|d| d.driver_id.clone());
+        let Some(driver_id) = driver_id else {
+            return;
+        };
+        self.instances.remove(&instance_key(fp, &driver_id));
+        self.devices.retain(|d| &d.fingerprint != fp);
+        self.store.index_mut().remove(&fp.key());
+        self.push_toast(
+            ToastKind::Info,
+            format!(
+                "[Hardware] {} removed -> driver cached, re-provisions on replug",
+                fp.display_name()
+            ),
+        );
+        let _ = self.store.save_index();
+    }
+
     /// The full provisioning pipeline for one fingerprint. On any failure the
     /// device is brought up on the Generic Fallback Driver with a toast.
     pub async fn provision(&mut self, fp: HardwareFingerprint) -> Result<(), EngineError> {
@@ -1001,6 +1026,36 @@ mod tests {
         assert!(engine.uninstall_driver("driver.usb.046d.0825"));
         assert!(engine.devices().is_empty());
         assert!(!engine.uninstall_driver(GENERIC_FALLBACK_ID));
+    }
+
+    #[test]
+    fn test_remove_device_drops_instance_keeps_cache() {
+        let (config, dir) = tmp_config();
+        let mut engine = AutohalEngine::new(config).unwrap();
+        engine.provision_blocking(c270_fp());
+        assert_eq!(engine.devices().len(), 1);
+        assert_eq!(
+            engine.store().index().get(&c270_fp().key()),
+            Some("driver.usb.046d.0825")
+        );
+
+        engine.remove_device(&c270_fp());
+        assert!(
+            engine.devices().is_empty(),
+            "removed device must leave the tracking list"
+        );
+        assert!(engine
+            .toasts()
+            .iter()
+            .any(|t| t.message.contains("removed")));
+
+        engine.provision_blocking(c270_fp());
+        assert_eq!(
+            engine.devices().len(),
+            1,
+            "replug must re-provision from the cached driver"
+        );
+        assert!(dir.path().join("drivers").exists());
     }
 
     #[test]

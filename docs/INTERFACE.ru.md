@@ -225,7 +225,7 @@ cargo run --bin aios -- --safe-mode
 | 6 | Web | Текстовый браузер (омнибокс, ссылки, история, нативный просмотрщик) |
 | 7 | Shell | Командная строка (`ps`, `blocks`, `store`, `net`, ...) |
 
-Вкладка **System & HW (1)** также встраивает виджет **Hardware Inspector**: таблицу устройств по шинам (USB/PCI/NVMe/Bluetooth/ACPI) с бейджами статуса драйвера (`[Active]` / `[Downloading...]` / `[Compiling]` / `[Generic]` / `[Failed]` / `[Rolled Back]`), сводку выданных прав по каждому устройству и ленту hot-plug тостов (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`). После 3 сбоев подряд устройство автоматически переходит на Generic Fallback Driver, а предупреждающий тост объясняет переключение.
+Вкладка **System & HW (1)** также встраивает виджет **Hardware Inspector**: таблицу устройств по шинам (USB/PCI/NVMe/Bluetooth/ACPI) с бейджами статуса драйвера (`[Active]` / `[Downloading...]` / `[Compiling]` / `[Generic]` / `[Failed]` / `[Rolled Back]`), сводку выданных прав по каждому устройству и ленту hot-plug тостов (`[Hardware] Detected USB 046D:0825 -> Fetching WASM Driver... [OK]`). После 3 сбоев подряд устройство автоматически переходит на Generic Fallback Driver, а предупреждающий тост объясняет переключение. Фоновый hot-plug монитор (см. `docs/ARCHITECTURE.md`) отражает живое отключение/подключение без ручных действий: удалённое устройство показывает `[Hardware] ... removed -> driver cached, re-provisions on replug`, а повторное подключение обеспечивается мгновенно из кэша. `F10` остаётся доступен для ручного полного re-probe.
 
 ### Горячие клавиши
 

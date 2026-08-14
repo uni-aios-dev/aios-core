@@ -900,6 +900,14 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - Kernel `aios` (`TuiApp`): `hw_engine`/`hw_views`/`hw_toasts` initialized in `new()` through `init_hw_engine` (inert in safe mode), refreshed each tick (`hw_refresh`) and re-scanned on the `F10` hardware re-probe (`refresh_hw`); `draw_system_tab` renders the `HardwareInspector` as the third block of the System & HW tab.
 - TUI and GUI therefore show identical `DeviceView`/toast content for the same machine.
 
+### Hot-plug event loop (`hotplug.rs`)
+
+`HotplugMonitor` — a background thread (one per UI surface) that periodically re-detects the attached `HardwareProfile` (`HotplugConfig::poll_ms`, default 1000 ms), extracts the fingerprint set and diffs it against the previous poll, emitting `HotplugEvent::Added/Removed` over an `mpsc` channel. The first poll only records the baseline, so startup is silent. The monitor is never `Send`-shared into the engine; each UI tick drains the channel and applies events on the UI thread: `Added` → `provision_blocking`, `Removed` → `AutohalEngine::remove_device` (unloads the WASM instance + tracked device but keeps the cached driver, so a replug re-provisions instantly). The monitor stops cleanly on `Drop`.
+
+- Kernel TUI: `TuiApp::hw_hotplug` started alongside the engine (inert in safe mode); `hw_poll_hotplug` drains it every tick before `hw_refresh`.
+- GUI: `AiosApp::hw_hotplug` started with the engine; `hw_poll_hotplug` drains it in every `update` frame.
+- Periodic `F10` re-probe remains as a manual full rescan.
+
 ---
 
 ## Network Stack (`aios-net`)

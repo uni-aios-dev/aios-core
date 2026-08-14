@@ -460,7 +460,8 @@
   - [x] Тесты: unit-тесты каждого модуля (всего 57); speed-тест с двойными порогами debug/release (debug 50 мкс / release 8 мкс на операцию fingerprint)
   - [x] Доки: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
   - [x] Живая интеграция: вкладка `aios-gui` Hardware & Drivers (F9) подключена к `AutohalEngine` (`hw_init`/`hw_refresh`/`apply_hw_actions`, `tabs/hardware.rs`); kernel TUI `aios` встраивает `HardwareInspector` во вкладку System & HW (`TuiApp` `hw_engine`/`hw_views`/`hw_toasts`, `init_hw_engine` инертен в safe mode, обновление по тику, рескан по `F10`)
-  - [ ] Осталось: демон hot-plug (kernel), который питает движок при реальном появлении устройств (`udev`) вместо периодического re-probe
+  - [x] Цикл hot-plug событий: `hotplug.rs` — фоновый `HotplugMonitor` периодически снимает аппаратный снимок и выдаёт отпечатки `Added`/`Removed` через `mpsc`; kernel TUI и GUI разгребают его каждый тик/кадр и применяют события к движку (`provision_blocking` при появлении, `AutohalEngine::remove_device` при удалении с сохранением кэша драйвера). Warm-up базовой линии + чистая остановка в drop.
+  - [ ] Осталось: push-события `udev`/`evdev` (Linux) или PnP (Windows) вместо интервала опроса
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |

@@ -900,6 +900,14 @@ User Input (TUI)
 - Kernel `aios` (`TuiApp`): `hw_engine`/`hw_views`/`hw_toasts` инициализируются в `new()` через `init_hw_engine` (инертен в safe mode), обновляются каждый тик (`hw_refresh`) и пере-сканируются при аппаратном re-probe по `F10` (`refresh_hw`); `draw_system_tab` рендерит `HardwareInspector` третьим блоком вкладки System & HW.
 - Таким образом, TUI и GUI показывают идентичное содержимое `DeviceView`/тостов для одной машины.
 
+### Цикл hot-plug событий (`hotplug.rs`)
+
+`HotplugMonitor` — фоновый поток (по одному на UI-поверхность), который периодически пере-определяет подключённый `HardwareProfile` (`HotplugConfig::poll_ms`, по умолчанию 1000 мс), извлекает набор отпечатков и сравнивает его с предыдущим опросом, выдавая `HotplugEvent::Added/Removed` через канал `mpsc`. Первый опрос лишь фиксирует базовую линию, поэтому старт тихий. Монитор никогда не передаётся внутрь движка; каждый тик UI разгребает канал и применяет события в потоке UI: `Added` → `provision_blocking`, `Removed` → `AutohalEngine::remove_device` (выгружает WASM-инстанс и запись устройства, но сохраняет закэшированный драйвер, так что повторное подключение обеспечивается мгновенно). Монитор корректно останавливается в `Drop`.
+
+- Kernel TUI: `TuiApp::hw_hotplug` запускается вместе с движком (инертен в safe mode); `hw_poll_hotplug` разгребает его каждый тик перед `hw_refresh`.
+- GUI: `AiosApp::hw_hotplug` запускается вместе с движком; `hw_poll_hotplug` разгребает его в каждом кадре `update`.
+- Периодический re-probe по `F10` остаётся ручным полным rescan.
+
 ---
 
 ## Сетевой стек (`aios-net`)

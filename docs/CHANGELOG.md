@@ -1,5 +1,16 @@
 # AIOS Development Log
 
+## v2.24.0 — Live hot-plug event loop for hardware provisioning (2026-08-14)
+
+### Hot-plug daemon (aios-autohal + kernel TUI + GUI)
+- New `hotplug.rs` — background `HotplugMonitor`: a dedicated thread re-detects the attached `HardwareProfile` on an interval (`HotplugConfig::poll_ms`, default 1000 ms), extracts the fingerprint set (`extract_fingerprints`) and diffs it against the previous poll, emitting `HotplugEvent::Added/Removed(HardwareFingerprint)` over an `mpsc` channel. The first poll only records the baseline so startup does not look like a mass hot-plug. The monitor stops cleanly on `Drop` (shared `AtomicBool` stop flag + `join`).
+- `engine.rs` — new `AutohalEngine::remove_device(&HardwareFingerprint)`: drops the WASM instance and the tracked `DeviceDriver` entry for a device that was physically removed, but keeps the cached driver in the `DriverStore` (index entry removed, index persisted) so a later replug re-provisions instantly without a network fetch; pushes an info toast (`[Hardware] USB 046D:0825 removed -> driver cached, re-provisions on replug`).
+- Kernel TUI (`aios`): `TuiApp` starts the monitor alongside the engine (`hw_hotplug`, inert in safe mode) and drains it every tick (`hw_poll_hotplug` before `hw_refresh` in the `run` loop): `Added` → `provision_blocking`, `Removed` → `remove_device`. Periodic F10 re-probe remains as a manual full rescan.
+- GUI (`aios-gui`): `AiosApp` mirrors the same monitor (`hw_hotplug` started with the engine) and drains it every `update` frame, so the Hardware & Drivers tab reflects live unplug/replug without any manual action.
+- The monitor thread never touches the engine directly (the `AutohalEngine` owns non-`Send` Wasmtime instances); it only produces fingerprint events that the UI thread applies.
+- Tests: `hotplug.rs` unit tests (`diff_fingerprints` add/remove, first-scan report, warm-up skip, unchanged set, event helpers) + `engine::remove_device` test (device drops out, toast emitted, replug re-provisions from cache). Workspace: 1323 tests pass, clippy zero warnings, `cargo fmt` clean.
+- Files: `aios-autohal/src/{lib,hotplug,engine}.rs`, `aios/src/tui/{app_state,mod}.rs`, `aios-gui/src/app.rs`, `docs/*`.
+
 ## v2.23.0 — Live integration of aios-autohal into the kernel TUI and GUI (2026-08-14)
 
 ### Live integration (TUI + GUI parity per Master Brief)

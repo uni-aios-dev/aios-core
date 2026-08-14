@@ -15,6 +15,7 @@ pub mod catalog;
 pub mod engine;
 pub mod fetcher;
 pub mod fingerprint;
+pub mod hotplug;
 pub mod manifest;
 pub mod registry;
 #[cfg(feature = "gui")]
@@ -33,5 +34,6 @@ pub use crate::fetcher::{
     FetcherConfig, Transport,
 };
 pub use crate::fingerprint::{extract_fingerprints, BusType, HardwareFingerprint};
+pub use crate::hotplug::{diff_fingerprints, HotplugConfig, HotplugEvent, HotplugMonitor};
 pub use crate::manifest::{cap_from_name, DriverManifest, DriverSource, SupportedHardware};
 pub use crate::registry::{DriverIndex, DriverStore};

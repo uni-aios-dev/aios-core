@@ -188,6 +188,8 @@ pub struct AiosApp {
     pub hw_views: Vec<aios_autohal::DeviceView>,
     /// Recent provisioning toasts (hot-plug strip).
     pub hw_toasts: Vec<aios_autohal::Toast>,
+    /// Live device hot-plug monitor, started alongside the engine.
+    pub hw_hotplug: Option<aios_autohal::HotplugMonitor>,
 }
 
 /// Active modal input mode of the GUI Files tab.
@@ -208,6 +210,11 @@ impl AiosApp {
         ram_total: u64,
     ) -> Self {
         let hw_init = init_hw_engine(&hardware);
+        let hw_hotplug = if hw_init.0.is_some() {
+            Some(aios_autohal::HotplugMonitor::start(Default::default()))
+        } else {
+            None
+        };
         Self {
             ai_tier,
             hardware,
@@ -266,6 +273,7 @@ impl AiosApp {
             hw_engine: hw_init.0,
             hw_views: hw_init.1,
             hw_toasts: hw_init.2,
+            hw_hotplug,
         }
     }
 
@@ -451,6 +459,28 @@ impl AiosApp {
                 }
             }
         }
+    }
+
+    /// Drain hot-plug events from the background monitor and apply them to the
+    /// engine (provision on arrival, unload on removal). Cheap when idle.
+    pub fn hw_poll_hotplug(&mut self) {
+        let events = match &self.hw_hotplug {
+            Some(monitor) => monitor.drain(),
+            None => return,
+        };
+        if events.is_empty() {
+            return;
+        }
+        let Some(engine) = &mut self.hw_engine else {
+            return;
+        };
+        for event in events {
+            match event {
+                aios_autohal::HotplugEvent::Added(fp) => engine.provision_blocking(fp),
+                aios_autohal::HotplugEvent::Removed(fp) => engine.remove_device(&fp),
+            }
+        }
+        self.hw_refresh();
     }
 
     /// Confirm the active Files-tab modal input (mkdir / rename).
@@ -1122,6 +1152,7 @@ impl eframe::App for AiosApp {
         self.poll_browser_open();
         self.poll_ai();
         self.poll_fm_acks();
+        self.hw_poll_hotplug();
 
         if self.selected_tab == 8 {
             self.hw_refresh();
