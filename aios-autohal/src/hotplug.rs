@@ -1,21 +1,30 @@
 //! Live device hot-plug monitoring.
 //!
-//! A background [`HotplugMonitor`] thread periodically re-detects the attached
-//! hardware snapshot and diffs the fingerprint set against the previous poll.
-//! Changed devices are emitted as [`HotplugEvent`]s (`Added`/`Removed`) over an
-//! `mpsc` channel; the owner (kernel TUI or GUI main loop) drains the events on
-//! its tick and applies them to the [`crate::engine::AutohalEngine`], which is
+//! A background [`HotplugMonitor`] thread re-detects the attached hardware
+//! snapshot and diffs the fingerprint set against the previous poll. Changed
+//! devices are emitted as [`HotplugEvent`]s (`Added`/`Removed`) over an `mpsc`
+//! channel; the owner (kernel TUI or GUI main loop) drains the events on its
+//! tick and applies them to the [`crate::engine::AutohalEngine`], which is
 //! deliberately kept on the UI thread because it owns non-`Send` `WasmBlock`
 //! instances.
+//!
+//! The full `HardwareProfile::detect()` is comparatively expensive, so the
+//! monitor never runs it unconditionally. On Linux a cheap change signal
+//! ([`cheap_signal`]) hashes the mtimes of the `/sys/bus/{usb,pci,nvme}/devices`
+//! directories — those only change when a device is attached or removed — so a
+//! full detection runs the moment the device tree actually moves. On platforms
+//! without such a signal the monitor falls back to the fixed-interval full scan
+//! cadence ([`HotplugConfig::poll_ms`]).
 
 use crate::fingerprint::{extract_fingerprints, HardwareFingerprint};
 use aios_hal::hardware::HardwareProfile;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A single hot-plug transition detected by the monitor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,13 +52,69 @@ impl HotplugEvent {
 /// Tunables for the [`HotplugMonitor`].
 #[derive(Debug, Clone)]
 pub struct HotplugConfig {
-    /// Delay between hardware re-detection polls in milliseconds.
+    /// Fixed-interval full re-detection cadence in milliseconds. Also the
+    /// safety net on Linux: a full scan runs at least this often even when the
+    /// cheap change signal reports no device-tree movement.
     pub poll_ms: u64,
+    /// Cadence of the cheap change-signal check (Linux) / cadence of the full
+    /// scan scheduling on platforms without a signal. Kept small (250 ms) since
+    /// it is far cheaper than a full detection.
+    pub signal_poll_ms: u64,
 }
 
 impl Default for HotplugConfig {
     fn default() -> Self {
-        Self { poll_ms: 1000 }
+        Self {
+            poll_ms: 1000,
+            signal_poll_ms: 250,
+        }
+    }
+}
+
+/// Fold the mtimes of the given directories into a single hash. `None` when no
+/// directory is readable, so a missing tree never counts as a change.
+pub fn dir_signal_hash(paths: &[&Path]) -> Option<u64> {
+    let mut hash: u64 = 0;
+    let mut seen = false;
+    for dir in paths {
+        if let Ok(metadata) = std::fs::metadata(dir) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(ns) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    hash = hash.rotate_left(17) ^ (ns.as_nanos() as u64);
+                    seen = true;
+                }
+            }
+        }
+    }
+    if seen {
+        Some(hash)
+    } else {
+        None
+    }
+}
+
+/// Cheap platform change signal: `(changed, next_state)`.
+///
+/// Linux hashes the mtimes of `/sys/bus/{usb,pci,nvme}/devices` (std fs only);
+/// these directories change exactly when a device is attached or removed, so a
+/// full `HardwareProfile::detect()` can be skipped while nothing moved. On other
+/// platforms there is no cheap signal (`None`), which forces the fixed-interval
+/// full-scan cadence.
+fn cheap_signal(prev: Option<u64>) -> (bool, Option<u64>) {
+    #[cfg(target_os = "linux")]
+    {
+        let paths = [
+            Path::new("/sys/bus/usb/devices"),
+            Path::new("/sys/bus/pci/devices"),
+            Path::new("/sys/bus/nvme/devices"),
+        ];
+        let state = dir_signal_hash(&paths);
+        (state != prev, state)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = prev;
+        (true, None)
     }
 }
 
@@ -72,8 +137,8 @@ pub fn diff_fingerprints(
     events
 }
 
-/// Background thread that turns periodic hardware re-detection into a stream
-/// of [`HotplugEvent`]s. Dropping the monitor stops the thread.
+/// Background thread that turns hardware re-detection into a stream of
+/// [`HotplugEvent`]s. Dropping the monitor stops the thread.
 pub struct HotplugMonitor {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
@@ -88,19 +153,26 @@ impl HotplugMonitor {
         let thread_stop = Arc::clone(&stop);
         let handle = thread::spawn(move || {
             let mut previous: HashSet<HardwareFingerprint> = HashSet::new();
+            scan_and_emit(&mut previous, &tx);
+            let mut last_full = Instant::now();
+            let poll_dur = Duration::from_millis(config.poll_ms);
+            let signal_dur = Duration::from_millis(config.signal_poll_ms);
+            let (_, initial_signal) = cheap_signal(None);
+            let have_cheap = initial_signal.is_some();
+            let mut prev_signal = initial_signal;
             while !thread_stop.load(Ordering::Relaxed) {
-                let profile = HardwareProfile::detect();
-                let current: HashSet<HardwareFingerprint> =
-                    extract_fingerprints(&profile).into_iter().collect();
-                if !previous.is_empty() {
-                    for event in diff_fingerprints(&previous, &current) {
-                        if tx.send(event).is_err() {
-                            return;
-                        }
-                    }
+                let run_scan = if have_cheap {
+                    let (changed, state) = cheap_signal(prev_signal);
+                    prev_signal = state;
+                    changed || last_full.elapsed() >= poll_dur
+                } else {
+                    last_full.elapsed() >= poll_dur
+                };
+                if run_scan {
+                    scan_and_emit(&mut previous, &tx);
+                    last_full = Instant::now();
                 }
-                previous = current;
-                thread::sleep(Duration::from_millis(config.poll_ms));
+                thread::sleep(signal_dur);
             }
         });
         Self {
@@ -119,6 +191,22 @@ impl HotplugMonitor {
     pub fn drain(&self) -> Vec<HotplugEvent> {
         self.rx.try_iter().collect()
     }
+}
+
+/// Run one full hardware detection, diff it against `previous` and emit the
+/// changes. The very first scan only records the baseline (warm-up).
+fn scan_and_emit(previous: &mut HashSet<HardwareFingerprint>, tx: &Sender<HotplugEvent>) {
+    let profile = HardwareProfile::detect();
+    let current: HashSet<HardwareFingerprint> =
+        extract_fingerprints(&profile).into_iter().collect();
+    if !previous.is_empty() {
+        for event in diff_fingerprints(previous, &current) {
+            if tx.send(event).is_err() {
+                return;
+            }
+        }
+    }
+    *previous = current;
 }
 
 impl Drop for HotplugMonitor {
@@ -208,5 +296,46 @@ mod tests {
         assert!(!removed.is_added());
         assert_eq!(added.fingerprint().vendor_id, 1);
         assert_eq!(removed.fingerprint().device_id, 4);
+    }
+
+    #[test]
+    fn dir_signal_hash_is_stable_and_hashed() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![dir.path()];
+        let first = dir_signal_hash(&paths).expect("readable dir yields a signal");
+        let second = dir_signal_hash(&paths).expect("stable across calls");
+        assert_eq!(first, second, "mtime hash must be deterministic");
+        assert_ne!(first, 0, "a real directory must not hash to zero");
+    }
+
+    #[test]
+    fn dir_signal_hash_ignores_missing_paths() {
+        let missing = Path::new("__aios_does_not_exist__");
+        assert_eq!(dir_signal_hash(&[missing]), None);
+        assert_eq!(dir_signal_hash(&[]), None);
+    }
+
+    #[test]
+    fn dir_signal_hash_detects_tree_change() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let ha = dir_signal_hash(&[a.path()]).unwrap();
+        let hb = dir_signal_hash(&[b.path()]).unwrap();
+        assert_ne!(ha, hb, "distinct directories must produce distinct hashes");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn non_linux_has_no_cheap_signal() {
+        let (changed, state) = cheap_signal(None);
+        assert!(state.is_none(), "no cheap signal off Linux");
+        assert!(changed, "no signal means 'run the full scan'");
+    }
+
+    #[test]
+    fn config_defaults() {
+        let cfg = HotplugConfig::default();
+        assert_eq!(cfg.poll_ms, 1000);
+        assert_eq!(cfg.signal_poll_ms, 250);
     }
 }

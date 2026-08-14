@@ -1,5 +1,15 @@
 # AIOS Development Log
 
+## v2.24.1 — Adaptive hot-plug re-detection with cheap device-tree signal (2026-08-14)
+
+### `hotplug.rs` (aios-autohal)
+- The monitor no longer runs the expensive `HardwareProfile::detect()` unconditionally every poll. On Linux a cheap change signal (`cheap_signal` → `dir_signal_hash`) hashes the mtimes of `/sys/bus/{usb,pci,nvme}/devices` — directories that change exactly when a device is attached or removed — so a full detection is triggered the moment the device tree actually moves (latency ≤ `signal_poll_ms`, default 250 ms) instead of waiting out a fixed interval.
+- `HotplugConfig` gains `signal_poll_ms` (default 250) — the cheap-signal cadence; `poll_ms` (default 1000) stays the full-scan safety net that guarantees a fresh detection at least that often even when the signal reports no movement.
+- Platforms without such a signal (e.g. Windows) keep the fixed-interval full-scan cadence — behavior unchanged from v2.24.0; a missing/unreadable `/sys` tree degrades the same way (no signal → fixed cadence).
+- Pure std-only implementation matching the repo convention (`aios-hal` uses sysfs reads on Linux, no FFI crates). The monitor thread still only produces fingerprint events; engine mutation stays on the UI thread.
+- Tests: +5 (`dir_signal_hash` stability/distinctness/missing-path handling, non-Linux has no cheap signal, config defaults). Workspace: 1328 tests pass, clippy zero warnings, `cargo fmt` clean.
+- Files: `aios-autohal/src/hotplug.rs`, `docs/*`.
+
 ## v2.24.0 — Live hot-plug event loop for hardware provisioning (2026-08-14)
 
 ### Hot-plug daemon (aios-autohal + kernel TUI + GUI)
