@@ -317,13 +317,11 @@ impl StoreManager {
         ))
     }
 
-    /// Run an async store operation from a synchronous context (e.g. the TUI shell).
+    /// Run an async store operation from a synchronous context (e.g. the TUI
+    /// shell). Safe to call from inside a tokio runtime (see
+    /// [`aios_core::runtime::block_on_future`]).
     pub fn block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build store runtime");
-        runtime.block_on(fut)
+        aios_core::runtime::block_on_future(fut)
     }
 }
 

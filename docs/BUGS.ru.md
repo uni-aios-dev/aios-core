@@ -6,6 +6,13 @@
 предупреждения, а 18 багов, найденных в ходе баг-фикс-фазы v2.7.0
 (BUG-021…BUG-038), исправлены и покрыты регрессионными тестами. Переструктурирование TUI ядра на 7 вкладок, флаг загрузки `--safe-mode` и вкладки GUI AI Studio / Network Settings в v2.8.0, а также сохранение чата / шаблоны `/preset` / стриминг в v2.9.0 и перенос этих возможностей в GUI AI Studio в v2.9.1, исправление контраста кнопок в v2.9.2, Live USB образ в v2.9.5, файловый менеджер `aios-vfs`/`aios-fm` в v2.10.0, кластер `aios-cluster` в v2.11.0, initramfs init `aios-init` в v2.12.0, передача управления `/system/aios-core` в v2.13.0, миграция процессов с переносом состояния в v2.20.0 (снимки состояния исполнителей + `GetState`/`GetStateReply` + `migrate` с переносом состояния), репликация контрольных точек в v2.21.0 (heartbeat-рассылка + вычистка по TTL + автоматическое восстановление при failover) и автоматическое обеспечение оборудованием `aios-autohal` в v2.22.0 и нативные push-уведомления hot-plug в v2.25.0 не добавили новых известных дефектов. См. раздел «Исторические проблемы» и `docs/CHANGELOG.md`.
 
+### ИСПРАВЛЕНО: `Cannot start a runtime from within a runtime` при старте TUI
+- **Статус:** ИСПРАВЛЕНО в v2.25.1 (найдено при живом запуске)
+- **Симптом:** `aios` (ядерный TUI) паниковал на `thread 'main'` сразу после HAL-детекции (`HAL: NVIDIA GPU detected … Detected 16 cores, …`) с `Cannot start a runtime from within a runtime` из `tokio-1.53.1/src/runtime/scheduler/multi_thread/mod.rs:91`.
+- **Причина:** `main` помечен `#[tokio::main]`, поэтому главный поток уже находится внутри tokio-runtime. Стартовый проход обеспечения (`AutohalEngine::rescan` → `provision_blocking`) и другие синхронные обёртки (`DriverFetcher::sync_get`/`find_driver_sync`, `StoreManager::block_on`) каждый раз строили *свежий* tokio-runtime и вызывали `block_on` изнутри работающего runtime, что tokio запрещает.
+- **Исправление:** новый хелпер `aios_core::runtime::block_on_future` — вне runtime строит свежий runtime; внутри multi-thread runtime паркует воркер через `block_in_place` и блокируется на существующем handle (включая не-`Send` футуры); все синхронные обёртки идут через него.
+- **Обходной путь / примечания:** не требуется после фикса; покрыто регрессионным тестом `provision_blocking_is_safe_inside_tokio_runtime`.
+
 ### ИСПРАВЛЕНО: `Kernel panic: No working init found` при загрузке из initramfs
 - **Статус:** ИСПРАВЛЕНО в v2.12.0 (на уровне архитектуры)
 - **Симптом:** Когда в initramfs не оказывалось рабочего `/sbin/init` (или скрипт busybox init отсутствовал / не был исполняемым), ядро останавливалось с `Kernel panic: No working init found. Try passing init= option to kernel.`

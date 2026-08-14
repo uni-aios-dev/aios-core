@@ -1,5 +1,17 @@
 # Журнал разработки AIOS
 
+## v2.25.1 — Исправление паники вложенного runtime в синхронных async-обёртках (2026-08-14)
+
+### Корневая причина
+- Ядро TUI (`aios`) работает на главном потоке `#[tokio::main]`. Стартовое обеспечение оборудованием (`AutohalEngine::rescan` → `provision_blocking`) и каждая последующая синхронная обёртка создавали свежий tokio-runtime и вызывали `block_on` изнутри уже работающего runtime, аварийно завершаясь с `Cannot start a runtime from within a runtime` сразу после HAL-детекции (`HAL: NVIDIA GPU detected … Detected 16 cores`).
+
+### Исправление
+- Новый хелпер `aios_core::runtime::block_on_future`: вне runtime создаёт свежий runtime; внутри multi-thread runtime паркует текущий воркер через `block_in_place` и блокируется на существующем handle (работает и для не-`Send` футур, например заимствующей не-`Send` `AutohalEngine`); внутри single-thread runtime откатывается на свежий runtime (в кодовой базе такого пути нет).
+- `AutohalEngine::provision_blocking`, `DriverFetcher::sync_get`/`find_driver_sync` (aios-autohal) и `StoreManager::block_on` (aios-store) теперь идут через хелпер, так что и стартовый проход обеспечения, и поиск/установка в магазине TUI больше не паникуют внутри `#[tokio::main]`.
+- `aios-core` получает зависимость `tokio` для моста runtime на уровне фундамента.
+- Тесты: +3 — `provision_blocking_is_safe_inside_tokio_runtime` (регрессия ровно на эту панику, multi-thread `#[tokio::test]`), `runs_from_plain_thread` и `runs_inside_multi_thread_runtime_without_nesting` (aios-core). Workspace: 1335 тестов проходят, clippy — ноль предупреждений, `cargo fmt` чист.
+- Файлы: `aios-core/src/{runtime,lib}.rs`, `aios-core/Cargo.toml`, `aios-autohal/src/{engine,fetcher}.rs`, `aios-store/src/manager.rs`, `docs/*`.
+
 ## v2.25.0 — Нативные push-уведомления hot-plug (2026-08-14)
 
 ### `native.rs` (aios-autohal)

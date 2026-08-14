@@ -1,5 +1,17 @@
 # AIOS Development Log
 
+## v2.25.1 — Fix nested-runtime panic in synchronous async wrappers (2026-08-14)
+
+### Root cause
+- The kernel TUI (`aios`) runs on a `#[tokio::main]` main thread. Startup hardware provisioning (`AutohalEngine::rescan` → `provision_blocking`) and every later synchronous wrapper created a fresh tokio runtime and called `block_on` from inside the running runtime, aborting with `Cannot start a runtime from within a runtime` right after HAL detection (`HAL: NVIDIA GPU detected … Detected 16 cores`).
+
+### Fix
+- New `aios_core::runtime::block_on_future` helper: outside a runtime it builds a fresh runtime; inside a multi-thread runtime it parks the current worker with `block_in_place` and blocks on the existing handle (works for non-`Send` futures like one borrowing the non-`Send` `AutohalEngine`); inside a single-thread runtime it falls back to a fresh runtime (no codebase path hits this case).
+- `AutohalEngine::provision_blocking`, `DriverFetcher::sync_get`/`find_driver_sync` (aios-autohal) and `StoreManager::block_on` (aios-store) now route through the helper, so both the startup provisioning pass and the TUI store search/install no longer panic inside `#[tokio::main]`.
+- `aios-core` gains a `tokio` dependency for the foundation-level runtime bridge.
+- Tests: +3 — `provision_blocking_is_safe_inside_tokio_runtime` (regression for the exact panic, multi-thread `#[tokio::test]`), `runs_from_plain_thread` and `runs_inside_multi_thread_runtime_without_nesting` (aios-core). Workspace: 1335 tests pass, clippy zero warnings, `cargo fmt` clean.
+- Files: `aios-core/src/{runtime,lib}.rs`, `aios-core/Cargo.toml`, `aios-autohal/src/{engine,fetcher}.rs`, `aios-store/src/manager.rs`, `docs/*`.
+
 ## v2.25.0 — Native push-based hot-plug notifications (2026-08-14)
 
 ### `native.rs` (aios-autohal)

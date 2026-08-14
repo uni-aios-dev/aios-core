@@ -85,10 +85,10 @@ impl Transport {
     }
 
     /// Synchronous wrapper used by the block/IPC and UI paths; the pipeline is
-    /// synchronous there and only the network hop needs a runtime.
+    /// synchronous there and only the network hop needs a runtime. Safe to call
+    /// from inside a tokio runtime (see [`aios_core::runtime::block_on_future`]).
     pub fn sync_get(&self, url: &str) -> Result<Vec<u8>, String> {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-        rt.block_on(self.get(url))
+        aios_core::runtime::block_on_future(self.get(url))
     }
 }
 
@@ -193,10 +193,10 @@ impl DriverFetcher {
         Err(FetchError::NotFound(fp.display_name()))
     }
 
-    /// Synchronous variant for block/IPC and UI paths.
+    /// Synchronous variant for block/IPC and UI paths. Safe to call from inside
+    /// a tokio runtime (see [`aios_core::runtime::block_on_future`]).
     pub fn find_driver_sync(&self, fp: &HardwareFingerprint) -> Result<FetchedDriver, FetchError> {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| FetchError::Network(e.to_string()))?;
-        rt.block_on(self.find_driver(fp))
+        aios_core::runtime::block_on_future(self.find_driver(fp))
     }
 
     /// Custom store registry layout: `{root}/drivers/{id}/driver.json` +

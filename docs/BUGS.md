@@ -4,6 +4,13 @@
 
 As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, the v2.12.0 `aios-init` initramfs init, the v2.13.0 `/system/aios-core` kernel-TUI handover, the v2.20.0 stateful process migration (executor state snapshots + `GetState`/`GetStateReply` + state-carried `migrate`), the v2.21.0 checkpoint replication (heartbeat broadcast + TTL pruning + automatic failover restore), the v2.22.0 `aios-autohal` hardware auto-provisioning and the v2.25.0 native push-based hot-plug notifications added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
 
+### RESOLVED: `Cannot start a runtime from within a runtime` at TUI startup
+- **Status:** FIXED in v2.25.1 (found during live verification)
+- **Symptom:** `aios` (kernel TUI) panicked on `thread 'main'` right after HAL detection (`HAL: NVIDIA GPU detected … Detected 16 cores, …`) with `Cannot start a runtime from within a runtime` from `tokio-1.53.1/src/runtime/scheduler/multi_thread/mod.rs:91`.
+- **Root cause:** `main` is `#[tokio::main]`, so the main thread already lives inside a tokio runtime. The startup provisioning pass (`AutohalEngine::rescan` → `provision_blocking`) and other synchronous wrappers (`DriverFetcher::sync_get`/`find_driver_sync`, `StoreManager::block_on`) each built a *fresh* tokio runtime and called `block_on` from inside the running runtime, which tokio forbids.
+- **Fix:** new `aios_core::runtime::block_on_future` helper — outside a runtime it builds a fresh runtime; inside a multi-thread runtime it parks the worker with `block_in_place` and blocks on the existing handle (non-`Send` futures included); all synchronous wrappers route through it.
+- **Workaround / notes:** none needed post-fix; covered by the regression test `provision_blocking_is_safe_inside_tokio_runtime`.
+
 ### RESOLVED: `Kernel panic: No working init found` on initramfs boot
 - **Status:** FIXED in v2.12.0 (design-level)
 - **Symptom:** When the initramfs did not contain a working `/sbin/init` (or the busybox init script was missing/not executable), the kernel aborted with `Kernel panic: No working init found. Try passing init= option to kernel.`

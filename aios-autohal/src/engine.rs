@@ -300,24 +300,10 @@ impl AutohalEngine {
     }
 
     /// Synchronous wrapper of [`AutohalEngine::provision`] for block/IPC and
-    /// UI paths that do not own a runtime.
+    /// UI paths that do not own a runtime. Safe to call from inside a tokio
+    /// runtime (see [`aios_core::runtime::block_on_future`]).
     pub fn provision_blocking(&mut self, fp: HardwareFingerprint) {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| EngineError::Sandbox(e.to_string()));
-        match rt {
-            Ok(rt) => {
-                let _ = rt.block_on(self.provision(fp));
-            }
-            Err(e) => {
-                self.push_toast(
-                    ToastKind::Error,
-                    format!(
-                        "[Hardware] {} -> runtime error ({e}) -> Generic Fallback",
-                        fp.display_name()
-                    ),
-                );
-                self.activate_generic(&fp);
-            }
-        }
+        let _ = aios_core::runtime::block_on_future(self.provision(fp));
     }
 
     /// Drop the WASM instance and tracking entry for a device that was
@@ -853,6 +839,20 @@ mod tests {
             .load_wasm("driver.usb.046d.0825")
             .expect("wasm cached");
         assert!(!cached.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn provision_blocking_is_safe_inside_tokio_runtime() {
+        let (config, _dir) = tmp_config();
+        let mut engine = AutohalEngine::new(config).unwrap();
+        engine.provision_blocking(c270_fp());
+
+        let dev = engine
+            .devices()
+            .iter()
+            .find(|d| d.fingerprint == c270_fp())
+            .expect("device provisioned from inside a tokio runtime");
+        assert_eq!(dev.state, DriverState::Active);
     }
 
     #[test]
