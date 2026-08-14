@@ -1,5 +1,16 @@
 # AIOS Development Log
 
+## v2.25.2 — Fix VRAM reported as 4.0 GB for GPUs above 4 GiB (2026-08-14)
+
+### Root cause
+- The kernel TUI (`aios`) detected the GPU model correctly but showed 4.0 GB VRAM for an RTX 3060 12 GB. `hw_probe::probe_gpu` read VRAM from WMI `win32_VideoController.AdapterRAM`, a 32-bit field: NVIDIA drivers report wrapped/truncated values for GPUs above 4 GiB (the RTX 3060 returns 4293918720 = 0xFFF00000, i.e. 4.0 GiB minus 1 MiB). The existing 0xFFFFFFFF guard only handled the "unknown" sentinel, not the wrap, so the TUI rendered 4.0 GB while the GUI/HAL correctly showed 12288 MB.
+
+### Fix
+- `probe_gpu` now prefers `aios_hal::hardware::HardwareProfile::detect()`, which reads the real VRAM via `nvidia-smi --query-gpu=memory.total` (MiB). The WMI `AdapterRAM` path stays only as a last-resort name source.
+- New `gpu_from_hal` converter (vram_mb → bytes/GiB) with regression tests.
+- Tests: +3 in `hw_probe` (`hal_gpu_vram_mb_is_converted_to_gi_bytes`, `hal_gpu_without_vram_reports_zero_gib`, `wmi_adapterram_wrap_no_longer_reaches_the_tui`). Clippy zero warnings, `cargo fmt` clean.
+- Files: `aios/src/hw_probe.rs`, `docs/*`.
+
 ## v2.25.1 — Fix nested-runtime panic in synchronous async wrappers (2026-08-14)
 
 ### Root cause

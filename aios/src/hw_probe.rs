@@ -135,7 +135,23 @@ fn probe_memory(sys: &sysinfo::System) -> MemInfo {
     }
 }
 
+fn gpu_from_hal(gpu: &aios_hal::hardware::GpuInfo) -> GpuInfo {
+    GpuInfo {
+        model: gpu.name.clone(),
+        vram_bytes: gpu.vram_mb.saturating_mul(1_048_576),
+        vram_gb: gpu.vram_mb as f64 / 1024.0,
+    }
+}
+
 fn probe_gpu() -> Option<GpuInfo> {
+    // Prefer the HAL detection: it reads the real VRAM through nvidia-smi
+    // (`memory.total`, MiB) / rocm-smi. WMI's win32_VideoController.AdapterRAM
+    // is a 32-bit field that wraps for GPUs above 4 GiB (an RTX 3060 reports
+    // 0xFFF00000 -> "4.0 GB"), so it is only kept as a last-resort name source.
+    if let Some(gpu) = aios_hal::hardware::HardwareProfile::detect().gpu {
+        return Some(gpu_from_hal(&gpu));
+    }
+
     #[cfg(target_os = "windows")]
     {
         if let Ok(out) = String::from_utf8(
@@ -286,5 +302,42 @@ fn determine_ai_tier(cpu: &CpuInfo, mem: &MemInfo, gpu: &Option<GpuInfo>) -> Str
         "Tier2 (Mid Range)".into()
     } else {
         "Tier3 (Fallback)".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hal_gpu(vram_mb: u64) -> aios_hal::hardware::GpuInfo {
+        aios_hal::hardware::GpuInfo {
+            name: "NVIDIA GeForce RTX 3060".into(),
+            vram_mb,
+            compute_shaders: true,
+            vendor: "NVIDIA".into(),
+            driver_version: "test".into(),
+            cuda_cores: 3584,
+            compute_capability: "8.6".into(),
+        }
+    }
+
+    #[test]
+    fn hal_gpu_vram_mb_is_converted_to_gi_bytes() {
+        let gpu = gpu_from_hal(&hal_gpu(12288));
+        assert_eq!(gpu.vram_bytes, 12_884_901_888);
+        assert!((gpu.vram_gb - 12.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hal_gpu_without_vram_reports_zero_gib() {
+        let gpu = gpu_from_hal(&hal_gpu(0));
+        assert_eq!(gpu.vram_bytes, 0);
+        assert_eq!(gpu.vram_gb, 0.0);
+    }
+
+    #[test]
+    fn wmi_adapterram_wrap_no_longer_reaches_the_tui() {
+        let gpu = gpu_from_hal(&hal_gpu(12_288));
+        assert!(gpu.vram_gb > 4.0);
     }
 }

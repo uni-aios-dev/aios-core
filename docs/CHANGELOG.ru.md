@@ -1,5 +1,16 @@
 # Журнал разработки AIOS
 
+## v2.25.2 — Исправлен VRAM «4.0 GB» для видеокарт больше 4 ГиБ (2026-08-14)
+
+### Причина
+- Ядерный TUI (`aios`) верно определял модель видеокарты, но показывал 4.0 GB VRAM для RTX 3060 на 12 ГБ. `hw_probe::probe_gpu` брал VRAM из WMI-поля `win32_VideoController.AdapterRAM` (32-битное): драйверы NVIDIA отдают «завёрнутое»/усечённое значение для карт больше 4 ГиБ (RTX 3060 возвращает 4293918720 = 0xFFF00000, т.е. 4.0 ГиБ минус 1 МиБ). Существующая проверка на 0xFFFFFFFF покрывала только «неизвестное» значение, а не заворот, поэтому TUI показывал 4.0 GB, тогда как GUI/HAL корректно отдавал 12288 MB.
+
+### Исправление
+- `probe_gpu` теперь сначала использует `aios_hal::hardware::HardwareProfile::detect()`, который читает реальный VRAM через `nvidia-smi --query-gpu=memory.total` (в МиБ). Путь через WMI `AdapterRAM` оставлен только как запасной источник имени.
+- Добавлен конвертер `gpu_from_hal` (vram_mb → байты/ГиБ) с регрессионными тестами.
+- Тесты: +3 в `hw_probe` (`hal_gpu_vram_mb_is_converted_to_gi_bytes`, `hal_gpu_without_vram_reports_zero_gib`, `wmi_adapterram_wrap_no_longer_reaches_the_tui`). Clippy без предупреждений, `cargo fmt` чист.
+- Файлы: `aios/src/hw_probe.rs`, `docs/*`.
+
 ## v2.25.1 — Исправление паники вложенного runtime в синхронных async-обёртках (2026-08-14)
 
 ### Корневая причина

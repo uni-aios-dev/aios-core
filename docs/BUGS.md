@@ -4,6 +4,13 @@
 
 As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, the v2.12.0 `aios-init` initramfs init, the v2.13.0 `/system/aios-core` kernel-TUI handover, the v2.20.0 stateful process migration (executor state snapshots + `GetState`/`GetStateReply` + state-carried `migrate`), the v2.21.0 checkpoint replication (heartbeat broadcast + TTL pruning + automatic failover restore), the v2.22.0 `aios-autohal` hardware auto-provisioning and the v2.25.0 native push-based hot-plug notifications added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
 
+### RESOLVED: VRAM shown as 4.0 GB for GPUs above 4 GiB in the kernel TUI
+- **Status:** FIXED in v2.25.2 (found during live verification)
+- **Symptom:** `aios` (kernel TUI) detected the GPU model correctly but always reported 4.0 GB VRAM (an RTX 3060 12 GB showed "4.0 GB VRAM"), while the GUI/HAL correctly showed 12288 MB.
+- **Root cause:** `hw_probe::probe_gpu` read VRAM from the WMI field `win32_VideoController.AdapterRAM`, which is 32-bit. NVIDIA drivers return wrapped/truncated values for GPUs above 4 GiB — the RTX 3060 reports 4293918720 (0xFFF00000), i.e. 4.0 GiB minus 1 MiB. The existing `0xFFFFFFFF` guard only covered the "unknown" sentinel, not the wrap.
+- **Fix:** `probe_gpu` now prefers `aios_hal::hardware::HardwareProfile::detect()`, which reads the real VRAM via `nvidia-smi --query-gpu=memory.total` (MiB). The WMI path remains only as a last-resort name source; a `gpu_from_hal` converter plus regression tests were added.
+- **Workaround / notes:** none needed post-fix; covered by regression tests in `aios/src/hw_probe.rs`.
+
 ### RESOLVED: `Cannot start a runtime from within a runtime` at TUI startup
 - **Status:** FIXED in v2.25.1 (found during live verification)
 - **Symptom:** `aios` (kernel TUI) panicked on `thread 'main'` right after HAL detection (`HAL: NVIDIA GPU detected … Detected 16 cores, …`) with `Cannot start a runtime from within a runtime` from `tokio-1.53.1/src/runtime/scheduler/multi_thread/mod.rs:91`.
