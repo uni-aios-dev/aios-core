@@ -60,6 +60,12 @@ pub struct HotplugConfig {
     /// scan scheduling on platforms without a signal. Kept small (250 ms) since
     /// it is far cheaper than a full detection.
     pub signal_poll_ms: u64,
+    /// Whether to run the OS-native push listener
+    /// ([`crate::native::NativeHotplugMonitor`]). A native arrival/removal
+    /// event triggers an immediate full re-detection instead of waiting for the
+    /// next signal/poll tick. Default `true`; set to `false` in environments
+    /// where no native source exists (pure polling keeps working either way).
+    pub native_enabled: bool,
 }
 
 impl Default for HotplugConfig {
@@ -67,6 +73,7 @@ impl Default for HotplugConfig {
         Self {
             poll_ms: 1000,
             signal_poll_ms: 250,
+            native_enabled: true,
         }
     }
 }
@@ -153,11 +160,20 @@ pub struct HotplugMonitor {
 }
 
 impl HotplugMonitor {
-    /// Start a monitor thread with the given polling configuration.
+    /// Start a monitor thread with the given polling configuration. When
+    /// [`HotplugConfig::native_enabled`] is set, an OS-native push listener
+    /// ([`crate::native::NativeHotplugMonitor`]) is started alongside the
+    /// poll/signal loop: any relevant kernel-reported device arrival/removal
+    /// triggers a full re-detection immediately rather than on the next tick.
     pub fn start(config: HotplugConfig) -> Self {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let native = if config.native_enabled {
+            Some(crate::native::NativeHotplugMonitor::start())
+        } else {
+            None
+        };
         let handle = thread::spawn(move || {
             let mut previous: HashSet<HardwareFingerprint> = HashSet::new();
             scan_and_emit(&mut previous, &tx);
@@ -168,7 +184,20 @@ impl HotplugMonitor {
             let have_cheap = initial_signal.is_some();
             let mut prev_signal = initial_signal;
             while !thread_stop.load(Ordering::Relaxed) {
-                let run_scan = if have_cheap {
+                let native_pushed = if let Some(native) = native.as_ref() {
+                    let mut pushed = false;
+                    while let Some(ev) = native.try_recv() {
+                        if ev.is_relevant() {
+                            pushed = true;
+                        }
+                    }
+                    pushed
+                } else {
+                    false
+                };
+                let run_scan = if native_pushed {
+                    true
+                } else if have_cheap {
                     let (changed, state) = cheap_signal(prev_signal);
                     prev_signal = state;
                     changed || last_full.elapsed() >= poll_dur
@@ -344,5 +373,35 @@ mod tests {
         let cfg = HotplugConfig::default();
         assert_eq!(cfg.poll_ms, 1000);
         assert_eq!(cfg.signal_poll_ms, 250);
+        assert!(cfg.native_enabled);
+    }
+
+    #[test]
+    fn native_monitor_starts_and_stops_cleanly() {
+        let monitor = crate::native::NativeHotplugMonitor::start();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && !monitor.is_active() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        #[cfg(windows)]
+        assert!(
+            monitor.is_active(),
+            "PnP listener should create its hidden message window"
+        );
+        assert_eq!(monitor.try_recv(), None, "no events while the tree is idle");
+        drop(monitor);
+    }
+
+    #[test]
+    fn disabled_native_falls_back_to_polling() {
+        let cfg = HotplugConfig {
+            poll_ms: 50,
+            native_enabled: false,
+            ..HotplugConfig::default()
+        };
+        let monitor = HotplugMonitor::start(cfg);
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(monitor.drain().is_empty(), "no hot-plug should fire here");
+        drop(monitor);
     }
 }

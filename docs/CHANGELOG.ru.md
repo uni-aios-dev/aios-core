@@ -1,5 +1,17 @@
 # Журнал разработки AIOS
 
+## v2.25.0 — Нативные push-уведомления hot-plug (2026-08-14)
+
+### `native.rs` (aios-autohal)
+- Новый нативный push-слушатель `NativeHotplugMonitor`: ядро сообщает AIOS *сразу*, когда дерево устройств движется, поэтому полный `HardwareProfile::detect()` + диф отпечатков запускается ровно тогда, когда это гарантированно полезно, а не по истечении следующего тика сигнала/опроса (каденция v2.24.1, по умолчанию 250 мс).
+- **Windows**: скрытое message-only окно + `RegisterDeviceNotificationW` (все классы device-interface). `WM_DEVICECHANGE` с `DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE` будит выделенный поток message-pump, который передаёт монитору грубое `NativeEvent` (`added` + `BusHint`).
+- **Linux**: сокет `NETLINK_KOBJECT_UEVENT` (multicast-группа 1) разбирает uevents `add`/`bind`/`change`/`remove`/`unbind`; имя подсистемы классифицируется в `BusHint`. Чистый FFI на `libc`, завязан на `cfg(target_os = "linux")`.
+- `BusHint` (Usb/Pci/Nvme/Storage/Other) позволяет монитору игнорировать посторонний шум (дисплеи, звук, HID) без оплаты полного сканирования. Нативный слой осознанно **не** строит отпечатки сам — он лишь вовремя запускает авторитетный `HardwareProfile::detect()`.
+- `HotplugConfig` получает `native_enabled` (по умолчанию `true`); `false` форсирует чистый путь опроса/дешёвого сигнала (например, окружения без нативного источника). `HotplugMonitor::start` дренирует нативные события каждый тик; любое релевантное событие сразу запускает полное пере-определение, дешёвый сигнал и страховочная сетка `poll_ms` остаются запасным вариантом.
+- Чистое завершение: `HWND` публикуется сразу после создания окна, поэтому `Drop` шлёт `WM_CLOSE` (pump выходит, поток джойнится); ограниченное ожидание в `Drop` убирает стартовую гонку, где `WM_CLOSE` мог бы потеряться, а ограниченный join утекает «заклинивший» слушатель вместо зависания вызывающего.
+- Тесты: +3 в `hotplug.rs` (`native_monitor_starts_and_stops_cleanly` — реальный PnP-слушатель на Windows и проверка появления скрытого окна, `disabled_native_falls_back_to_polling`, обновлённый `config_defaults`) плюс юнит-тесты нативного модуля (фильтр релевантности, классификация Windows-интерфейсов, разбор Linux-uevent). Workspace: 1332 теста проходят, clippy — ноль предупреждений, `cargo fmt` чист.
+- Файлы: `aios-autohal/src/{lib,native,hotplug}.rs`, `aios-autohal/Cargo.toml` (libc для linux-таргета), `docs/*`.
+
 ## v2.24.1 — Адаптивное пере-определение hot-plug по дешёвому сигналу дерева устройств (2026-08-14)
 
 ### `hotplug.rs` (aios-autohal)

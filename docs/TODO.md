@@ -463,7 +463,7 @@
   - [x] Docs: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
   - [x] Live integration: `aios-gui` Hardware & Drivers tab (F9) wired to `AutohalEngine` (`hw_init`/`hw_refresh`/`apply_hw_actions`, `tabs/hardware.rs`); kernel TUI `aios` embeds `HardwareInspector` in System & HW tab (`TuiApp` `hw_engine`/`hw_views`/`hw_toasts`, `init_hw_engine` inert in safe mode, tick refresh, `F10` rescan)
   - [x] Hot-plug event loop: `hotplug.rs` — background `HotplugMonitor` thread re-detects the hardware snapshot and emits `Added`/`Removed` fingerprints over `mpsc`; kernel TUI and GUI drain it every tick/frame and apply events to the engine (`provision_blocking` on arrival, `AutohalEngine::remove_device` on removal keeping the cached driver). Adaptive cadence: Linux cheap sysfs-mtime signal (`dir_signal_hash`) triggers full detect only when the device tree moves; other platforms use the fixed `poll_ms` interval. Baseline warm-up + clean stop on drop.
-  - [ ] Remaining: native push-based hot-plug — `udev` netlink (Linux) or PnP/RegisterDeviceNotification (Windows) instead of the cheap-signal/sysfs-mtime and polling approaches
+  - [x] Native push-based hot-plug: `native.rs` — `NETLINK_KOBJECT_UEVENT` udev listener on Linux and `RegisterDeviceNotificationW` hidden-window PnP monitor on Windows push a coarse `NativeEvent` (`BusHint`-classified) to `HotplugMonitor`, which triggers an immediate full re-detection; `HotplugConfig::native_enabled` (default on) falls back to the cheap signal + `poll_ms` net (v2.25.0)
 
 ### Readiness Targets
 | Milestone | Target Readiness | Key Gap |

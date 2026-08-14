@@ -1,5 +1,17 @@
 # AIOS Development Log
 
+## v2.25.0 — Native push-based hot-plug notifications (2026-08-14)
+
+### `native.rs` (aios-autohal)
+- New OS-native push listener `NativeHotplugMonitor`: the kernel tells AIOS *immediately* when the device tree moves, so a full `HardwareProfile::detect()` + fingerprint diff runs exactly when it is guaranteed useful, instead of waiting out the next signal/poll tick (v2.24.1 cadence, default 250 ms).
+- **Windows**: a hidden message-only window is registered with `RegisterDeviceNotificationW` (all device-interface classes). `WM_DEVICECHANGE` with `DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE` wakes a dedicated message-pump thread, which forwards a coarse `NativeEvent` (`added` + `BusHint`) to the monitor.
+- **Linux**: a `NETLINK_KOBJECT_UEVENT` socket (multicast group 1) parses `add`/`bind`/`change`/`remove`/`unbind` uevents; subsystem names are classified into `BusHint`. Pure `libc` FFI gated behind `cfg(target_os = "linux")`.
+- `BusHint` (Usb/Pci/Nvme/Storage/Other) lets the monitor ignore irrelevant churn (display, audio, HID consumer events) without paying for a full scan. The native layer deliberately does **not** build fingerprints itself — it only triggers the authoritative `HardwareProfile::detect()` promptly.
+- `HotplugConfig` gains `native_enabled` (default `true`); set `false` to force the pure poll/cheap-signal path (e.g. environments with no native source). `HotplugMonitor::start` drains native events every tick; any relevant event triggers an immediate full re-detection, the cheap signal and `poll_ms` safety net stay as the fallback.
+- Clean shutdown: the `HWND` is published right after window creation so `Drop` posts `WM_CLOSE` (the pump exits and the thread joins); a bounded wait in `Drop` removes the start-up race where a WM_CLOSE could be lost, and a bounded join leaks a wedged listener rather than hanging the caller.
+- Tests: +3 in `hotplug.rs` (`native_monitor_starts_and_stops_cleanly` — starts the real PnP listener on Windows and asserts its hidden window comes up, `disabled_native_falls_back_to_polling`, updated `config_defaults`) plus the native module unit tests (relevance filter, Windows interface classification, Linux uevent parsing). Workspace: 1332 tests pass, clippy zero warnings, `cargo fmt` clean.
+- Files: `aios-autohal/src/{lib,native,hotplug}.rs`, `aios-autohal/Cargo.toml` (libc for the linux target), `docs/*`.
+
 ## v2.24.1 — Adaptive hot-plug re-detection with cheap device-tree signal (2026-08-14)
 
 ### `hotplug.rs` (aios-autohal)

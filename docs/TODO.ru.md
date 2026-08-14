@@ -461,7 +461,7 @@
   - [x] Доки: ARCHITECTURE/CHANGELOG/INTERFACE (EN + RU)
   - [x] Живая интеграция: вкладка `aios-gui` Hardware & Drivers (F9) подключена к `AutohalEngine` (`hw_init`/`hw_refresh`/`apply_hw_actions`, `tabs/hardware.rs`); kernel TUI `aios` встраивает `HardwareInspector` во вкладку System & HW (`TuiApp` `hw_engine`/`hw_views`/`hw_toasts`, `init_hw_engine` инертен в safe mode, обновление по тику, рескан по `F10`)
   - [x] Цикл hot-plug событий: `hotplug.rs` — фоновый `HotplugMonitor` пере-определяет аппаратный снимок и выдаёт отпечатки `Added`/`Removed` через `mpsc`; kernel TUI и GUI разгребают его каждый тик/кадр и применяют события к движку (`provision_blocking` при появлении, `AutohalEngine::remove_device` при удалении с сохранением кэша драйвера). Адаптивная частота: на Linux дешёвый сигнал по mtime sysfs (`dir_signal_hash`) запускает полное определение только при движении дерева устройств; другие платформы используют фиксированный интервал `poll_ms`. Warm-up базовой линии + чистая остановка в drop.
-  - [ ] Осталось: нативные push-события — `udev` netlink (Linux) или PnP/RegisterDeviceNotification (Windows) вместо дешёвого сигнала/mtime sysfs и опроса
+  - [x] Нативные push-события: `native.rs` — слушатель `NETLINK_KOBJECT_UEVENT` (udev) на Linux и PnP-монитор `RegisterDeviceNotificationW` со скрытым окном на Windows шлют грубое `NativeEvent` (классификация по `BusHint`) в `HotplugMonitor`, который сразу запускает полное пере-определение; `HotplugConfig::native_enabled` (по умолчанию вкл.) откатывается на дешёвый сигнал + сетку `poll_ms` (v2.25.0)
 
 ### Целевые показатели готовности
 | Веха | Целевая готовность | Ключевой разрыв |
