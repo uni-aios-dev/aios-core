@@ -71,23 +71,30 @@ impl Default for HotplugConfig {
     }
 }
 
-/// Fold the mtimes of the given directories into a single hash. `None` when no
-/// directory is readable, so a missing tree never counts as a change.
+/// Fold the paths and mtimes of the given directories into a single hash.
+/// `None` when no directory is readable, so a missing tree never counts as a
+/// change. The path is folded in as well so that distinct directories never
+/// collide purely because their mtimes match (filesystem timestamp granularity
+/// on Windows can give two freshly-created directories identical mtimes).
 pub fn dir_signal_hash(paths: &[&Path]) -> Option<u64> {
-    let mut hash: u64 = 0;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
     let mut seen = false;
     for dir in paths {
+        dir.hash(&mut hasher);
         if let Ok(metadata) = std::fs::metadata(dir) {
             if let Ok(modified) = metadata.modified() {
                 if let Ok(ns) = modified.duration_since(std::time::UNIX_EPOCH) {
-                    hash = hash.rotate_left(17) ^ (ns.as_nanos() as u64);
+                    (ns.as_nanos() as u64).hash(&mut hasher);
                     seen = true;
                 }
             }
         }
     }
     if seen {
-        Some(hash)
+        Some(hasher.finish())
     } else {
         None
     }
