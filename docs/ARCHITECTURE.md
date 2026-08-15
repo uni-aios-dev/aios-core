@@ -1278,13 +1278,18 @@ The script runs `cargo build --release --target x86_64-unknown-linux-musl` for `
 - Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
 - `init=/init` tells the kernel to run the binary instead of `/sbin/init`; `console=tty0` routes kernel + init output to the primary console.
 
-## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — v2.26.0
+## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — v2.27.0
 
-A fresh `x86_64-unknown-none` microkernel that boots directly from `bootloader::BiosBoot` (BIOS disk image) inside QEMU. It is the seed of a self-hosted kernel and currently provides milestone 0 console I/O only.
+A fresh `x86_64-unknown-none` microkernel that boots directly from `bootloader::BiosBoot` (BIOS disk image) inside QEMU. It is the seed of a self-hosted kernel and currently provides milestone 0 console I/O plus milestone 1 interrupts (GDT/TSS, IDT, PIC remap, PIT timer, PS/2 keyboard).
 
 - `aios-kernel`: `no_std`/`no_main` crate. Entry point via `bootloader_api::entry_point!(kernel_main, config = &BOOTLOADER_CONFIG)`; `BOOTLOADER_CONFIG` enables `mappings.physical_memory = Some(Mapping::Dynamic)` so low physical memory (e.g. the VGA text buffer at `0xB8000`) is reachable at `physical_memory_offset`.
   - `serial` — COM1 polling UART driver (`outb`/`inb`), `kprintln!`.
   - `vga` — 80x25 text-mode console behind a spin lock; `vga_init(offset)` re-points the buffer to `0xB8000 + offset`; `vprintln!`.
+  - `port` — `outb`/`inb`/`io_wait` helpers for x86 port I/O.
+  - `gdt` — 7-entry GDT (null, kernel/user code+data, 64-bit TSS with a dedicated double-fault IST stack); `Descriptor` is `#[repr(C, packed)]` so `lgdt` reads the base from the correct offset. `reload_segments` refreshes DS/ES/FS/GS to `0x10`; `ltr` installs the TSS.
+  - `idt` — 256-entry IDT built from the assembly-generated `aios_handler_table` (vector stubs in `.text`, table in `.data.rel.ro` with load-time relocations applied by the bootloader); gate 8 uses the double-fault IST.
+  - `interrupts` — `aios_interrupt_common` C shim (`aios_handle_interrupt`) dispatches by vector: fatal faults (0/6/8/13/14) print and halt, IRQ range `0x20..=0x2F` is EOI'd, IRQ0 (PIT) bumps `TICKS` at 100 Hz, IRQ1 (keyboard) stores the last scancode. `init_pic` remaps the 8259 PIC to `0x20`/`0x28` and masks all but IRQ0/IRQ1; `init_pit` programs channel 0 for 100 Hz.
+  - `main` — boots, initializes serial/VGA, prints memory regions, physical-memory offset, framebuffer and RSDP, then enables GDT/TSS, IDT, PIC and PIT, `sti`, and enters `idle_loop` printing `tick Ns` every second and decoded keys.
   - Panic handler prints via both consoles and `halt_loop`s.
 - `aios-kernel-run`: build runner + BIOS image producer (`BiosBoot::new(elf).create_disk_image`) + QEMU launcher (`-serial stdio -display none -no-reboot`).
-- Verify: `cargo run --release` in `aios-kernel-run` — serial shows memory regions, physical memory offset, framebuffer, RSDP and `[serial] Milestone 0 OK.`
+- Verify: `cargo run --release` in `aios-kernel-run` — serial shows memory regions, physical memory offset, framebuffer, RSDP, `[serial] Milestone 0 OK.`, `[serial] Milestone 1: interrupts online.`, then `tick 1s/2s/...` every second; injected keys print as `key 'x' (0xNN)`. Keyboard can be tested via QEMU monitor: `sendkey h`.

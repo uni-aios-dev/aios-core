@@ -1,6 +1,22 @@
 # AIOS Development Log
 
-## v2.26.0 — aios-kernel milestone 0: bare-metal kernel boots with serial + VGA console (2026-08-15)
+## v2.27.0 — aios-kernel milestone 1: interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard) (2026-08-15)
+
+### What landed
+- `aios-kernel` gained a full x86_64 interrupt stack: a 7-entry GDT with a 64-bit TSS (double-fault IST), a 256-entry IDT wired to assembly vector stubs, 8259 PIC remap to `0x20`/`0x28`, a 100 Hz PIT timer and PS/2 keyboard IRQ handling.
+- New modules: `gdt` (GDT + TSS, `lgdt`/`reload_segments`/`ltr`), `idt` (256 gates built from `aios_handler_table`), `interrupts` (dispatch shim `aios_handle_interrupt`, `init_pic`, `init_pit`, `pic_eoi`, scancode table), `port` (`outb`/`inb`/`io_wait`).
+- `build.rs` generates `irq_stubs.S`: 256 per-vector stubs plus `aios_interrupt_common` (frame save/restore, calls the C handler). The handler table lives in `.data.rel.ro` (with `.hidden`), vector stubs and the common path in `.text`.
+- `kernel_main` now installs GDT/TSS, IDT, PIC and PIT, executes `sti` and enters an idle loop that prints `tick Ns` every second and decodes keyboard scancodes (`key 'x' (0xNN)`).
+- Milestone 1 smoke test passes under QEMU: `[serial] Milestone 1: interrupts online.`, then `tick 1s/2s/...`; injected keys via QEMU monitor (`sendkey h`) print `[serial] key 'h' (0x23)`.
+
+### Bugs fixed
+- `Descriptor { limit, base }` in `gdt.rs`/`idt.rs` was `#[repr(C)]`; the `u64` base field landed at offset 8, but `lgdt`/`lidt` read the 10-byte descriptor as limit at 0 and base at 2, so the loaded GDTR/IDTR base was `padding + first two base bytes` (e.g. `0xd960` instead of `0x1000001d960`). Result: every segment/IDT load through the new GDT faulted (`#GP` on `lretq`/`mov ds`, `#DF` on IDT delivery, triple fault). Fixed with `#[repr(C, packed)]` and `addr_of_mut!` for the descriptor field.
+- `global_asm!` blocks are concatenated into one assembly stream; the `.section .data.rel.ro` emitted by the generated `irq_stubs.S` leaked into the next `global_asm!`, placing `aios_reload_segments` code into a data section. Fixed by an explicit `.text` at the top of the `gdt` assembly.
+- The far-return CS reload (`push 0x08; ... retfq`) was unnecessary — the bootloader already runs the kernel with CS=`0x08`/SS=`0x10`, which resolve to the kernel's own descriptors after `lgdt` — and it faulted while the GDT was broken. Replaced with a plain DS/ES/FS/GS reload to `0x10`.
+- `aios_handler_table` originally lived in `.rodata`; absolute relocations there failed to link. Moved to `.data.rel.ro` with `.hidden` so the bootloader's load-time relocations apply (verified: `table[0]=0x10000017500` at runtime).
+- Files: `aios-kernel/build.rs`, `aios-kernel/src/{main,gdt,idt,interrupts,port}.rs`, `docs/*`.
+
+
 
 ### What landed
 - New `aios-kernel` crate (`no_std`, `#![no_main]`, `x86_64-unknown-none`): a fresh bare-metal microkernel. Entry point via `bootloader_api::entry_point!`, its own `halt_loop` panic handler, a COM1 `serial` driver (blocking `outb`/`inb` polled UART) and a `vga` console (80×25 text buffer, spin-lock guarded `VGA_WRITER`).

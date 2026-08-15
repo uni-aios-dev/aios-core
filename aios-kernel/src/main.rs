@@ -1,18 +1,37 @@
 #![no_std]
 #![no_main]
 
+mod gdt;
+mod idt;
+mod interrupts;
+mod port;
 mod serial;
 mod vga;
 
 use bootloader_api::config::{BootloaderConfig, Mapping};
 use bootloader_api::{self, entry_point};
 use core::panic::PanicInfo;
+use core::sync::atomic::Ordering;
 
 pub static BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
     config.mappings.physical_memory = Some(Mapping::Dynamic);
     config
 };
+
+const KERNEL_STACK_SIZE: usize = 64 * 1024;
+const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
+
+#[repr(align(16))]
+#[allow(dead_code)]
+struct KernelStack([u8; KERNEL_STACK_SIZE]);
+
+#[repr(align(16))]
+#[allow(dead_code)]
+struct DoubleFaultStack([u8; DOUBLE_FAULT_STACK_SIZE]);
+
+static KERNEL_STACK: KernelStack = KernelStack([0; KERNEL_STACK_SIZE]);
+static DOUBLE_FAULT_STACK: DoubleFaultStack = DoubleFaultStack([0; DOUBLE_FAULT_STACK_SIZE]);
 
 fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let phys_offset = boot_info.physical_memory_offset.into_option().unwrap_or(0);
@@ -24,7 +43,6 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     kprintln!("[serial] AIOS kernel booting...");
 
     let regions = boot_info.memory_regions.len();
-
     vprintln!("Memory regions: {}", regions);
     kprintln!("[serial] memory regions = {}", regions);
 
@@ -57,7 +75,53 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     vprintln!("Milestone 0 OK: serial + VGA console live.");
     kprintln!("[serial] Milestone 0 OK.");
 
-    halt_loop();
+    let kernel_stack_top = &KERNEL_STACK as *const KernelStack as u64 + KERNEL_STACK_SIZE as u64;
+    let double_fault_stack_top =
+        &DOUBLE_FAULT_STACK as *const DoubleFaultStack as u64 + DOUBLE_FAULT_STACK_SIZE as u64;
+
+    idt::init();
+    gdt::init(double_fault_stack_top);
+    gdt::set_kernel_stack(kernel_stack_top);
+    interrupts::init_pic();
+    interrupts::init_pit();
+
+    vprintln!("Milestone 1: interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
+    kprintln!("[serial] Milestone 1: interrupts online.");
+
+    unsafe {
+        core::arch::asm!("sti", options(nostack, preserves_flags));
+    }
+
+    idle_loop();
+}
+
+fn idle_loop() -> ! {
+    let mut last_tick_print = 0u64;
+    let mut last_scancode = 0u64;
+    loop {
+        let ticks = interrupts::TICKS.load(Ordering::Relaxed);
+        if ticks >= interrupts::TIMER_HZ && ticks - last_tick_print >= interrupts::TIMER_HZ {
+            vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
+            kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
+            last_tick_print = ticks;
+        }
+        let sc = interrupts::LAST_SCANCODE.load(Ordering::Relaxed);
+        if sc != last_scancode {
+            last_scancode = sc;
+            if sc & 0x80 == 0 {
+                if let Some(c) = interrupts::scancode_to_char(sc as u8) {
+                    vprintln!("[key] '{}' (0x{:02x})", c, sc);
+                    kprintln!("[serial] key '{}' (0x{:02x})", c, sc);
+                } else {
+                    vprintln!("[key] scancode 0x{:02x}", sc);
+                    kprintln!("[serial] key scancode 0x{:02x}", sc);
+                }
+            }
+        }
+        unsafe {
+            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
+    }
 }
 
 fn halt_loop() -> ! {

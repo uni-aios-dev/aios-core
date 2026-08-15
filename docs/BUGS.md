@@ -1,5 +1,19 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: aios-kernel milestone 1 triple-faulted during GDT/IDT setup (packed descriptor layout)
+- **Status:** FIXED in v2.27.0 (found during milestone 1 interrupt bring-up under QEMU)
+- **Symptom:** the kernel booted to milestone 0, then died inside `gdt::init` with no panic message. QEMU `-d int` showed a single `v=0d` (#GP) at `aios_reload_segments` / `ltr`, then `v=08` (double fault) and a triple fault; the register dump at the fault showed `GDT= d960000000000000 0000003f` and `IDT= d9f0000000000000 00000fff` — the GDTR/IDTR bases were truncated (low 16 bits of the real base).
+- **Root cause:** `struct Descriptor { limit: u16, base: u64 }` was `#[repr(C)]`; alignment of `u64` pushed `base` to offset 8 and left 6 padding bytes at 2..8. The CPU reads an `lgdt`/`lidt` operand as a contiguous 10-byte descriptor — limit at offset 0, base at offset 2. So the loaded base became `padding + first two base bytes` (e.g. `0xd960` instead of `0x1000001d960`), pointing GDT/IDT at garbage. Every descriptor load through the new GDT then faulted: `retfq`/`mov ds, 0x10` → `#GP`, exception delivery via the broken IDT → `#DF` → triple fault.
+- **Fix:** mark both descriptors `#[repr(C, packed)]` (base now starts at offset 2, matching the CPU's view) and access the `descriptor` field through `addr_of_mut!` (packed fields are unaligned). `gdt.rs` and `idt.rs`.
+- **Workaround / notes:** none needed post-fix; verified by the milestone 1 QEMU run (`[serial] Milestone 1: interrupts online.`, `tick 1s/2s/...`, `key 'h' (0x23)` via QEMU monitor).
+
+## RESOLVED: aios-kernel `aios_reload_segments` code landed in a data section (`.section` leak across `global_asm!`)
+- **Status:** FIXED in v2.27.0 (found during milestone 1 interrupt bring-up)
+- **Symptom:** `aios_reload_segments` was linked into `.data.rel.ro` (a data section) instead of `.text`; `nm` reported it as `D aios_reload_segments` inside the `.data.rel.ro` range.
+- **Root cause:** Rust concatenates all `global_asm!` blocks into one assembly stream. The generated `irq_stubs.S` emits `.section .data.rel.ro` for `aios_handler_table`, and the assembler keeps that section as current; the next `global_asm!` (the `gdt` module) has no explicit section, so its code landed in `.data.rel.ro`.
+- **Fix:** explicit `.text` at the top of the `gdt` module's `global_asm!`. Also removed the unnecessary far-return CS reload (`retfq`); the bootloader already runs the kernel with CS=`0x08`/SS=`0x10`, which resolve to the kernel's own descriptors after `lgdt`, so `reload_segments` only reloads DS/ES/FS/GS.
+- **Workaround / notes:** none needed post-fix.
+
 ## RESOLVED: aios-kernel milestone 0 triple-faulted on first boot (VGA write to unmapped 0xB8000)
 - **Status:** FIXED in v2.26.0 (found during first boot verification under QEMU)
 - **Symptom:** QEMU booted the bootloader, the kernel entry point was reached, then the CPU triple-faulted. The serial log ended with `Jumping to kernel entry point at VirtAddr(0x100000028a0)`; QEMU `-d int` showed `old: 0xe new 0xe` then `v=08` (double fault), with `RAX=0xB8000`, `IP=0x10000001a40` (`movw $0x720,(%rax)`) and `CR2=0xE0`.
