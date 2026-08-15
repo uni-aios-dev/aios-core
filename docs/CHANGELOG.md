@@ -1,5 +1,20 @@
 # AIOS Development Log
 
+## v2.28.0 — aios-kernel milestone 2: paging + kernel heap (2026-08-15)
+
+### What landed
+- `aios-kernel` gained an own paging core: a page-table walker that reads the active PML4/PDPT/PD/PT through the bootloader's physical-memory map (`memory::translate`, huge pages supported), plus `memory::map_page`/`unmap_page` that allocate page-table frames on demand and flush the TLB with `invlpg`.
+- New `memory` module: `init` builds a bump frame allocator over the boot info `Usable` regions (page-aligned, up to 16 regions); `alloc_frame` hands out single 4 KiB frames; `selftest` maps a scratch page at `0xFFFF880000000000`, writes/reads a 64-bit pattern, checks `translate`, then unmaps and verifies it is gone.
+- New `heap` module: 2 MiB kernel heap at `HEAP_START = 0xFFFF840000000000` mapped page-by-page with `memory::map_page`; a `#[global_allocator]` free-list allocator (first-fit with split, coalescing with the head block, spin-lock guarded) enables `alloc`-crate types (`Box`, `Vec`, `String`) inside the kernel. `heap::init_heap` sets up the initial free block, `heap::test_heap` allocates a 1000-element `Vec<u64>`, a `String`, a `Box<f64>` and stress-cycles 200 short strings.
+- `kernel_main` now initializes the memory manager and heap between milestones 0 and 1; boot logs `memory manager init, usable regions = N`, `paging selftest OK.`, heap results and `Milestone 2: paging + kernel heap online.`
+- Verified under QEMU: `[serial] translate vga=0xNone kernel=0xSome(1013150) heap_before=0xNone`, `[serial] paging selftest OK.`, `[serial] heap: Vec<u64> 1000 elems, sum=999000`, `[serial] heap: String 'heap string ok'`, `[serial] heap: Box<f64> 3.25`, `[serial] heap: stress 200 strings len_sum=5100, final Vec sum=1498500`, then milestone 1 still boots with `tick 1s/2s/...`.
+
+### Bugs fixed
+- The heap free-list allocator returned the payload of an allocated block without recording the allocated size in the block header; the header still carried the full (pre-split) block size, so `dealloc` computed coalescing with a wrong size and corrupted the free list (first observed as a garbage `Vec` sum `18446198715943183352` instead of `999000`). Fixed by writing `needed` into `(*block).size` right after the split decision.
+- Files: `aios-kernel/src/{main,memory,heap}.rs`, `docs/*`.
+
+
+
 ## v2.27.0 — aios-kernel milestone 1: interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard) (2026-08-15)
 
 ### What landed

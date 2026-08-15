@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: aios-kernel heap returned corrupt data after `Vec` growth (stale block size on alloc)
+- **Status:** FIXED in v2.28.0 (found during milestone 2 heap testing under QEMU)
+- **Symptom:** the milestone 2 heap test printed `heap: Vec<u64> 1000 elems, sum=18446198715943183352` instead of `999000`; later allocations were inconsistent.
+- **Root cause:** the free-list allocator took a free block, split it, but never recorded the *allocated* size in the block header — the header still held the pre-split (full) block size. `dealloc` then used that stale size for the coalescing adjacency check, adding a wrong size to the merged block and corrupting the free list.
+- **Fix:** `heap.rs` writes the exact allocated size (`needed`) into `(*block).size` immediately after the split decision, before returning the payload.
+- **Workaround / notes:** none needed post-fix; verified by the milestone 2 QEMU run (`sum=999000`, stress `len_sum=5100`, `final Vec sum=1498500`).
+
 ## RESOLVED: aios-kernel milestone 1 triple-faulted during GDT/IDT setup (packed descriptor layout)
 - **Status:** FIXED in v2.27.0 (found during milestone 1 interrupt bring-up under QEMU)
 - **Symptom:** the kernel booted to milestone 0, then died inside `gdt::init` with no panic message. QEMU `-d int` showed a single `v=0d` (#GP) at `aios_reload_segments` / `ltr`, then `v=08` (double fault) and a triple fault; the register dump at the fault showed `GDT= d960000000000000 0000003f` and `IDT= d9f0000000000000 00000fff` — the GDTR/IDTR bases were truncated (low 16 bits of the real base).

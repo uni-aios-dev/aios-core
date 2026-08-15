@@ -1,9 +1,13 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 mod gdt;
+mod heap;
 mod idt;
 mod interrupts;
+mod memory;
 mod port;
 mod serial;
 mod vga;
@@ -74,6 +78,55 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
 
     vprintln!("Milestone 0 OK: serial + VGA console live.");
     kprintln!("[serial] Milestone 0 OK.");
+
+    memory::init(phys_offset, &boot_info.memory_regions);
+    vprintln!(
+        "Memory manager: {} usable frame regions",
+        memory::frame_region_count()
+    );
+    kprintln!(
+        "[serial] memory manager init, usable regions = {}",
+        memory::frame_region_count()
+    );
+
+    let vga_translated = memory::translate(0xB8000);
+    let kernel_virt = &BOOTLOADER_CONFIG as *const BootloaderConfig as u64;
+    let kernel_translated = memory::translate(kernel_virt);
+    let heap_translated = memory::translate(heap::HEAP_START);
+    vprintln!(
+        "translate: vga=0x{:x?} kernel=0x{:x?} heap_unmapped=0x{:x?}",
+        vga_translated,
+        kernel_translated,
+        heap_translated
+    );
+    kprintln!(
+        "[serial] translate vga=0x{:x?} kernel=0x{:x?} heap_before=0x{:x?}",
+        vga_translated,
+        kernel_translated,
+        heap_translated
+    );
+
+    match memory::selftest() {
+        Ok(()) => {
+            vprintln!("Paging selftest: OK (map/write/read/translate/unmap)");
+            kprintln!("[serial] paging selftest OK.");
+        }
+        Err(e) => {
+            vprintln!("Paging selftest FAILED: {}", e);
+            kprintln!("[serial] paging selftest FAILED: {}", e);
+        }
+    }
+
+    heap::init_heap();
+    heap::test_heap();
+    vprintln!(
+        "Heap: {} MiB mapped at 0x{:x}",
+        heap::HEAP_SIZE / 1024 / 1024,
+        heap::HEAP_START
+    );
+    kprintln!("[serial] heap online.");
+    vprintln!("Milestone 2: paging + kernel heap online");
+    kprintln!("[serial] Milestone 2: paging + kernel heap online.");
 
     let kernel_stack_top = &KERNEL_STACK as *const KernelStack as u64 + KERNEL_STACK_SIZE as u64;
     let double_fault_stack_top =
