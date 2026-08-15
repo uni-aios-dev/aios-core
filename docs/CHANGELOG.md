@@ -1,5 +1,20 @@
 # AIOS Development Log
 
+## v2.26.0 — aios-kernel milestone 0: bare-metal kernel boots with serial + VGA console (2026-08-15)
+
+### What landed
+- New `aios-kernel` crate (`no_std`, `#![no_main]`, `x86_64-unknown-none`): a fresh bare-metal microkernel. Entry point via `bootloader_api::entry_point!`, its own `halt_loop` panic handler, a COM1 `serial` driver (blocking `outb`/`inb` polled UART) and a `vga` console (80×25 text buffer, spin-lock guarded `VGA_WRITER`).
+- New `aios-kernel-run` crate: builds the kernel, produces a BIOS disk image via `bootloader::BiosBoot::new(...).create_disk_image(...)`, locates `qemu-system-x86_64` and boots it with `-serial stdio -display none -no-reboot`.
+- Milestone 0 smoke test passes under QEMU: `[serial] AIOS kernel booting...`, `memory regions = 10`, `physical memory offset = 0x28000000000`, `framebuffer = 1280x720`, `rsdp = 0xf52e0`, `[serial] Milestone 0 OK.` — serial + VGA console live.
+
+### Root cause found (VGA triple-fault)
+- The first boot attempt triple-faulted. The bootloader default `Mappings` maps the kernel, boot info, stack and framebuffer but sets `physical_memory: Option::None`, so nothing maps low physical memory. The kernel's VGA clear loop wrote to the text buffer at physical `0xB8000`, which was not mapped → page fault (CR2`=0xE0` came from the IDT-descriptor fetch at IDT base 0, since no IDT is installed yet) → double fault → triple fault.
+
+### Fix
+- `aios-kernel/src/main.rs`: `BOOTLOADER_CONFIG` enables `config.mappings.physical_memory = Some(Mapping::Dynamic)` and is passed to `entry_point!(kernel_main, config = &BOOTLOADER_CONFIG)`; `kernel_main` reads `physical_memory_offset` and forwards it to `vga::vga_init`.
+- `aios-kernel/src/vga.rs`: `VgaWriter` gained a `buffer_addr` field; `vga_init(offset)` re-points it to `0xB8000 + offset`, so the VGA buffer is reached through the bootloader's physical-memory map.
+- Files: `aios-kernel/src/{main,vga}.rs`, `aios-kernel-run/src/main.rs`, `Cargo.toml` (workspace members), `docs/*`.
+
 ## v2.25.2 — Fix VRAM reported as 4.0 GB for GPUs above 4 GiB (2026-08-14)
 
 ### Root cause

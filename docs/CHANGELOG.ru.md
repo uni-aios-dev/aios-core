@@ -1,5 +1,20 @@
 # Журнал разработки AIOS
 
+## v2.26.0 — aios-kernel, веха 0: голое ядро загружается с последовательной и VGA консолью (2026-08-15)
+
+### Что добавлено
+- Новый крейт `aios-kernel` (`no_std`, `#![no_main]`, `x86_64-unknown-none`): новый голый микроядрe. Точка входа через `bootloader_api::entry_point!`, собственный `halt_loop` panic-handler, драйвер последовательного порта COM1 `serial` (блокирующий опросный UART через `outb`/`inb`) и консоль `vga` (текстовый буфер 80×25, `VGA_WRITER` под spin-lock).
+- Новый крейт `aios-kernel-run`: собирает ядро, создаёт BIOS-образ диска через `bootloader::BiosBoot::new(...).create_disk_image(...)`, находит `qemu-system-x86_64` и запускает его с `-serial stdio -display none -no-reboot`.
+- Смоук-тест вехи 0 проходит под QEMU: `[serial] AIOS kernel booting...`, `memory regions = 10`, `physical memory offset = 0x28000000000`, `framebuffer = 1280x720`, `rsdp = 0xf52e0`, `[serial] Milestone 0 OK.` — последовательная и VGA консоль работают.
+
+### Найденная причина (тройной фолт VGA)
+- Первая попытка загрузки заканчивалась тройным фолтом. Дефолтный `Mappings` загрузчика маппит ядро, boot info, стек и кадровый буфер, но задаёт `physical_memory: Option::None`, поэтому нижняя физическая память не отображена. Цикл очистки VGA в ядре писал в текстовый буфер по физическому адресу `0xB8000`, который не был отображён → page fault (CR2`=0xE0` пришёл из выборки дескриптора IDT по базе 0, т.к. IDT ещё не установлен) → double fault → triple fault.
+
+### Исправление
+- `aios-kernel/src/main.rs`: `BOOTLOADER_CONFIG` включает `config.mappings.physical_memory = Some(Mapping::Dynamic)` и передаётся в `entry_point!(kernel_main, config = &BOOTLOADER_CONFIG)`; `kernel_main` читает `physical_memory_offset` и передаёт его в `vga::vga_init`.
+- `aios-kernel/src/vga.rs`: у `VgaWriter` появилось поле `buffer_addr`; `vga_init(offset)` перенаправляет его на `0xB8000 + offset`, так что буфер VGA доступен через карту физической памяти загрузчика.
+- Файлы: `aios-kernel/src/{main,vga}.rs`, `aios-kernel-run/src/main.rs`, `Cargo.toml` (участники workspace), `docs/*`.
+
 ## v2.25.2 — Исправлен VRAM «4.0 GB» для видеокарт больше 4 ГиБ (2026-08-14)
 
 ### Причина

@@ -1,0 +1,21 @@
+# aios-kernel: the real AIOS kernel (x86_64, no_std, freestanding).
+#
+# Standalone crate (NOT a workspace member) on purpose: it targets
+# `x86_64-unknown-none` and is built with `cargo build --target x86_64-unknown-none`,
+# so it must not be part of the host workspace profile/target setup.
+# The bootable disk image is assembled by the sibling `aios-kernel-run` crate.
+
+[package]
+name = "aios-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS standalone kernel (x86_64) — milestone 0: boot, serial, VGA text console"
+
+[dependencies]
+bootloader_api = "0.11.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

@@ -1277,3 +1277,14 @@ The script runs `cargo build --release --target x86_64-unknown-linux-musl` for `
 - GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`
 - Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
 - `init=/init` tells the kernel to run the binary instead of `/sbin/init`; `console=tty0` routes kernel + init output to the primary console.
+
+## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — v2.26.0
+
+A fresh `x86_64-unknown-none` microkernel that boots directly from `bootloader::BiosBoot` (BIOS disk image) inside QEMU. It is the seed of a self-hosted kernel and currently provides milestone 0 console I/O only.
+
+- `aios-kernel`: `no_std`/`no_main` crate. Entry point via `bootloader_api::entry_point!(kernel_main, config = &BOOTLOADER_CONFIG)`; `BOOTLOADER_CONFIG` enables `mappings.physical_memory = Some(Mapping::Dynamic)` so low physical memory (e.g. the VGA text buffer at `0xB8000`) is reachable at `physical_memory_offset`.
+  - `serial` — COM1 polling UART driver (`outb`/`inb`), `kprintln!`.
+  - `vga` — 80x25 text-mode console behind a spin lock; `vga_init(offset)` re-points the buffer to `0xB8000 + offset`; `vprintln!`.
+  - Panic handler prints via both consoles and `halt_loop`s.
+- `aios-kernel-run`: build runner + BIOS image producer (`BiosBoot::new(elf).create_disk_image`) + QEMU launcher (`-serial stdio -display none -no-reboot`).
+- Verify: `cargo run --release` in `aios-kernel-run` — serial shows memory regions, physical memory offset, framebuffer, RSDP and `[serial] Milestone 0 OK.`

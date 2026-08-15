@@ -32,3 +32,6 @@ tests/AIOS/
 live/out/
 initramfs.cpio.gz
 rootfs/
+
+# Bare-metal kernel boot artifacts (aios-kernel-run)
+aios-kernel-run/bios.img

@@ -470,3 +470,11 @@
 |-----------|-----------------|---------|
 | Current | **100%** | Distributed scheduling |
 | + CPU affinity + state migration | 90%+ | Distributed scheduling |
+
+## Microkernel Roadmap (`aios-kernel`)
+
+- [x] **Milestone 0** (v2.26.0): bare-metal `x86_64-unknown-none` kernel boots under QEMU with serial (COM1) + VGA console; bootloader config enables the physical-memory mapping so the VGA text buffer is reachable.
+- [ ] **Milestone 1 — interrupts**: GDT/TSS, IDT with real handlers (page fault, double fault, keyboard/8259 PIC), `sti`/`hlt` idle loop; timer via PIT/APIC.
+- [ ] **Milestone 2 — paging**: own page-table walker over the bootloader's physical-memory map, `VgaBuffer` via the offset, kernel heap allocator.
+- [ ] **Milestone 3 — preemption**: timer-driven scheduler with context switch, kernel/user privilege separation (ring 0/3).
+- [ ] **Milestone 4 — IPC**: message-passing bus reusing `aios_core::ipc_protocol` types on the kernel side.

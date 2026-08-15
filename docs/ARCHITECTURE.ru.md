@@ -1270,3 +1270,14 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`
 - Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
 - `init=/init` указывает ядру запускать этот бинарник вместо `/sbin/init`; `console=tty0` направляет вывод ядра и init на основную консоль.
+
+## Голое ядро (`aios-kernel`, `aios-kernel-run`) — v2.26.0
+
+Новое микроядро `x86_64-unknown-none`, которое загружается напрямую из `bootloader::BiosBoot` (BIOS-образ диска) внутри QEMU. Это основа самодостаточного ядра; на текущий момент предоставляет только консольный ввод-вывод вехи 0.
+
+- `aios-kernel`: крейт `no_std`/`no_main`. Точка входа через `bootloader_api::entry_point!(kernel_main, config = &BOOTLOADER_CONFIG)`; `BOOTLOADER_CONFIG` включает `mappings.physical_memory = Some(Mapping::Dynamic)`, поэтому нижняя физическая память (например, текстовый буфер VGA по `0xB8000`) доступна по `physical_memory_offset`.
+  - `serial` — опросный UART-драйвер COM1 (`outb`/`inb`), `kprintln!`.
+  - `vga` — текстовая консоль 80x25 под spin-lock; `vga_init(offset)` перенаправляет буфер на `0xB8000 + offset`; `vprintln!`.
+  - Panic-обработчик печатает в обе консоли и уходит в `halt_loop`.
+- `aios-kernel-run`: сборщик и производитель BIOS-образа (`BiosBoot::new(elf).create_disk_image`) + запускатор QEMU (`-serial stdio -display none -no-reboot`).
+- Проверка: `cargo run --release` в `aios-kernel-run` — в serial выводятся memory regions, смещение физической памяти, framebuffer, RSDP и `[serial] Milestone 0 OK.`
