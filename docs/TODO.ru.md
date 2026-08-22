@@ -46,6 +46,7 @@
 - [x] Фаза 52: Управление кластером из Shell ядерного TUI — команды `cluster status/nodes/spawn/kill/migrate` управляют `DistributedScheduler` на реальных потоках `SchedulerProcessExecutor`; `OrchestratorState` удерживает handle планировщика; миграция процессов между узлами (спавн-затем-убийство) (v2.18.0–v2.19.0)
 - [x] Фаза 53: Миграция процессов с переносом состояния — `ProcessExecutor::extract_state`/`restore_state`, `Spawn` несёт снимок состояния по сети (`GetState`/`GetStateReply`), `migrate` восстанавливает его на узле назначения до убийства исходника (v2.20.0)
 - [x] Фаза 54: Репликация контрольных точек — воркеры рассылают снимок состояния каждого процесса всем пирам каждый heartbeat; `tick()` восстанавливает самую свежую реплицированную контрольную точку при потере узла-хоста и вычищает устаревшие снимки по `checkpoint_ttl` (builder + `AIOS_CLUSTER_CHECKPOINT_TTL_MS`, по умолчанию 15 с) (v2.21.0)
+- [x] Полный аудит проекта + схема программы и карта функций — прогон build/clippy/fmt/test (1338 тестов зелёные), исправлен «мигающий» порог RT-стресс-теста (двойной debug/release), новые `docs/AUDIT.ru.md` + `docs/SCHEME.ru.md` с картами функций по крейтам, двуязычно (v2.28.1)
 
 ## Бэклог
 
@@ -445,7 +446,7 @@
   - [x] Строка состояния GUI: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` с живым счётчиком IPC-пакетов
   - [x] Паритет GUI AI Studio: стриминг + персистентность чата/шаблонов (Фаза 45b, v2.9.1)
 
-- [ ] **Фаза 46: aios-autohal — автоматическое обеспечение оборудованием и хранилище драйверов (Master Brief)**
+- [x] **Фаза 46: aios-autohal — автоматическое обеспечение оборудованием и хранилище драйверов (Master Brief)**
   - **Роль**: автоматическое определение подключённого оборудования по слепку; поиск, скачивание и адаптация открытых драйверов в изолированные `.wasm`-модули; безопасный запуск в WASM-песочнице с выдачей Capability-токенов; локальное кэширование со 100% паритетом TUI/GUI.
   - [x] `fingerprint.rs` — `HardwareFingerprint`/`BusType` (USB/PCI/Bluetooth/ACPI/NVMe), извлечение из `aios-hal::HardwareProfile`
   - [x] `manifest.rs` — `DriverManifest` (id, name, version, supported_hardware, required_capabilities, hash_sha256, entry_point), JSON-схема + валидация, `DriverSource` (Redox Tree / Linux Core / Custom Store / Builtin / Generic)

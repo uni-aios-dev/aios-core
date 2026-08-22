@@ -1,5 +1,14 @@
 # AIOS Development Log
 
+## v2.28.1 — full workspace audit + program scheme & function map (2026-08-22)
+
+### What landed
+- Full project audit (`docs/AUDIT.md` + `docs/AUDIT.ru.md`): build OK, `cargo clippy --workspace --all-targets` 0 warnings, `cargo fmt --check` clean, `cargo test --workspace` **1338 passed / 0 failed** in 91 suites; codebase snapshot: 244 `.rs` files, ~59,400 lines, per-crate files/lines/tests table.
+- New program scheme with function map (`docs/SCHEME.md` + `docs/SCHEME.ru.md`): layer map of all crates, boot flow of the `aios` binary, IPC data-flow diagram, per-crate module/function tables (foundation, kernel subsystems, services, web stack, AI layer), REST endpoint table for `aios-bridge`, bare-metal microkernel milestone status, integration-test coverage map.
+- Bug fixed: `tests/stress_test.rs::test_stress_rt_scheduler_500` flaked on a loaded machine ("RT scheduling took 2.0974127s (>2s)") — hard-coded 2 s wall-clock threshold violated the dual debug/release rule; now 5 s under `cfg!(debug_assertions)`, 2 s in release. Suite re-run green (11/11).
+- Roadmap hygiene: Phase 46 (`aios-autohal`) marked complete in `TODO.md`/`TODO.ru.md` — all sub-items shipped across v2.22.0–v2.25.0 but the parent checkbox was left open.
+- Files: `tests/stress_test.rs`, `docs/{AUDIT,SCHEME}{,.ru}.md` (new), `docs/{CHANGELOG,BUGS,TODO}{,.ru}.md`, `docs/ARCHITECTURE{,.ru}.md` (see-also links).
+
 ## v2.28.0 — aios-kernel milestone 2: paging + kernel heap (2026-08-15)
 
 ### What landed

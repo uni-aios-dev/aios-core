@@ -46,6 +46,7 @@
 - [x] Phase 52: Cluster management in the kernel TUI Shell — `cluster status/nodes/spawn/kill/migrate` commands drive `DistributedScheduler` on real `SchedulerProcessExecutor` threads; `OrchestratorState` keeps the scheduler handle alive; process migration between nodes (spawn-then-kill) (v2.18.0–v2.19.0)
 - [x] Phase 53: Stateful process migration — `ProcessExecutor::extract_state`/`restore_state`, `Spawn` carries the state snapshot on the wire (`GetState`/`GetStateReply`), `migrate` restores it on the destination before killing the source (v2.20.0)
 - [x] Phase 54: Checkpoint replication — workers broadcast a per-process state snapshot to all peers each heartbeat; `tick()` restores the newest replicated checkpoint when a hosting node is lost and prunes stale snapshots by `checkpoint_ttl` (builder + `AIOS_CLUSTER_CHECKPOINT_TTL_MS`, default 15 s) (v2.21.0)
+- [x] Full project audit + program scheme & function map — build/clippy/fmt/test sweep (1338 tests green), flaky RT stress threshold fixed (dual debug/release), new `docs/AUDIT.md` + `docs/SCHEME.md` with per-crate function maps, bilingual (v2.28.1)
 
 ## Backlog
 
@@ -447,7 +448,7 @@
   - [x] GUI status bar: `HW Tier | IPC: N pkts | F6=Deps F7=Browser` with live IPC packet counter
   - [x] GUI AI Studio parity: streaming + chat/preset persistence (Phase 45b, v2.9.1)
 
-- [ ] **Phase 46: aios-autohal — Hardware Auto-Provisioning & Driver Store (Master Brief)**
+- [x] **Phase 46: aios-autohal — Hardware Auto-Provisioning & Driver Store (Master Brief)**
   - **Role**: automatic device detection by fingerprint; search/download/adapt open-source drivers into isolated `.wasm` modules; safe launch in the WASM sandbox with Capability tokens; local caching with 100% TUI/GUI parity.
   - [x] `fingerprint.rs` — `HardwareFingerprint`/`BusType` (USB/PCI/Bluetooth/ACPI/NVMe), extraction from `aios-hal::HardwareProfile`
   - [x] `manifest.rs` — `DriverManifest` (id, name, version, supported_hardware, required_capabilities, hash_sha256, entry_point), JSON schema + validation, `DriverSource` (Redox Tree / Linux Core / Custom Store / Builtin / Generic)

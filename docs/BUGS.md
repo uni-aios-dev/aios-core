@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: `test_stress_rt_scheduler_500` flaked on a loaded machine (hard 2 s wall-clock threshold)
+- **Status:** FIXED in v2.28.1 (found during the v2.28.1 full workspace audit, Windows x64)
+- **Symptom:** `cargo test --workspace` failed once with `RT scheduling took 2.0974127s (>2s)` in `tests/stress_test.rs:113`. The functional assertion (500 RT processes scheduled) passed; only the wall-clock budget tripped.
+- **Root cause:** the speed limit was hard-coded to `2000 ms` regardless of build profile, violating the AGENTS.md rule that all speed tests carry **dual debug/release thresholds**. A debug-build scheduler loop on a machine running parallel test binaries can legitimately exceed 2 s.
+- **Fix:** dual threshold — `5000 ms` under `cfg!(debug_assertions)`, `2000 ms` in release. Re-run of the suite is green (11/11).
+- **Workaround / notes:** none needed post-fix; if CI flakes recur on other wall-clock stress tests, consider percentile budgets or CPU pinning.
+
 ## RESOLVED: aios-kernel heap returned corrupt data after `Vec` growth (stale block size on alloc)
 - **Status:** FIXED in v2.28.0 (found during milestone 2 heap testing under QEMU)
 - **Symptom:** the milestone 2 heap test printed `heap: Vec<u64> 1000 elems, sum=18446198715943183352` instead of `999000`; later allocations were inconsistent.

@@ -110,9 +110,12 @@ fn test_stress_rt_scheduler_500() {
     }
     let elapsed = start.elapsed();
     assert!(count > 500, "Scheduled {} processes (<500)", count);
+    // Dual threshold per AGENTS.md: relaxed under debug builds where the
+    // scheduler loop is not optimized and CI machines may be loaded.
+    let limit_ms: u128 = if cfg!(debug_assertions) { 5000 } else { 2000 };
     assert!(
-        elapsed.as_millis() < 2000,
-        "RT scheduling took {:?} (>2s)",
+        elapsed.as_millis() < limit_ms,
+        "RT scheduling took {:?} (>{limit_ms}ms)",
         elapsed
     );
 }

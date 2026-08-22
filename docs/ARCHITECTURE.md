@@ -6,6 +6,8 @@ AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for
 
 All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios` crate provides a unified system binary with both interactive TUI mode and headless daemon mode, replacing the separate `aios-tui` and `aios-daemon` entry points.
 
+> **See also:** `docs/SCHEME.md` — call-level program scheme with the per-crate function map; `docs/AUDIT.md` — full project audit report.
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │              Interface Layer (User-Facing)            │
