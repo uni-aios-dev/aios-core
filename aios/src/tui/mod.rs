@@ -75,6 +75,7 @@ fn run(
         web_poll(&mut app);
         app.hw_poll_hotplug();
         app.hw_refresh();
+        app.sys_poll();
     }
     save_chat(&app);
     save_bookmarks(&app);
@@ -1486,6 +1487,13 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
     match key.code {
         KeyCode::Char('q') => {
             app.running = false;
+        }
+        KeyCode::Char('l') => {
+            app.sys_toggle_layout();
+            push_log(
+                &app.logs,
+                "AIOS: sys: layout hotkey Alt+Shift dispatched".to_string(),
+            );
         }
         KeyCode::F(1) | KeyCode::Char('?') => {
             app.show_help = !app.show_help;

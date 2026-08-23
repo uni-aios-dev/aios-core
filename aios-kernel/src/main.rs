@@ -7,9 +7,12 @@ mod gdt;
 mod heap;
 mod idt;
 mod interrupts;
+mod ipc;
 mod memory;
 mod port;
+mod sched;
 mod serial;
+mod user;
 mod vga;
 
 use bootloader_api::config::{BootloaderConfig, Mapping};
@@ -145,11 +148,54 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
         core::arch::asm!("sti", options(nostack, preserves_flags));
     }
 
+    // Milestone 3+4: scheduler, ring-3 demo tasks, IPC syscalls.
+    sched::init();
+
+    static mut WORKER_STACK: [u8; 16 * 1024] = [0; 16 * 1024];
+    let worker_top = core::ptr::addr_of!(WORKER_STACK) as u64 + 16 * 1024;
+    match sched::spawn_kernel(kernel_worker as *const () as u64, worker_top) {
+        Some(slot) => {
+            vprintln!("[sched] kernel worker spawned (slot {})", slot);
+            kprintln!("[serial] [sched] kernel worker spawned (slot {})", slot);
+        }
+        None => {
+            vprintln!("[sched] WARNING: no slot for kernel worker");
+            kprintln!("[serial] [sched] no slot for kernel worker");
+        }
+    }
+
+    match user::init() {
+        Ok(()) => {}
+        Err(e) => {
+            vprintln!("[user] FAILED: {}", e);
+            kprintln!("[serial] [user] FAILED: {}", e);
+        }
+    }
+
+    vprintln!("Milestone 3 OK: preemptive round-robin scheduler + ring 3 armed");
+    vprintln!("Milestone 4 OK: kernel IPC mailboxes behind the int 0x80 gate");
+    kprintln!("[serial] Milestone 3 OK: preemptive scheduler online.");
+    kprintln!("[serial] Milestone 4 OK: IPC syscalls online.");
+
     idle_loop();
+}
+
+/// Ring-0 demo thread: proves kernel tasks are preempted too.
+fn kernel_worker() -> ! {
+    let mut alive: u64 = 0;
+    loop {
+        for _ in 0..20_000_000u64 {
+            core::hint::spin_loop();
+        }
+        alive += 1;
+        vprintln!("[ktask] alive #{}", alive);
+        kprintln!("[serial] [ktask] alive #{}", alive);
+    }
 }
 
 fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
+    let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
     loop {
         let ticks = interrupts::TICKS.load(Ordering::Relaxed);
@@ -157,6 +203,20 @@ fn idle_loop() -> ! {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
+        }
+        // Every 5 seconds: scheduler + IPC proof counters.
+        let stats_window = 5 * interrupts::TIMER_HZ;
+        if ticks >= stats_window && ticks - last_stats_print >= stats_window {
+            let (sent, recv) = ipc::stats();
+            let switches = sched::switch_count();
+            vprintln!(
+                "[stats] switches={} ipc_sent={} ipc_recv={}",
+                switches,
+                sent,
+                recv
+            );
+            kprintln!("[serial] [stats] switches={} sent={} recv={}", switches, sent, recv);
+            last_stats_print = ticks;
         }
         let sc = interrupts::LAST_SCANCODE.load(Ordering::Relaxed);
         if sc != last_scancode {

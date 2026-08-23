@@ -1,6 +1,6 @@
 # AIOS Program Scheme & Function Map
 
-> Version: v2.28.1 · Date: 2026-08-22
+> Version: v2.29.0 - Date: 2026-08-23
 > Companion documents: `docs/AUDIT.md` (full audit), `docs/ARCHITECTURE.md` (deep architecture), `docs/INTERFACE.md` (UI guide).
 > This document is the **call-level map**: every crate, its modules, and its key public functions.
 
@@ -34,7 +34,7 @@
 ═══════════════════════════════════════════════════════════════════════
  BARE-METAL TRACK (standalone, excluded from workspace):
  live ISO → aios-init (static-musl PID 1) → aios-kernel (x86_64-unknown-none,
- milestones M0–M2 done; M3 preemption, M4 IPC planned) ← aios-kernel-run (QEMU)
+ milestones M0–M4 done) ← aios-kernel-run (QEMU)
 ```
 
 ## 2. Boot Flow (`aios` kernel binary)
@@ -291,6 +291,7 @@ Pipeline (5 steps): detect → DriverStore lookup → fetch/adapt → validate+g
 | `aios-search` (5 files · 0.4k ln · 7 t) | `SearchEngine::{search}` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` (2 files · 0.3k ln · 7 t) | `WebBrowser::{open,navigate,back,forward,close}` on background thread via event-loop proxy; persistent profile; `resolve_target()` omnibox rule |
 | `aios-net-config` (5 files · 0.9k ln · 32 t) | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
+| `aios-sys-control` (5 files - ~1.1k ln - 79 t) | `NetManager` (simulated/host wifi, DHCP craft/parse), `LayoutManager` (EN/RU hotkeys per window), `PowerManager` + thermal governor 80/70C -> cloud LLM, `KeyringVault` (AES-256-GCM redb, TEE-bound) |
 
 ### 7.5 Store & updates
 
@@ -362,19 +363,19 @@ Core types: `BridgeContext` (shared subsystem handles), `IntentParser` (RU/EN ke
 
 ## 10. Bare-Metal Microkernel Track
 
-`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 10 files · ~1.3k lines) + `aios-kernel-run` (QEMU BIOS runner).
+`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 13 files - ~1.7k lines) + `aios-kernel-run` (QEMU BIOS runner).
 
 | Milestone | Status | Content |
 |---|---|---|
 | M0 (v2.26.0) | ✅ | QEMU boot, serial COM1 + VGA console, physical-memory mapping |
 | M1 (v2.27.0) | ✅ | GDT/TSS (double-fault IST), 256-entry IDT, PIC remap, PIT 100 Hz, PS/2 keyboard |
 | M2 (v2.28.0) | ✅ | Page-table walker, map/unmap + frame allocator, 2 MiB free-list heap (`Box/Vec/String`) |
-| M3 | ⬜ plan | Preemption: timer scheduler, context switch, ring 0/3 |
-| M4 | ⬜ plan | Kernel-side IPC reusing `aios_core::ipc_protocol` |
+| M3 (v2.29.0) | DONE | Preemption: PIT-tick round-robin scheduler, frame-copy context switch, ring-0 worker + two ring-3 user programs (`sched.rs`, `user.rs`) |
+| M4 (v2.29.0) | DONE | IPC mailboxes behind `int 0x80` DPL-3 gate; header mirrors `aios_core::ipc_protocol`; proof via `scripts/qemu-smoke.ps1` (COM1) (`ipc.rs`) |
 
-Modules: `main` (entry/stacks/idle loop) · `gdt` (GDT+TSS) · `idt` (256 gates) · `interrupts` (PIC/PIT/keyboard + generated stubs) · `memory` (translate/map/unmap/bump allocator) · `heap` (free-list GlobalAlloc) · `vga` (80×25 writer) · `serial` (COM1) · `port` (inb/outb) · `build.rs` (256 asm vector stubs).
+Modules: `main` (entry/stacks/idle loop) · `gdt` (GDT+TSS) · `idt` (256 gates) · `interrupts` (PIC/PIT/keyboard + generated stubs) · `memory` (translate/map/unmap/bump allocator) · `heap` (free-list GlobalAlloc) · `vga` (80×25 writer) · `serial` (COM1) · `port` (inb/outb) · `build.rs` (256 asm vector stubs) - `ipc.rs` (mailboxes + syscall) - `sched.rs` (tasks/switch) - `user.rs` (ring-3 demo programs).
 
-## 11. Integration Tests (root `tests/`, 14 files · 162 tests)
+## 11. Integration Tests (root `tests/`, 15 files - 194 tests)
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -391,11 +392,12 @@ Modules: `main` (entry/stacks/idle loop) · `gdt` (GDT+TSS) · `idt` (256 gates)
 | `real_hot_swap.rs` | 7 | WASM version-change hot swap |
 | `e2e_pipeline_test.rs` | 6 | HW→tier→LLM intent→EasyLang→WASM chain |
 | `fuzz_test.rs` | 6 | Randomized packet fuzzing |
+| `sys_control_tests.rs` | 32 | WiFi sim flows, DHCP wire format, layout switching, thermal governor cycles, keyring lifecycle, hub end-to-end |
 | `stress_fault_tolerance.rs` | 5 | 50 parallel WASM blocks, crash storms |
 
-## 12. Codebase Statistics (v2.28.1 audit snapshot)
+## 12. Codebase Statistics (v2.29.0 audit snapshot)
 
-- **244 Rust source files**, **~59,400 lines** across 39 workspace crates + 3 standalone crates.
-- **1,338 tests green** in 91 suites (unit + integration + doc-tests), `cargo clippy --workspace --all-targets`: **0 warnings**, `cargo fmt --check`: clean.
+- **255 Rust source files**, **~62,600 lines** across 40 workspace crates + 3 standalone crates.
+- **1,417 tests green** in 94 suites (unit + integration + doc-tests), `cargo clippy --workspace --all-targets`: **0 warnings**, `cargo fmt --check`: clean.
 
 Top crates by size: `aios-autohal` 4.4k · `aios-tui` 4.3k · `aios` 3.6k · `aios-gui` 3.3k · `aios-cluster` 3.0k · `aios-process-mgr` 2.6k · `aios-block-mgr` 2.1k · `aios-store` 2.1k · `tests/` 3.9k.

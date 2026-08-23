@@ -1273,7 +1273,17 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
 - `init=/init` указывает ядру запускать этот бинарник вместо `/sbin/init`; `console=tty0` направляет вывод ядра и init на основную консоль.
 
-## Голое ядро (`aios-kernel`, `aios-kernel-run`) — v2.28.0
+
+
+## Системная управляющая плоскость (`aios-sys-control`) - v2.29.0
+Общая системная управляющая плоскость для TUI, GUI, bridge и интеграционных тестов:
+- `net_manager` — управление Wi-Fi поверх двух бэкендов (`WifiBackend::Simulated` эфир с 3 сетями / `WifiBackend::Host` через `netsh wlan`), wire-кодек DHCP Discover/Request/Ack, сохраняемый lease, `SysControlHub`, агрегирующий сеть + раскладку + питание в сериализуемый `SysStatusSnapshot` с `status_line()`.
+- `input_i18n` — менеджер раскладок EN/RU: хоткеи (`alt_shift` по умолчанию), переопределения по окнам, `status_segment()` с активной парой первой.
+- `power_mgr` — сэмплинг батареи/температуры (`Mock` или host sysfs) + термал-гувернёр с гистерезисом 80/70 °C: при нагреве LLM уходит в облако (`Groq`), при остывании возвращается локально.
+- `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
+
+Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`.
+## Голое ядро (`aios-kernel`, `aios-kernel-run`) — v2.29.0
 
 Новое микроядро `x86_64-unknown-none`, которое загружается напрямую из `bootloader::BiosBoot` (BIOS-образ диска) внутри QEMU. Это основа самодостаточного ядра; на текущий момент предоставляет консольный ввод-вывод вехи 0, прерывания вехи 1 (GDT/TSS, IDT, ремап PIC, таймер PIT, клавиатура PS/2) и paging вехи 2 (собственный обход таблиц страниц + аллокатор кадров + куча ядра).
 

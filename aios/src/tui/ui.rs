@@ -869,8 +869,28 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
     };
 
     let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back t tab x close [ ] switch a bkmk m list B native ",
+        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [L] layout  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back t tab x close [ ] switch a bkmk m list B native ",
     )]);
+
+    let snap = app.sys_snap.lock().map(|g| g.clone()).unwrap_or_default();
+    let sys_ok = snap
+        .wifi
+        .as_ref()
+        .is_some_and(|l| l.state == aios_sys_control::net_manager::LinkState::Connected);
+    let sys_color = if sys_ok {
+        Color::Green
+    } else {
+        Color::DarkGray
+    };
+    let sys_line = Line::from(vec![
+        Span::styled(
+            " sys: ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(snap.status_line(), Style::default().fg(sys_color)),
+    ]);
 
     let log_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -878,9 +898,11 @@ fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(area);
     frame.render_widget(list, log_chunks[0]);
-    frame.render_widget(Paragraph::new(net_line).style(net_style), log_chunks[1]);
-    frame.render_widget(help, log_chunks[2]);
+    frame.render_widget(Paragraph::new(sys_line), log_chunks[1]);
+    frame.render_widget(Paragraph::new(net_line).style(net_style), log_chunks[2]);
+    frame.render_widget(help, log_chunks[3]);
 }

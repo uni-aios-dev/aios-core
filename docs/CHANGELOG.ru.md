@@ -1,5 +1,32 @@
 # Журнал разработки AIOS
 
+## v2.29.0 — aios-sys-control (Wi-Fi/раскладки/питание/keyring) + вехи ядра M3/M4 (2026-08-23)
+
+### Что добавлено
+- Новый крейт `aios-sys-control` (5 модулей, 47 юнит-тестов) — системная управляющая плоскость, общая для TUI/GUI/bridge:
+  - `dhcp.rs` — полная сборка/разбор DHCP Discover/Request/Ack по wire-формату (magic cookie, опции 53/54/51/1/3/6/255).
+  - `net_manager.rs` — `NetManager` поверх `WifiBackend::Simulated` (3 сети: `aios-lab-5g` WPA3 Ghz5 −42 dBm, `home-net` WPA2 Ghz24, `coffee-shop` Open) или `WifiBackend::Host` через `netsh wlan`; scan/connect/disconnect/status + сохранение DHCP lease; `SysControlHub` (tokio RwLock), агрегирующий Wi-Fi + раскладку + питание в `SysStatusSnapshot` с однострочным `status_line()` (`[Wi-Fi: ssid] [RU/EN] [BAT+: 84% | 48 °C] [LLM: cloud]`).
+  - `input_i18n.rs` — `LayoutManager`: пары EN/RU, хоткеи `alt_shift`/`ctrl_shift`/`cmd_space`, переопределения по окнам, детект переключения в `feed_key`, `status_segment()` (активная раскладка первой).
+  - `power_mgr.rs` — `PowerBackend::{Mock,Host}` с сэмплингом (linux sysfs thermal zones; Windows-заглушка), `ThermalGovernor` с гистерезисом 80/70 °C и решениями `ThrottleDecision::{KeepCurrentBackend,MoveToCloud(Groq),ReturnToLocal}`, `PowerManager::set_mock()` для детерминированных тестов.
+  - `keyring.rs` — `KeyringVault` на redb: AES-256-GCM (nonce||ct), canary-запись для проверки мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, привязка ключа к TEE (`SealingKey::derive(b"aios-keyring-v1", platform_id)`), `change_master_password` перешифровывает все секреты.
+- Интеграции: sys-строка статуса в панели логов TUI + хоткей `l` (переключение раскладки); сегменты в top-bar GUI с обновлением раз в 2 с через current-thread runtime; bridge REST `GET /api/v1/sys/status`, `GET /api/v1/sys/wifi/scan`, `POST /api/v1/sys/wifi/connect`, `POST /api/v1/sys/layout`.
+- `tests/sys_control_tests.rs` — 32 интеграционных теста: wire-формат DHCP, потоки имитируемого Wi-Fi (неверная фраза, открытая сеть, отключение, persist lease между перезапусками), переключение раскладок + оконные переопределения, циклы термал-гувернёра (нагрев→облако→охлаждение→локально), жизненный цикл keyring (store/get/list/delete/change-master/неверный пароль/перепривязка TEE), hub end-to-end, JSON-сериализация snapshot.
+- Веха ядра 3 (вытеснение): новый `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков), frame-copy переключение контекста внутри ISR с сохранением полного trap-frame, спавн ring-0 worker-потока; новый `user.rs` — две ring-3 программы в виде сырого машинного кода (циклы int 0x80 send/recv), user-мапинг через `map_page(user=true)` (CODE_BASE 0x40000000, STACK_TOP 0x7F000000, 4 страницы стека); `gdt::USER_CS=0x18|3`, `USER_DS=0x20|3`.
+- Веха ядра 4 (IPC ядра): новый `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16 кольцевых буфера), диспетчер syscall `SYS_SEND`=1/`SYS_RECV`=2, заголовок пакета `IpcPacketHeader{src,dst,kind,len}` зеркалит `aios_core::ipc_protocol`; запись IDT 128 получает вентиль DPL-3 с флагами 0xEE; ветка таймера ISR вызывает `sched::tick(frame)`, вектор 128 — `ipc::syscall(frame)`; idle-цикл печатает `[stats] switches=N ipc_sent=M ipc_recv=K` каждые 5 с.
+- QEMU-инструментарий доказательства: `scripts/qemu-smoke.ps1` собирает BIOS-образ headlessly (режим `AIOS_SKIP_QEMU=1` добавлен в `aios-kernel-run`), грузит его в QEMU без дисплея, пишет COM1 в лог и проверяет четыре proof-строки (вход в ring3, IPC-трафик, переключения планировщика, вытеснение kernel-worker); при отсутствии QEMU завершается кодом 2 с понятным сообщением.
+
+### Исправленные баги
+- `NetManager::status()` был async и держал std MutexGuard → future не Send через tokio::spawn в TUI; стал синхронным.
+- `SysControlHub.net` переведён со std Mutex на tokio RwLock, чтобы axum-хендлеры возвращали Send-futures.
+- Диспетчер syscall ядра брал src-pid из `frame.cs` (селектор GDT) — теперь берёт `crate::sched::current_pid()`.
+- DHCP `craft()` добавлял терминатор 255 до того, как тестовые опции были дописаны; убран, чтобы парсинг опций оставался точным.
+
+### Верификация
+- **1417 тестов зелёные** в 94 наборах (unit + integration + doc-tests), `cargo clippy --workspace --all-targets`: **0 предупреждений**, `cargo fmt --check`: чисто.
+
+Файлы: `aios-sys-control/*`, `tests/sys_control_tests.rs`, `aios/src/tui/{app_state,mod,ui}.rs`, `aios-gui/src/app.rs`, `aios-bridge/src/server.rs`, `aios-kernel/src/{ipc,sched,user}.rs` + `{main,interrupts,idt,gdt}.rs`, `aios-kernel-run/src/main.rs`, `scripts/qemu-smoke.ps1` (новый), `docs/{SCHEME,TODO}{,.ru}.md`.
+
+
 ## v2.28.1 — полный аудит воркспейса + схема программы и карта функций (2026-08-22)
 
 ### Что добавлено

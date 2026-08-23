@@ -2,6 +2,10 @@ use crate::gdt;
 
 pub const IDT_ENTRIES: usize = 256;
 pub const INTERRUPT_GATE: u8 = 0x8E;
+/// Interrupt gate callable from ring 3 (`int 0x80` syscall gate).
+pub const SYSCALL_GATE: u8 = 0xEE;
+/// Vector of the syscall gate.
+pub const SYSCALL_VECTOR: usize = 128;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +73,12 @@ pub fn init() {
         let idt = &mut *core::ptr::addr_of_mut!(IDT);
         let table = &aios_handler_table;
         for (index, entry) in idt.entries.iter_mut().enumerate() {
-            entry.set_handler(table[index], INTERRUPT_GATE);
+            let flags = if index == SYSCALL_VECTOR {
+                SYSCALL_GATE
+            } else {
+                INTERRUPT_GATE
+            };
+            entry.set_handler(table[index], flags);
         }
         set_ist(8, gdt::DOUBLE_FAULT_IST_INDEX);
         let descriptor = &mut *core::ptr::addr_of_mut!(DESCRIPTOR);

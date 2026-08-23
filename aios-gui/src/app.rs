@@ -190,6 +190,15 @@ pub struct AiosApp {
     pub hw_toasts: Vec<aios_autohal::Toast>,
     /// Live device hot-plug monitor, started alongside the engine.
     pub hw_hotplug: Option<aios_autohal::HotplugMonitor>,
+
+    /// System-control hub: Wi-Fi / keyboard layout / battery-thermal state.
+    pub sys_hub: Option<Arc<aios_sys_control::SysControlHub>>,
+    /// Dedicated current-thread runtime hosting the hub's async internals.
+    pub sys_rt: Option<tokio::runtime::Runtime>,
+    /// Latest system snapshot rendered in the top bar.
+    pub sys_snap: aios_sys_control::SysStatusSnapshot,
+    /// Rate-limit gate for hub polls (one refresh per 2 seconds).
+    sys_last_poll: std::time::Instant,
 }
 
 /// Active modal input mode of the GUI Files tab.
@@ -274,7 +283,29 @@ impl AiosApp {
             hw_views: hw_init.1,
             hw_toasts: hw_init.2,
             hw_hotplug,
+            sys_hub: Some(Arc::new(aios_sys_control::SysControlHub::defaults())),
+            sys_rt: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok(),
+            sys_snap: aios_sys_control::SysStatusSnapshot::default(),
+            sys_last_poll: std::time::Instant::now(),
         }
+    }
+
+    /// Refresh Wi-Fi / battery / thermal snapshot at most every 2 seconds.
+    ///
+    /// Runs on the dedicated current-thread runtime so egui frames never
+    /// touch an async context directly.
+    pub fn sys_poll(&mut self) {
+        if self.sys_last_poll.elapsed() < std::time::Duration::from_secs(2) {
+            return;
+        }
+        let (Some(hub), Some(rt)) = (&self.sys_hub, &self.sys_rt) else {
+            return;
+        };
+        self.sys_snap = rt.block_on(hub.refresh_status());
+        self.sys_last_poll = std::time::Instant::now();
     }
 
     /// Start the file-manager engine on a dedicated tokio runtime.
@@ -1206,6 +1237,23 @@ impl eframe::App for AiosApp {
                 ui.label(
                     egui::RichText::new(format!("RAM: {}/{} MB", self.ram_used, self.ram_total))
                         .color(theme.text)
+                        .size(12.0),
+                );
+                ui.separator();
+                self.sys_poll();
+                let sys_connected = self.sys_snap.wifi.as_ref().is_some_and(|l| {
+                    matches!(l.state, aios_sys_control::net_manager::LinkState::Connected)
+                });
+                let sys_color = if self.sys_snap.throttled {
+                    theme.danger
+                } else if sys_connected {
+                    theme.success
+                } else {
+                    theme.text_dim
+                };
+                ui.label(
+                    egui::RichText::new(self.sys_snap.status_line())
+                        .color(sys_color)
                         .size(12.0),
                 );
                 ui.separator();

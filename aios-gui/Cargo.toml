@@ -15,6 +15,7 @@ aios-optim = { path = "../aios-optim" }
 aios-security = { path = "../aios-security" }
 aios-net = { path = "../aios-net" }
 aios-webview = { path = "../aios-webview" }
+aios-sys-control = { path = "../aios-sys-control" }
 aios-llm = { path = "../aios-llm" }
 aios-net-config = { path = "../aios-net-config" }
 aios-vfs = { path = "../aios-vfs" }

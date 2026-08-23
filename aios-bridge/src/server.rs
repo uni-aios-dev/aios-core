@@ -48,6 +48,8 @@ pub struct BridgeContext {
     pub trace_context: Mutex<TraceContext>,
     pub crash_reporter: Mutex<CrashReporter>,
     pub _panic_handler: Mutex<PanicHandler>,
+    /// System-control hub: Wi-Fi / layout / power endpoints (`/api/v1/sys/*`).
+    pub sys_control: tokio::sync::Mutex<aios_sys_control::SysControlHub>,
     /// Directory holding installed block binaries (`<name>_<version>.wasm`).
     pub blocks_dir: String,
 }
@@ -77,6 +79,7 @@ impl BridgeContext {
             trace_context: Mutex::new(TraceContext::new()),
             crash_reporter: Mutex::new(CrashReporter::new("aios-bridge", "1.0.0")),
             _panic_handler: Mutex::new(PanicHandler::new("aios-bridge", "1.0.0")),
+            sys_control: tokio::sync::Mutex::new(aios_sys_control::SysControlHub::defaults()),
             blocks_dir: std::env::var("AIOS_BLOCKS_DIR").unwrap_or_else(|_| "./blocks".to_string()),
         }
     }
@@ -113,6 +116,10 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/metrics", get(metrics_handler))
         .route("/api/v1/traces", get(traces_handler))
         .route("/api/v1/crash-report", post(crash_report_handler))
+        .route("/api/v1/sys/status", get(sys_status_handler))
+        .route("/api/v1/sys/wifi/scan", get(sys_wifi_scan_handler))
+        .route("/api/v1/sys/wifi/connect", post(sys_wifi_connect_handler))
+        .route("/api/v1/sys/layout", post(sys_layout_handler))
         .route("/ws/telemetry", get(ws_handler))
         .layer(tower_http::cors::CorsLayer::permissive())
         .layer(middleware::from_fn_with_state(
@@ -899,6 +906,120 @@ async fn crash_report_handler(
         success: true,
         report: Some(report_json),
         total_reports: total,
+        error: None,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct SysStatusResponse {
+    success: bool,
+    snapshot: aios_sys_control::SysStatusSnapshot,
+}
+
+async fn sys_status_handler(State(state): State<SharedState>) -> Json<SysStatusResponse> {
+    let hub = state.sys_control.lock().await;
+    let snapshot = hub.refresh_status().await;
+    Json(SysStatusResponse {
+        success: true,
+        snapshot,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct SysScanResponse {
+    success: bool,
+    networks: Vec<aios_sys_control::net_manager::WifiNetwork>,
+    error: Option<String>,
+}
+
+async fn sys_wifi_scan_handler(State(state): State<SharedState>) -> Json<SysScanResponse> {
+    let hub = state.sys_control.lock().await;
+    match hub.scan_networks().await {
+        Ok(networks) => Json(SysScanResponse {
+            success: true,
+            networks,
+            error: None,
+        }),
+        Err(e) => Json(SysScanResponse {
+            success: false,
+            networks: Vec::new(),
+            error: Some(format!("{e}")),
+        }),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SysWifiConnectRequest {
+    pub ssid: String,
+    pub password: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct SysConnectResponse {
+    success: bool,
+    link: Option<aios_sys_control::net_manager::LinkStatus>,
+    error: Option<String>,
+}
+
+async fn sys_wifi_connect_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<SysWifiConnectRequest>,
+) -> Json<SysConnectResponse> {
+    let hub = state.sys_control.lock().await;
+    match hub.connect_wifi(&req.ssid, req.password.as_deref()).await {
+        Ok(link) => Json(SysConnectResponse {
+            success: true,
+            link: Some(link),
+            error: None,
+        }),
+        Err(e) => Json(SysConnectResponse {
+            success: false,
+            link: None,
+            error: Some(format!("{e}")),
+        }),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SysLayoutRequest {
+    /// Hotkey combo name: `alt_shift`, `ctrl_shift` or `cmd_space`.
+    pub hotkey: String,
+}
+
+#[derive(serde::Serialize)]
+struct SysLayoutResponse {
+    success: bool,
+    applied: bool,
+    layout: String,
+    error: Option<String>,
+}
+
+async fn sys_layout_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<SysLayoutRequest>,
+) -> Json<SysLayoutResponse> {
+    use aios_sys_control::input_i18n::Hotkey;
+    let combo = match req.hotkey.to_lowercase().as_str() {
+        "alt_shift" | "alt+shift" => Some(Hotkey::AltShift),
+        "ctrl_shift" | "ctrl+shift" => Some(Hotkey::CtrlShift),
+        "cmd_space" | "cmd+space" => Some(Hotkey::CmdSpace),
+        _ => None,
+    };
+    let Some(combo) = combo else {
+        return Json(SysLayoutResponse {
+            success: false,
+            applied: false,
+            layout: String::new(),
+            error: Some(format!("unknown hotkey '{}'", req.hotkey)),
+        });
+    };
+    let hub = state.sys_control.lock().await;
+    let applied = hub.feed_hotkey(combo).await;
+    let layout = hub.layout_indicator().await;
+    Json(SysLayoutResponse {
+        success: true,
+        applied,
+        layout,
         error: None,
     })
 }

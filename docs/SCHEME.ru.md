@@ -1,6 +1,6 @@
 # Схема программы и карта функций AIOS
 
-> Версия: v2.28.1 · Дата: 2026-08-22
+> Версия: v2.29.0 — Дата: 2026-08-23
 > Сопутствующие документы: `docs/AUDIT.ru.md` (полный аудит), `docs/ARCHITECTURE.ru.md` (глубокая архитектура), `docs/INTERFACE.ru.md` (руководство по интерфейсу).
 > Этот документ — **карта уровня вызовов**: каждый крейт, его модули и ключевые публичные функции.
 
@@ -34,7 +34,7 @@
 ═══════════════════════════════════════════════════════════════════════
  BARE-METAL-ВЕТКА (отдельно, вне воркспейса):
  live ISO → aios-init (статический musl PID 1) → aios-kernel (x86_64-unknown-none,
- вехи M0–M2 готовы; M3 вытеснение, M4 IPC — план) ← aios-kernel-run (QEMU)
+ вехи M0–M4 выполнены) ← aios-kernel-run (QEMU)
 ```
 
 ## 2. Порядок загрузки (бинарник `aios`)
@@ -291,6 +291,7 @@ StatefulBlock::handle_message() → Response(ok|err)             [aios-core::blo
 | `aios-search` (5 файлов · 0.4 тыс. · 7 т) | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + LLM TL;DR в `SearchSummarizer` |
 | `aios-webview` (2 файла · 0.3 тыс. · 7 т) | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке через event-loop proxy; постоянный профиль; правило адресной строки `resolve_target()` |
 | `aios-net-config` (5 файлов · 0.9 тыс. · 32 т) | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
+| `aios-sys-control` (5 файлов · ~1.1 тыс. · 79 т) | `NetManager` (имитируемый/host Wi-Fi, DHCP craft/parse), `LayoutManager` (EN/RU-хоткеи по окнам), `PowerManager` + термал-гувернёр 80/70 °C → облачная LLM, `KeyringVault` (AES-256-GCM redb, привязка к TEE) |
 
 ### 7.5 Магазин и обновления
 
@@ -362,19 +363,19 @@ StatefulBlock::handle_message() → Response(ok|err)             [aios-core::blo
 
 ## 10. Bare-metal-ветка микроядра
 
-`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 10 файлов · ~1.3 тыс. строк) + `aios-kernel-run` (QEMU BIOS-раннер).
+`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 13 файлов · ~1.7 тыс. строк) + `aios-kernel-run` (QEMU BIOS-раннер).
 
 | Веха | Статус | Содержание |
 |---|---|---|
 | M0 (v2.26.0) | ✅ | Загрузка в QEMU, serial COM1 + VGA-консоль, отображение физической памяти |
 | M1 (v2.27.0) | ✅ | GDT/TSS (double-fault IST), IDT на 256 вентилей, ремап PIC, PIT 100 Гц, клавиатура PS/2 |
 | M2 (v2.28.0) | ✅ | Обход таблиц страниц, map/unmap + аллокатор кадров, куча 2 МиБ со списком свободных блоков (`Box/Vec/String`) |
-| M3 | ⬜ план | Вытеснение: планировщик по таймеру, переключение контекста, ring 0/3 |
-| M4 | ⬜ план | IPC на стороне ядра с переиспользованием `aios_core::ipc_protocol` |
+| M3 (v2.29.0) | ✅ | Вытеснение: round-robin-планировщик по тикам PIT, переключение контекста копированием trap-frame, ring-0 worker + две ring-3 пользовательские программы (`sched.rs`, `user.rs`) |
+| M4 (v2.29.0) | ✅ | IPC-почтовые ящики ядра за вентилем `int 0x80` (DPL-3); заголовок пакета зеркалит `aios_core::ipc_protocol`; проверка через `scripts/qemu-smoke.ps1` (COM1) (`ipc.rs`) |
 
-Модули: `main` (точка входа/стеки/idle-цикл) · `gdt` (GDT+TSS) · `idt` (256 вентилей) · `interrupts` (PIC/PIT/клавиатура + сгенерированные заглушки) · `memory` (translate/map/unmap/bump-аллокатор) · `heap` (free-list GlobalAlloc) · `vga` (писатель 80×25) · `serial` (COM1) · `port` (inb/outb) · `build.rs` (256 asm-заглушек векторов).
+Модули: `main` (точка входа/стеки/idle-цикл) · `gdt` (GDT+TSS) · `idt` (256 вентилей) · `interrupts` (PIC/PIT/клавиатура + сгенерированные заглушки) · `memory` (translate/map/unmap/bump-аллокатор) · `heap` (free-list GlobalAlloc) · `vga` (писатель 80×25) · `serial` (COM1) · `port` (inb/outb) · `build.rs` (256 asm-заглушек векторов); новые: `ipc.rs` (почтовые ящики + syscall), `sched.rs` (задачи + frame-copy переключение), `user.rs` (ring-3 демо-программы).
 
-## 11. Интеграционные тесты (корневой `tests/`, 14 файлов · 162 теста)
+## 11. Интеграционные тесты (корневой `tests/`, 15 файлов · 194 теста)
 
 | Файл | Тесты | Покрытие |
 |---|---|---|
@@ -391,11 +392,12 @@ StatefulBlock::handle_message() → Response(ok|err)             [aios-core::blo
 | `real_hot_swap.rs` | 7 | Hot-swap WASM при смене версии |
 | `e2e_pipeline_test.rs` | 6 | Цепочка HW→тир→LLM intent→EasyLang→WASM |
 | `fuzz_test.rs` | 6 | Fuzzing случайных пакетов |
+| `sys_control_tests.rs` | 32 | Потоки Wi-Fi-симуляции, wire-формат DHCP, переключение раскладок, циклы термал-гувернёра, жизненный цикл keyring, hub end-to-end |
 | `stress_fault_tolerance.rs` | 5 | 50 параллельных WASM-блоков, штормы сбоев |
 
-## 12. Статистика кодовой базы (срез аудита v2.28.1)
+## 12. Статистика кодовой базы (срез аудита v2.29.0)
 
-- **244 исходника Rust**, **~59 400 строк** в 39 крейтах воркспейса + 3 отдельных крейта.
-- **1338 тестов зелёные** в 91 наборе (unit + integration + doc-tests), `cargo clippy --workspace --all-targets`: **0 предупреждений**, `cargo fmt --check`: чисто.
+- **255 исходников Rust**, **~62 600 строк** в 40 крейтах воркспейса + 3 отдельных крейта.
+- **1417 тестов зелёные** в 94 наборах (unit + integration + doc-tests), `cargo clippy --workspace --all-targets`: **0 предупреждений**, `cargo fmt --check`: чисто.
 
 Крупнейшие крейты: `aios-autohal` 4.4 тыс. · `aios-tui` 4.3 тыс. · `aios` 3.6 тыс. · `aios-gui` 3.3 тыс. · `aios-cluster` 3.0 тыс. · `aios-process-mgr` 2.6 тыс. · `aios-block-mgr` 2.1 тыс. · `aios-store` 2.1 тыс. · `tests/` 3.9 тыс.

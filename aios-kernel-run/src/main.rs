@@ -66,6 +66,13 @@ fn main() {
     create_bios_image(&kernel_elf, &bios_path);
     println!("BIOS disk image: {}", bios_path.display());
 
+    // Build-only mode for hosts without QEMU (`AIOS_SKIP_QEMU=1`) and for
+    // the smoke-test script that drives QEMU itself.
+    if env::var_os("AIOS_SKIP_QEMU").is_some() {
+        println!("AIOS_SKIP_QEMU=1 -> stopping after image creation");
+        return;
+    }
+
     let qemu = find_qemu();
     println!("QEMU: {}", qemu.display());
 

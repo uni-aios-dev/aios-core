@@ -236,8 +236,10 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `Alt`+`1`-`7` | Direct tab select even while typing in the Shell / Web URL / AI input / net line |
 | `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
 | `Space` | Pause/resume event log |
+| `L` | Toggle EN/RU input layout (the sys status line shows the active pair) |
 | `q` / `Ctrl+C` | Quit |
 
+The bottom **event log** carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `L` to switch layouts from any tab; the same snapshot is rendered in the GUI top bar and exposed over REST (`/api/v1/sys/status`).
 ### Blocks Tab (2)
 
 | Key | Action |
@@ -385,7 +387,8 @@ cargo run --bin aios-gui
 | Key | Action |
 |-----|--------|
 | `F1`-`F9` | Switch tab |
-| `j` | Move selection down |
+
+The top bar appends system-control segments after the RAM separator: Wi-Fi state/SSID, the active input-layout pair, battery/CPU temperature and the effective LLM backend (`local`/`cloud`), refreshed every 2 s; the same data feeds the TUI `sys:` log line and `/api/v1/sys/status`.| `j` | Move selection down |
 | `k` | Move selection up |
 
 ### Mouse

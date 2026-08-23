@@ -4,6 +4,7 @@ use aios_autohal::hotplug::{HotplugEvent, HotplugMonitor};
 use aios_browser::types::Page;
 use aios_hal::hardware::HardwareProfile;
 use aios_llm::{default_config, LlmConfig};
+use aios_sys_control::{SysControlHub, SysStatusSnapshot};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -133,6 +134,10 @@ pub struct TuiApp {
     pub hw_toasts: Vec<Toast>,
     /// Live device hot-plug monitor (absent in safe mode, like the engine).
     pub hw_hotplug: Option<HotplugMonitor>,
+    /// System-control hub: Wi-Fi engine, layout switcher, power/thermal state.
+    pub sys_hub: Arc<SysControlHub>,
+    /// Last polled system snapshot rendered in the status bar.
+    pub sys_snap: Arc<Mutex<SysStatusSnapshot>>,
 }
 
 impl TuiApp {
@@ -184,7 +189,34 @@ impl TuiApp {
             hw_views,
             hw_toasts,
             hw_hotplug,
+            sys_hub: Arc::new(SysControlHub::defaults()),
+            sys_snap: Arc::new(Mutex::new(SysStatusSnapshot::default())),
         }
+    }
+
+    /// Poll Wi-Fi / battery / thermal state into the cached snapshot.
+    ///
+    /// Fire-and-forget background refresh; the status bar keeps rendering
+    /// the previous snapshot until the poll completes.
+    pub fn sys_poll(&self) {
+        let hub = self.sys_hub.clone();
+        let slot = self.sys_snap.clone();
+        tokio::spawn(async move {
+            let snap = hub.refresh_status().await;
+            if let Ok(mut guard) = slot.lock() {
+                *guard = snap;
+            }
+        });
+    }
+
+    /// Toggle RU/EN through the registered Alt+Shift combo.
+    pub fn sys_toggle_layout(&self) {
+        let hub = self.sys_hub.clone();
+        tokio::spawn(async move {
+            let _ = hub
+                .feed_hotkey(aios_sys_control::input_i18n::Hotkey::AltShift)
+                .await;
+        });
     }
 
     /// Drain hot-plug events reported by the background monitor and apply them

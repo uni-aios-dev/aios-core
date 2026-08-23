@@ -47,6 +47,7 @@
 - [x] Phase 53: Stateful process migration — `ProcessExecutor::extract_state`/`restore_state`, `Spawn` carries the state snapshot on the wire (`GetState`/`GetStateReply`), `migrate` restores it on the destination before killing the source (v2.20.0)
 - [x] Phase 54: Checkpoint replication — workers broadcast a per-process state snapshot to all peers each heartbeat; `tick()` restores the newest replicated checkpoint when a hosting node is lost and prunes stale snapshots by `checkpoint_ttl` (builder + `AIOS_CLUSTER_CHECKPOINT_TTL_MS`, default 15 s) (v2.21.0)
 - [x] Full project audit + program scheme & function map — build/clippy/fmt/test sweep (1338 tests green), flaky RT stress threshold fixed (dual debug/release), new `docs/AUDIT.md` + `docs/SCHEME.md` with per-crate function maps, bilingual (v2.28.1)
+- [x] Phase 55: `aios-sys-control` - system control plane: `NetManager` (simulated/host Wi-Fi via netsh, DHCP craft/parse, lease persistence), `LayoutManager` (EN/RU input hotkeys with per-window overrides), `PowerManager` + thermal governor 80/70 C driving cloud LLM offload, `KeyringVault` (AES-256-GCM redb, TEE-bound sealing); TUI sys status line + `l` hotkey, GUI top-bar segments, bridge REST `/api/v1/sys/{status,wifi/scan,wifi/connect,layout}`; 47 unit + 32 integration tests (v2.29.0)
 
 ## Backlog
 
@@ -477,5 +478,5 @@
 - [x] **Milestone 0** (v2.26.0): bare-metal `x86_64-unknown-none` kernel boots under QEMU with serial (COM1) + VGA console; bootloader config enables the physical-memory mapping so the VGA text buffer is reachable.
 - [x] **Milestone 1** (v2.27.0): interrupts — GDT/TSS (with double-fault IST), 256-entry IDT with real handlers (page fault, double fault, GPF), 8259 PIC remap, PIT timer (100 Hz → `TICKS`), PS/2 keyboard; `sti`/`hlt` idle loop prints `tick Ns` and decoded keys.
 - [x] **Milestone 2** (v2.28.0): paging — own page-table walker (`memory::translate`) over the bootloader's physical-memory map, `memory::map_page`/`unmap_page` with on-demand page-table frames, bump frame allocator over `Usable` regions, 2 MiB kernel heap (`heap`, `#[global_allocator]` free-list allocator, `Box`/`Vec`/`String`).
-- [ ] **Milestone 3 — preemption**: timer-driven scheduler with context switch, kernel/user privilege separation (ring 0/3).
-- [ ] **Milestone 4 — IPC**: message-passing bus reusing `aios_core::ipc_protocol` types on the kernel side.
+- [x] **Milestone 3** (v2.29.0): preemption — PIT-tick round-robin scheduler (`sched.rs`, switch every TIMER_HZ/4 ticks) using in-ISR frame-copy context switching; ring-0 kernel worker thread + two ring-3 user programs mapped user-mode (`user.rs`, CODE_BASE 0x40000000, STACK_TOP 0x7F000000); `gdt::USER_CS/USER_DS` selectors.
+- [x] **Milestone 4** (v2.29.0): kernel IPC — per-pid mailboxes (`ipc.rs`, MAX_PID=4 × MAILBOX_DEPTH=16) behind the `int 0x80` DPL-3 gate (IDT flags 0xEE); SYS_SEND/SYS_RECV syscalls whose packet header mirrors `aios_core::ipc_protocol`; periodic `[stats] switches/sent/recv` proof lines and `scripts/qemu-smoke.ps1` headless QEMU check.

@@ -1,5 +1,32 @@
 # AIOS Development Log
 
+## v2.29.0 — aios-sys-control (Wi-Fi/layouts/power/keyring) + kernel milestones M3/M4 (2026-08-23)
+
+### What added
+- New crate `aios-sys-control` (5 modules, 47 unit tests) - the system control plane shared by TUI/GUI/bridge:
+  - `dhcp.rs` - full DHCP Discover/Request/Ack wire build+parse (magic cookie, options 53/54/51/1/3/6/255).
+  - `net_manager.rs` - `NetManager` over `WifiBackend::Simulated` (3 networks: `aios-lab-5g` WPA3 Ghz5 -42 dBm, `home-net` WPA2 Ghz24, `coffee-shop` Open) or `WifiBackend::Host` via `netsh wlan`; scan/connect/disconnect/status + persisted DHCP lease; `SysControlHub` (tokio RwLock) aggregating Wi-Fi + layout + power into `SysStatusSnapshot` with one-line `status_line()` (`[Wi-Fi: ssid] [RU/EN] [BAT+: 84% | 48 C] [LLM: cloud]`).
+  - `input_i18n.rs` - `LayoutManager`: EN/RU pairs, hotkeys `alt_shift`/`ctrl_shift`/`cmd_space`, per-window overrides, `feed_key` toggle detection, `status_segment()` (active layout first).
+  - `power_mgr.rs` - `PowerBackend::{Mock,Host}` sampling (linux sysfs thermal zones; Windows stub), `ThermalGovernor` with 80/70 C hysteresis emitting `ThrottleDecision::{KeepCurrentBackend,MoveToCloud(Groq),ReturnToLocal}`, `PowerManager::set_mock()` for deterministic tests.
+  - `keyring.rs` - `KeyringVault` on redb: AES-256-GCM (nonce||ct), canary record for master-password check, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key (`SealingKey::derive(b"aios-keyring-v1", platform_id)`), `change_master_password` re-encrypts all secrets.
+- Integrations: TUI sys status row in the logs panel + `l` hotkey (layout toggle); GUI top-bar segments refreshed every 2 s via a current-thread runtime; bridge REST endpoints `GET /api/v1/sys/status`, `GET /api/v1/sys/wifi/scan`, `POST /api/v1/sys/wifi/connect`, `POST /api/v1/sys/layout`.
+- `tests/sys_control_tests.rs` - 32 integration tests: DHCP wire format, simulated Wi-Fi flows (wrong passphrase, open network, disconnect, lease persist across restart), layout switching + window overrides, thermal governor cycles (heat->cloud->cool->local), keyring lifecycle (store/get/list/delete/change-master/wrong-password/TEE rebind), hub end-to-end, snapshot JSON serialization.
+- Kernel Milestone 3 (preemption): new `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks), in-ISR frame-copy context switch preserving full trap frames, ring-0 worker thread spawn; new `user.rs` - two ring-3 programs built as raw machine code (int 0x80 send/recv loops), user-mode mapping via `map_page(user=true)` (CODE_BASE 0x40000000, STACK_TOP 0x7F000000, 4 stack pages); `gdt::USER_CS=0x18|3`, `USER_DS=0x20|3`.
+- Kernel Milestone 4 (kernel IPC): new `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16 ring buffers), `SYS_SEND`=1/`SYS_RECV`=2 syscall dispatch, packet header `IpcPacketHeader{src,dst,kind,len}` mirroring `aios_core::ipc_protocol`; IDT entry 128 gets DPL-3 gate flags 0xEE; timer ISR arm calls `sched::tick(frame)`, vector 128 dispatches `ipc::syscall(frame)`; idle loop prints `[stats] switches=N ipc_sent=M ipc_recv=K` every 5 s.
+- QEMU proof tooling: `scripts/qemu-smoke.ps1` builds the BIOS image headlessly (`AIOS_SKIP_QEMU=1` mode added to `aios-kernel-run`), boots it in QEMU without a display, captures COM1 and asserts four proof lines (ring3 entry, IPC traffic, scheduler switching, kernel-worker preemption); exits 2 with a clear message when QEMU is absent.
+
+### Bug fixes
+- `NetManager::status()` was async while holding a std MutexGuard -> not Send across tokio::spawn in the TUI poll task; made synchronous.
+- `SysControlHub.net` switched from std Mutex to tokio RwLock so axum handlers return Send futures.
+- Kernel syscall dispatcher derived the source pid from `frame.cs` (a GDT selector) - now uses `crate::sched::current_pid()`.
+- DHCP `craft()` appended the 255 terminator before test options were pushed; removed so option parsing stays exact.
+
+### Verification
+- 47 unit (aios-sys-control) + 32 integration = workspace total **1417 tests green** in 94 suites; kernel builds clean on nightly `x86_64-unknown-none` (0 warnings) and produces a bootable BIOS image.
+
+Files: `aios-sys-control/*`, `tests/sys_control_tests.rs`, `aios/src/tui/{app_state,mod,ui}.rs`, `aios-gui/src/app.rs`, `aios-bridge/src/server.rs`, `aios-kernel/src/{ipc,sched,user}.rs` + `{main,interrupts,idt,gdt}.rs`, `aios-kernel-run/src/main.rs`, `scripts/qemu-smoke.ps1` (new), `docs/{SCHEME,TODO}{,.ru}.md`.
+
+
 ## v2.28.1 — full workspace audit + program scheme & function map (2026-08-22)
 
 ### What landed

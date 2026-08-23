@@ -1280,7 +1280,17 @@ The script runs `cargo build --release --target x86_64-unknown-linux-musl` for `
 - Syslinux: `LABEL aios\n KERNEL /boot/vmlinuz\n APPEND init=/init console=tty0 quiet\n INITRD /boot/initramfs.cpio.gz`
 - `init=/init` tells the kernel to run the binary instead of `/sbin/init`; `console=tty0` routes kernel + init output to the primary console.
 
-## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — v2.28.0
+
+
+## System Control Plane (`aios-sys-control`) - v2.29.0
+Shared system-control plane consumed by the TUI, GUI, bridge and integration tests:
+- `net_manager` - Wi-Fi management over two backends (`WifiBackend::Simulated` ether with 3 networks / `WifiBackend::Host` driving `netsh wlan`), DHCP Discover/Request/Ack wire codec, persisted lease, `SysControlHub` aggregating net + layout + power into a serializable `SysStatusSnapshot` with `status_line()`.
+- `input_i18n` - EN/RU input-layout manager: hotkeys (`alt_shift` default), per-window overrides, active-first `status_segment()`.
+- `power_mgr` - battery/thermal sampling (`Mock` or host sysfs) + `ThermalGovernor` hysteresis 80/70 C that offloads the LLM to cloud (`Groq`) when hot and returns it to local when cool.
+- `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
+
+Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`.
+## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — v2.29.0
 
 A fresh `x86_64-unknown-none` microkernel that boots directly from `bootloader::BiosBoot` (BIOS disk image) inside QEMU. It is the seed of a self-hosted kernel and currently provides milestone 0 console I/O, milestone 1 interrupts (GDT/TSS, IDT, PIC remap, PIT timer, PS/2 keyboard) and milestone 2 paging (own page-table walker + frame allocator + kernel heap).
 

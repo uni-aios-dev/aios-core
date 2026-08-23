@@ -1,0 +1,23 @@
+[package]
+name = "aios-sys-control"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aios-core = { path = "../aios-core" }
+aios-net-config = { path = "../aios-net-config" }
+aios-llm = { path = "../aios-llm" }
+aios-tee = { path = "../aios-tee" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+log = { workspace = true }
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+redb = "2"
+tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

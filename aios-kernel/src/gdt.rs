@@ -1,6 +1,10 @@
 pub const KERNEL_CS: u16 = 0x08;
 #[allow(dead_code)]
 pub const KERNEL_DS: u16 = 0x10;
+/// User-mode selectors (entries 3/4 with RPL 3) used by the scheduler.
+pub const USER_CS: u16 = (3 * 8) | 3; // 0x1B
+#[allow(dead_code)]
+pub const USER_DS: u16 = (4 * 8) | 3; // 0x23
 pub const TSS_SELECTOR: u16 = 0x28;
 pub const DOUBLE_FAULT_IST_INDEX: u8 = 1;
 

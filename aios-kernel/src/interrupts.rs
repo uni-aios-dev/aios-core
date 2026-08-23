@@ -54,17 +54,20 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
             match vector {
                 32 => {
                     TICKS.fetch_add(1, Ordering::Relaxed);
+                    pic_eoi(vector);
+                    crate::sched::tick(frame);
                 }
                 33 => {
                     LAST_SCANCODE.store(
                         unsafe { port::inb(KEYBOARD_PORT) } as u64,
                         Ordering::Relaxed,
                     );
+                    pic_eoi(vector);
                 }
-                _ => {}
+                _ => pic_eoi(vector),
             }
-            pic_eoi(vector);
         }
+        128 => crate::ipc::syscall(frame),
         _ => fatal(frame, "UNHANDLED INTERRUPT"),
     }
 }

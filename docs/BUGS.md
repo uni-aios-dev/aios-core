@@ -37,6 +37,16 @@
 
 ## Current: No known defects (Clean Build)
 
+
+### KNOWN LIMITATION: kernel frame-copy scheduler is single-core; demo tasks never exit
+The Milestone 3/4 scheduler switches contexts by copying trap frames inside the timer ISR: no SMP/IPI support, no task teardown (the two ring-3 programs and the kernel worker loop forever), and IPC mailboxes drop-oldest when full (`MAILBOX_DEPTH=16`). Fine for milestone scope; revisit before running real workloads on the bare-metal track.
+
+### KNOWN LIMITATION: QEMU smoke test skips when qemu-system-x86_64 is absent
+`scripts/qemu-smoke.ps1` builds the BIOS image, then exits with code 2 and a clear message instead of failing CI on hosts without QEMU. Install QEMU (or run on a host that has it) to execute the runtime assertions over COM1.
+
+### KNOWN LIMITATION: GUI sys segments poll via current-thread Runtime `block_on`
+`aios-gui` refreshes the top-bar system-control segments every 2 s by `block_on` on a current-thread tokio Runtime created at startup. Acceptable for a periodic top-bar refresh; switch to an async channel if the polling surface grows.
+
 As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs found in the v2.7.0 bug-fix pass (BUG-021…BUG-038) are fixed and covered by regression tests. The v2.8.0 restructure of the kernel TUI to 7 tabs, the `--safe-mode` boot flag and the GUI AI Studio / Network Settings tabs, the v2.9.0 / v2.9.1 AI chat persistence, `/preset` templates and streaming work, the v2.9.2 button-contrast fix, the v2.9.5 Live USB image, the v2.10.0 `aios-vfs`/`aios-fm` file manager, the v2.11.0 `aios-cluster`, the v2.12.0 `aios-init` initramfs init, the v2.13.0 `/system/aios-core` kernel-TUI handover, the v2.20.0 stateful process migration (executor state snapshots + `GetState`/`GetStateReply` + state-carried `migrate`), the v2.21.0 checkpoint replication (heartbeat broadcast + TTL pruning + automatic failover restore), the v2.22.0 `aios-autohal` hardware auto-provisioning and the v2.25.0 native push-based hot-plug notifications added no new known defects. See the Historical Issues section and `docs/CHANGELOG.md`.
 
 ### RESOLVED: VRAM shown as 4.0 GB for GPUs above 4 GiB in the kernel TUI
