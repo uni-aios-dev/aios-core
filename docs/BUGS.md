@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: `test_runner_recovery_after_heartbeat` flaked under load (heartbeat raced the watchdog tick phase)
+- **Status:** FIXED in v2.29.1 (found during a full verification run on Windows x64; the workspace test suite and a parallel kernel BIOS build were loading the machine)
+- **Symptom:** `aios-watchdog\src\runner.rs:228` failed with `assertion left == right failed: left: Recovering, right: Monitoring` — the final state check after the recovery heartbeat saw `Recovering` instead of `Monitoring`. The failure was intermittent (passed on isolated runs).
+- **Root cause:** test race against the background thread's tick phase. `WatchdogRunner` polls `check_timeout()` every `interval/2 = 100 ms`; under load a tick can be delayed so that at the moment the test sends hb2 (t≈500 ms) the state is still `Suspended`. By design (`watchdog.rs:88`) a heartbeat restores `Monitoring` only from `Recovering/SafeMode/Warned` — from `Suspended` it does nothing until the next tick advances `Suspended → Recovering`. With no further heartbeats sent, the state stayed `Recovering` at assert time.
+- **Fix:** the test now polls for `Monitoring` for up to 2 s, sending an increasing-sequence heartbeat every 50 ms per iteration — whichever tick phase the background thread is in, the first heartbeat after `Suspended → Recovering` completes the recovery. Semantics under test are unchanged.
+- **Workaround / notes:** none needed post-fix; verified by 5 consecutive green runs of `cargo test -p aios-watchdog --lib` plus a full workspace run (1417 tests green). Same flake class as the v2.28.1 RT stress threshold fix.
+
 ## RESOLVED: `test_stress_rt_scheduler_500` flaked on a loaded machine (hard 2 s wall-clock threshold)
 - **Status:** FIXED in v2.28.1 (found during the v2.28.1 full workspace audit, Windows x64)
 - **Symptom:** `cargo test --workspace` failed once with `RT scheduling took 2.0974127s (>2s)` in `tests/stress_test.rs:113`. The functional assertion (500 RT processes scheduled) passed; only the wall-clock budget tripped.

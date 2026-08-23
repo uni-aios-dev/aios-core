@@ -1,5 +1,16 @@
 # AIOS Development Log
 
+## v2.29.1 — fix flaky `test_runner_recovery_after_heartbeat` (2026-08-23)
+
+### Fixed
+- `aios-watchdog/src/runner.rs`: `test_runner_recovery_after_heartbeat` raced the background thread's tick phase — if a tick was delayed under load, hb2 arrived while the state was still `Suspended`, where heartbeats do not restore `Monitoring` by design (`watchdog.rs` recovers only from `Recovering/SafeMode/Warned`). The test now polls for `Monitoring` for up to 2 s, sending an increasing-sequence heartbeat every 50 ms; the first heartbeat after the background `Suspended → Recovering` transition completes recovery regardless of tick phase.
+
+### Verification
+- 5 consecutive green runs of `cargo test -p aios-watchdog --lib`; full workspace suite **1417 tests green**; `cargo clippy --workspace`: **0 warnings**; `cargo fmt --all`: clean.
+- QEMU smoke: BIOS image built OK (`scripts/qemu-smoke.ps1`); runtime assertions skipped on this host (no qemu-system-x86_64 installed).
+
+Files: `aios-watchdog/src/runner.rs`, `docs/{BUGS,CHANGELOG}{,.ru}.md`.
+
 ## v2.29.0 — aios-sys-control (Wi-Fi/layouts/power/keyring) + kernel milestones M3/M4 (2026-08-23)
 
 ### What added

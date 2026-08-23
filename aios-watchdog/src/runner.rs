@@ -222,10 +222,19 @@ mod tests {
                 || runner.state() == WatchdogState::SafeMode
         );
 
-        let hb2 = Heartbeat::new(2, b"runner_test_secret");
-        runner.receive_heartbeat(&hb2).unwrap();
-        std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(runner.state(), WatchdogState::Monitoring);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut seq = 2u64;
+        while runner.state() != WatchdogState::Monitoring {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watchdog stuck in {:?}",
+                runner.state()
+            );
+            let hb = Heartbeat::new(seq, b"runner_test_secret");
+            seq += 1;
+            runner.receive_heartbeat(&hb).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]

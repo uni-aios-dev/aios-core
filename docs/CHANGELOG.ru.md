@@ -1,5 +1,17 @@
 # Журнал разработки AIOS
 
+## v2.29.1 — фикс «мигающего» `test_runner_recovery_after_heartbeat` (2026-08-23)
+
+### Исправлено
+- `aios-watchdog/src/runner.rs`: тест `test_runner_recovery_after_heartbeat` гонял с фазой тиков фонового потока — если под нагрузкой тик запаздывал, hb2 приходил, пока состояние ещё `Suspended`, а из `Suspended` heartbeat не возвращает `Monitoring` по дизайну (`watchdog.rs` восстанавливает только из `Recovering/SafeMode/Warned`). Теперь тест ждёт `Monitoring` до 2 с, отправляя heartbeat с растущим sequence каждые 50 мс; первый heartbeat после перехода `Suspended → Recovering` завершает восстановление при любой фазе тиков.
+
+### Верификация
+- 5 подряд зелёных прогонов `cargo test -p aios-watchdog --lib`; полный прогон воркспейса **1417 тестов зелёные**; `cargo clippy --workspace`: **0 предупреждений**; `cargo fmt --all`: чисто.
+- QEMU smoke: BIOS-образ собран OK (`scripts/qemu-smoke.ps1`); рантайм-проверки пропущены на этой машине (не установлен qemu-system-x86_64).
+
+Файлы: `aios-watchdog/src/runner.rs`, `docs/{BUGS,CHANGELOG}{,.ru}.md`.
+
+
 ## v2.29.0 — aios-sys-control (Wi-Fi/раскладки/питание/keyring) + вехи ядра M3/M4 (2026-08-23)
 
 ### Что добавлено
