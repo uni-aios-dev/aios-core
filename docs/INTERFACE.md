@@ -524,6 +524,17 @@ The SPA is available at the root URL. The bridge port is configurable via the `a
   - Red = Disconnected / Error
 - WebSocket auto-reconnect with 1s → 15s exponential backoff
 
+### Authentication
+
+As of v2.30.0 the Web Studio requires a local account before it will load the dashboard:
+
+- **First run**: the sign-in screen shows two tabs — *Sign in* and *Create account*. The first user on a fresh instance creates the account (username ≥ 3 chars, password ≥ 6 chars). A new account is registered on that AIOS instance and signs you in.
+- **Session token**: on success the server returns a self-signed HMAC token with a 12 h lifetime. The UI stores it in `localStorage` (`aios_token`) and sends it as `Authorization: Bearer <token>` on every API call via `apiFetch`.
+- **Re-login**: if the server replies `401`, the UI clears the token and returns to the sign-in screen automatically.
+- **Sign out**: the sidebar footer has a *Sign out* button (also shows the current username + avatar).
+- **Server-side protection**: the whole `/api/v1/*` surface is gated by the `require_auth` middleware, except the public `auth/register`, `auth/login`, `health`, `sys/status` and WebSocket telemetry routes. The bridge secret comes from `AIOS_AUTH_SECRET` (fallback derived from the data dir); users live in `<AIOS_DATA_DIR>/users.json`.
+- **CORS**: disabled by default (the UI is same-origin) or restricted to a single origin via `AIOS_CORS_ORIGIN`.
+
 ### Requirements
 
 - Any modern browser (Chrome, Firefox, Safari, Edge)

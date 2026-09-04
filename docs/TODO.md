@@ -48,11 +48,19 @@
 - [x] Phase 54: Checkpoint replication — workers broadcast a per-process state snapshot to all peers each heartbeat; `tick()` restores the newest replicated checkpoint when a hosting node is lost and prunes stale snapshots by `checkpoint_ttl` (builder + `AIOS_CLUSTER_CHECKPOINT_TTL_MS`, default 15 s) (v2.21.0)
 - [x] Full project audit + program scheme & function map — build/clippy/fmt/test sweep (1338 tests green), flaky RT stress threshold fixed (dual debug/release), new `docs/AUDIT.md` + `docs/SCHEME.md` with per-crate function maps, bilingual (v2.28.1)
 - [x] Phase 55: `aios-sys-control` - system control plane: `NetManager` (simulated/host Wi-Fi via netsh, DHCP craft/parse, lease persistence), `LayoutManager` (EN/RU input hotkeys with per-window overrides), `PowerManager` + thermal governor 80/70 C driving cloud LLM offload, `KeyringVault` (AES-256-GCM redb, TEE-bound sealing); TUI sys status line + `l` hotkey, GUI top-bar segments, bridge REST `/api/v1/sys/{status,wifi/scan,wifi/connect,layout}`; 47 unit + 32 integration tests (v2.29.0)
+- [x] Web authentication for `aios-studio` + CORS lockdown — local accounts (`AIOS_DATA_DIR/users.json`), salted + key-stretched (SHA-256 × 10 000) passwords, self-signed HMAC-SHA256 session tokens (12 h TTL), `require_auth` middleware gating `/api/v1/*`, sign-in / create-account UI, `apiFetch` + `localStorage` token, sidebar user badge / sign-out (v2.30.0; Rust build NOT yet verified on this host)
 
 ## Backlog
 
 - [x] Wire `aios-init` + `build_initramfs.sh` into `live/build.sh` step [4] as the initramfs `/init` by default (done in v2.14.0; legacy busybox path kept behind `USE_BUSYBOX_INIT=1`)
 - [x] Add a `rootfs` cleanup guard / `--keep-rootfs` flag to `build_initramfs.sh` — done (v2.13.0)
+
+## Planned follow-ups (from v2.30.0 review)
+
+- [ ] WebSocket auth: authenticate `/ws/telemetry` with the session token (currently intentionally public — only RAM/CPU telemetry exposed).
+- [ ] Dangerous-action confirmations in `aios-studio` (kill process, unload block, compact memory) — second-chance dialog before destructive ops.
+- [ ] GUI (`aios-gui`) parity: real live data + working actions (currently fake/disabled); re-login flow for the web client from the bridge.
+- [ ] Re-verify the v2.30.0 Rust build on a machine with an MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — blocked on this host (no `link.exe`).
 
 ## Readiness Assessment (2026-07-29, updated)
 

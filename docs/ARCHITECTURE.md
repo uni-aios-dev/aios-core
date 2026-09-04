@@ -1021,6 +1021,7 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - **Hardware security bridge** unifies MPK/TEE/IOMMU protection for block isolation
 - **CoW persistence** with atomic rollback and crash-recovery journal
 - **Compressed telemetry** auto-compresses cold data with ZSTD
+- **Web authentication** (v2.30.0): local accounts in `<AIOS_DATA_DIR>/users.json`, salted + key-stretched (SHA-256 × 10 000) passwords, self-signed HMAC-SHA256 session tokens (12 h TTL), `require_auth` middleware gates the `/api/v1/*` surface, CORS disabled by default or pinned to `AIOS_CORS_ORIGIN`
 
 **Not yet implemented**: full WebAssembly runtime integration. See `docs/TODO.md`.
 

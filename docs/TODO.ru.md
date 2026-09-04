@@ -48,11 +48,19 @@
 - [x] Фаза 54: Репликация контрольных точек — воркеры рассылают снимок состояния каждого процесса всем пирам каждый heartbeat; `tick()` восстанавливает самую свежую реплицированную контрольную точку при потере узла-хоста и вычищает устаревшие снимки по `checkpoint_ttl` (builder + `AIOS_CLUSTER_CHECKPOINT_TTL_MS`, по умолчанию 15 с) (v2.21.0)
 - [x] Полный аудит проекта + схема программы и карта функций — прогон build/clippy/fmt/test (1338 тестов зелёные), исправлен «мигающий» порог RT-стресс-теста (двойной debug/release), новые `docs/AUDIT.ru.md` + `docs/SCHEME.ru.md` с картами функций по крейтам, двуязычно (v2.28.1)
 - [x] Phase 55 / `aios-sys-control` — системная управляющая плоскость: `NetManager` (имитируемый/host Wi-Fi через netsh, DHCP craft/parse, сохранение lease), `LayoutManager` (EN/RU-хоткеи ввода с переопределениями по окнам), `PowerManager` + термал-гувернёр 80/70 °C с уходом LLM в облако, `KeyringVault` (AES-256-GCM redb, привязка к TEE); sys-строка статуса в TUI + хоткей `l`, сегменты в top-bar GUI, bridge REST `/api/v1/sys/{status,wifi/scan,wifi/connect,layout}`; 47 юнит + 32 интеграционных теста (v2.29.0)
+- [x] Веб-аутентификация для `aios-studio` + ужесточение CORS — локальные аккаунты (`AIOS_DATA_DIR/users.json`), солёные + key-stretched (SHA-256 × 10 000) пароли, самоподписанные HMAC-SHA256 сессионные токены (TTL 12 ч), middleware `require_auth` для `/api/v1/*`, UI входа/создания аккаунта, `apiFetch` + `localStorage`-токен, user badge / sign-out в сайдбаре (v2.30.0; сборка Rust на этом хосте пока НЕ проверена)
 
 ## Бэклог
 
 - [x] Сделать подключение `aios-init` + `build_initramfs.sh` в `live/build.sh` шаг [4] как `/init` initramfs режимом по умолчанию (сделано в v2.14.0; прежний путь busybox сохранён за `USE_BUSYBOX_INIT=1`)
 - [x] Защита очистки `rootfs` / флаг `--keep-rootfs` в `build_initramfs.sh` — сделано (v2.13.0)
+
+## Планируемые follow-up (из ревью v2.30.0)
+
+- [ ] Аутентификация WebSocket: защитить `/ws/telemetry` сессионным токеном (сейчас намеренно публичный — раскрывается только телеметрия RAM/CPU).
+- [ ] Подтверждения опасных действий в `aios-studio` (kill process, unload block, compact memory) — диалог второго шанса перед деструктивными операциями.
+- [ ] Паритет GUI (`aios-gui`): реальные живые данные + рабочие действия (сейчас фейковые/отключённые); поток повторного входа для веб-клиента из bridge.
+- [ ] Повторно проверить сборку Rust v2.30.0 на машине с MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — заблокировано на этом хосте (нет `link.exe`).
 
 ## Оценка готовности (2026-07-28, обновлено)
 

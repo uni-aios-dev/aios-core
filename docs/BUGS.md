@@ -1,5 +1,11 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN: AIOS Studio web auth shipped but the Rust build is UNVERIFIED (no MSVC linker on this host)
+- **Status:** OPEN in v2.30.0 — code complete and logic-reviewed, but NOT compiled
+- **Symptom / risk:** `aios-bridge` auth (`src/auth.rs`), DTOs, `require_auth` middleware, CORS changes and the `aios-studio` web sign-in flow are written, but this Windows host has no `link.exe` (VS Build Tools installer exits with code 87, no logs). `cargo build`/`cargo test`/`cargo clippy` could still surface type/lifetime errors.
+- **Workaround / notes:** must re-run `cargo test --workspace` and `cargo clippy --workspace` on a machine with a working linker before treating v2.30.0 as merged-verified. Code avoids new dependencies beyond already-present `uuid/base64/sha2/tempfile`.
+- **Related:** the `/ws/telemetry` endpoint is intentionally left unauthenticated (WebSocket auth is a follow-up); it only exposes RAM/CPU telemetry.
+
 ## RESOLVED: `test_runner_recovery_after_heartbeat` flaked under load (heartbeat raced the watchdog tick phase)
 - **Status:** FIXED in v2.29.1 (found during a full verification run on Windows x64; the workspace test suite and a parallel kernel BIOS build were loading the machine)
 - **Symptom:** `aios-watchdog\src\runner.rs:228` failed with `assertion left == right failed: left: Recovering, right: Monitoring` — the final state check after the recovery heartbeat saw `Recovering` instead of `Monitoring`. The failure was intermittent (passed on isolated runs).

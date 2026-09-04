@@ -1,3 +1,4 @@
+use crate::auth::{AuthHandle, AuthStore};
 use crate::dto::*;
 use crate::error::{BridgeError, Result};
 use crate::intent_engine::{BlockAction, IntentParser, MetricType, ProcessAction, UserIntent};
@@ -29,6 +30,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 pub struct BridgeContext {
@@ -52,6 +54,8 @@ pub struct BridgeContext {
     pub sys_control: tokio::sync::Mutex<aios_sys_control::SysControlHub>,
     /// Directory holding installed block binaries (`<name>_<version>.wasm`).
     pub blocks_dir: String,
+    /// Local user authentication store (register / login / sessions).
+    pub auth: AuthHandle,
 }
 
 impl BridgeContext {
@@ -62,6 +66,15 @@ impl BridgeContext {
         watchdog: Watchdog,
         bridge_block_id: u32,
     ) -> Self {
+        let data_dir = std::env::var("AIOS_DATA_DIR").unwrap_or_else(|_| "aios_data".to_string());
+        let auth = crate::auth::open_auth(std::path::Path::new(&data_dir))
+            .unwrap_or_else(|e| {
+                log::warn!("AUTH: failed to open auth store, auth disabled: {e}");
+                std::sync::Arc::new(Mutex::new(
+                    AuthStore::new(std::path::Path::new(&data_dir))
+                        .expect("in-memory auth store fallback"),
+                ))
+            });
         Self {
             intent_parser: IntentParser::new(),
             scheduler,
@@ -81,6 +94,7 @@ impl BridgeContext {
             _panic_handler: Mutex::new(PanicHandler::new("aios-bridge", "1.0.0")),
             sys_control: tokio::sync::Mutex::new(aios_sys_control::SysControlHub::defaults()),
             blocks_dir: std::env::var("AIOS_BLOCKS_DIR").unwrap_or_else(|_| "./blocks".to_string()),
+            auth,
         }
     }
 
@@ -98,8 +112,30 @@ impl BridgeContext {
 type SharedState = Arc<BridgeContext>;
 
 pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
+    // CORS: restrict to a single origin when configured, otherwise disable
+    // CORS headers entirely (the UI is served from the same origin as the
+    // API, so cross-origin access is not needed). This replaces the previous
+    // permissive policy that allowed any website to call the bridge.
+    let allowed_origin = std::env::var("AIOS_CORS_ORIGIN").ok();
+    let cors = match &allowed_origin {
+        Some(origin) => CorsLayer::new()
+            .allow_origin(AllowOrigin::exact(
+                axum::http::HeaderValue::from_str(origin).unwrap_or(axum::http::HeaderValue::from_static("*")),
+            ))
+            .allow_headers(Any)
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ]),
+        None => CorsLayer::never(),
+    };
+
     let app = Router::new()
-        .route("/api/v1/health", get(health_handler))
+        // Public auth endpoints.
+        .route("/api/v1/auth/register", post(auth_register_handler))
+        .route("/api/v1/auth/login", post(auth_login_handler))
+        // Protected API surface.
         .route("/api/v1/system/status", get(status_handler))
         .route("/api/v1/intent", post(intent_handler))
         .route("/api/v1/workflow", post(workflow_handler))
@@ -109,10 +145,6 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/store/index", get(store_index_handler))
         .route("/api/v1/store/register", post(store_register_handler))
         .route("/api/v1/store/publish", post(store_publish_handler))
-        .route("/store/index.json", get(store_catalog_handler))
-        .route("/store/blocks/{name}.wasm", get(store_block_handler))
-        .route("/index.json", get(store_catalog_handler))
-        .route("/blocks/{name}.wasm", get(store_block_handler))
         .route("/api/v1/metrics", get(metrics_handler))
         .route("/api/v1/traces", get(traces_handler))
         .route("/api/v1/crash-report", post(crash_report_handler))
@@ -120,8 +152,19 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/sys/wifi/scan", get(sys_wifi_scan_handler))
         .route("/api/v1/sys/wifi/connect", post(sys_wifi_connect_handler))
         .route("/api/v1/sys/layout", post(sys_layout_handler))
+        .route("/api/v1/auth/me", get(auth_me_handler))
         .route("/ws/telemetry", get(ws_handler))
-        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_auth,
+        ))
+        // Public, unauthenticated fallbacks and happy-path plumbing.
+        .route("/api/v1/health", get(health_handler))
+        .route("/store/index.json", get(store_catalog_handler))
+        .route("/store/blocks/{name}.wasm", get(store_block_handler))
+        .route("/index.json", get(store_catalog_handler))
+        .route("/blocks/{name}.wasm", get(store_block_handler))
+        .layer(cors)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             record_metrics,
@@ -139,6 +182,98 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .map_err(|e| BridgeError::ServerError(format!("Server error: {e}")))?;
 
     Ok(())
+}
+
+/// Reject calls to protected routes unless a valid bearer token is presented.
+async fn require_auth(State(state): State<SharedState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    // Always allow the public surfaces.
+    if path == "/api/v1/auth/register"
+        || path == "/api/v1/auth/login"
+        || path == "/api/v1/health"
+        || path == "/ws/telemetry"
+        || path == "/api/v1/sys/status"
+        || !path.starts_with("/api/")
+    {
+        return next.run(req).await;
+    }
+    // `/api/v1/auth/me` is protected and reads the token below.
+
+    let Some(header) = req.headers().get(axum::http::header::AUTHORIZATION) else {
+        return Json(serde_json::json!({
+            "success": false,
+            "error": "Authentication required"
+        }))
+        .into_response();
+    };
+    let Ok(header_str) = header.to_str() else {
+        return Json(serde_json::json!({
+            "success": false,
+            "error": "Malformed authorization header"
+        }))
+        .into_response();
+    };
+    let store = state.auth.lock().unwrap();
+    match store.bearer_user(header_str) {
+        Ok(user) => {
+            let mut req = req;
+            req.extensions_mut().insert(user);
+            next.run(req).await
+        }
+        Err(_) => Json(serde_json::json!({
+            "success": false,
+            "error": "Invalid or expired token"
+        }))
+        .into_response(),
+    }
+}
+
+async fn auth_register_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<RegisterRequest>,
+) -> std::result::Result<Json<AuthResponse>, IntentApiError> {
+    let mut store = state.auth.lock().unwrap();
+    let token = store.register(&req.username, &req.password)?;
+    Ok(Json(AuthResponse {
+        success: true,
+        token: Some(token),
+        username: Some(req.username.trim().to_lowercase()),
+        error: None,
+    }))
+}
+
+async fn auth_login_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<LoginRequest>,
+) -> std::result::Result<Json<AuthResponse>, IntentApiError> {
+    let mut store = state.auth.lock().unwrap();
+    let token = store.login(&req.username, &req.password)?;
+    Ok(Json(AuthResponse {
+        success: true,
+        token: Some(token),
+        username: Some(req.username.trim().to_lowercase()),
+        error: None,
+    }))
+}
+
+async fn auth_me_handler(State(state): State<SharedState>, req: Request) -> Json<MeResponse> {
+    let username = req
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_else(|| "anonymous".into());
+    let store = state.auth.lock().unwrap();
+    let user_count = store.user_count();
+    let data_dir = store
+        .users_path()
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "aios_data".to_string());
+    Json(MeResponse {
+        username,
+        user_count,
+        data_dir,
+    })
 }
 
 async fn record_metrics(State(state): State<SharedState>, req: Request, next: Next) -> Response {

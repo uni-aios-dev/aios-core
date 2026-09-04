@@ -1,5 +1,26 @@
 # Журнал разработки AIOS
 
+## v2.30.0 — аутентификация Web + ужесточение CORS для AIOS Studio (2026-09-04)
+
+### Что добавлено
+- Новый `aios-bridge/src/auth.rs` (7 юнит-тестов) — автономная локальная аутентификация без внешнего крипто-сервиса:
+  - Пользователи сохраняются в `<AIOS_DATA_DIR>/users.json` (fallback `aios_data`); пароли солятся (UUID v4) и растягиваются SHA-256 за 10 000 итераций, никогда не хранятся в открытом виде.
+  - Сессионные токены — самоподписанный HMAC-SHA256 (RFC 2104, реализован поверх крейта `sha2`) с раскладкой `header.payload.signature` и сроком жизни 12 часов.
+  - `AuthStore::{register, login, bearer_user}`; секрет моста из env `AIOS_AUTH_SECRET` (fallback — производная от пути data dir).
+- `aios-bridge/src/dto.rs` — новые `RegisterRequest`, `LoginRequest`, `AuthResponse`, `MeResponse`.
+- `aios-bridge/src/server.rs`:
+  - `BridgeContext.auth: AuthHandle` (`Arc<Mutex<AuthStore>>`), инициализируется из `AIOS_DATA_DIR`; если хранилище не открыть — безопасный fallback в памяти.
+  - Эндпоинты `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`.
+  - Middleware `require_auth` защищает всю поверхность `/api/v1/*`, кроме публичных auth/health/sys-status маршрутов и статики; имя аутентифицированного пользователя пробрасывается через request extensions.
+  - CORS ужесточён: по умолчанию `CorsLayer::never()` (UI и API на одном origin, кросс-домен не нужен) либо один origin из `AIOS_CORS_ORIGIN`; ранее любой сайт мог вызывать мост.
+- `aios-studio` (веб-интерфейс): экран входа/регистрации (`.auth-overlay`/`.auth-card`/табы), токен в `localStorage` (`aios_token`), обёртка `apiFetch()` с заголовком `Authorization: Bearer`, автоматический повторный вход при 401, бейдж пользователя + кнопка выхода в сайдбаре. Все существующие `fetch`-вызовы переведены на `apiFetch`.
+
+### Известное ограничение
+- Rust-сборка НЕ проверена на этой машине: нет MSVC `link.exe` (установщик VS Build Tools выходит с кодом 87, без логов). Сделан ревью кода + логическая проверка компиляции, но `cargo build`/`cargo test`/`clippy` нужно перезапустить на машине с рабочим линкером для подтверждения слияния.
+- `/ws/telemetry` намеренно оставлен публичным (аутентификация WebSocket — следующий шаг), отдаётся только телеметрия RAM/CPU.
+
+Файлы: `aios-bridge/src/{auth,server,dto,lib,error}.rs`, `aios-studio/{index.html,style.css,app.js}`, `docs/{CHANGELOG,BUGS,INTERFACE,ARCHITECTURE,TODO}{,.ru}.md`.
+
 ## v2.29.1 — фикс «мигающего» `test_runner_recovery_after_heartbeat` (2026-08-23)
 
 ### Исправлено

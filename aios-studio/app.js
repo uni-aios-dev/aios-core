@@ -3,12 +3,44 @@ const API = {
   status: '/api/v1/system/status',
   intent: '/api/v1/intent',
   workflow: '/api/v1/workflow',
+  login: '/api/v1/auth/login',
+  register: '/api/v1/auth/register',
+  me: '/api/v1/auth/me',
   ws: () => {
     const p = window.location;
     const proto = p.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${p.host}/ws/telemetry`;
   }
 };
+
+const TOKEN_KEY = 'aios_token';
+let authMode = 'login';
+let authUser = null;
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+/* Fetch wrapper that attaches the bearer token and handles 401s. */
+async function apiFetch(url, options = {}) {
+  const headers = Object.assign({}, options.headers || {});
+  const token = getToken();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(url, Object.assign({}, options, { headers }));
+  if (r.status === 401) {
+    setToken(null);
+    showAuthScreen(true);
+    throw new AuthError('Session expired — please sign in again');
+  }
+  return r;
+}
+
+class AuthError extends Error {}
 
 const MAX_POINTS = 120;
 let ramHistory = [];
@@ -86,7 +118,7 @@ document.getElementById('command-input').addEventListener('keydown', async e => 
 /* ── API ── */
 async function sendIntent(prompt) {
   try {
-    const r = await fetch(API.intent, {
+    const r = await apiFetch(API.intent, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt })
@@ -97,13 +129,14 @@ async function sendIntent(prompt) {
     }
     return await r.json();
   } catch (e) {
+    if (e instanceof AuthError) return { error: e.message };
     return null;
   }
 }
 
 async function fetchStatus() {
   try {
-    const r = await fetch(API.status);
+    const r = await apiFetch(API.status);
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
@@ -575,7 +608,7 @@ async function runWorkflow() {
   output.innerHTML = '<em style="color:var(--text-muted)">Running workflow…</em>';
 
   try {
-    const r = await fetch(API.workflow, {
+    const r = await apiFetch(API.workflow, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompts: workflow.map(s => s.prompt) })
@@ -609,11 +642,121 @@ async function runWorkflow() {
   resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+/* ── Authentication ── */
+function showAuthScreen(visible) {
+  document.getElementById('auth-screen').classList.toggle('hidden', !visible);
+  if (visible) {
+    document.getElementById('auth-error').classList.add('hidden');
+  }
+}
+
+function showAuthMode(mode) {
+  authMode = mode;
+  document.getElementById('auth-tab-login').classList.toggle('active', mode === 'login');
+  document.getElementById('auth-tab-register').classList.toggle('active', mode === 'register');
+  document.getElementById('auth-submit').textContent = mode === 'login' ? 'Sign in' : 'Create account';
+  document.getElementById('auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  document.getElementById('auth-error').classList.add('hidden');
+}
+
+function setAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+async function authRequest(endpoint, username, password) {
+  const r = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok || !body.success) {
+    throw new Error(body && body.error ? body.error : `HTTP ${r.status}`);
+  }
+  return body;
+}
+
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const submit = document.getElementById('auth-submit');
+  submit.disabled = true;
+  try {
+    const endpoint = authMode === 'login' ? API.login : API.register;
+    const res = await authRequest(endpoint, username, password);
+    setToken(res.token);
+    authUser = res.username || username.toLowerCase();
+    await enterApp();
+  } catch (err) {
+    setAuthError(err.message || 'Authentication failed');
+  } finally {
+    submit.disabled = false;
+    document.getElementById('auth-password').value = '';
+  }
+  return false;
+}
+
+function logout() {
+  setToken(null);
+  authUser = null;
+  document.getElementById('auth-username').value = '';
+  document.getElementById('auth-password').value = '';
+  showAuthMode('login');
+  showAuthScreen(true);
+}
+
+function updateUserBadge() {
+  document.getElementById('user-name').textContent = authUser || '—';
+  document.getElementById('user-avatar').textContent = (authUser || '?').charAt(0).toUpperCase();
+}
+
+async function enterApp() {
+  showAuthScreen(false);
+  updateUserBadge();
+  connectWs();
+  await updateDashboard();
+  if (!statusTimer) {
+    statusTimer = setInterval(updateDashboard, 5000);
+  }
+}
+
+/* Validate a stored token; returns true if session is valid. */
+async function validateSession() {
+  const token = getToken();
+  if (!token) return false;
+  try {
+    const r = await fetch(API.me, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!r.ok && r.status === 401) {
+      setToken(null);
+      return false;
+    }
+    if (!r.ok) return false;
+    const body = await r.json().catch(() => null);
+    authUser = body && body.username ? body.username : null;
+    updateUserBadge();
+    return true;
+  } catch {
+    return true; // backend unreachable — keep local session
+  }
+}
+
+async function initAuth() {
+  const ok = await validateSession();
+  if (ok) {
+    await enterApp();
+  } else {
+    showAuthScreen(true);
+  }
+}
+
 /* ── Init ── */
 function init() {
-  connectWs();
-  updateDashboard();
-  statusTimer = setInterval(updateDashboard, 5000);
+  initAuth();
   window.addEventListener('resize', () => requestAnimationFrame(drawChart));
 }
 

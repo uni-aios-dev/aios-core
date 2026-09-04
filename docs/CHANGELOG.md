@@ -1,5 +1,26 @@
 # AIOS Development Log
 
+## v2.30.0 — Web authentication + CORS lockdown for the AIOS Studio (2026-09-04)
+
+### What added
+- New `aios-bridge/src/auth.rs` (7 unit tests) — self-contained local auth, no external crypto service:
+  - Users persisted to `<AIOS_DATA_DIR>/users.json` (fallback `aios_data`); passwords are salted (UUID v4) and key-stretched with SHA-256 over 10 000 iterations, never stored in plaintext.
+  - Session tokens are self-signed HMAC-SHA256 (RFC 2104 reimplemented on top of the `sha2` crate) with `header.payload.signature` layout and a 12 h expiry.
+  - `AuthStore::{register, login, bearer_user}`; `bridge` secret from `AIOS_AUTH_SECRET` env (fallback derived from the data dir path).
+- `aios-bridge/src/dto.rs` — new `RegisterRequest`, `LoginRequest`, `AuthResponse`, `MeResponse`.
+- `aios-bridge/src/server.rs`:
+  - `BridgeContext.auth: AuthHandle` (`Arc<Mutex<AuthStore>>`), initialized from `AIOS_DATA_DIR`; auth disabled safely with an in-memory fallback if the store cannot open.
+  - Endpoints `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`.
+  - `require_auth` middleware protects the whole `/api/v1/*` surface except public auth/health/sys-status routes and static files; the authenticated username is threaded via request extensions.
+  - CORS hardened: default is `CorsLayer::never()` (UI is same-origin, so cross-origin is not needed) or a single origin from `AIOS_CORS_ORIGIN`; previously any website could call the bridge.
+- `aios-studio` (web UI): full sign-in / create-account screen (`.auth-overlay`/`.auth-card`/tabs), token stored in `localStorage` (`aios_token`), `apiFetch()` wrapper attaching `Authorization: Bearer`, automatic re-logon when a 401 is seen, sidebar user badge + Sign out button. All existing `fetch` calls now go through `apiFetch`.
+
+### Known limitation
+- Rust build NOT verified on this host: no MSVC `link.exe` (VS Build Tools installer exits with code 87, no logs). Code review + logical compile checks done, but `cargo build`/`cargo test`/`clippy` must be re-run on a machine with a working linker before merge confidence.
+- `/ws/telemetry` is intentionally left public (WebSocket auth is a follow-up), only RAM/CPU telemetry is exposed.
+
+Files: `aios-bridge/src/{auth,server,dto,lib,error}.rs`, `aios-studio/{index.html,style.css,app.js}`, `docs/{CHANGELOG,BUGS,INTERFACE,ARCHITECTURE,TODO}{,.ru}.md`.
+
 ## v2.29.1 — fix flaky `test_runner_recovery_after_heartbeat` (2026-08-23)
 
 ### Fixed

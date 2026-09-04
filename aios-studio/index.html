@@ -7,6 +7,34 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- Auth Screen (login / register) -->
+<div id="auth-screen" class="auth-overlay hidden">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+      </svg>
+      <span>AIOS Studio</span>
+    </div>
+    <h1 class="auth-title">Welcome</h1>
+    <p class="auth-subtitle">Sign in to access your AIOS control panel</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="auth-tab-login" onclick="showAuthMode('login')">Sign in</button>
+      <button class="auth-tab" id="auth-tab-register" onclick="showAuthMode('register')">Create account</button>
+    </div>
+
+    <form id="auth-form" onsubmit="return handleAuthSubmit(event)">
+      <input type="text" id="auth-username" class="auth-input" placeholder="Username" autocomplete="username" required>
+      <input type="password" id="auth-password" class="auth-input" placeholder="Password" autocomplete="current-password" required>
+      <div id="auth-error" class="auth-error hidden"></div>
+      <button type="submit" id="auth-submit" class="btn btn-accent auth-submit">Sign in</button>
+    </form>
+
+    <p class="auth-hint">After the first sign-in, an account is created on this AIOS instance.</p>
+  </div>
+</div>
+
 <div id="app">
   <aside id="sidebar">
     <div class="sidebar-header">
@@ -39,6 +67,11 @@
       </button>
     </nav>
     <div class="sidebar-footer">
+      <div class="user-row">
+        <span class="user-avatar" id="user-avatar">?</span>
+        <span class="user-name" id="user-name">—</span>
+        <button class="btn btn-sm btn-ghost" id="auth-logout" onclick="logout()" title="Sign out" style="margin-left:auto">Sign out</button>
+      </div>
       <div id="connection-status" class="status-badge disconnected">
         <span class="status-dot"></span>
         <span class="status-label">Disconnected</span>

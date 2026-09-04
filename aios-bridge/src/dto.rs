@@ -243,3 +243,30 @@ pub struct SearchResponse {
     pub duration_ms: u64,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthResponse {
+    pub success: bool,
+    pub token: Option<String>,
+    pub username: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    pub username: String,
+    pub user_count: usize,
+    pub data_dir: String,
+}
