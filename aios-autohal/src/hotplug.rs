@@ -63,8 +63,10 @@ pub struct HotplugConfig {
     /// Whether to run the OS-native push listener
     /// ([`crate::native::NativeHotplugMonitor`]). A native arrival/removal
     /// event triggers an immediate full re-detection instead of waiting for the
-    /// next signal/poll tick. Default `true`; set to `false` in environments
-    /// where no native source exists (pure polling keeps working either way).
+    /// next signal/poll tick; bursts of pushes (e.g. a flapping device) are
+    /// coalesced to at most one scan per `poll_ms`. Default `true`; set to
+    /// `false` in environments where no native source exists (pure polling
+    /// keeps working either way).
     pub native_enabled: bool,
 }
 
@@ -196,7 +198,7 @@ impl HotplugMonitor {
                     false
                 };
                 let run_scan = if native_pushed {
-                    true
+                    last_full.elapsed() >= poll_dur
                 } else if have_cheap {
                     let (changed, state) = cheap_signal(prev_signal);
                     prev_signal = state;

@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: phantom `USB 0000:0000 (unknown)` re-provisioned in a loop — "a new line appears every time I open tab 1"
+- **Status:** FIXED in v2.31.1 (reported by the user after the pile-up fix: «уже лучше но все равно когда переключаю первую вкладку появляется инфо которое смещает каждое открытие появляется новая строка»)
+- **Symptom:** on the System & HW tab the Events toast strip and the right-side log panel kept gaining lines: `HAL: NVIDIA GPU detected …` / `HAL: Detected 16 cores…` every few seconds and a recurring `[Hardware] USB 0000:0000 (unknown) -> driver not found… -> Generic Fallback` provisioning toast. Each visit showed more content. The machine's PnP tree contains a USB entry without any vendor/product identity (`USB 0000:0000 (unknown)`) that keeps flapping.
+- **Root cause:** (1) `HardwareProfile::detect_usb` kept such `0000:0000` entries as devices, so every flap surfaced as an `Added` fingerprint difference and re-triggered provisioning; (2) `HotplugMonitor` ran a full `HardwareProfile::detect()` on every native push event (WM_DEVICECHANGE), one scan per event; (3) `detect()`/`detect_gpu_nvidia` logged the `INFO` hardware summary on every scan, flooding the log panel.
+- **Fix:** (1) `detect_usb` now drops entries where VID==0 && PID==0 via new pure helper `is_identifiable_usb` (unit-tested) — enumeration artifacts can't be fingerprinted or provisioned; (2) native pushes are coalesced in `HotplugMonitor` to at most one full scan per `poll_ms`; (3) the `HAL: Detected …` / `HAL: NVIDIA GPU detected` lines are logged once per process.
+- **Workaround / notes:** covered by `test_is_identifiable_usb` + `test_pnp_extract_unknown_usb_is_zero_zero`. Debounce + phantom filter apply on Linux too (a `lsusb` line without a parsed ID is skipped).
+
 ## RESOLVED: kernel TUI painted the RAM gauge over the status bar on short windows ("everything piles up" when switching tabs)
 - **Status:** FIXED in v2.31.1 (reported by the user: «при использовании переключая между вкладками распадается интерфейс и потом все в кучу становится»)
 - **Symptom:** on small terminal heights the System & HW tab (tab 1) looked like a pile of widgets — the ` RAM Usage ` gauge row sat on top of the status bar row (`AIOS v…` invisible), the CPU/OS blocks collapsed and the Hardware Inspector + events sprawled. Reproduced deterministically at 50×14 and root-caused with a `TestBackend` render harness + row dumps.

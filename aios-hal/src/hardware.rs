@@ -140,17 +140,21 @@ impl HardwareProfile {
         let usb_devices = Self::detect_usb();
         let thunderbolt_devices = Self::detect_thunderbolt();
 
-        log::info!(
-            "HAL: Detected {} cores, {}MB RAM, GPU={}, NPU={}, PCI={}, Storage={}, USB={}, TB={}",
-            cpu.cores,
-            memory.total_mb,
-            gpu.is_some(),
-            npu.is_some(),
-            pci_devices.len(),
-            storage_devices.len(),
-            usb_devices.len(),
-            thunderbolt_devices.len(),
-        );
+        static HAL_DETECT_LOGGED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !HAL_DETECT_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            log::info!(
+                "HAL: Detected {} cores, {}MB RAM, GPU={}, NPU={}, PCI={}, Storage={}, USB={}, TB={}",
+                cpu.cores,
+                memory.total_mb,
+                gpu.is_some(),
+                npu.is_some(),
+                pci_devices.len(),
+                storage_devices.len(),
+                usb_devices.len(),
+                thunderbolt_devices.len(),
+            );
+        }
 
         Self {
             cpu,
@@ -315,13 +319,17 @@ impl HardwareProfile {
 
         let cuda_cores = Self::estimate_cuda_cores(&name);
 
-        log::info!(
-            "HAL: NVIDIA GPU detected — {} ({}MB, CC={}, driver={})",
-            name,
-            vram_mb,
-            compute_capability,
-            driver_version
-        );
+        static HAL_GPU_LOGGED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !HAL_GPU_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            log::info!(
+                "HAL: NVIDIA GPU detected — {} ({}MB, CC={}, driver={})",
+                name,
+                vram_mb,
+                compute_capability,
+                driver_version
+            );
+        }
 
         Some(GpuInfo {
             name,
@@ -735,6 +743,14 @@ impl HardwareProfile {
         devices
     }
 
+    /// Whether a USB PnP entry carries a real vendor/product identity.
+    /// `0000:0000` entries are enumeration artifacts: they cannot be
+    /// fingerprinted or provisioned, and ignoring them prevents repeated
+    /// phantom re-detection/provisioning churn in the hotplug monitor.
+    fn is_identifiable_usb(vendor_id: u16, product_id: u16) -> bool {
+        vendor_id != 0 || product_id != 0
+    }
+
     fn detect_usb() -> Vec<UsbDevice> {
         let mut devices = Vec::new();
 
@@ -758,6 +774,9 @@ impl HardwareProfile {
                         } else {
                             (0, 0)
                         };
+                        if !Self::is_identifiable_usb(vid, pid) {
+                            continue;
+                        }
                         let name = parts[3..].join(" ");
                         let is_hub = name.to_lowercase().contains("hub");
                         let speed = Self::classify_usb_speed(line);
@@ -795,6 +814,9 @@ impl HardwareProfile {
                             let dev_id = parts.get(2).unwrap_or(&"").trim();
                             let vid = Self::extract_pnp_vendor_id(dev_id);
                             let pid = Self::extract_pnp_product_id(dev_id);
+                            if !Self::is_identifiable_usb(vid, pid) {
+                                continue;
+                            }
                             let speed = UsbSpeed::Unknown;
                             let is_hub = name.to_lowercase().contains("hub");
                             let port = Self::extract_pnp_parent(dev_id);
@@ -1738,5 +1760,23 @@ mod tests {
         let profile = HardwareProfile::mock_legacy();
         assert!(profile.usb_devices.is_empty());
         assert!(profile.thunderbolt_devices.is_empty());
+    }
+
+    #[test]
+    fn test_is_identifiable_usb() {
+        assert!(!HardwareProfile::is_identifiable_usb(0, 0));
+        assert!(HardwareProfile::is_identifiable_usb(0x046d, 0));
+        assert!(HardwareProfile::is_identifiable_usb(0, 0x0825));
+        assert!(HardwareProfile::is_identifiable_usb(0x046d, 0x0825));
+    }
+
+    #[test]
+    fn test_pnp_extract_unknown_usb_is_zero_zero() {
+        let dev_id = r"USB\ROOT_HUB30\4&16a0c2e8&0&0";
+        let vid = HardwareProfile::extract_pnp_vendor_id(dev_id);
+        let pid = HardwareProfile::extract_pnp_product_id(dev_id);
+        assert_eq!(vid, 0);
+        assert_eq!(pid, 0);
+        assert!(!HardwareProfile::is_identifiable_usb(vid, pid));
     }
 }
