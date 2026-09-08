@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: `F10` re-probe was promised by the UI/docs but unbound (F-key bar lied: `10Quit`)
+- **Status:** FIXED in v2.31.1
+- **Symptom:** the System & HW inspector printed "Press F10 to re-probe" and `docs/INTERFACE.md` claimed `F10` triggers a manual full re-probe, yet pressing `F10` did nothing — the F-key bar label read `10Quit`, but quitting is already `q` (or `Ctrl+C`).
+- **Root cause:** the kernel TUI only ever bound `KeyCode::F(1)`; `F10` fell through to the per-tab handlers and was ignored. The `10Quit` label and the `F10 re-probe` hint contradicted each other.
+- **Fix:** `KeyCode::F(10)` now calls `refresh_hw()` (full `HardwareProfile::detect()` + engine rescan) from any tab; the F-key bar label became `10Rescan` and the render smoke test asserts it (`all_tabs_render_without_panic_and_with_chrome`).
+- **Workaround / notes:** none needed post-fix.
+
 ## RESOLVED: F1 "Help" in the kernel TUI did nothing (the overlay was never rendered)
 - **Status:** FIXED in v2.31.1 (reported by the user: «сделай на ф1 держишь справка показывается реализуй как положеное»)
 - **Symptom:** pressing/holding `F1` (or `?`) in the `aios` TUI showed nothing, even though the F-key bar labels key 1 as `Help` and INTERFACE/ARCHITECTURE already documented an "F1 Help Overlay".
@@ -39,7 +46,7 @@
 - **Symptom:** `/api/v1/system/status` returned `{"error":"Authentication required","success":false}` (assert on `status == "running"` got `Null`); the same awaited `/api/v1/workflow`, `/api/v1/metrics`, `/api/v1/intent`.
 - **Root cause:** the test predates authentication — `require_auth` protects every `/api/*` route except the allowlist (`/api/v1/auth/*`, `/api/v1/health`, `/api/v1/sys/status`, `/ws/telemetry`, non-`/api/` paths); `/api/v1/system/status` is not on it, and the test sent no credentials.
 - **Fix:** the test now registers user `e2e` (or logs in when the user already persists on disk) and sends a `Bearer` token on all protected calls.
-- **Workaround / notes:** follow-up — decide whether `/api/v1/system/status` should be public like `/api/v1/sys/status`; both routes exist today. Verified by 3 consecutive isolated runs + the full workspace suite.
+- **Workaround / notes:** DECIDED — `/api/v1/system/status` stays protected (it exposes processes/blocks/watchdog/RAM); `/api/v1/sys/status` remains the public lightweight status probe. Verified by 3 consecutive isolated runs + the full workspace suite.
 
 ## RESOLVED: AIOS Studio web auth and CORS lockdown — full workspace verification
 - **Status:** RESOLVED in v2.31.1 (previously OPEN in v2.30.0)

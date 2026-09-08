@@ -1516,6 +1516,9 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::F(1) | KeyCode::Char('?') => {
             app.show_help = !app.show_help;
         }
+        KeyCode::F(10) => {
+            app.refresh_hw();
+        }
         KeyCode::Tab => {
             app.current_tab = (app.current_tab + 1) % 7;
         }

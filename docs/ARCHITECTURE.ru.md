@@ -558,7 +558,7 @@ TUI ядра на базе Ratatui с компоновкой из 7 вкладо
 
 **Зона приглашения**: `AIOS>_` для shell, `net>_` при сетевом вводе `key=value`.
 
-**Зона клавиш F** (внизу, 1 строка): `1Help 2Tabs 3View 4Edit 5Copy 6Move 7Mkdir 8Del 9Sort 10Quit`; `F10` выходит вместе с `q`/`Ctrl+C`.
+**Зона клавиш F** (внизу, 1 строка): `1Help 2Tabs 3View 4Edit 5Copy 6Move 7Mkdir 8Del 9Sort 10Rescan`; `F10` делает ручной re-probe железа (`refresh_hw`), выход — `q`/`Ctrl+C`.
 
 `OrchestratorState` управляет:
 - Снимками процессов/блоков (берутся каждый кадр для согласованного рендеринга)

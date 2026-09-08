@@ -52,7 +52,7 @@ Far Manager / Midnight Commander style: top status bar, dual 50/50 panels (tab c
 ├──────────────────────────┴────────────────────────────────────┤
 │ AIOS> _                                                        │  ← Prompt
 ├───────────────────────────────────────────────────────────────┤
-│  1Help  2Tabs  3View  4Edit  5Copy  6Move  7Mkdir  8Del  9Sort 10Quit │  ← F-key bar
+│  1Help  2Tabs  3View  4Edit  5Copy  6Move  7Mkdir  8Del  9Sort 10Rescan │  ← F-key bar
 └───────────────────────────────────────────────────────────────┘
 ```
 

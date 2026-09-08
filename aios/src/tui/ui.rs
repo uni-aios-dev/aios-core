@@ -275,14 +275,14 @@ fn fkey_bar() -> Line<'static> {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("View "),
+        Span::raw("View"),
         Span::styled(
             " 4",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("Edit "),
+        Span::raw("Edit"),
         Span::styled(
             " 5",
             Style::default()
@@ -324,7 +324,7 @@ fn fkey_bar() -> Line<'static> {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("Quit"),
+        Span::raw("Rescan"),
     ])
 }
 
@@ -1199,8 +1199,8 @@ mod render_smoke_tests {
                 );
                 if w >= 70 {
                     assert!(
-                        text.contains("Quit"),
-                        "F-key 'Quit' clipped before {w}x{h} tab {tab}"
+                        text.contains("Rescan"),
+                        "F-key 'Rescan' clipped before {w}x{h} tab {tab}"
                     );
                 }
             }

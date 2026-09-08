@@ -558,7 +558,7 @@ Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary), restyled in
 
 **Prompt zone**: `AIOS>_` for the shell, `net>_` during network `key=value` input.
 
-**F-key zone** (bottom, 1 row): `1Help 2Tabs 3View 4Edit 5Copy 6Move 7Mkdir 8Del 9Sort 10Quit`; `F10` quits alongside `q`/`Ctrl+C`.
+**F-key zone** (bottom, 1 row): `1Help 2Tabs 3View 4Edit 5Copy 6Move 7Mkdir 8Del 9Sort 10Rescan`; `F10` re-probes hardware (`refresh_hw`), `q`/`Ctrl+C` quit.
 
 `OrchestratorState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)
