@@ -6,7 +6,16 @@ use aios_hal::hardware::HardwareProfile;
 use aios_llm::{default_config, LlmConfig};
 use aios_sys_control::{SysControlHub, SysStatusSnapshot};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// Lock a `std::sync::Mutex`, recovering from poisoning instead of panicking.
+///
+/// A background bridge/handler thread that panics while holding the lock
+/// (e.g. the block scheduler or registry) would otherwise make the next TUI
+/// frame panic, leaving the terminal in raw mode — a frozen heap of glyphs.
+pub fn locked<'a, T>(m: &'a Mutex<T>) -> MutexGuard<'a, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// One persisted chat entry of the AI Console.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

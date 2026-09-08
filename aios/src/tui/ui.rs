@@ -1,4 +1,4 @@
-use crate::tui::app_state::TuiApp;
+use crate::tui::app_state::{locked, TuiApp};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -34,7 +34,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
 }
 
 fn draw_status_bar(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let state = app.state.lock().unwrap();
+    let state = locked(&app.state);
     let elapsed = state.start_time.elapsed().as_secs();
     let uptime = format!(
         "{:02}:{:02}:{:02}",
@@ -66,48 +66,26 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &TuiApp) {
     } else {
         Color::DarkGray
     };
+    let sys_line = snap.status_line();
 
-    let segs = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(14),
-            Constraint::Length(16),
-            Constraint::Length(12),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Length(14),
-            Constraint::Min(8),
-        ])
-        .split(area);
-
-    let col = |text: String, fg: Color| {
-        Paragraph::new(Line::from(Span::styled(
-            text,
-            Style::default().fg(fg).add_modifier(Modifier::BOLD),
-        )))
-        .alignment(ratatui::layout::Alignment::Center)
+    let bold = |text: String, fg: Color| {
+        Span::styled(text, Style::default().fg(fg).add_modifier(Modifier::BOLD))
     };
-
     frame.render_widget(
-        col(format!(" AIOS v{}", env!("CARGO_PKG_VERSION")), Color::Cyan),
-        segs[0],
-    );
-    frame.render_widget(
-        col(format!(" {} ", TITLES[app.current_tab]), Color::White),
-        segs[1],
-    );
-    frame.render_widget(col(format!(" {} ", status_label), status_color), segs[2]);
-    frame.render_widget(col(format!(" {} ", uptime), Color::Yellow), segs[3]);
-    frame.render_widget(col(format!(" {} ", tier), Color::Magenta), segs[4]);
-    frame.render_widget(col(format!(" {} ", ram), Color::Magenta), segs[5]);
-    frame.render_widget(
-        col(format!(" BR: {} ", bridge_label), bridge_color),
-        segs[6],
-    );
-    frame.render_widget(
-        col(format!(" SYS: {} ", snap.status_line()), sys_color),
-        segs[7],
+        Paragraph::new(Line::from(vec![
+            bold(
+                format!(" AIOS v{} ", env!("CARGO_PKG_VERSION")),
+                Color::Cyan,
+            ),
+            bold(format!(" {} ", TITLES[app.current_tab]), Color::White),
+            bold(format!(" {} ", status_label), status_color),
+            bold(format!(" {} ", uptime), Color::Yellow),
+            bold(format!(" {} ", tier), Color::Magenta),
+            bold(format!(" {} ", ram), Color::Magenta),
+            bold(format!(" BR: {} ", bridge_label), bridge_color),
+            bold(format!(" SYS: {} ", sys_line), sys_color),
+        ])),
+        area,
     );
 }
 
@@ -290,7 +268,7 @@ fn fkey_bar() -> Line<'static> {
 }
 
 fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let state = app.state.lock().unwrap();
+    let state = locked(&app.state);
     let hw = &state.hw_profile;
 
     let chunks = Layout::default()
@@ -376,11 +354,11 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
             .percent((ram_ratio * 100.0) as u16);
         let gauge_area = Rect::new(
             chunks[0].x + 2,
-            chunks[0].y + chunks[0].height - 3,
-            chunks[0].width - 4,
+            chunks[0].y + chunks[0].height.saturating_sub(4),
+            chunks[0].width.saturating_sub(4),
             3,
         );
-        if gauge_area.width > 10 {
+        if gauge_area.width > 10 && gauge_area.height > 0 {
             frame.render_widget(gauge, gauge_area);
         }
     }
@@ -411,11 +389,11 @@ fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
 }
 
 fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let state = app.state.lock().unwrap();
+    let state = locked(&app.state);
     // Lock order must match the bridge (scheduler → registry) to avoid a
     // deadlock between the TUI render thread and bridge request handlers.
-    let scheduler = state.bridge.scheduler.lock().unwrap();
-    let registry = state.bridge.registry.lock().unwrap();
+    let scheduler = locked(&state.bridge.scheduler);
+    let registry = locked(&state.bridge.registry);
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -523,7 +501,7 @@ fn draw_ai_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         .block(Block::default().title(" Input ").borders(Borders::ALL));
     frame.render_widget(input_para, chunks[1]);
 
-    let status = app.ai_status.lock().unwrap().clone();
+    let status = locked(&app.ai_status).clone();
     let cfg = &app.ai_config;
     let backend = match cfg.backend {
         aios_llm::BackendKind::Cloud(ref p) => format!("cloud/{}", aios_llm::provider_name(p)),
@@ -564,7 +542,7 @@ fn draw_ai_output(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let width = area.width.saturating_sub(2).max(1) as usize;
     let mut items: Vec<ListItem> = Vec::new();
     {
-        let guard = app.ai_output.lock().unwrap();
+        let guard = locked(&app.ai_output);
         for line in guard.iter() {
             let (style, text) = if line.starts_with('>') {
                 (Style::default().fg(Color::Cyan), format!("  {line}"))
@@ -578,8 +556,8 @@ fn draw_ai_output(frame: &mut Frame, area: Rect, app: &TuiApp) {
             }
         }
     }
-    if *app.ai_streaming.lock().unwrap() {
-        let partial = app.ai_stream.lock().unwrap().clone();
+    if *locked(&app.ai_streaming) {
+        let partial = locked(&app.ai_stream).clone();
         if !partial.is_empty() {
             for wrapped in wrap_line(&partial, width) {
                 items.push(ListItem::new(Line::from(Span::styled(
@@ -670,7 +648,7 @@ fn draw_ai_help(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_bridge_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let state = app.state.lock().unwrap();
+    let state = locked(&app.state);
     let bridge_running = state
         .bridge_running
         .load(std::sync::atomic::Ordering::SeqCst);
@@ -993,4 +971,222 @@ fn draw_shell_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .style(Style::default().fg(Color::Green))
         .block(Block::default().title(" Input ").borders(Borders::ALL));
     frame.render_widget(input, chunks[1]);
+}
+
+#[cfg(test)]
+mod render_smoke_tests {
+    use super::*;
+    use crate::hw_probe::{CpuInfo, GpuInfo, HwProfile, MemInfo, OsInfo};
+    use crate::orchestrator::OrchestratorState;
+    use aios_block_mgr::registry::BlockRegistry;
+    use aios_block_mgr::router::MessageRouter;
+    use aios_bridge::server::BridgeContext;
+    use aios_core::block::BlockId;
+    use aios_process_mgr::scheduler::Scheduler;
+    use aios_security::access_control::AccessControlLayer;
+    use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    fn test_state() -> Arc<Mutex<OrchestratorState>> {
+        let data_dir =
+            std::env::temp_dir().join(format!("aios_render_smoke_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&data_dir);
+        std::env::set_var("AIOS_DATA_DIR", &data_dir);
+
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let scheduler = Arc::new(Mutex::new(Scheduler::new(8192)));
+        let mut registry = BlockRegistry::new();
+        for (name, version) in [
+            ("hal", "1.0.0"),
+            ("ipc_bus", "1.0.0"),
+            ("scheduler", "1.0.0"),
+            ("browser", "0.1.0"),
+        ] {
+            if let Ok(id) =
+                registry.register_block(name, version, format!("{name}-{version}").into_bytes())
+            {
+                let _ = registry.activate_block(id);
+            }
+        }
+        let access_control = AccessControlLayer::new(b"aios_test_secret".to_vec(), 86_400_000);
+        let watchdog = Watchdog::new(WatchdogConfig::default());
+        let bridge = Arc::new(BridgeContext::new(
+            scheduler,
+            registry,
+            access_control,
+            watchdog,
+            42,
+        ));
+        let hw_profile = HwProfile {
+            cpu: CpuInfo {
+                brand: "Test CPU".into(),
+                physical_cores: 8,
+                logical_cores: 16,
+                architecture: "x86_64".into(),
+                flags: vec!["sse4.2".into()],
+            },
+            memory: MemInfo {
+                total_bytes: 8 << 30,
+                used_bytes: 2 << 30,
+                free_bytes: 6 << 30,
+                total_gb: 8.0,
+                used_gb: 2.0,
+            },
+            gpu: Some(GpuInfo {
+                model: "Test GPU".into(),
+                vram_bytes: 2 << 30,
+                vram_gb: 2.0,
+            }),
+            os: OsInfo {
+                name: "Windows".into(),
+                kernel_version: "10.0".into(),
+                os_version: "Test".into(),
+                uptime_secs: 120,
+                hostname: "testbox".into(),
+            },
+            ai_tier: "intermediate".into(),
+        };
+
+        Arc::new(Mutex::new(OrchestratorState {
+            hw_profile,
+            bridge,
+            router: MessageRouter::new(),
+            net_block_id: BlockId::new(100),
+            safe_mode: true,
+            start_time: Instant::now(),
+            bridge_running: Arc::new(AtomicBool::new(false)),
+            logs,
+            cluster: None,
+        }))
+    }
+
+    fn make_app() -> TuiApp {
+        let mut app = TuiApp::new(test_state());
+        for (i, line) in [
+            "AIOS: probing hardware...",
+            "AIOS: detected CPU: Test CPU",
+            "AIOS: Bridge listening on 0.0.0.0:8080",
+            "AIOS WARN: store refresh delayed",
+            "AIOS ERROR: watchdog timeout on block 3",
+        ]
+        .iter()
+        .enumerate()
+        {
+            app.displayed_logs.push_back(format!("{i:03} {line}"));
+        }
+        app.shell_output.push_back("$ help".into());
+        app.shell_output.push_back("AIOS: shell ready".into());
+        app.shell_output.push_back("  clusters list".into());
+        app.shell_output
+            .push_back("AIOS ERROR: command not found: foo".into());
+        app.ai_output.lock().unwrap().push_back("> hello".into());
+        app.ai_output
+            .lock()
+            .unwrap()
+            .push_back("Hello! I am the local AIOS assistant.".into());
+        app.store_installed = vec!["viz-0.1.0.wasm".into(), "weather-1.0.0.wasm".into()];
+        app.net_status = "hostname=aiosbox listen=8080 dhcp=on dns=1.1.1.1".into();
+        app
+    }
+
+    fn screen_text(backend: &TestBackend) -> String {
+        backend
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn all_tabs_render_without_panic_and_with_chrome() {
+        let mut app = make_app();
+        let sizes = [
+            (120u16, 30u16),
+            (100, 25),
+            (90, 24),
+            (80, 24),
+            (70, 20),
+            (60, 18),
+            (50, 14),
+            (40, 12),
+        ];
+        for (w, h) in sizes {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            for tab in 0..TITLES.len() {
+                app.current_tab = tab;
+                terminal
+                    .draw(|f| draw(f, &mut app))
+                    .unwrap_or_else(|e| panic!("render panic at {w}x{h} tab {tab}: {e}"));
+                let text = screen_text(terminal.backend());
+                assert!(
+                    text.contains("AIOS v"),
+                    "status bar missing at {w}x{h} tab {tab}"
+                );
+                assert!(
+                    text.contains(&TITLES[tab].trim().to_string()),
+                    "tab title missing at {w}x{h} tab {tab}"
+                );
+                assert!(
+                    text.contains("1Help"),
+                    "F-key bar missing at {w}x{h} tab {tab}"
+                );
+                if w >= 70 {
+                    assert!(
+                        text.contains("Quit"),
+                        "F-key 'Quit' clipped before {w}x{h} tab {tab}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn net_and_shell_prompts_render_in_both_editing_modes() {
+        let mut app = make_app();
+        let backend = TestBackend::new(100, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        for tab in [2, 4, 6] {
+            app.current_tab = tab;
+            app.ai_mode = true;
+            app.ai_input = "what is AIOS?".into();
+            app.net_mode = true;
+            app.net_input = "listen 9090".into();
+            app.shell_input = "clusters list".into();
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+            let text = screen_text(terminal.backend());
+            assert!(text.contains("net>"), "net prompt missing tab {tab}");
+        }
+        app.net_mode = false;
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let text = screen_text(terminal.backend());
+        assert!(text.contains("AIOS>"), "std prompt missing");
+    }
+
+    #[test]
+    fn poisoned_locks_do_not_break_rendering() {
+        let mut app = make_app();
+        let state = app.state.clone();
+        std::thread::spawn(move || {
+            let _st = locked(&state);
+            let _reg = _st.bridge.registry.lock().unwrap();
+            panic!("simulated background crash while holding the registry lock");
+        })
+        .join()
+        .unwrap_err();
+
+        let backend = TestBackend::new(100, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        for tab in 0..TITLES.len() {
+            app.current_tab = tab;
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+        }
+        let text = screen_text(terminal.backend());
+        assert!(text.contains("AIOS v"), "status bar missing after poison");
+    }
 }

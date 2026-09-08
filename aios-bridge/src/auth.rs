@@ -83,14 +83,17 @@ impl AuthStore {
             format!("aios-bridge-{}", data_dir.to_string_lossy())
         });
         let users = if path.exists() {
-            let raw = std::fs::read_to_string(&path).map_err(|e| {
-                BridgeError::ServerError(format!("Cannot read auth store: {e}"))
-            })?;
+            let raw = std::fs::read_to_string(&path)
+                .map_err(|e| BridgeError::ServerError(format!("Cannot read auth store: {e}")))?;
             serde_json::from_str::<HashMap<String, UserRecord>>(&raw).unwrap_or_default()
         } else {
             HashMap::new()
         };
-        Ok(Self { users, secret, path })
+        Ok(Self {
+            users,
+            secret,
+            path,
+        })
     }
 
     /// Path used for the backing user store.
@@ -102,9 +105,8 @@ impl AuthStore {
         let json = serde_json::to_string_pretty(&self.users).map_err(|e| {
             BridgeError::SerializationFailed(format!("Users serialization failed: {e}"))
         })?;
-        std::fs::write(&self.path, json).map_err(|e| {
-            BridgeError::ServerError(format!("Cannot write auth store: {e}"))
-        })
+        std::fs::write(&self.path, json)
+            .map_err(|e| BridgeError::ServerError(format!("Cannot write auth store: {e}")))
     }
 
     fn sign_token(&self, payload: &TokenPayload) -> String {
@@ -127,17 +129,13 @@ impl AuthStore {
         let signing_input = format!("{}.{}", parts[0], parts[1]);
         let expected = self.hmac_sha256(signing_input.as_bytes());
         let given = b64_decode(parts[2])?;
-        if expected.len() != given.len()
-            || expected
-                .iter()
-                .zip(given.iter())
-                .any(|(a, b)| a != b)
-        {
-            return Err(BridgeError::InvalidRequest("Invalid token signature".into()));
+        if expected.len() != given.len() || expected.iter().zip(given.iter()).any(|(a, b)| a != b) {
+            return Err(BridgeError::InvalidRequest(
+                "Invalid token signature".into(),
+            ));
         }
-        let payload: TokenPayload = serde_json::from_slice(&b64_decode(parts[1])?).map_err(|_| {
-            BridgeError::InvalidRequest("Invalid token payload".into())
-        })?;
+        let payload: TokenPayload = serde_json::from_slice(&b64_decode(parts[1])?)
+            .map_err(|_| BridgeError::InvalidRequest("Invalid token payload".into()))?;
         if payload.exp <= now_secs() {
             return Err(BridgeError::InvalidRequest("Token expired".into()));
         }

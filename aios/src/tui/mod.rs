@@ -4,7 +4,7 @@ mod ui;
 pub use app_state::TuiApp;
 pub use ui::draw;
 
-use self::app_state::{AiMessage, WebBookmark, WebTab};
+use self::app_state::{locked, AiMessage, WebBookmark, WebTab};
 
 use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
@@ -47,13 +47,29 @@ pub fn run_tui(state: Arc<Mutex<OrchestratorState>>) -> Result<(), Box<dyn std::
     load_chat(&app);
     load_bookmarks(&mut app);
 
-    let res = run(&mut terminal, app);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut terminal, app)));
 
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
-    res
+    let mut out = stdout();
+    let restore = disable_raw_mode()
+        .and_then(|_| out.execute(LeaveAlternateScreen))
+        .and_then(|_| terminal.show_cursor());
+    match result {
+        Ok(res) => {
+            restore?;
+            res
+        }
+        Err(panic) => {
+            let _ = restore;
+            let message = if let Some(msg) = panic.downcast_ref::<&str>() {
+                msg.to_string()
+            } else if let Some(msg) = panic.downcast_ref::<String>() {
+                msg.clone()
+            } else {
+                "unknown panic".into()
+            };
+            Err(format!("AIOS TUI crashed: {message}").into())
+        }
+    }
 }
 
 fn run(
@@ -96,7 +112,7 @@ fn store_manager() -> StoreManager {
 
 fn dispatch_net_get(app: &mut TuiApp) -> Option<String> {
     let result = {
-        let mut state = app.state.lock().unwrap();
+        let mut state = locked(&app.state);
         let packet = IpcPacket::new(
             0,
             state.net_block_id.0,
@@ -133,7 +149,7 @@ fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> String {
     }
     let body = serde_json::Value::Object(updates).to_string();
     let result = {
-        let mut state = app.state.lock().unwrap();
+        let mut state = locked(&app.state);
         let packet = IpcPacket::new(
             0,
             state.net_block_id.0,
@@ -290,7 +306,7 @@ fn load_chat(app: &TuiApp) {
 }
 
 fn apply_config_async(app: &TuiApp, config: LlmConfig) {
-    let state = app.state.lock().unwrap();
+    let state = locked(&app.state);
     let bridge = state.bridge.clone();
     drop(state);
     tokio::spawn(async move {
@@ -302,7 +318,7 @@ fn apply_config_async(app: &TuiApp, config: LlmConfig) {
 fn submit_ai_query(app: &mut TuiApp, prompt: String) {
     let system = app.ai_system_prompt.clone();
     let config = app.ai_config.clone();
-    let state = app.state.lock().unwrap();
+    let state = locked(&app.state);
     let logs = app.logs.clone();
     let ai_out = app.ai_output.clone();
     let status = app.ai_status.clone();
@@ -392,7 +408,7 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
     match name {
         "help" | "?" => {
             app.ai_show_help = true;
-            replies.push("Help panel opened — press h or Esc to close".into());
+            replies.push("Help panel opened вЂ” press h or Esc to close".into());
             replies.push(
                 "Commands: /help /status /clear /history /system /model /backend /key /temp \
                  /tokens /preset /save /load"
@@ -536,7 +552,7 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
                     replies.push(format!("Presets ({}):", app.ai_presets.len()));
                     for (name, text) in app.ai_presets.iter() {
                         let preview: String = text.chars().take(60).collect();
-                        replies.push(format!("  /preset {name}  —  {preview}"));
+                        replies.push(format!("  /preset {name}  вЂ”  {preview}"));
                     }
                 }
             } else if pname == "del" && !ptext.is_empty() {
@@ -890,7 +906,7 @@ fn web_open_native(app: &mut TuiApp, target: Option<String>) {
             None => {
                 push_log(
                     &app.logs,
-                    "AIOS: web: nothing to open — load a page first".into(),
+                    "AIOS: web: nothing to open вЂ” load a page first".into(),
                 );
                 return;
             }
@@ -940,8 +956,8 @@ fn block_restart(app: &mut TuiApp) {
     let Some(name) = name else {
         return;
     };
-    let state = app.state.lock().unwrap();
-    let mut registry = state.bridge.registry.lock().unwrap();
+    let state = locked(&app.state);
+    let mut registry = locked(&state.bridge.registry);
     if let Ok(_entry) = registry.unload_block(id) {
         let _ = registry.register_block(&name, "1.0.0", b"block".to_vec());
         let _ = registry.activate_block(id);
@@ -954,8 +970,8 @@ fn block_kill(app: &mut TuiApp) {
     let Some(name) = name else {
         return;
     };
-    let state = app.state.lock().unwrap();
-    let mut registry = state.bridge.registry.lock().unwrap();
+    let state = locked(&app.state);
+    let mut registry = locked(&state.bridge.registry);
     match registry.unload_block(id) {
         Ok(_) => push_log(
             &app.logs,
@@ -969,8 +985,8 @@ fn block_kill(app: &mut TuiApp) {
 }
 
 fn selected_block(app: &TuiApp) -> (Option<String>, aios_core::block::BlockId) {
-    let state = app.state.lock().unwrap();
-    let registry = state.bridge.registry.lock().unwrap();
+    let state = locked(&app.state);
+    let registry = locked(&state.bridge.registry);
     let mut ids = registry.all_ids();
     ids.sort_by_key(|id| id.0);
     let sel = app.blocks_selected.min(ids.len().saturating_sub(1));
@@ -992,8 +1008,8 @@ fn block_load_path(app: &mut TuiApp, path: &str) {
         push_log(&app.logs, "AIOS: blocks: usage: load <path-to.wasm>".into());
         return;
     }
-    let state = app.state.lock().unwrap();
-    let mut registry = state.bridge.registry.lock().unwrap();
+    let state = locked(&app.state);
+    let mut registry = locked(&state.bridge.registry);
     match BlockLoader::load_from_directory(&mut registry, PathBuf::from(path).as_path()) {
         results if results.is_empty() => match BlockLoader::load_from_binary(
             &mut registry,
@@ -1056,8 +1072,8 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
             app.shell_output.clear();
         }
         "ps" => {
-            let state = app.state.lock().unwrap();
-            let scheduler = state.bridge.scheduler.lock().unwrap();
+            let state = locked(&app.state);
+            let scheduler = locked(&state.bridge.scheduler);
             for proc in scheduler.all_processes() {
                 let st = match proc.state {
                     aios_process_mgr::task::ProcessState::Running => "Running",
@@ -1078,8 +1094,8 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
             ));
         }
         "blocks" => {
-            let state = app.state.lock().unwrap();
-            let registry = state.bridge.registry.lock().unwrap();
+            let state = locked(&app.state);
+            let registry = locked(&state.bridge.registry);
             let mut ids = registry.all_ids();
             ids.sort_by_key(|id| id.0);
             for id in ids {
@@ -1093,8 +1109,8 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
         }
         "kill" => match parts.get(1).and_then(|p| p.parse::<u64>().ok()) {
             Some(pid) => {
-                let state = app.state.lock().unwrap();
-                let mut scheduler = state.bridge.scheduler.lock().unwrap();
+                let state = locked(&app.state);
+                let mut scheduler = locked(&state.bridge.scheduler);
                 match scheduler.kill_process(ProcessId(pid)) {
                     Ok(p) => out.push(format!("  killed '{}' ({})", p.name, p.pid.0)),
                     Err(e) => out.push(format!("  kill failed: {e}")),
@@ -1138,7 +1154,7 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
                                 out.push(format!("  {} result(s):", results.len()));
                                 for m in results {
                                     out.push(format!(
-                                        "  {} {} — {}",
+                                        "  {} {} вЂ” {}",
                                         m.name, m.version, m.description
                                     ));
                                 }
@@ -1184,10 +1200,10 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
             cluster_execute(app, &parts, &mut out);
         }
         "status" => {
-            let state = app.state.lock().unwrap();
+            let state = locked(&app.state);
             let up = state.start_time.elapsed().as_secs();
             let bridge = state.bridge_running.load(Ordering::SeqCst);
-            let n_blocks = state.bridge.registry.lock().unwrap().count();
+            let n_blocks = locked(&state.bridge.registry).count();
             out.push(format!(
                 "  uptime={up}s bridge={} tier={}",
                 if bridge { "online" } else { "starting" },
@@ -1218,7 +1234,7 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
             push_log(&app.logs, "AIOS: restart requested via shell".into());
         }
         _ => {
-            out.push(format!("  unknown command '{command}' — type help"));
+            out.push(format!("  unknown command '{command}' вЂ” type help"));
         }
     }
     for l in out {
@@ -1227,7 +1243,7 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
 }
 
 fn cluster_execute(app: &TuiApp, parts: &[&str], out: &mut Vec<String>) {
-    let cluster = app.state.lock().unwrap().cluster.clone();
+    let cluster = locked(&app.state).cluster.clone();
     out.extend(cluster_run(cluster, parts));
 }
 
@@ -1540,8 +1556,8 @@ fn handle_blocks_key(app: &mut TuiApp, key: event::KeyEvent) {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
             let count = {
-                let state = app.state.lock().unwrap();
-                let reg = state.bridge.registry.lock().unwrap();
+                let state = locked(&app.state);
+                let reg = locked(&state.bridge.registry);
                 reg.count()
             };
             if count > 0 && app.blocks_selected + 1 < count {

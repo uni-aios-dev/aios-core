@@ -1,10 +1,36 @@
 # AIOS Known Bugs & Workarounds
 
-## OPEN: AIOS Studio web auth shipped but the Rust build is UNVERIFIED (no MSVC linker on this host)
-- **Status:** OPEN in v2.30.0 — code complete and logic-reviewed, but NOT compiled
-- **Symptom / risk:** `aios-bridge` auth (`src/auth.rs`), DTOs, `require_auth` middleware, CORS changes and the `aios-studio` web sign-in flow are written, but this Windows host has no `link.exe` (VS Build Tools installer exits with code 87, no logs). `cargo build`/`cargo test`/`cargo clippy` could still surface type/lifetime errors.
-- **Workaround / notes:** must re-run `cargo test --workspace` and `cargo clippy --workspace` on a machine with a working linker before treating v2.30.0 as merged-verified. Code avoids new dependencies beyond already-present `uuid/base64/sha2/tempfile`.
-- **Related:** the `/ws/telemetry` endpoint is intentionally left unauthenticated (WebSocket auth is a follow-up); it only exposes RAM/CPU telemetry.
+## RESOLVED: kernel TUI painted the RAM gauge over the status bar on short windows ("everything piles up" when switching tabs)
+- **Status:** FIXED in v2.31.1 (reported by the user: «при использовании переключая между вкладками распадается интерфейс и потом все в кучу становится»)
+- **Symptom:** on small terminal heights the System & HW tab (tab 1) looked like a pile of widgets — the ` RAM Usage ` gauge row sat on top of the status bar row (`AIOS v…` invisible), the CPU/OS blocks collapsed and the Hardware Inspector + events sprawled. Reproduced deterministically at 50×14 and root-caused with a `TestBackend` render harness + row dumps.
+- **Root cause:** `draw_system_tab` positioned the RAM gauge as `Rect::new(x+2, chunk.y + chunk.height - 3, w-4, 3)`. ratatui treats `Length` constraints as hard equalities and shrinks them proportionally when the sum (9+8+10=27) exceeds the panel height; at panel height ≤ 9 the CPU chunk gets `height == 0`, so the gauge's `y` became `chunk.y + 0 - 3`, and for `chunk.y == 3` that is row `0` — the status bar zone. `Flex::Start` cannot help: flex only affects spacers.
+- **Fix:** gauge rect clamped with `saturating_sub` on both height and width; the gauge is drawn only when `width > 10 && height > 0`, so it can never leave the left panel. Remaining overlap sources eliminated by a render smoke test looping all sizes.
+- **Workaround / notes:** none needed post-fix; covered by `all_tabs_render_without_panic_and_with_chrome`.
+
+## RESOLVED: status bar title truncated mid-word at narrow widths
+- **Status:** FIXED in v2.31.1
+- **Symptom:** `Network & Stor`, `Blocks & Sv`, `Studio Bridg` instead of full tab titles; the `AIOS v…` prefix disappeared at very small widths.
+- **Root cause:** the new status bar used a fixed 8-column segment layout; when the segment width < span width, ratatui's solver shrank the segment (and the title was chopped by the block side borders), regardless of `Flex::Start`.
+- **Fix:** status bar rendered as a single `Paragraph` from a `Line` of styled `Span`s — like Far/MC it clips only at the terminal's right edge; the title and version are never chopped. The F-key bar intentionally still clips at the right margin (same as `mc`).
+
+## RESOLVED: crashed bridge worker could kill the TUI and leave the terminal in raw mode
+- **Status:** FIXED in v2.31.1
+- **Symptom:** a panic in the bridge's background worker that held `registry`/`scheduler` poisoned those mutexes; the next frame's `.lock().unwrap()` in `draw_blocks_tab`/`draw_bridge_tab` panicked, `run_tui` unwound without restoring the terminal, and the console was left in raw-mode garbage (one more way the screen "piles up").
+- **Root cause:** `run_tui` had no `catch_unwind`; every draw-path `Mutex::lock().unwrap()` was panic-on-poison.
+- **Fix:** added poison-tolerant `locked()` in `app_state.rs` (`unwrap_or_else(|p| p.into_inner())`); converted all draw-path and handler locks in `ui.rs`/`mod.rs` to it; wrapped `run()` in `std::panic::catch_unwind(AssertUnwindSafe(..))` that unconditionally restores the terminal and returns `Err("AIOS TUI crashed: …")`. `logs` locks are intentionally left as `unwrap` (cannot be poisoned — only the TUI touches them, via `if let`).
+- **Workaround / notes:** covered by `poisoned_locks_do_not_break_rendering`.
+
+## RESOLVED: `test_e2e_bridge_http_endpoints` failed after the v2.30.0 web-auth lockdown
+- **Status:** FIXED in v2.31.1 (caught by `cargo test --workspace` during the v2.31.1 verification run)
+- **Symptom:** `/api/v1/system/status` returned `{"error":"Authentication required","success":false}` (assert on `status == "running"` got `Null`); the same awaited `/api/v1/workflow`, `/api/v1/metrics`, `/api/v1/intent`.
+- **Root cause:** the test predates authentication — `require_auth` protects every `/api/*` route except the allowlist (`/api/v1/auth/*`, `/api/v1/health`, `/api/v1/sys/status`, `/ws/telemetry`, non-`/api/` paths); `/api/v1/system/status` is not on it, and the test sent no credentials.
+- **Fix:** the test now registers user `e2e` (or logs in when the user already persists on disk) and sends a `Bearer` token on all protected calls.
+- **Workaround / notes:** follow-up — decide whether `/api/v1/system/status` should be public like `/api/v1/sys/status`; both routes exist today. Verified by 3 consecutive isolated runs + the full workspace suite.
+
+## RESOLVED: AIOS Studio web auth and CORS lockdown — full workspace verification
+- **Status:** RESOLVED in v2.31.1 (previously OPEN in v2.30.0)
+- **Note:** the v2.30.0 entry below was marked "UNVERIFIED (no linker)". The MSVC linker became available; `cargo test --workspace` now compiles and runs `aios-bridge` (auth.rs, DTOs, `require_auth`, CORS) green, so the code is verified.
+- **Related:** `/ws/telemetry` remains intentionally unauthenticated (WebSocket auth is a follow-up); it only exposes RAM/CPU telemetry.
 
 ## RESOLVED: `test_runner_recovery_after_heartbeat` flaked under load (heartbeat raced the watchdog tick phase)
 - **Status:** FIXED in v2.29.1 (found during a full verification run on Windows x64; the workspace test suite and a parallel kernel BIOS build were loading the machine)

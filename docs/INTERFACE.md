@@ -218,6 +218,8 @@ At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1
 
 The kernel TUI uses the same Far Manager / Midnight Commander style as `aios-tui`: a **status bar** (version, active tab, uptime, tier, RAM, bridge status, sys link), a **dual 50/50 main panel** (active tab left, events log right), an **`AIOS>_` prompt** (or `net>_` in network input mode), and a **F-key strip** at the bottom. The active tab name replaces the old tab strip. The `sys:` link status and bridge status now live in the top status bar instead of the old footer line.
 
+On narrow windows the status bar text clips at the right edge (Far/MC behaviour) and the F-key strip clips too; the tab titles and `AIOS v…` version are never chopped mid-word. On very short windows the System & HW **RAM gauge** overlays nothing — it stays inside the left panel; when the window is too small for the CPU/OS blocks, those blocks naturally compress instead of the drawer breaking.
+
 ### Tabs
 
 | # | Tab | Content |

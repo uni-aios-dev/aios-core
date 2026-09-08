@@ -67,14 +67,13 @@ impl BridgeContext {
         bridge_block_id: u32,
     ) -> Self {
         let data_dir = std::env::var("AIOS_DATA_DIR").unwrap_or_else(|_| "aios_data".to_string());
-        let auth = crate::auth::open_auth(std::path::Path::new(&data_dir))
-            .unwrap_or_else(|e| {
-                log::warn!("AUTH: failed to open auth store, auth disabled: {e}");
-                std::sync::Arc::new(Mutex::new(
-                    AuthStore::new(std::path::Path::new(&data_dir))
-                        .expect("in-memory auth store fallback"),
-                ))
-            });
+        let auth = crate::auth::open_auth(std::path::Path::new(&data_dir)).unwrap_or_else(|e| {
+            log::warn!("AUTH: failed to open auth store, auth disabled: {e}");
+            std::sync::Arc::new(Mutex::new(
+                AuthStore::new(std::path::Path::new(&data_dir))
+                    .expect("in-memory auth store fallback"),
+            ))
+        });
         Self {
             intent_parser: IntentParser::new(),
             scheduler,
@@ -160,18 +159,16 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/store/blocks/{name}.wasm", get(store_block_handler))
         .route("/index.json", get(store_catalog_handler))
         .route("/blocks/{name}.wasm", get(store_block_handler))
-        .route_layer(
-            middleware::from_fn_with_state::<_, _, (State<SharedState>, Request)>(
-                state.clone(),
-                require_auth,
-            ),
-        )
-        .route_layer(
-            middleware::from_fn_with_state::<_, _, (State<SharedState>, Request)>(
-                state.clone(),
-                record_metrics,
-            ),
-        )
+        .route_layer(middleware::from_fn_with_state::<
+            _,
+            _,
+            (State<SharedState>, Request),
+        >(state.clone(), require_auth))
+        .route_layer(middleware::from_fn_with_state::<
+            _,
+            _,
+            (State<SharedState>, Request),
+        >(state.clone(), record_metrics))
         .with_state(state.clone())
         .fallback_service(ServeDir::new("aios-studio"));
 

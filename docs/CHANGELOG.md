@@ -1,5 +1,27 @@
 # AIOS Development Log
 
+## v2.31.1 — TUI tab-switch robustness & regression harness, bridge e2e auth fix (2026-09-08)
+
+### Fixed
+- **Kernel TUI no longer "piles up" when switching tabs on a short window.** The System & HW tab computes its RAM gauge as `chunk.y + chunk.height - 3`; ratatui gives `chunk.height == 0` at small terminal heights (constraints 9+8+10 exceed the panel), so the gauge rect snapped to row `0` and painted **over the status bar** — the exact "всё в кучу" artifact. The gauge position is now clamped with `saturating_sub` and is only drawn when the chunk is wide enough, so it can never leave the left panel.
+- **Status bar stops truncating mid-word.** The old fixed-length segment layout shrank proportionally (Length constraints are hard solver equalities; `Flex::Start` affects only spacers), chopping titles like `Network & Stor` / `Blocks & Sv`. `draw_status_bar()` now renders one `Paragraph` built from a `Line` of styled `Span`s (Far/MC idiom) — it clips only at the terminal's right edge.
+- **A crashed background bridge worker can no longer kill the TUI / leave the terminal in raw mode.** A handler panic while holding `registry`/`scheduler` poisoned those mutexes, so the next draw's `.lock().unwrap()` panicked and the terminal stayed raw. Added poison-tolerant `locked()` (`app_state.rs`), switched every draw- and handler-path lock in `ui.rs`/`mod.rs` to it, and wrapped the `run()` loop in `std::panic::catch_unwind` that **always** restores the terminal (disable raw mode, leave alternate screen, show cursor) and returns `AIOS TUI crashed: …`.
+- **`test_e2e_bridge_http_endpoints` restored to green.** The endpoint calls were written before the v2.30.0 web-auth lockdown: `/api/v1/system/status`, `/workflow`, `/metrics`, `/intent` are protected, and the test sent no token. The test now registers (or, if the user already exists on disk, logs in) and sends a `Bearer` token. Everything else was already green; workspace suite passes in full.
+- `cargo fmt --all` applied across `aios-bridge` (cosmetic; no semantics).
+
+### Added
+- `aios/src/tui/ui.rs` `#[cfg(test)] mod render_smoke_tests` using `TestBackend` (always available in ratatui 0.29 — no feature gate needed), with `make_app()` (safe-mode `TuiApp::new`, `HwProfile`/`BridgeContext` built from scratch) and three tests:
+  - `all_tabs_render_without_panic_and_with_chrome` — all 7 tabs × sizes 120x30 → 40x12; asserts the version/tab-title status bar survives and nothing panics.
+  - `net_and_shell_prompts_render_in_both_editing_modes` — `net>`/`AIOS>` prompt switching.
+  - `poisoned_locks_do_not_break_rendering` — poisons `registry` via a panicked thread, then draws every tab (would panic before `locked()`).
+- `locked()` helper: `pub fn locked<'a, T>(m: &'a Mutex<T>) -> MutexGuard<'a, T>` that converts `Mutex` poisoning into recovery via `into_inner()`.
+
+### Verification
+- `cargo test --workspace`: all 22 test binaries green (~500+ tests), 3 consecutive green runs of the e2e bridge test.
+- `cargo clippy --workspace`: 0 warnings. `cargo fmt --all --check`: clean.
+
+Files: `aios/src/tui/{ui,mod,app_state}.rs`, `tests/e2e_pipeline_test.rs`, `docs/{CHANGELOG,BUGS,INTERFACE,ARCHITECTURE}{,.ru}.md`.
+
 ## v2.31.0 — Far/MC-style two-panel redesign of both TUIs (2026-09-08)
 
 ### Changed

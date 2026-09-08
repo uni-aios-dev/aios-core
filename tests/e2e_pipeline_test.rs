@@ -215,7 +215,36 @@ async fn test_e2e_bridge_http_endpoints() {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let client = reqwest::Client::new();
+    let auth_resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/v1/auth/register"))
+        .json(&serde_json::json!({"username": "e2e", "password": "e2e-pass"}))
+        .send()
+        .await
+        .unwrap();
+    let auth_json: serde_json::Value = if auth_resp.status() == 200 {
+        auth_resp.json().await.unwrap()
+    } else {
+        reqwest::Client::new()
+            .post(format!("http://{addr}/api/v1/auth/login"))
+            .json(&serde_json::json!({"username": "e2e", "password": "e2e-pass"}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    };
+    let token = auth_json["token"].as_str().unwrap();
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
 
     let resp = client
         .get(format!("http://{addr}/api/v1/health"))
