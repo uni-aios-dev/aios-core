@@ -66,8 +66,10 @@ pub struct HardwareInspector<'a> {
 
 impl Widget for HardwareInspector<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let toast_height = (self.toasts.len() as u16).min(4) + 1;
-        let (table_area, toast_area) = if toast_height > 1 {
+        // Reserve a FIXED toast strip height once toasts exist, so the device
+        // table never reflows (content jumping) as hot-plug toasts accumulate.
+        let toast_height = if self.toasts.is_empty() { 0u16 } else { 5u16 };
+        let (table_area, toast_area) = if toast_height > 0 {
             let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(toast_height)])
                 .split(area);
             (chunks[0], chunks[1])
@@ -281,5 +283,65 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("No devices detected"));
+    }
+
+    #[test]
+    fn test_inspector_layout_stable_as_toasts_grow() {
+        let devices = vec![c270_view()];
+
+        fn render(devices: &[DeviceView], toasts: &[Toast]) -> String {
+            let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+            terminal
+                .draw(|f| {
+                    f.render_widget(
+                        HardwareInspector {
+                            devices,
+                            toasts,
+                            selected: None,
+                            title: HARDWARE_INSPECTOR_TITLE,
+                        },
+                        f.area(),
+                    );
+                })
+                .unwrap();
+            let buf = terminal.backend().buffer().clone();
+            let rows: Vec<String> = (0..30)
+                .map(|y| {
+                    (0..120)
+                        .map(|x| {
+                            buf.content()[y as usize * 120 + x as usize]
+                                .symbol()
+                                .to_string()
+                        })
+                        .collect::<String>()
+                })
+                .collect();
+            rows.join("\n")
+        }
+
+        let table_top_no_toasts = render(&devices, &[]).find("\u{250c}").unwrap();
+        for n in 1..=4 {
+            let toasts: Vec<Toast> = (0..n)
+                .map(|i| Toast {
+                    message: format!("[Hardware] Detected USB 046D:0825 -> event {i}"),
+                    kind: ToastKind::Info,
+                    created_ms: i as u64,
+                })
+                .collect();
+            let text = render(&devices, &toasts);
+            let table_top = text.find("\u{250c}").unwrap();
+            let events_row = text
+                .lines()
+                .position(|l| l.contains(" Events "))
+                .unwrap_or(usize::MAX);
+            assert_eq!(
+                table_top, table_top_no_toasts,
+                "table top shifted with {n} toasts (was {table_top_no_toasts}, now {table_top})"
+            );
+            assert_eq!(
+                events_row, 25,
+                "Events strip must sit at a fixed row with {n} toasts (got {events_row})"
+            );
+        }
     }
 }
