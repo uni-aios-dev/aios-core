@@ -2,7 +2,7 @@ use crate::tui::app_state::{locked, TuiApp};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 const TITLES: &[&str] = &[
@@ -31,6 +31,67 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     draw_main(frame, zones[1], app);
     frame.render_widget(Paragraph::new(prompt_line(app)), zones[2]);
     frame.render_widget(Paragraph::new(fkey_bar()), zones[3]);
+
+    if app.show_help {
+        draw_help(frame, area);
+    }
+}
+
+const HELP_LINES: &[&str] = &[
+    "",
+    " F1          open / close this help",
+    " F2 / Tab    switch to the next tab",
+    " 1..7        jump directly to a tab",
+    " Esc / h     close this help",
+    " q           quit AIOS (Ctrl+C also works)",
+    " l           toggle the CPU/OS layout",
+    " Space       pause / resume the Events log",
+    " g           open the bridge dashboard",
+    " W           launch the GUI dashboard (webview)",
+    "",
+    " Tab 1 System & HW : hardware inspector (F10 re-probes)",
+    " Tab 2 Blocks & Svc : j/Entries select, r restart, k kill, l load",
+    " Tab 3 AI Console   : i query mode, h console help, Esc back",
+    " Tab 4 Studio Bridge: n net settings, s refresh store, g net_get",
+    " Tab 5 Web          : g URL, Enter open, j/k scroll, b back, Esc unfocus",
+    " Tab 7 Shell        : type a command, Enter run, Esc clear",
+    "",
+    " Esc / h / F1    close this help",
+];
+
+fn help_pad(line: &str, width: u16) -> String {
+    let mut out = String::with_capacity(width as usize);
+    out.push_str(line);
+    while out.chars().count() < width as usize {
+        out.push(' ');
+    }
+    out.truncate(width as usize);
+    out
+}
+
+fn draw_help(frame: &mut Frame, area: Rect) {
+    let win_w = area.width.min(96);
+    let win_h = (HELP_LINES.len() as u16 + 2).min(area.height.saturating_sub(2));
+    if win_w < 4 || win_h < 3 {
+        return;
+    }
+    let x = area.x + area.width.saturating_sub(win_w) / 2;
+    let y = area.y + area.height.saturating_sub(win_h) / 2;
+    let popup = Rect::new(x, y, win_w, win_h);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Clear, popup);
+
+    let inner_w = win_w.saturating_sub(2);
+    let lines: Vec<Line<'static>> = HELP_LINES
+        .iter()
+        .map(|line| Line::from(help_pad(line, inner_w).to_string()))
+        .collect();
+    let block = Block::default()
+        .title(" AIOS Help ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
 }
 
 fn draw_status_bar(frame: &mut Frame, area: Rect, app: &TuiApp) {
@@ -1188,5 +1249,21 @@ mod render_smoke_tests {
         }
         let text = screen_text(terminal.backend());
         assert!(text.contains("AIOS v"), "status bar missing after poison");
+    }
+
+    #[test]
+    fn help_overlay_renders_on_all_sizes() {
+        let mut app = make_app();
+        app.show_help = true;
+        for (w, h) in [(120u16, 30u16), (100, 25), (80, 24), (50, 14), (40, 12)] {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|f| draw(f, &mut app))
+                .unwrap_or_else(|e| panic!("help overlay render panic at {w}x{h}: {e}"));
+            let text = screen_text(terminal.backend());
+            assert!(text.contains("AIOS Help"), "help title missing at {w}x{h}");
+            assert!(text.contains("F2"), "help F2 line missing at {w}x{h}");
+        }
     }
 }

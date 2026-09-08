@@ -1380,7 +1380,9 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
 
     if app.show_help {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('h') => app.show_help = false,
+            KeyCode::F(1) | KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('h') => {
+                app.show_help = false;
+            }
             KeyCode::Char('q') => app.running = false,
             _ => {}
         }

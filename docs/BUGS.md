@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: F1 "Help" in the kernel TUI did nothing (the overlay was never rendered)
+- **Status:** FIXED in v2.31.1 (reported by the user: «сделай на ф1 держишь справка показывается реализуй как положеное»)
+- **Symptom:** pressing/holding `F1` (or `?`) in the `aios` TUI showed nothing, even though the F-key bar labels key 1 as `Help` and INTERFACE/ARCHITECTURE already documented an "F1 Help Overlay".
+- **Root cause:** `F1`/`?` toggled `app.show_help`, and the key handler react to `Esc`/`h`, but **no draw path ever rendered that flag** — `draw()` only consumed `ai_show_help` (AI Console help). The global help state was dead code.
+- **Fix:** `draw()` now renders a full-screen opaque `AIOS Help` block (`draw_help`, gated on `show_help`) that replaces the whole dashboard background before drawing, so no text blends. `F1`/`?`/`Esc`/`h` dismiss it. Holding `F1` keeps it open (key repeats are filtered out).
+- **Workaround / notes:** covered by `help_overlay_renders_on_all_sizes` (40×12…120×30 asserts the `AIOS Help` title and F-key lines at every size).
+
 ## RESOLVED: phantom `USB 0000:0000 (unknown)` re-provisioned in a loop — "a new line appears every time I open tab 1"
 - **Status:** FIXED in v2.31.1 (reported by the user after the pile-up fix: «уже лучше но все равно когда переключаю первую вкладку появляется инфо которое смещает каждое открытие появляется новая строка»)
 - **Symptom:** on the System & HW tab the Events toast strip and the right-side log panel kept gaining lines: `HAL: NVIDIA GPU detected …` / `HAL: Detected 16 cores…` every few seconds and a recurring `[Hardware] USB 0000:0000 (unknown) -> driver not found… -> Generic Fallback` provisioning toast. Each visit showed more content. The machine's PnP tree contains a USB entry without any vendor/product identity (`USB 0000:0000 (unknown)`) that keeps flapping.
