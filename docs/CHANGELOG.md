@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## v2.31.0 — Far/MC-style two-panel redesign of both TUIs (2026-09-08)
+
+### Changed
+- **`aios-tui`** (`src/ui/`): new themed UI module in classic Far Manager / Midnight Commander style.
+  - `theme.rs` — three deep-blue/cyan palettes (`Far`, `Mc`, `Custom`) via `ThemeKind`, `From<ThemeKind>`, `Default`.
+  - `status_bar.rs` — `draw_top_bar()`, `draw_bottom_keys()`, `fkey_line()`, `command_prompt()`, `titled_block()`, `far_layout()`.
+  - `dual_panel.rs` — `draw_dual_panel()`, `inside_borders()`, `inset()`, `draw_modal()`.
+  - `widgets/table_view.rs` — `draw_dense_table()`, `draw_bordered_list()`, `selection_bar_style()`, `truncate()`.
+  - `dashboard.rs` chrome rewritten to `far_layout()` + `draw_top_bar()` + dual-panel main + `command_prompt()` + `draw_bottom_keys()`; removed `draw_header`/`draw_tabs`/`draw_footer`.
+  - `main.rs` — `F10` added as a quit binding alongside `q`.
+- **`aios`** (kernel TUI, `src/tui/ui.rs`): restyled to the same Far layout.
+  - New `draw_status_bar()` (version, active tab, status, uptime, tier, RAM, bridge, sys-link) replacing `draw_header`.
+  - New `draw_main()` 55/45 dual-panel: active tab content left, events log right.
+  - New `draw_events_panel()`, `prompt_line()` (`AIOS>_` / `net>_`), `fkey_bar()`.
+  - Removed the old tab strip, footer hints block, and the bottom `draw_logs` layout; `sys:`/net/help lines folded into the top status bar and right panel.
+- Both TUIs now share the same two-panel chrome and command-prompt/F-key idiom.
+
+### Verification
+- `cargo clippy -p aios -p aios-tui -- -D warnings`: 0 warnings.
+- `cargo fmt --all`: clean.
+- `cargo test -p aios`: 9 tests green; `cargo test -p aios-tui`: 54 tests green (47 lib + 7 main).
+- `cargo build -p aios -p aios-tui`: success.
+
+Files: `aios-tui/src/ui/**`, `aios-tui/src/{lib,dashboard,main}.rs`, `aios/src/tui/ui.rs`, `docs/{INTERFACE,CHANGELOG}{,.ru}.md`.
+
 ## v2.30.0 — Web authentication + CORS lockdown for the AIOS Studio (2026-09-04)
 
 ### What added

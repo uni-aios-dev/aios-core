@@ -2,7 +2,7 @@ use crate::tui::app_state::TuiApp;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Tabs};
+use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 const TITLES: &[&str] = &[
@@ -17,95 +17,276 @@ const TITLES: &[&str] = &[
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let area = frame.area();
-    let chunks = Layout::default()
+    let zones = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(2),
-            Constraint::Min(10),
-            Constraint::Length(7),
+            Constraint::Min(6),
+            Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(area);
 
-    draw_header(frame, chunks[0], app);
-    draw_tabs(frame, chunks[1], app);
+    draw_status_bar(frame, zones[0], app);
+    draw_main(frame, zones[1], app);
+    frame.render_widget(Paragraph::new(prompt_line(app)), zones[2]);
+    frame.render_widget(Paragraph::new(fkey_bar()), zones[3]);
+}
+
+fn draw_status_bar(frame: &mut Frame, area: Rect, app: &TuiApp) {
+    let state = app.state.lock().unwrap();
+    let elapsed = state.start_time.elapsed().as_secs();
+    let uptime = format!(
+        "{:02}:{:02}:{:02}",
+        elapsed / 3600,
+        (elapsed % 3600) / 60,
+        elapsed % 60
+    );
+    let tier = &state.hw_profile.ai_tier;
+    let ram = format!("{:.1}G", state.hw_profile.memory.total_gb);
+    let status_label = if state.safe_mode { "SAFE" } else { "OK" };
+    let status_color = if state.safe_mode {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
+    let bridge_ok = state
+        .bridge_running
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let bridge_label = if bridge_ok { "ON" } else { "OFF" };
+    let bridge_color = if bridge_ok { Color::Green } else { Color::Red };
+
+    let snap = app.sys_snap.lock().map(|g| g.clone()).unwrap_or_default();
+    let sys_ok = snap
+        .wifi
+        .as_ref()
+        .is_some_and(|l| l.state == aios_sys_control::net_manager::LinkState::Connected);
+    let sys_color = if sys_ok {
+        Color::Green
+    } else {
+        Color::DarkGray
+    };
+
+    let segs = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(14),
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(14),
+            Constraint::Min(8),
+        ])
+        .split(area);
+
+    let col = |text: String, fg: Color| {
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            Style::default().fg(fg).add_modifier(Modifier::BOLD),
+        )))
+        .alignment(ratatui::layout::Alignment::Center)
+    };
+
+    frame.render_widget(
+        col(format!(" AIOS v{}", env!("CARGO_PKG_VERSION")), Color::Cyan),
+        segs[0],
+    );
+    frame.render_widget(
+        col(format!(" {} ", TITLES[app.current_tab]), Color::White),
+        segs[1],
+    );
+    frame.render_widget(col(format!(" {} ", status_label), status_color), segs[2]);
+    frame.render_widget(col(format!(" {} ", uptime), Color::Yellow), segs[3]);
+    frame.render_widget(col(format!(" {} ", tier), Color::Magenta), segs[4]);
+    frame.render_widget(col(format!(" {} ", ram), Color::Magenta), segs[5]);
+    frame.render_widget(
+        col(format!(" BR: {} ", bridge_label), bridge_color),
+        segs[6],
+    );
+    frame.render_widget(
+        col(format!(" SYS: {} ", snap.status_line()), sys_color),
+        segs[7],
+    );
+}
+
+fn draw_main(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
+    let panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+
     match app.current_tab {
-        0 => draw_system_tab(frame, chunks[2], app),
-        1 => draw_blocks_tab(frame, chunks[2], app),
-        2 => draw_ai_tab(frame, chunks[2], app),
-        3 => draw_bridge_tab(frame, chunks[2], app),
-        4 => draw_net_store_tab(frame, chunks[2], app),
-        5 => draw_web_tab(frame, chunks[2], app),
-        6 => draw_shell_tab(frame, chunks[2], app),
+        0 => {
+            draw_system_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
+        1 => {
+            draw_blocks_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
+        2 => {
+            draw_ai_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
+        3 => {
+            draw_bridge_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
+        4 => {
+            draw_net_store_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
+        5 => {
+            draw_web_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
+        6 => {
+            draw_shell_tab(frame, panels[0], app);
+            draw_events_panel(frame, panels[1], app);
+        }
         _ => {}
     }
-    draw_logs(frame, chunks[3], app);
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let state = app.state.lock().unwrap();
-    let s = state.start_time.elapsed().as_secs();
-    let uptime = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
+fn draw_events_panel(frame: &mut Frame, area: Rect, app: &TuiApp) {
+    let count = app.displayed_logs.len();
+    let start = count.saturating_sub(area.height.saturating_sub(3) as usize);
+    let recent: Vec<&String> = app.displayed_logs.iter().skip(start).collect();
 
-    let header = Line::from(vec![
-        Span::styled(
-            " AIOS v2.9.1 ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" │ Status: "),
-        Span::styled(
-            if state.safe_mode { "SAFE MODE" } else { "OK" },
-            Style::default()
-                .fg(if state.safe_mode {
-                    Color::Yellow
-                } else {
-                    Color::Green
-                })
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" │ Uptime: "),
-        Span::styled(uptime, Style::default().fg(Color::Yellow)),
-        Span::raw(" │ AI Tier: "),
-        Span::styled(
-            state.hw_profile.ai_tier.clone(),
-            Style::default().fg(Color::Magenta),
-        ),
-        Span::raw(" │ RAM: "),
-        Span::styled(
-            format!("{:.1}G", state.hw_profile.memory.total_gb),
-            Style::default().fg(Color::Magenta),
-        ),
-    ]);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::White));
-    let paragraph = Paragraph::new(header).block(block);
-    frame.render_widget(paragraph, area);
-}
-
-fn draw_tabs(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let titles: Vec<Line> = TITLES
+    let items: Vec<ListItem> = recent
         .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            if i == app.current_tab {
-                Line::from(Span::styled(
-                    *t,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-                ))
+        .map(|l| {
+            let color = if l.contains("ERROR") {
+                Color::Red
+            } else if l.contains("WARN") {
+                Color::Yellow
+            } else if l.contains("Bridge") {
+                Color::Cyan
             } else {
-                Line::from(Span::styled(*t, Style::default().fg(Color::White)))
-            }
+                Color::DarkGray
+            };
+            ListItem::new(Line::from(Span::styled(
+                l.as_str(),
+                Style::default().fg(color),
+            )))
         })
         .collect();
-    let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title(" Navigation "))
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
-    frame.render_widget(tabs, area);
+
+    let title = if app.log_paused {
+        " Events (PAUSED) "
+    } else {
+        " Events "
+    };
+    let list = List::new(items).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    frame.render_widget(list, area);
+}
+
+fn prompt_line(app: &TuiApp) -> Line<'static> {
+    if app.net_mode {
+        Line::from(vec![
+            Span::styled(
+                "net> ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.net_input.clone(), Style::default().fg(Color::Green)),
+            Span::styled("\u{258c}", Style::default().fg(Color::Cyan)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                "AIOS> ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.shell_input.clone(), Style::default().fg(Color::White)),
+            Span::styled("\u{258c}", Style::default().fg(Color::Cyan)),
+        ])
+    }
+}
+
+fn fkey_bar() -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            " 1",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Help "),
+        Span::styled(
+            " 2",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Tabs "),
+        Span::styled(
+            " 3",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("View "),
+        Span::styled(
+            " 4",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Edit "),
+        Span::styled(
+            " 5",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Copy "),
+        Span::styled(
+            " 6",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Move "),
+        Span::styled(
+            " 7",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Mkdir "),
+        Span::styled(
+            " 8",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Del "),
+        Span::styled(
+            " 9",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Sort "),
+        Span::styled(
+            "10",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Quit"),
+    ])
 }
 
 fn draw_system_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
@@ -812,97 +993,4 @@ fn draw_shell_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .style(Style::default().fg(Color::Green))
         .block(Block::default().title(" Input ").borders(Borders::ALL));
     frame.render_widget(input, chunks[1]);
-}
-
-fn draw_logs(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let count = app.displayed_logs.len();
-    let start = count.saturating_sub(3);
-    let recent: Vec<String> = app.displayed_logs.iter().skip(start).cloned().collect();
-
-    let log_lines: Vec<ListItem> = recent
-        .iter()
-        .map(|l| {
-            ListItem::new(Line::from(Span::styled(
-                l.clone(),
-                if l.contains("ERROR") {
-                    Style::default().fg(Color::Red)
-                } else if l.contains("WARN") {
-                    Style::default().fg(Color::Yellow)
-                } else if l.contains("Bridge") {
-                    Style::default().fg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                },
-            )))
-        })
-        .collect();
-
-    let title = if app.log_paused {
-        " Events (PAUSED) "
-    } else {
-        " Events "
-    };
-    let list = List::new(log_lines)
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .style(Style::default().fg(Color::DarkGray));
-
-    let net_line = if app.net_mode {
-        Line::from(vec![
-            Span::styled(
-                " net: ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(app.net_input.clone(), Style::default().fg(Color::Green)),
-            Span::raw("  [Enter] apply  [Esc] cancel  (e.g. hostname=server-1 listen_port=8080)"),
-        ])
-    } else {
-        Line::from(Span::raw(
-            " [n] Change network settings via IPC (hostname, listen_port, dhcp_enabled, dns_server) ",
-        ))
-    };
-    let net_style = if app.net_mode {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::DarkGray).bg(Color::Black)
-    };
-
-    let help = Line::from(vec![Span::raw(
-        " [Tab/F1] tabs  [1-7] goto  [W] GUI  [L] layout  [Space] pause  [q] quit  | Web: g nav j/k links o open u/d scroll b back t tab x close [ ] switch a bkmk m list B native ",
-    )]);
-
-    let snap = app.sys_snap.lock().map(|g| g.clone()).unwrap_or_default();
-    let sys_ok = snap
-        .wifi
-        .as_ref()
-        .is_some_and(|l| l.state == aios_sys_control::net_manager::LinkState::Connected);
-    let sys_color = if sys_ok {
-        Color::Green
-    } else {
-        Color::DarkGray
-    };
-    let sys_line = Line::from(vec![
-        Span::styled(
-            " sys: ",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(snap.status_line(), Style::default().fg(sys_color)),
-    ]);
-
-    let log_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-    frame.render_widget(list, log_chunks[0]);
-    frame.render_widget(Paragraph::new(sys_line), log_chunks[1]);
-    frame.render_widget(Paragraph::new(net_line).style(net_style), log_chunks[2]);
-    frame.render_widget(help, log_chunks[3]);
 }

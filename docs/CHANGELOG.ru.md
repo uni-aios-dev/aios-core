@@ -1,5 +1,30 @@
 # Журнал разработки AIOS
 
+## v2.31.0 — двухпанельный редизайн обоих TUI в стиле Far/MC (2026-09-08)
+
+### Изменено
+- **`aios-tui`** (`src/ui/`): новый тематический UI-модуль в классическом стиле Far Manager / Midnight Commander.
+  - `theme.rs` — три палитры глубоко-синий/циан (`Far`, `Mc`, `Custom`) через `ThemeKind`, `From<ThemeKind>`, `Default`.
+  - `status_bar.rs` — `draw_top_bar()`, `draw_bottom_keys()`, `fkey_line()`, `command_prompt()`, `titled_block()`, `far_layout()`.
+  - `dual_panel.rs` — `draw_dual_panel()`, `inside_borders()`, `inset()`, `draw_modal()`.
+  - `widgets/table_view.rs` — `draw_dense_table()`, `draw_bordered_list()`, `selection_bar_style()`, `truncate()`.
+  - Хром `dashboard.rs` переписан на `far_layout()` + `draw_top_bar()` + двухпанельную основную + `command_prompt()` + `draw_bottom_keys()`; удалены `draw_header`/`draw_tabs`/`draw_footer`.
+  - `main.rs` — `F10` добавлен как выход вместе с `q`.
+- **`aios`** (ядерный TUI, `src/tui/ui.rs`): переоформлен в ту же Far-компоновку.
+  - Новый `draw_status_bar()` (версия, активная вкладка, статус, uptime, tier, RAM, мост, sys-ссылка) вместо `draw_header`.
+  - Новый `draw_main()` 55/45 двухпанельный: содержимое активной вкладки слева, журнал событий справа.
+  - Новые `draw_events_panel()`, `prompt_line()` (`AIOS>_` / `net>_`), `fkey_bar()`.
+  - Удалены старая панель вкладок, блок подсказок в подвале и нижняя компоновка `draw_logs`; строки `sys:`/net/help перенесены в верхнюю полосу статуса и правую панель.
+- Оба TUI теперь используют одинаковый двухпанельный хром и идиому приглашения/клавиш F.
+
+### Верификация
+- `cargo clippy -p aios -p aios-tui -- -D warnings`: 0 предупреждений.
+- `cargo fmt --all`: чисто.
+- `cargo test -p aios`: 9 тестов зелёные; `cargo test -p aios-tui`: 54 теста зелёные (47 lib + 7 main).
+- `cargo build -p aios -p aios-tui`: успешно.
+
+Файлы: `aios-tui/src/ui/**`, `aios-tui/src/{lib,dashboard,main}.rs`, `aios/src/tui/ui.rs`, `docs/{INTERFACE,CHANGELOG}{,.ru}.md`.
+
 ## v2.30.0 — аутентификация Web + ужесточение CORS для AIOS Studio (2026-09-04)
 
 ### Что добавлено

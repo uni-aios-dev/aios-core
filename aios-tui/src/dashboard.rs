@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::ui::{command_prompt, draw_bottom_keys, draw_top_bar, far_layout, FKey, Theme};
 use aios_block_mgr::registry::BlockRegistry;
 use aios_fm::commands::Ack;
 use aios_fm::engine::FileManager;
@@ -12,7 +13,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table},
     Frame,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -639,34 +640,86 @@ impl DashboardState {
     }
 }
 
+/// Classic two-panel Far/MC layout: system strip, panel grid, command line,
+/// function-key bar. A full-screen help modal is drawn on top when open.
 pub fn draw_dashboard(f: &mut Frame<'_>, state: &DashboardState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(10),
-            Constraint::Length(3),
-        ])
-        .split(f.area());
+    let theme = Theme::default();
+    let zones = far_layout(f.area());
 
-    draw_header(f, chunks[0], state);
-    draw_tabs(f, chunks[1], state);
-    draw_main(f, chunks[2], state);
-    draw_footer(f, chunks[3]);
+    draw_top_bar(f, zones[0], &theme, &top_bar_segments(&theme, state));
+    draw_main(f, zones[1], state);
+    let prompt = Paragraph::new(command_prompt(&theme, &state.shell_state.input_buffer));
+    f.render_widget(prompt, zones[2]);
+    draw_bottom_keys(f, zones[3], &theme, &FKEYS);
 
     if state.show_help {
         draw_help(f, f.area());
     }
 }
 
-fn draw_header(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let wd_color = match state.watchdog_state {
-        WatchdogState::Monitoring => Color::Green,
-        WatchdogState::Warned => Color::Yellow,
-        WatchdogState::Suspended => Color::Red,
-        WatchdogState::Recovering => Color::Yellow,
-        WatchdogState::SafeMode => Color::Magenta,
+/// Short tab names used both in the top strip and the F-key help.
+pub const TAB_NAMES: [&str; 8] = [
+    "Overview",
+    "Processes",
+    "Blocks",
+    "Metrics",
+    "Deps",
+    "Web",
+    "Shell",
+    "Files",
+];
+
+/// Bottom function-key strip, aligned to the classic Far row.
+pub const FKEYS: [FKey<'static>; 10] = [
+    FKey {
+        key: "1",
+        label: "Help",
+    },
+    FKey {
+        key: "2",
+        label: "Rename",
+    },
+    FKey {
+        key: "3",
+        label: "View",
+    },
+    FKey {
+        key: "4",
+        label: "Edit",
+    },
+    FKey {
+        key: "5",
+        label: "Copy",
+    },
+    FKey {
+        key: "6",
+        label: "Move",
+    },
+    FKey {
+        key: "7",
+        label: "Mkdir",
+    },
+    FKey {
+        key: "8",
+        label: "Del",
+    },
+    FKey {
+        key: "9",
+        label: "Sort",
+    },
+    FKey {
+        key: "10",
+        label: "Quit",
+    },
+];
+
+/// Builds the top-strip segments: version, active tab, AI tier, watchdog
+/// health, CPU cores, RAM, and live block/process counts.
+fn top_bar_segments(theme: &Theme, state: &DashboardState) -> Vec<(String, Style)> {
+    let wd_style = match state.watchdog_state {
+        WatchdogState::Monitoring => theme.ok,
+        WatchdogState::Warned | WatchdogState::Recovering => theme.warn,
+        WatchdogState::Suspended | WatchdogState::SafeMode => theme.error,
     };
     let wd_label = match state.watchdog_state {
         WatchdogState::Monitoring => "OK",
@@ -675,97 +728,60 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         WatchdogState::Recovering => "RECOVERING",
         WatchdogState::SafeMode => "SAFE MODE",
     };
-
-    let header = Paragraph::new(vec![Line::from(vec![
-        Span::styled(
-            "  AIOS v0.5.0",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+    vec![
+        (format!("AIOS v{}", env!("CARGO_PKG_VERSION")), theme.accent),
+        (
+            TAB_NAMES[state.selected_tab.min(TAB_NAMES.len() - 1)].to_string(),
+            theme.title_active,
         ),
-        Span::raw("  |  "),
-        Span::styled(
-            format!("{}", state.ai_tier),
-            match state.ai_tier {
-                AiTier::Tier1 => Style::default().fg(Color::Green),
-                AiTier::Tier2 => Style::default().fg(Color::Yellow),
-                AiTier::Tier3 => Style::default().fg(Color::Red),
-            },
+        (format!("Tier {}", state.ai_tier), theme.text),
+        (format!("WD {wd_label}"), wd_style),
+        (format!("{} cores", state.hardware.cpu.cores), theme.text),
+        (
+            format!("{}/{}MB RAM", state.ram_used, state.ram_total),
+            theme.text,
         ),
-        Span::raw("  |  WD: "),
-        Span::styled(
-            wd_label,
-            Style::default().fg(wd_color).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  |  CPU: "),
-        Span::styled(
-            format!("{}", state.hardware.cpu.cores),
-            Style::default().fg(Color::White),
-        ),
-        Span::raw("  |  RAM: "),
-        Span::styled(
-            format!("{}/{}MB", state.ram_used, state.ram_total),
-            Style::default().fg(Color::White),
-        ),
-        Span::raw("  |  Blocks: "),
-        Span::styled(
-            format!("{}", state.blocks_count),
-            Style::default().fg(Color::Green),
-        ),
-        Span::raw("  |  Proc: "),
-        Span::styled(
-            format!("{}", state.process_count),
-            Style::default().fg(Color::Green),
-        ),
-    ])])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" AIOS Dashboard "),
-    );
-    f.render_widget(header, area);
+        (format!("{} blocks", state.blocks_count), theme.ok),
+        (format!("{} procs", state.process_count), theme.ok),
+    ]
 }
 
-fn draw_tabs(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let titles = vec![
-        " Overview ",
-        " Processes ",
-        " Blocks ",
-        " Metrics ",
-        " Deps ",
-        " Web ",
-        " Shell ",
-        " Files ",
-    ];
-
-    let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title(" Tabs "))
-        .select(state.selected_tab)
-        .highlight_style(
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider("|")
-        .padding(" ", " ");
-
-    let tabs_area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0)])
-        .split(area);
-
-    f.render_widget(tabs, tabs_area[0]);
-}
-
+/// Renders the main zone as two 50/50 panels. The active tab owns the left
+/// panel; the right panel is the persistent activity log, giving the classic
+/// companion-panel look shared by all tabs.
 fn draw_main(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let (left, right) = (panels[0], panels[1]);
+
     match state.selected_tab {
         0 => draw_overview(f, area, state),
-        1 => draw_processes(f, area, state),
-        2 => draw_blocks(f, area, state),
-        3 => draw_metrics(f, area, state),
-        4 => draw_dependencies(f, area, state),
-        5 => draw_web(f, area, state),
-        6 => draw_shell(f, area, state),
+        1 => {
+            draw_processes(f, left, state);
+            draw_log_panel(f, right, state);
+        }
+        2 => {
+            draw_blocks(f, left, state);
+            draw_log_panel(f, right, state);
+        }
+        3 => {
+            draw_metrics(f, left, state);
+            draw_log_panel(f, right, state);
+        }
+        4 => {
+            draw_dependencies(f, left, state);
+            draw_log_panel(f, right, state);
+        }
+        5 => {
+            draw_web(f, left, state);
+            draw_log_panel(f, right, state);
+        }
+        6 => {
+            draw_shell(f, left, state);
+            draw_log_panel(f, right, state);
+        }
         7 => draw_files(f, area, state),
         _ => draw_overview(f, area, state),
     }
@@ -1966,53 +1982,6 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
         )
         .style(Style::default().bg(Color::DarkGray).fg(Color::White));
     f.render_widget(help_para, area);
-}
-
-fn draw_footer(f: &mut Frame<'_>, area: Rect) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " q",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Quit  "),
-        Span::styled(
-            "1-7",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Tab  "),
-        Span::styled(
-            "j/k",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Nav  "),
-        Span::styled(
-            "F1",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Help  "),
-        Span::styled(
-            "K",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Kill  "),
-        Span::styled(
-            ":",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("=Cmd"),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
-    f.render_widget(footer, area);
 }
 
 fn priority_style(pri: &str) -> Style {

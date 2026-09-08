@@ -39,18 +39,21 @@ cargo run --bin aios-tui
 
 ### Layout
 
+Far Manager / Midnight Commander style: top status bar, dual 50/50 panels (tab content left, events right), command prompt, and F-key strip at the bottom.
+
 ```
-┌──────────────────────────────────────────────────────┐
-│ AIOS v1.0.0 | Tier1 | WD: OK | CPU: 16 | RAM: ...  │  ← Header
-├──────────────────────────────────────────────────────┤
-│ Overview │ Processes │ Blocks │ Metrics │ Deps │ Web │ Shell │  ← Tabs
-├──────────────────────────────────────────────────────┤
-│                                                      │
-│              Main content area                       │
-│                                                      │
-├──────────────────────────────────────────────────────┤
-│ q=Quit Alt+1-8=Tab j/k=Nav K=Kill U=Unload L=Load H=HS F1=Help :=Cmd │  ← Footer
-└──────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ AIOS v0.1.0  │ Overview  │ Status: OK  │ Uptime ...  │ Tier  │  ← Status bar
+├──────────────────────────┬────────────────────────────────────┤
+│                          │                                    │
+│     Active tab content   │           Events log              │  ← Main (dual)
+│     (55% width)          │           (45% width)             │
+│                          │                                    │
+├──────────────────────────┴────────────────────────────────────┤
+│ AIOS> _                                                        │  ← Prompt
+├───────────────────────────────────────────────────────────────┤
+│  1Help  2Tabs  3View  4Edit  5Copy  6Move  7Mkdir  8Del  9Sort 10Quit │  ← F-key bar
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ### Keyboard Shortcuts
@@ -213,6 +216,8 @@ cargo run --bin aios -- --safe-mode
 
 At boot the header and the System tab show the detected **AI Tier** (e.g. `Tier1`/`Tier2`) plus CPU/RAM; safe mode is shown as `SAFE MODE`.
 
+The kernel TUI uses the same Far Manager / Midnight Commander style as `aios-tui`: a **status bar** (version, active tab, uptime, tier, RAM, bridge status, sys link), a **dual 50/50 main panel** (active tab left, events log right), an **`AIOS>_` prompt** (or `net>_` in network input mode), and a **F-key strip** at the bottom. The active tab name replaces the old tab strip. The `sys:` link status and bridge status now live in the top status bar instead of the old footer line.
+
 ### Tabs
 
 | # | Tab | Content |
@@ -237,9 +242,9 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
 | `Space` | Pause/resume event log |
 | `L` | Toggle EN/RU input layout (the sys status line shows the active pair) |
-| `q` / `Ctrl+C` | Quit |
+| `q` / `F10` / `Ctrl+C` | Quit |
 
-The bottom **event log** carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `L` to switch layouts from any tab; the same snapshot is rendered in the GUI top bar and exposed over REST (`/api/v1/sys/status`).
+The bottom **event log** now lives as the right-hand panel of the dual layout (45% width). It carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `Space` to pause the log, or `L` to switch layouts from any tab; the same snapshot is rendered in the GUI top bar and exposed over REST (`/api/v1/sys/status`).
 ### Blocks Tab (2)
 
 | Key | Action |

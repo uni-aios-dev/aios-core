@@ -80,7 +80,7 @@ impl AuthStore {
         let path = data_dir.join("users.json");
         let secret = std::env::var("AIOS_AUTH_SECRET").unwrap_or_else(|_| {
             // Derive a stable secret from a machine path when not configured.
-            format!("aios-bridge-{}", data_dir.display().to_string_lossy())
+            format!("aios-bridge-{}", data_dir.to_string_lossy())
         });
         let users = if path.exists() {
             let raw = std::fs::read_to_string(&path).map_err(|e| {
@@ -153,7 +153,7 @@ impl AuthStore {
             h.update(&key);
             key = h.finalize().to_vec();
         }
-        let mut key_padded = vec![0u8; BLOCK];
+        let mut key_padded = [0u8; BLOCK];
         key_padded[..key.len()].copy_from_slice(&key);
 
         let mut ipad = vec![0u8; BLOCK];
@@ -170,7 +170,7 @@ impl AuthStore {
 
         let mut outer = Sha256::new();
         outer.update(&opad);
-        outer.update(&inner_digest);
+        outer.update(inner_digest);
         outer.finalize().to_vec()
     }
 

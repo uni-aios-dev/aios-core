@@ -520,18 +520,16 @@ Ready → Running → Terminated
 
 ### Dashboard (`aios/src/tui`)
 
-Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
+Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary), restyled in a classic Far Manager / Midnight Commander two-panel form (v2.31.0):
 
-**Header zone**:
-- Project title "AIOS v2.9.1"
-- Detected AI tier with color coding: Tier1=Green, Tier2=Yellow, Tier3=Red
-- `SAFE MODE` badge (Yellow) when booted with `--safe-mode`
-- Watchdog state: OK (Green), SUSPENDED (Red), RECOVERING (Yellow), SAFE MODE (Magenta)
-- CPU cores, RAM usage, block count, process count
+**Status-bar zone** (top, 1 row, replaces the old header + tab strip):
+- Version, active tab name, system status (`OK`/`SAFE`)
+- Uptime, AI tier, RAM, bridge status (`ON`/`OFF`)
+- `sys:` link status (Wi-Fi connected/grey, from `aios_sys_control` snapshot)
 
-**Tabs zone**: 7 tabs — System & HW | Blocks & Svc | AI Console | Studio Bridge | Network & Store | Web | Shell. Selection via `1`-`7`, `Alt`+`1`-`7` (works even while typing), `Tab`/`F1` cycles, `?` toggles the help overlay.
+**Main dual-panel zone** (55/45 split): the active tab renders on the left, the **events log** on the right (color-coded: Red=error, Yellow=warn, Cyan=Bridge, grey=info).
 
-**Tab 1 — System & HW**: CPU model, cores/threads, AVX flags, GPU name/VRAM, storage, AI tier; RAM gauge; activity log (last messages, color-coded: Red=error, Yellow=warn, Green=success)
+**Tab 1 — System & HW**: CPU model, cores/threads, AVX flags, GPU name/VRAM, storage, AI tier; RAM gauge; Hardware Inspector device table and hot-plug toasts.
 
 **Tab 2 — Blocks & Svc**: block table (ID, Name, Version, State, Size) with `j`/`k` selection; keybindings `r`=restart, `k`=unload, `l`=load from disk (prompts a path); bottom pane shows the selected block and the process list
 
@@ -558,7 +556,9 @@ Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary):
 - Toggled with F1 or '?', dismissed with F1/Esc/'?'
 - Shows all keyboard shortcuts and shell commands in a popup window
 
-**Footer zone**: Keybind hints (q=Quit, 1-7=Tab, Alt+1-7=Tab everywhere, W=GUI, Space=Pause log, F1=Help)
+**Prompt zone**: `AIOS>_` for the shell, `net>_` during network `key=value` input.
+
+**F-key zone** (bottom, 1 row): `1Help 2Tabs 3View 4Edit 5Copy 6Move 7Mkdir 8Del 9Sort 10Quit`; `F10` quits alongside `q`/`Ctrl+C`.
 
 `OrchestratorState` manages:
 - Process/Block snapshots (taken each frame for consistent rendering)

@@ -117,19 +117,19 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
     // API, so cross-origin access is not needed). This replaces the previous
     // permissive policy that allowed any website to call the bridge.
     let allowed_origin = std::env::var("AIOS_CORS_ORIGIN").ok();
-    let cors = match &allowed_origin {
-        Some(origin) => CorsLayer::new()
+    let cors = allowed_origin.as_ref().map(|origin| {
+        CorsLayer::new()
             .allow_origin(AllowOrigin::exact(
-                axum::http::HeaderValue::from_str(origin).unwrap_or(axum::http::HeaderValue::from_static("*")),
+                axum::http::HeaderValue::from_str(origin)
+                    .unwrap_or(axum::http::HeaderValue::from_static("*")),
             ))
             .allow_headers(Any)
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,
                 axum::http::Method::OPTIONS,
-            ]),
-        None => CorsLayer::never(),
-    };
+            ])
+    });
 
     let app = Router::new()
         // Public auth endpoints.
@@ -154,23 +154,31 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
         .route("/api/v1/sys/layout", post(sys_layout_handler))
         .route("/api/v1/auth/me", get(auth_me_handler))
         .route("/ws/telemetry", get(ws_handler))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_auth,
-        ))
         // Public, unauthenticated fallbacks and happy-path plumbing.
         .route("/api/v1/health", get(health_handler))
         .route("/store/index.json", get(store_catalog_handler))
         .route("/store/blocks/{name}.wasm", get(store_block_handler))
         .route("/index.json", get(store_catalog_handler))
         .route("/blocks/{name}.wasm", get(store_block_handler))
-        .layer(cors)
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            record_metrics,
-        ))
-        .with_state(state)
+        .route_layer(
+            middleware::from_fn_with_state::<_, _, (State<SharedState>, Request)>(
+                state.clone(),
+                require_auth,
+            ),
+        )
+        .route_layer(
+            middleware::from_fn_with_state::<_, _, (State<SharedState>, Request)>(
+                state.clone(),
+                record_metrics,
+            ),
+        )
+        .with_state(state.clone())
         .fallback_service(ServeDir::new("aios-studio"));
+
+    let app = match cors {
+        Some(layer) => app.layer(layer),
+        None => app,
+    };
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -213,14 +221,17 @@ async fn require_auth(State(state): State<SharedState>, req: Request, next: Next
         }))
         .into_response();
     };
-    let store = state.auth.lock().unwrap();
-    match store.bearer_user(header_str) {
-        Ok(user) => {
+    let user = {
+        let store = state.auth.lock().unwrap();
+        store.bearer_user(header_str).ok()
+    };
+    match user {
+        Some(user) => {
             let mut req = req;
             req.extensions_mut().insert(user);
             next.run(req).await
         }
-        Err(_) => Json(serde_json::json!({
+        None => Json(serde_json::json!({
             "success": false,
             "error": "Invalid or expired token"
         }))

@@ -1605,7 +1605,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::F(1) | KeyCode::Char('?') => {
                             state.show_help = true;
                         }
-                        KeyCode::Char('q') => break,
+                        KeyCode::Char('q') | KeyCode::F(10) => break,
                         KeyCode::Esc => {
                             if state.show_help {
                                 state.show_help = false;
