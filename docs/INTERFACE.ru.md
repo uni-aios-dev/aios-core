@@ -12,6 +12,25 @@
 - Сеть: при загрузке выполняется попытка DHCP на всех ethernet/wifi-интерфейсах (см. вкладку Network в TUI — там адрес).
 - Чтобы установить AIOS на диск машины, введите `aios-install`. Установщик покажет список дисков, запросит целевой (например `sda`), потребует подтверждения `YES`, разметит диск (GPT: 512 МБ EFI + ext4 root), скопирует систему и установит GRUB. Перезагрузитесь после сообщения об успехе.
 
+### Сборка ISO
+
+На Linux/macOS с Docker:
+
+```
+docker run --rm -it -v "$PWD:/src" -v "$PWD/live:/work" \
+  -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+  rust:alpine sh /work/build.sh
+```
+
+На Windows c Docker Desktop (бэкенд WSL2 — **Intel VT-x должен быть включён в UEFI/BIOS**):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\fix-wsl2.ps1        # (1) подготовить WSL2 и запустить движок
+powershell -ExecutionPolicy Bypass -File scripts\build-live-iso.ps1  # (2) собрать live\out\aios-live.iso
+```
+
+Результат — `live/out/aios-live.iso` (гибрид BIOS+UEFI). Запишите его через Rufus/Ventoy.
+
 ---
 
 ## Обзор

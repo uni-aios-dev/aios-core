@@ -1,5 +1,19 @@
 # Журнал разработки AIOS
 
+## Дополнение к v2.31.1 — скрипты сборки Live-ISO на Windows (2026-09-09)
+
+### Добавлено
+- **`scripts/fix-wsl2.ps1`** — повышенный (elevated) провижинер WSL2-бэкенда Docker Desktop на Windows-хосте (параметр `-LogPath`, лог через `Start-Transcript`, т.к. внешний перенаправление через UAC-элевацию ненадёжно). Шаги: (1) включение опциональных функций `Microsoft-Windows-Subsystem-Linux` и `VirtualMachinePlatform` (DISM); (2) установка ядра WSL2 через `wsl --update` → `wsl --install --no-distribution` → фолбэк ручным MSI с `aka.ms/wslkernel` (проверка `C:\Windows\System32\lxss\tools\kernel`); (3) чтение состояния виртуализации прошивки и предупреждение, если VT-x выключен; (4) запуск Docker Desktop и ожидание движка.
+- **`scripts/build-live-iso.ps1`** — Docker-обёртка над `live/build.sh` на Windows: проверка движка, pull `rust:alpine`, монтирование репозитория в `/src`, каталога `live/` в `/work` и host-реестра `~/.cargo/registry` в `/usr/local/cargo/registry` (сборка идёт с `CARGO_NET_OFFLINE=true`), запуск `sh /work/build.sh`, затем вывод пути к ISO / размера / SHA256.
+- Оба скрипта **намеренно чистый ASCII**: PowerShell 5.1 на этой машине декодирует BOM-less UTF-8 `.ps1` как ANSI-кодовую страницу, и не-ASCII байт (например, тире `—`, чей хвостовой UTF-8 байт `0x94` в CP1252 декодируется как `"`) ломает строковые литералы в ошибки `MissingEndCurlyBrace`.
+
+### Аппаратное предусловие (этот тестовый стенд)
+- Docker Desktop также требует **Intel VT-x, включённый в UEFI/BIOS**: стенд загружается с `VirtualizationFirmwareEnabled: False`, поэтому у WSL2-ВМ нет аппаратной виртуализации, даже когда функции и ядро установлены (`wsl --update` → `0x8024001e`). `fix-wsl2.ps1` обнаруживает и сообщает об этом. После включения VT-x и перезагрузки повторно запустите `scripts/fix-wsl2.ps1`, затем `scripts/build-live-iso.ps1`.
+
+### Верификация
+- Оба скрипта: `[System.Management.Automation.Language.Parser]::ParseFile` → parse OK; нет байтов > 0x7F.
+- Elevated-прогон исправленного `scripts/fix-wsl2.ps1` на этом хосте: функции включены (перезагрузка отложена), путь с MSI-ядром выполнен, проверка виртуализации корректно сообщила о выключенном в прошивке VT-x, Docker Desktop запущен, но движок остаётся недоступен до перезагрузки.
+
 ## v2.31.1 — Надёжность переключения вкладок TUI, регрессионный каркас, фикс e2e-авторизации моста (2026-09-08)
 
 ### Исправлено

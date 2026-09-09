@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## v2.31.1 addendum — Windows Live-ISO build scripts (2026-09-09)
+
+### Added
+- **`scripts/fix-wsl2.ps1`** — elevated provisioner for Docker Desktop's WSL2 backend on a Windows host (takes `-LogPath`, logs via `Start-Transcript` since outer redirection across UAC elevation is unreliable). Steps: (1) enable the `Microsoft-Windows-Subsystem-Linux` and `VirtualMachinePlatform` optional features (DISM); (2) install the WSL2 kernel via `wsl --update` → `wsl --install --no-distribution` → manual `aka.ms/wslkernel` MSI fallback (checks `C:\Windows\System32\lxss\tools\kernel`); (3) read firmware virtualization state and warn if VT-x is off; (4) start Docker Desktop and wait for the engine.
+- **`scripts/build-live-iso.ps1`** — Docker wrapper for `live/build.sh` on Windows: verifies the engine, pulls `rust:alpine`, mounts the repo `/src`, `live/` `/work`, and the host `~/.cargo/registry` at `/usr/local/cargo/registry` (the build runs with `CARGO_NET_OFFLINE=true`), runs `sh /work/build.sh`, then reports the ISO path / size / SHA256.
+- Both scripts are **pure ASCII** on purpose: this machine's PowerShell 5.1 decodes BOM-less UTF-8 `.ps1` files as the ANSI codepage, and a non-ASCII byte (e.g. an em-dash `—`, whose UTF-8 trailing byte `0x94` decodes as `"` in CP1252) breaks string literals into `MissingEndCurlyBrace` parse errors.
+
+### Hardware prerequisite (this test rig)
+- Docker Desktop also needs **Intel VT-x enabled in the UEFI/BIOS**: the rig boots with `VirtualizationFirmwareEnabled: False`, so the WSL2 VM has no CPU virtualization even with the features and kernel installed (`wsl --update` → `0x8024001e`). `fix-wsl2.ps1` detects and reports this. After enabling VT-x and rebooting, re-run `scripts/fix-wsl2.ps1`, then `scripts/build-live-iso.ps1`.
+
+### Verification
+- Both scripts: `[System.Management.Automation.Language.Parser]::ParseFile` → parse OK; no bytes > 0x7F.
+- Elevated run of the fixed `scripts/fix-wsl2.ps1` on this host: features enabled (reboot pending), MSI kernel path attempted, virtualization check correctly reported the firmware VT-x-off state, Docker Desktop started but engine stays down until reboot.
+
 ## v2.31.1 — TUI tab-switch robustness & regression harness, bridge e2e auth fix (2026-09-08)
 
 ### Fixed

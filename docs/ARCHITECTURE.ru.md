@@ -1244,6 +1244,11 @@ User Input (TUI)
 - Загрузка: BIOS/UEFI → GRUB → initramfs init → squashfs root (только чтение; `/tmp`, `/run`, `/var/log` на tmpfs) → TUI `aios` → `Esc`/`q` в шелл `#` → `aios-install` для постоянной установки на диск
 - Флаги сборки: `aios` собирается с `--no-default-features` для Live-образа (без webview) — см. feature `webview` в `Cargo.toml` (v2.9.4)
 
+### Сборка на Windows (дополнение к v2.31.1)
+- `scripts/build-live-iso.ps1` оборачивает сборку в Docker выше (монтирует репозиторий, `live/` и host-реестр `~/.cargo/registry` как mount офлайн-крейтов) и выводит ISO/SHA256.
+- Если движок Docker не запускается, `scripts/fix-wsl2.ps1` (elevated) готовит бэкенд WSL2: включает `Microsoft-Windows-Subsystem-Linux` / `VirtualMachinePlatform`, ставит ядро WSL2 (`wsl --update` → `wsl --install --no-distribution` → MSI с `aka.ms/wslkernel`), затем запускает Docker Desktop.
+- Предусловие в прошивке: WSL2-ВМ требует **Intel VT-x, включённый в UEFI/BIOS**. При выключенном VT-x движок не поднимется даже после установки функций/ядра (проверка: `VirtualizationFirmwareEnabled` в CIM). Оба скрипта — чистый ASCII, чтобы обойти ANSI-декодирование BOM-less UTF-8 `.ps1` в PowerShell 5.1.
+
 ## Слой 8: `aios-init` и автономный initramfs (`aios-init/`, `build_initramfs.sh`)
 
 ### Обзор

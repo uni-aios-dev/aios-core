@@ -1251,6 +1251,11 @@ The `live/` directory builds a bootable hybrid (BIOS+UEFI) ISO that boots straig
 - Boot: BIOS/UEFI → GRUB → initramfs init → squashfs root (read-only; `/tmp`, `/run`, `/var/log` on tmpfs) → `aios` TUI → `Esc`/`q` drops to `#` shell → `aios-install` for persistent install to disk
 - Feature gating: `aios` is built with `--no-default-features` for the Live image (no webview) — see `Cargo.toml` `webview` feature (v2.9.4)
 
+### Building on Windows (v2.31.1 addendum)
+- `scripts/build-live-iso.ps1` wraps the Docker build above (mounts the repo, `live/`, and the host `~/.cargo/registry` as the offline-crates mount) and reports the ISO/SHA256.
+- If the Docker engine won't start, `scripts/fix-wsl2.ps1` (elevated) provisions the WSL2 backend: enables `Microsoft-Windows-Subsystem-Linux` / `VirtualMachinePlatform`, installs the WSL2 kernel (`wsl --update` → `wsl --install --no-distribution` → `aka.ms/wslkernel` MSI), then starts Docker Desktop.
+- Firmware prerequisite: the WSL2 VM needs **Intel VT-x enabled in the UEFI/BIOS**. With VT-x off the engine stays down even after the features/kernel install (check: `VirtualizationFirmwareEnabled` in CIM). Both scripts are pure ASCII to sidestep PowerShell 5.1's ANSI decoding of BOM-less UTF-8 `.ps1` files.
+
 ## Layer 8: `aios-init` & standalone initramfs (`aios-init/`, `build_initramfs.sh`)
 
 ### Overview

@@ -12,6 +12,25 @@ The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight i
 - Network: DHCP is attempted on all ethernet/wifi interfaces at boot (see the TUI Network tab for the assigned address).
 - To install AIOS to the machine's disk, type `aios-install`. It will list the disks, ask for the target (e.g. `sda`), require confirmation `YES`, partition the disk (GPT: 512 MB EFI + ext4 root), copy the system, and install GRUB. Reboot after the message.
 
+### Building the ISO
+
+On Linux/macOS with Docker:
+
+```
+docker run --rm -it -v "$PWD:/src" -v "$PWD/live:/work" \
+  -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+  rust:alpine sh /work/build.sh
+```
+
+On Windows with Docker Desktop (WSL2 backend — **Intel VT-x must be enabled in the UEFI/BIOS**):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\fix-wsl2.ps1        # (1) provision WSL2 + start the engine
+powershell -ExecutionPolicy Bypass -File scripts\build-live-iso.ps1  # (2) build live\out\aios-live.iso
+```
+
+The result is `live/out/aios-live.iso` (hybrid BIOS+UEFI). Flash it with Rufus/Ventoy.
+
 ---
 
 ## Overview
