@@ -299,6 +299,32 @@ impl BlockRegistry {
             }
         }
     }
+
+    /// Atomically replace the binary payload and version of an already
+    /// registered block, preserving its `BlockId` and re-hashing + re-arming
+    /// the manifest. The caller is responsible for parking the old module
+    /// first (e.g. via `aios-live-update`), so the swap looks atomic to
+    /// in-flight traffic.
+    pub fn swap_binary(
+        &mut self,
+        id: BlockId,
+        new_binary: Vec<u8>,
+        new_version: String,
+    ) -> Result<BlockManifest> {
+        let sha256 = aios_core::crypto::compute_sha256_bytes(&new_binary);
+        let entry = self.get_mut(id)?;
+        entry.manifest.version = new_version;
+        entry.manifest.sha256 = sha256;
+        entry.binary = new_binary;
+        entry.state = BlockState::Active;
+        log::info!(
+            "BlockManager: Swapped binary of block {} ({} v{})",
+            entry.manifest.name,
+            id,
+            entry.manifest.version
+        );
+        Ok(entry.manifest.clone())
+    }
 }
 
 impl Default for BlockRegistry {
@@ -335,6 +361,35 @@ mod tests {
         let removed = reg.unload_block(id).unwrap();
         assert_eq!(removed.manifest.name, "test");
         assert!(reg.get(id).is_err());
+    }
+
+    #[test]
+    fn test_swap_binary_preserves_id() {
+        let mut reg = BlockRegistry::new();
+        let id = reg
+            .register_block("test", "0.1.0", sample_binary("test"))
+            .unwrap();
+        reg.activate_block(id).unwrap();
+
+        let new_binary = sample_binary("test_v2");
+        let manifest = reg.swap_binary(id, new_binary.clone(), "0.2.0".into()).unwrap();
+
+        assert_eq!(manifest.id, id);
+        assert_eq!(manifest.version, "0.2.0");
+        let entry = reg.get(id).unwrap();
+        assert_eq!(entry.binary, new_binary);
+        assert_eq!(
+            entry.manifest.sha256,
+            aios_core::crypto::compute_sha256_bytes(&new_binary)
+        );
+        assert_eq!(entry.state, BlockState::Active);
+        assert!(reg.verify_signature(id).unwrap());
+    }
+
+    #[test]
+    fn test_swap_binary_unknown_id() {
+        let mut reg = BlockRegistry::new();
+        assert!(reg.swap_binary(BlockId::new(999), vec![0u8; 8], "1.0.0".into()).is_err());
     }
 
     #[test]

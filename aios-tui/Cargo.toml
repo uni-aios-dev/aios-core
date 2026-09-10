@@ -24,7 +24,7 @@ log = { workspace = true }
 env_logger = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
-reqwest = { version = "0.12", features = ["blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "system-proxy", "blocking"] }
 url = "2"
 sha2 = { workspace = true }
 hex = { workspace = true }

@@ -12,7 +12,7 @@ log = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "system-proxy", "json"] }
 tokio = { workspace = true }
 ed25519-dalek = { workspace = true }
 

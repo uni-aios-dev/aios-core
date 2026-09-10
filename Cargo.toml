@@ -42,7 +42,7 @@ bincode = "1"
 tempfile = "3"
 wasmtime = "47"
 portpicker = "0.1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "system-proxy", "json"] }
 sha2 = "0.10"
 hex = "0.4"
 

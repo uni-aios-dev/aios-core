@@ -39,6 +39,19 @@ impl Priority {
             4..=255 => Self::Critical,
         }
     }
+
+    /// Parse a priority from its display name (case-insensitive), e.g. the
+    /// `"Critical"` in an `AdjustPriority` intent target.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "background" => Some(Self::Background),
+            "low" => Some(Self::Low),
+            "normal" | "default" => Some(Self::Normal),
+            "high" => Some(Self::High),
+            "critical" => Some(Self::Critical),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Priority {
@@ -204,5 +217,32 @@ impl ProcessTimer {
 
     pub fn force_expire(&mut self) {
         self.started = Instant::now() - std::time::Duration::from_millis(self.quota_ms + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_priority_from_name() {
+        assert_eq!(Priority::from_name("Critical"), Some(Priority::Critical));
+        assert_eq!(Priority::from_name("high"), Some(Priority::High));
+        assert_eq!(Priority::from_name("Normal"), Some(Priority::Normal));
+        assert_eq!(Priority::from_name("default"), Some(Priority::Normal));
+        assert_eq!(Priority::from_name("low"), Some(Priority::Low));
+        assert_eq!(Priority::from_name("Background"), Some(Priority::Background));
+        assert_eq!(Priority::from_name("urgent"), None);
+        assert_eq!(Priority::from_name(""), None);
+    }
+
+    #[test]
+    fn test_priority_roundtrip_from_u8() {
+        assert_eq!(Priority::from_u8(0), Priority::Background);
+        assert_eq!(Priority::from_u8(1), Priority::Low);
+        assert_eq!(Priority::from_u8(2), Priority::Normal);
+        assert_eq!(Priority::from_u8(3), Priority::High);
+        assert_eq!(Priority::from_u8(4), Priority::Critical);
+        assert_eq!(Priority::from_u8(99), Priority::Critical);
     }
 }
