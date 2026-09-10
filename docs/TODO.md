@@ -58,7 +58,7 @@
 ## Planned follow-ups (from v2.30.0 review)
 
 - [x] WebSocket auth: authenticate `/ws/telemetry` with the session token — done (v2.31.2): bridge validates `?token=<session>` inside the handler.
-- [ ] Dangerous-action confirmations in `aios-studio` (kill process, unload block, compact memory) — second-chance dialog before destructive ops.
+- [x] Dangerous-action confirmations in `aios-studio` (kill process, unload block, compact memory) — second-chance dialog before destructive ops. Done (v2.31.3): `#confirm-overlay` modal gates the command palette, the blocks-table Stop action, the dashboard Compact Memory quick action, and workflows containing `kill` / `unload_block` / `compact` steps.
 - [x] GUI (`aios-gui`) parity: real live data + working actions — done (v2.31.2): `GuiRuntime` (real scheduler/registry/watchdog/ipc/live-update/marketplace) powers processes/blocks/RAM/IPC/watchdog views and kill/suspend/resume/load/unload/install/uninstall/update/hot-swap.
 - [x] Re-verify the v2.30.0 Rust build on a machine with an MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — verified for all touched crates (process-mgr, block-mgr, bridge, gui) on this host; `cargo clippy --workspace` is clean at 0 warnings (v2.31.2).
 

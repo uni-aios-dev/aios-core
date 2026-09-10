@@ -84,6 +84,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     const overlay = document.getElementById('command-overlay');
     if (!overlay.classList.contains('hidden')) overlay.classList.add('hidden');
+    const confirmOverlay = document.getElementById('confirm-overlay');
+    if (!confirmOverlay.classList.contains('hidden')) dismissConfirm(false);
   }
 });
 
@@ -93,6 +95,12 @@ document.getElementById('command-input').addEventListener('keydown', async e => 
   const prompt = input.value.trim();
   if (!prompt) return;
   e.preventDefault();
+  if (isDangerousPrompt(prompt)) {
+    const ok = await askConfirm(
+      `<strong>"${escapeHtml(prompt)}"</strong> will run a potentially destructive action (kill, unload or memory compaction). Proceed?`
+    );
+    if (!ok) { input.focus(); return; }
+  }
   input.disabled = true;
   const resultDiv = document.getElementById('command-result');
   resultDiv.classList.remove('hidden');
@@ -277,6 +285,55 @@ function renderProcessTable(entries) {
   }).join('');
 }
 
+/* ── Destructive Action Confirmation ── */
+const DANGEROUS_RE = /\b(kill|terminate|unload|stop|remove|delete|compact|free)\b[\w\s,@-]*/i;
+
+let confirmResolve = null;
+
+function isDangerousPrompt(prompt) {
+  return DANGEROUS_RE.test(prompt);
+}
+
+function askConfirm(text) {
+  return new Promise(resolve => {
+    confirmResolve = resolve;
+    document.getElementById('confirm-text').innerHTML = text;
+    document.getElementById('confirm-overlay').classList.remove('hidden');
+    const ok = document.getElementById('confirm-ok');
+    setTimeout(() => ok.focus(), 30);
+  });
+}
+
+function dismissConfirm(result) {
+  document.getElementById('confirm-overlay').classList.add('hidden');
+  if (confirmResolve) {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    resolve(result);
+  }
+}
+
+/* -- Blocks Table -- */
+function unloadBlock(name) {
+  askConfirm(
+    `<strong>${escapeHtml(name)}</strong> will be unloaded and its state dropped. Proceed?`
+  ).then(ok => {
+    if (ok) {
+      sendIntent('unload block ' + name).then(res => {
+        if (res && res.error) alert('Unload failed: ' + res.error);
+      });
+    }
+  });
+}
+
+function compactMemory() {
+  askConfirm(
+    'Memory compaction will be applied system-wide. Proceed?'
+  ).then(ok => {
+    if (ok) sendIntent('compact memory');
+  });
+}
+
 /* ── Blocks Table ── */
 function renderBlocksTable(entries) {
   const tbody = document.getElementById('blocks-tbody');
@@ -292,7 +349,7 @@ function renderBlocksTable(entries) {
       <td>${escapeHtml(b.version)}</td>
       <td class="${stateCls}">${escapeHtml(b.state)}</td>
       <td>
-        <button class="action-btn danger" onclick="sendIntent('unload ${escapeHtml(b.name)}')">Stop</button>
+        <button class="action-btn danger" onclick="unloadBlock('${escapeHtml(b.name)}')">Stop</button>
       </td>
     </tr>`;
   }).join('');
@@ -604,6 +661,18 @@ async function runWorkflow() {
 
   const resultDiv = document.getElementById('workflow-result');
   const output = document.getElementById('workflow-output');
+
+  const dangerousSteps = workflow.filter(s => ['kill', 'unload_block', 'compact'].includes(s.action));
+  if (dangerousSteps.length > 0) {
+    const names = dangerousSteps.map(s =>
+      `<strong>${STEP_LABELS[s.action] || s.action}</strong><br>${escapeHtml(s.prompt)}`
+    ).join('<br>');
+    const ok = await askConfirm(
+      `This workflow contains ${dangerousSteps.length} destructive step(s): ${names}. Proceed?`
+    );
+    if (!ok) return;
+  }
+
   resultDiv.classList.remove('hidden');
   output.innerHTML = '<em style="color:var(--text-muted)">Running workflow…</em>';
 

@@ -58,7 +58,7 @@
 ## Планируемые follow-up (из ревью v2.30.0)
 
 - [x] Аутентификация WebSocket: защитить `/ws/telemetry` сессионным токеном — сделано (v2.31.2): мост проверяет `?token=<session>` внутри обработчика.
-- [ ] Подтверждения опасных действий в `aios-studio` (kill process, unload block, compact memory) — диалог второго шанса перед деструктивными операциями.
+- [x] Подтверждения опасных действий в `aios-studio` (kill process, unload block, compact memory) — диалог второго шанса перед деструктивными операциями. Сделано (v2.31.3): модальное окно `#confirm-overlay` закрывает командную палитру, Stop в таблице блоков, быстрое действие Compact Memory на дашборде и воркфлоу с шагами `kill` / `unload_block` / `compact`.
 - [x] Паритет GUI (`aios-gui`): реальные живые данные + рабочие действия — сделано (v2.31.2): `GuiRuntime` (реальные scheduler/registry/watchdog/ipc/live-update/marketplace) питает вкладки процессов/блоков/RAM/IPC/watchdog и действия kill/suspend/resume/load/unload/install/uninstall/update/hot-swap.
 - [x] Повторно проверить сборку Rust v2.30.0 на машине с MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — проверено для всех затронутых крейтов (process-mgr, block-mgr, bridge, gui) на этом хосте; `cargo clippy --workspace` — 0 предупреждений (v2.31.2).
 

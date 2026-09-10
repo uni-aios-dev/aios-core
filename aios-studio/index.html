@@ -204,7 +204,7 @@
       <div class="quick-actions" style="margin-top:24px">
         <h2>Quick Actions</h2>
         <div class="action-row">
-          <button class="btn btn-outline" onclick="sendIntent('compact memory')">
+          <button class="btn btn-outline" onclick="compactMemory()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
             </svg>
@@ -322,6 +322,23 @@
       <div class="palette-hint">
         <span>Enter to execute</span>
         <span>Esc to close</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Destructive Action Confirmation -->
+  <div id="confirm-overlay" class="overlay hidden" onclick="dismissConfirm(false)">
+    <div class="command-palette confirm-dialog" onclick="event.stopPropagation()">
+      <div class="palette-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z"/>
+        </svg>
+        <span class="confirm-title">Confirm destructive action</span>
+      </div>
+      <p id="confirm-text" class="confirm-text"></p>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" onclick="dismissConfirm(false)">Cancel</button>
+        <button class="btn btn-accent" id="confirm-ok" onclick="dismissConfirm(true)">Proceed</button>
       </div>
     </div>
   </div>

@@ -1,5 +1,18 @@
 # AIOS Development Log
 
+## v2.31.3 — Destructive-action confirmations in Studio (2026-09-10)
+
+### Added
+- **Second-chance confirmation dialog** (`aios-studio`): a modal (`#confirm-overlay`) with warning icon, message, Cancel / Proceed buttons (Enter confirms, Esc cancels) is now shown before any potentially destructive action:
+  - **Command palette** — prompts matching `kill / terminate / unload / stop / remove / delete / compact / free` require confirmation before the intent is sent.
+  - **Blocks table "Stop"** — unload now runs through `unloadBlock(name)` with a named confirmation.
+  - **Dashboard "Compact Memory"** — quick action routes through `compactMemory()` with a system-wide warning.
+  - **Workflow "Run"** — a workflow containing `kill`, `unload_block` or `compact` steps lists every destructive step (label + prompt) and asks to confirm once before executing.
+- Previously all three entry points (palette, quick actions, blocks Stop) executed destructively with a single click; the workflow builder had no guard at all.
+
+### Verification
+- `node --check aios-studio/app.js` passes; no Rust changes in this release.
+
 ## v2.31.2 — Live bridge + GUI kernel parity (2026-09-10)
 
 ### Added

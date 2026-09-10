@@ -176,6 +176,17 @@ tr:hover td{background:var(--bg-hover)}
   font-size:11px;color:var(--text-muted)
 }
 
+/* Destructive Action Confirmation */
+.confirm-dialog{width:480px;max-width:90vw;border-color:rgba(248,113,113,.4)}
+.confirm-dialog .palette-header{color:var(--error);border-bottom-color:rgba(248,113,113,.2)}
+.confirm-title{font-size:14px;font-weight:600}
+.confirm-text{padding:16px;margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}
+.confirm-text strong{color:var(--text-primary)}
+.confirm-actions{
+  display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;
+  border-top:1px solid var(--border)
+}
+
 /* Caps Grid */
 .caps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
 .cap-card{

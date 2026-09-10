@@ -545,12 +545,13 @@ The SPA is available at the root URL. The bridge port is configurable via the `a
 - **Supported**: process actions (list, kill, spawn), block actions (load, unload), system queries (status, memory, CPU), memory compaction
 - **Languages**: English + Russian (bilingual intent parser)
 - **Result display**: Shows description, JSON result, and list of used capability tokens
+- **Destructive-action confirmation** (v2.31.3): prompts matching `kill / terminate / unload / stop / remove / delete / compact / free` open the `#confirm-overlay` second-chance dialog (warning icon + message + Cancel / Proceed; Enter confirms, Esc cancels) before the intent is sent.
 
 ### Security Center
 
-- **Blocks table**: ID, Name, Version, State, Stop button per block
+- **Blocks table**: ID, Name, Version, State, Stop button per block (Stop asks for confirmation, then sends `unload block <name>`)
 - **Capability tokens grid**: All six tokens (CAP_PROCESS_KILL, CAP_PROCESS_SPAWN, CAP_BLOCK_LOAD, CAP_BLOCK_UNLOAD, CAP_SCHED_MODIFY, CAP_MEM_ALLOC) with descriptions
-- **Quick actions**: Compact Memory, List Blocks, List Processes
+- **Quick actions**: Compact Memory (confirmation required), List Blocks, List Processes
 
 ### Connection Status
 
