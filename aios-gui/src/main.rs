@@ -1,4 +1,5 @@
 mod app;
+mod runtime;
 mod tabs;
 mod theme;
 mod widgets;
@@ -43,6 +44,7 @@ fn main() -> eframe::Result<()> {
             );
             app.ai_load_persisted();
             app.fm_init();
+            app.start_runtime();
             Ok(Box::new(app))
         }),
     )

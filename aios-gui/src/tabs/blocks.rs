@@ -173,9 +173,24 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
             )
             .clicked()
         {
-            if let Some(_idx) = app.selected_block_idx {
-                app.add_log("Hot-swap: select new binary to swap".into());
+            if let Some(idx) = app.selected_block_idx {
+                let name = app.blocks[idx].name.clone();
+                app.hot_swap_block(name);
             }
+        }
+        if app.selected_block_idx.is_some() {
+            ui.add_space(6.0);
+            egui::CollapsingHeader::new(format!("Swap history ({})", app.swap_history.len()))
+                .default_open(false)
+                .show(ui, |ui| {
+                    for record in app.swap_history.iter().rev().take(20) {
+                        ui.label(
+                            egui::RichText::new(record.as_str())
+                                .color(theme.text_dim)
+                                .size(10.0),
+                        );
+                    }
+                });
         }
         if let Some(idx) = app.selected_block_idx {
             let b = &app.blocks[idx];

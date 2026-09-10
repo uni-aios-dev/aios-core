@@ -9,7 +9,7 @@ const API = {
   ws: () => {
     const p = window.location;
     const proto = p.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${p.host}/ws/telemetry`;
+    return `${proto}//${p.host}/ws/telemetry?token=${encodeURIComponent(getToken())}`;
   }
 };
 

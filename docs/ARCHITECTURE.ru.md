@@ -621,6 +621,22 @@ TUI не может отображать настоящие веб-страни�
 - **Files (F8)**: двухпанельный файловый менеджер (`aios-fm`) на `aios-vfs` — панель инструментов (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), панели с выбором кликом/двойным кликом, модальный диалог mkdir/rename, сворачиваемое AI-превью, живой прогресс задач и показ capability ACL
 - **Строка состояния**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files` с живым счётчиком IPC-пакетов
 
+#### Живое ядро для GUI (`aios-gui/src/runtime.rs`)
+
+Начиная с v2.31.2 каждая панель дашборда питается **реальным ядром** (`GuiRuntime`) вместо заглушек:
+
+- Настоящий `Scheduler` (round-robin, aging 5000 мс, слайс 100 мс) — таблица процессов, RAM и IPC-управление (`kill/suspend/resume`).
+- Настоящий `BlockRegistry` с нативными модулями (`hal`, `ipc_bus`, `scheduler`, `browser`) и пополняемый `boot_discover` из `AIOS_BLOCKS_DIR` (по умолчанию `./blocks`). Вкладка WASM Blocks грузит/выгружает/заменяет записи реестра; Hot-Swap выполняет `LiveUpdateEngine::perform_swap` (SHA-256, запись отката) по установленной копии в store, затем `registry.swap_binary`, с панелью истории свопов.
+- Настоящий `Watchdog` получает heartbeat раз в секунду (секрет `aios_gui_secret`); индикатор `WD:` в топбаре отражает `WatchdogState` (`Monitoring → 0`, `Suspended → 1`, `Recovering → 2`, иначе safe-mode).
+- Общая шина `IpcBus` (4096 слотов), которую питают реальные OS-thread процессы ядра (`ai_orchestrator[High]`, `io_handler[Normal]`, `health_monitor[Low]`, `telemetry_agg[Normal]`) через `spawn_real_process` с кооперативными `TerminateFlag`/`SuspendFlag`; счётчик IPC дренирует шину.
+- `HotReloader` пересканирует каталог блоков при каждом опросе UI и горячо перезагружает изменённые бинарники.
+- Локальный `BlockMarketplace` (репозиторий `official`, 4 внутренних предложения) + `BlockInstaller` пишут настоящие `<name>_<version>.wasm`/sidecar-манифесты; установка/обновление/удаление App Store пишут и удаляют реальные файлы store и записи реестра. Тестовые сборки перенаправляют каталог блоков в уникальную временную директорию, чтобы юнит-тесты не трогали репозиторий.
+- Все фоновые потоки стартуют только в `start_runtime()` (вызывается из `aios-gui/src/main.rs`), поэтому `AiosApp::new` остаётся без побочных эффектов и потоков для тестов.
+
+#### Аутентификация WebSocket-телеметрии (`aios-bridge`)
+
+`/ws/telemetry` остаётся в allowlist посредника `require_auth`, но теперь проверяет опциональный `?token=<session>` слоем `auth` моста, если зарегистрирован хотя бы один пользователь; `aios-studio`/`app.js` добавляет сохранённый токен к WS-URL. `HotSwap` моста выполняет live-update swap (`LiveUpdateEngine::perform_swap`), затем `registry.swap_binary`; `WorkflowExecution` последовательно запускает вложенные интенты через тот же путь `execute_intent`.
+
 ---
 
 ## Слой 5: Безопасность (`aios-watchdog`, `aios-security`, `aios-context`)

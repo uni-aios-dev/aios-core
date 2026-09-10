@@ -8,8 +8,8 @@ use aios_context::telemetry::TelemetryStore;
 use aios_debug::crash_reporter::CrashKind;
 use aios_debug::{CrashReporter, PanicHandler};
 use aios_ipc::bus::IpcBus;
-use aios_llm::{default_config, LlmEngine};
 use aios_live_update::engine::LiveUpdateEngine;
+use aios_llm::{default_config, LlmEngine};
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::ProcessId;
 use aios_security::access_control::AccessControlLayer;
@@ -560,12 +560,12 @@ fn execute_intent(
                     .map(|pid| serde_json::json!({ "spawned": target, "pid": pid.0 }))
                     .map_err(|e| e.to_string()),
                 ProcessAction::AdjustPriority => {
-                    let (pid, priority) = parse_adjust_target(&target)?;
+                    let (pid, priority) = parse_adjust_target(target)?;
                     scheduler
                         .set_priority(ProcessId(pid), priority)
-                        .map(|_| {
-                            serde_json::json!({ "pid": pid, "priority": priority.to_string() })
-                        })
+                        .map(
+                            |_| serde_json::json!({ "pid": pid, "priority": priority.to_string() }),
+                        )
                         .map_err(|e| e.to_string())
                 }
             }
@@ -618,13 +618,19 @@ fn execute_intent(
                         .map_err(|e| format!("Read failed for {:?}: {e}", wasm_path))?;
                     let binary_len = new_binary.len();
                     let new_version =
-                        version_from_path(wasm_path, &name).unwrap_or_else(|| "1.0.0".into());
+                        version_from_path(wasm_path, name).unwrap_or_else(|| "1.0.0".into());
                     let new_sha256 = aios_core::crypto::compute_sha256_bytes(&new_binary);
 
                     let old = registry
                         .find_by_name(name)
                         .ok_or_else(|| format!("Block not found: {name}"))
-                        .map(|e| (e.manifest.id.0, e.manifest.version.clone(), e.binary.clone()))?;
+                        .map(|e| {
+                            (
+                                e.manifest.id.0,
+                                e.manifest.version.clone(),
+                                e.binary.clone(),
+                            )
+                        })?;
                     drop(registry);
 
                     let (block_id, old_version, old_binary) = old;
@@ -1399,8 +1405,7 @@ mod tests {
         let old_binary = b"old-wasm-binary-v1".to_vec();
         {
             let mut registry = state.registry.lock().unwrap();
-            BlockLoader::load_from_binary(&mut registry, "wasm_heap", "1.0.0", old_binary)
-                .unwrap();
+            BlockLoader::load_from_binary(&mut registry, "wasm_heap", "1.0.0", old_binary).unwrap();
         }
 
         let dir = tempfile::tempdir().unwrap();

@@ -231,7 +231,10 @@ mod tests {
         assert_eq!(Priority::from_name("Normal"), Some(Priority::Normal));
         assert_eq!(Priority::from_name("default"), Some(Priority::Normal));
         assert_eq!(Priority::from_name("low"), Some(Priority::Low));
-        assert_eq!(Priority::from_name("Background"), Some(Priority::Background));
+        assert_eq!(
+            Priority::from_name("Background"),
+            Some(Priority::Background)
+        );
         assert_eq!(Priority::from_name("urgent"), None);
         assert_eq!(Priority::from_name(""), None);
     }

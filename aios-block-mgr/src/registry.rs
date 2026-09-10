@@ -372,7 +372,9 @@ mod tests {
         reg.activate_block(id).unwrap();
 
         let new_binary = sample_binary("test_v2");
-        let manifest = reg.swap_binary(id, new_binary.clone(), "0.2.0".into()).unwrap();
+        let manifest = reg
+            .swap_binary(id, new_binary.clone(), "0.2.0".into())
+            .unwrap();
 
         assert_eq!(manifest.id, id);
         assert_eq!(manifest.version, "0.2.0");
@@ -389,7 +391,9 @@ mod tests {
     #[test]
     fn test_swap_binary_unknown_id() {
         let mut reg = BlockRegistry::new();
-        assert!(reg.swap_binary(BlockId::new(999), vec![0u8; 8], "1.0.0".into()).is_err());
+        assert!(reg
+            .swap_binary(BlockId::new(999), vec![0u8; 8], "1.0.0".into())
+            .is_err());
     }
 
     #[test]

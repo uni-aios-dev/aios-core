@@ -1,5 +1,21 @@
 # Журнал разработки AIOS
 
+## v2.31.2 — Живой мост и ядро в GUI (2026-09-10)
+
+### Добавлено
+- **`Priority::from_name`** (`aios-process-mgr::task`) — парсинг приоритетов без учёта регистра, включая `"default" → Normal`; используется парсером цели `AdjustPriority` (+2 теста).
+- **`BlockRegistry::swap_binary(id, binary, version)`** (`aios-block-mgr::registry`) — атомарная замена бинарника/версии с сохранением id и пересчётом хэша; базовый примитив для hot-swap в мосте и GUI (+2 теста).
+- **Реальная реализация интентов моста** (`aios-bridge::server`): `AdjustPriority` (парсит строку `pid + priority`), `HotSwap` (читает `<name>_<version>.wasm` с диска, `LiveUpdateEngine::perform_swap` → `registry.swap_binary`), `WorkflowExecution` (последовательное рекурсивное исполнение шагов) и настоящая производная метрика **CPU** (`running_count / (cores × 2)`). Работают на собственных экземплярах `LiveUpdateEngine`/`IpcBus` в `BridgeContext` (+7 тестов).
+- **WorkflowExecution в LLM-классификаторе** (`aios-bridge::intent_engine`) — `parse_llm_response` теперь декодирует `{"intent":"WorkflowExecution","steps":[...]}`, вариант упомянут в промпте классификатора.
+- **Аутентификация WebSocket-телеметрии** — `/ws/telemetry` принимает опциональный `?token=<session>`, проверяемый слоем `auth` моста, когда пользователи существуют; маршрут остаётся в allowlist посредника, проверка выполняется внутри обработчика.
+- **Живое ядро для GUI** (`aios-gui::runtime::GuiRuntime`) — настоящие `Scheduler` (round-robin, aging 5000 мс, слайс 100 мс), `BlockRegistry` с нативными модулями и `boot_discover` из `AIOS_BLOCKS_DIR`, `Watchdog` (генератор heartbeat раз в 1 с, секрет `aios_gui_secret`), общая шина `IpcBus`, которую питают реальные OS-thread процессы ядра (`ai_orchestrator`, `io_handler`, `health_monitor`, `telemetry_agg`) через `spawn_real_process`/`TerminateFlag`/`SuspendFlag`, а также `LiveUpdateEngine`, `HotReloader` и локальный `BlockMarketplace` (репозиторий `official` с 4 внутренними предложениями). Потоки стартуют только из `start_runtime()` (вызов в `main`), не в тестах; тестовые сборки используют уникальный временный каталог блоков (+5 тестов).
+- **Действия GUI на реальных данных** (`aios-gui::app`) — список процессов/RAM/IPC-трафик/состояние watchdog обновляются из рантайма каждые 250 мс; `kill/suspend/resume` управляют планировщиком; `load/unload/update/uninstall` работают с реальным хранилищем и реестром; Hot-Swap выполняет live-update swap из установленной копии в store и рисует панель истории свопов во вкладке Blocks; установка пишет настоящие `<name>_<version>.wasm` + sidecar-манифесты.
+- **Токен WS в `aios-studio`** — `app.js` добавляет `?token=<сохранённая сессия>` к URL телеметрического WebSocket.
+- Связи крейтов: `aios-bridge` теперь зависит от `aios-ipc` + `aios-live-update`; `aios-gui` — от `aios-store` + `aios-live-update` + `aios-block-mgr`.
+
+### Верификация
+- `cargo test -p aios-process-mgr` (75), `-p aios-block-mgr`, `-p aios-bridge` (14) и `-p aios-gui` (18) — все зелёные; `cargo clippy --workspace` **0 предупреждений**; `cargo fmt --all` применён.
+
 ## Дополнение к v2.31.1 — скрипты сборки Live-ISO на Windows (2026-09-09)
 
 ### Добавлено

@@ -1,18 +1,23 @@
+use crate::runtime::GuiRuntime;
 use crate::tabs;
 use crate::theme::AiosTheme;
 
+use aios_block_mgr::loader::BlockLoader;
+use aios_core::block::BlockId;
 use aios_fm::commands::{Ack, Command};
 use aios_fm::engine::FileManager;
 use aios_fm::state::PanelSide;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_net_config::config::NetworkConfig;
+use aios_process_mgr::task::ProcessId;
+use aios_store::ManifestInfo;
 use aios_vfs::ai_preview::AiPreview;
 use aios_vfs::security::AclContext;
 use aios_vfs::vfs::{AiosVfs, VirtualFileSystem};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -164,6 +169,13 @@ pub struct AiosApp {
 
     pub ipc_traffic: u64,
 
+    /// Live kernel runtime: real scheduler, block registry, watchdog, IPC bus.
+    pub runtime: GuiRuntime,
+    /// Last instant the runtime was polled (drives the UI refresh rate).
+    runtime_poll_at: std::time::Instant,
+    /// Live-update forensics kept for the Blocks tab history view.
+    pub swap_history: Vec<String>,
+
     pub net_config: NetworkConfig,
     pub net_status: Option<String>,
 
@@ -224,6 +236,7 @@ impl AiosApp {
         } else {
             None
         };
+        let runtime = GuiRuntime::new(ram_total);
         Self {
             ai_tier,
             hardware,
@@ -237,6 +250,12 @@ impl AiosApp {
                 "System initialized".into(),
                 format!("AI Tier: {}", ai_tier),
                 format!("{block_count} blocks loaded"),
+                format!(
+                    "Live runtime: {} blocks, {} MB RAM budget, {} packets drained",
+                    runtime.registry.lock().map(|r| r.count()).unwrap_or(0),
+                    ram_total,
+                    runtime.ipc_drained_total()
+                ),
             ],
             selected_tab: 0,
             selected_process_idx: None,
@@ -270,6 +289,9 @@ impl AiosApp {
             ai_stream: Arc::new(Mutex::new(String::new())),
             pending_ai: Arc::new(Mutex::new(None)),
             ipc_traffic: 0,
+            runtime,
+            runtime_poll_at: std::time::Instant::now(),
+            swap_history: Vec::new(),
             net_config: NetworkConfig::default(),
             net_status: None,
             fm: None,
@@ -291,6 +313,61 @@ impl AiosApp {
             sys_snap: aios_sys_control::SysStatusSnapshot::default(),
             sys_last_poll: std::time::Instant::now(),
         }
+    }
+
+    /// Start the live kernel runtime threads (scheduler tick, watchdog
+    /// heartbeats, IPC-generating kernel processes). Called only from `main`
+    /// so GUI tests never spawn background threads.
+    pub fn start_runtime(&mut self) {
+        self.runtime.start();
+        if self.runtime.is_started() {
+            self.add_log("Live runtime started".into());
+        }
+    }
+
+    /// Poll the runtime at most every 250 ms: re-read processes, blocks,
+    /// watchdog state, RAM usage and drain the IPC bus for the traffic
+    /// counter. Hot-reload scan happens on the most infrequent cadence.
+    pub fn poll_runtime(&mut self) {
+        let now = std::time::Instant::now();
+        if self.runtime_poll_at.elapsed() < std::time::Duration::from_millis(250) {
+            return;
+        }
+        self.runtime_poll_at = now;
+
+        let drained = self.runtime.drain_ipc();
+        if drained > 0 {
+            self.ipc_traffic = self.ipc_traffic.wrapping_add(drained);
+        }
+        self.runtime.poll_hot_reload();
+        self.sync_runtime_snapshot();
+    }
+
+    /// Copy the current scheduler/watchdog state into the UI model.
+    fn sync_runtime_snapshot(&mut self) {
+        if let Ok(scheduler) = self.runtime.scheduler.lock() {
+            self.processes = scheduler
+                .all_processes()
+                .into_iter()
+                .map(|p| ProcessInfo {
+                    pid: p.pid.0,
+                    name: p.name.clone(),
+                    priority: p.priority.to_string(),
+                    state: p.state.to_string(),
+                    ram_mb: p.ram_quota_mb,
+                    cpu_ms: p.cpu_time_ms,
+                    crashes: p.crash_count,
+                })
+                .collect();
+            let (used, _total) = scheduler.ram_usage();
+            self.ram_used = used;
+        }
+        self.watchdog_state = match self.runtime.watchdog.lock().map(|w| w.state()) {
+            Ok(aios_watchdog::watchdog::WatchdogState::Monitoring) => 0,
+            Ok(aios_watchdog::watchdog::WatchdogState::Suspended) => 1,
+            Ok(aios_watchdog::watchdog::WatchdogState::Recovering) => 2,
+            _ => 3,
+        };
     }
 
     /// Refresh Wi-Fi / battery / thermal snapshot at most every 2 seconds.
@@ -571,34 +648,205 @@ impl AiosApp {
     }
 
     pub fn refresh_processes(&mut self) {
-        self.add_log("Refreshed process list".into());
+        self.sync_runtime_snapshot();
     }
 
     pub fn refresh_blocks(&mut self) {
-        self.add_log("Refreshed block list".into());
+        let Ok(registry) = self.runtime.registry.lock() else {
+            return;
+        };
+        let graph = registry.dependency_graph();
+        let mut infos = Vec::new();
+        for id in registry.all_ids() {
+            let Ok(entry) = registry.get(id) else {
+                continue;
+            };
+            let deps = graph.dependencies_of(&entry.manifest.name);
+            let dependents = graph.dependents_of(&entry.manifest.name);
+            infos.push(BlockInfo {
+                id: entry.manifest.id.0,
+                name: entry.manifest.name.clone(),
+                version: entry.manifest.version.clone(),
+                state: format!("{:?}", entry.state),
+                size: entry.binary.len(),
+                deps,
+                dependents,
+            });
+        }
+        drop(registry);
+        infos.sort_by(|a, b| a.name.cmp(&b.name));
+        self.blocks = infos;
     }
 
     pub fn kill_process(&mut self, pid: u64) {
-        self.add_log(format!("Kill process PID {pid}"));
+        {
+            let scheduler = self.runtime.scheduler.clone();
+            let Ok(mut scheduler) = scheduler.lock() else {
+                self.add_log("Kill failed: scheduler unavailable".into());
+                self.refresh_processes();
+                return;
+            };
+            if let Ok(p) = scheduler.kill_process(ProcessId(pid)) {
+                self.add_log(format!("Killed {} (PID {pid})", p.name));
+            }
+        }
+        self.refresh_processes();
     }
 
     pub fn suspend_process(&mut self, pid: u64) {
-        self.add_log(format!("Suspend process PID {pid}"));
+        {
+            let scheduler = self.runtime.scheduler.clone();
+            let Ok(mut scheduler) = scheduler.lock() else {
+                self.refresh_processes();
+                return;
+            };
+            if let Err(e) = scheduler.suspend_process(ProcessId(pid)) {
+                self.add_log(format!("Suspend failed: {e}"));
+            }
+        }
+        self.refresh_processes();
     }
 
     pub fn resume_process(&mut self, pid: u64) {
-        self.add_log(format!("Resume process PID {pid}"));
+        {
+            let scheduler = self.runtime.scheduler.clone();
+            let Ok(mut scheduler) = scheduler.lock() else {
+                self.refresh_processes();
+                return;
+            };
+            if let Err(e) = scheduler.resume_process(ProcessId(pid)) {
+                self.add_log(format!("Resume failed: {e}"));
+            }
+        }
+        self.refresh_processes();
     }
 
     pub fn load_block(&mut self, name: String, version: String) {
-        self.add_log(format!("Loading block {name} v{version}"));
+        let binary_path = self
+            .runtime
+            .blocks_dir
+            .join(format!("{name}_{version}.wasm"));
+        let binary = match std::fs::read(&binary_path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.add_log(format!("Load {name} v{version} failed: {e}"));
+                return;
+            }
+        };
+        {
+            let registry = self.runtime.registry.clone();
+            let Ok(mut registry) = registry.lock() else {
+                self.add_log("Load failed: registry unavailable".into());
+                return;
+            };
+            match BlockLoader::load_from_binary(&mut registry, &name, &version, binary) {
+                Ok(_) => self.add_log(format!("Loaded {name} v{version}")),
+                Err(e) => self.add_log(format!("Load {name} failed: {e}")),
+            }
+        }
+        self.refresh_blocks();
     }
 
     pub fn unload_block(&mut self, id: u32) {
-        self.add_log(format!("Unloading block ID {id}"));
+        {
+            let registry = self.runtime.registry.clone();
+            let Ok(mut registry) = registry.lock() else {
+                self.refresh_blocks();
+                return;
+            };
+            match registry.unload_block(BlockId::new(id)) {
+                Ok(entry) => self.add_log(format!("Unloaded {} (ID {id})", entry.manifest.name)),
+                Err(e) => self.add_log(format!("Unload failed: {e}")),
+            }
+        }
+        self.refresh_blocks();
+    }
+
+    /// Hot-swap a live block from the semantics of the *installed* store copy:
+    /// verifies the file exists, runs the live-update engine and then swaps
+    /// the registry binary so the new version is served immediately. The swap
+    /// is recorded in the live-update history and mirrored on the UI log.
+    pub fn hot_swap_block(&mut self, name: String) {
+        let installed = match self.runtime.installer.find_installed(&name) {
+            Some(b) => b,
+            None => {
+                self.add_log(format!("Hot-swap {name}: no installed store copy"));
+                return;
+            }
+        };
+        let binary = match std::fs::read(&installed.path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.add_log(format!("Hot-swap {name} failed: {e}"));
+                return;
+            }
+        };
+        let new_version = installed.manifest.version.clone();
+
+        let current = {
+            let registry = self.runtime.registry.clone();
+            let Ok(registry) = registry.lock() else {
+                return;
+            };
+            registry.find_by_name(&name).map(|e| {
+                (
+                    e.manifest.id.0,
+                    e.binary.clone(),
+                    e.manifest.version.clone(),
+                )
+            })
+        };
+        let Some((block_id, old_binary, old_version)) = current else {
+            self.add_log(format!("Hot-swap {name}: block not loaded in registry"));
+            return;
+        };
+
+        let swap_result = {
+            let live_update = self.runtime.live_update.clone();
+            let bus = self.runtime.ipc_bus.clone();
+            let Ok(mut live_update) = live_update.lock() else {
+                return;
+            };
+            let Ok(mut bus) = bus.lock() else {
+                return;
+            };
+            let new_hash = aios_core::crypto::compute_sha256_bytes(&binary);
+            live_update.perform_swap(
+                block_id,
+                old_binary,
+                old_version,
+                Vec::new(),
+                binary.clone(),
+                new_version.clone(),
+                new_hash,
+                &mut bus,
+                None,
+            )
+        };
+
+        match swap_result {
+            Ok(()) => {
+                let swapped = {
+                    let registry = self.runtime.registry.clone();
+                    let Ok(mut registry) = registry.lock() else {
+                        return;
+                    };
+                    registry
+                        .swap_binary(BlockId::new(block_id), binary.clone(), new_version.clone())
+                        .is_ok()
+                };
+                if swapped {
+                    self.swap_history.push(format!("{name} -> v{new_version}"));
+                    self.add_log(format!("Hot-swapped {name} to v{new_version}"));
+                }
+            }
+            Err(e) => self.add_log(format!("Hot-swap {name} failed: {e}")),
+        }
+        self.refresh_blocks();
     }
 
     pub fn search_marketplace(&mut self) {
+        self.sync_marketplace();
         if self.marketplace_search.is_empty() {
             self.marketplace_status = None;
         } else {
@@ -616,19 +864,200 @@ impl AiosApp {
         }
     }
 
+    /// Copy the in-memory marketplace catalog + store state into the UI
+    /// model. A block is "Installed" when the store has a concrete file.
+    fn sync_marketplace(&mut self) {
+        let (mut entries, installed) = {
+            let Ok(marketplace) = self.runtime.marketplace.lock() else {
+                return;
+            };
+            let repo = marketplace
+                .list_repo("official")
+                .into_iter()
+                .map(|m| MarketplaceEntry {
+                    name: m.name.clone(),
+                    version: m.version.clone(),
+                    author: m.author.clone(),
+                    description: m.description.clone(),
+                    status: "Available".into(),
+                    tags: m.tags.clone(),
+                    downloads: m.downloads,
+                })
+                .collect::<Vec<_>>();
+            (repo, self.runtime.installer.list_installed())
+        };
+        for entry in entries.iter_mut() {
+            if installed.iter().any(|b| b.manifest.name == entry.name) {
+                entry.status = "Installed".into();
+            }
+        }
+        self.marketplace_entries = entries;
+    }
+
+    /// Install a block from the internal catalog into the AIOS store: writes
+    /// a real `<name>_<version>.wasm` + sidecar manifest, registers it in the
+    /// registry and marks the offer as Installed.
     pub fn install_block(&mut self, name: String) {
-        self.add_log(format!("Installing block: {name}"));
         self.marketplace_status = Some(format!("Installing {name}..."));
+        let installed = self.runtime.installer.find_installed(&name);
+        if installed.is_some() {
+            self.marketplace_status = Some(format!("Installed {name}"));
+            self.add_log(format!("Block {name} already installed"));
+            self.sync_marketplace();
+            return;
+        }
+        let meta = {
+            let Ok(marketplace) = self.runtime.marketplace.lock() else {
+                return;
+            };
+            marketplace
+                .search(&name)
+                .into_iter()
+                .find(|m| m.name == name && m.version == "1.0.0")
+                .cloned()
+        };
+        let Some(meta) = meta else {
+            self.marketplace_status = Some(format!("Catalog has no '{name}'"));
+            self.add_log(format!("Install {name}: not in catalog"));
+            return;
+        };
+        let placeholder: Vec<u8> = format!(
+            "(module (memory 1) (func (export \"init\")) (func (export \"start\"))) ; {name} env"
+        )
+        .into_bytes();
+        let manifest = ManifestInfo {
+            name: meta.name,
+            version: meta.version,
+            description: meta.description,
+            author: meta.author,
+            capabilities: HashSet::new(),
+            wasm_size_bytes: placeholder.len() as u64,
+            wasm_sha256: String::new(),
+            signature: None,
+            store_url: None,
+        };
+        match self
+            .runtime
+            .installer
+            .install_from_bytes(manifest.clone(), &placeholder)
+        {
+            Ok(installed) => {
+                {
+                    let registry_handle = self.runtime.registry.clone();
+                    let guard = registry_handle.lock();
+                    if let Ok(mut registry) = guard {
+                        let _ = BlockLoader::load_from_binary(
+                            &mut registry,
+                            &manifest.name,
+                            &manifest.version,
+                            placeholder.clone(),
+                        );
+                    }
+                }
+                {
+                    let marketplace_handle = self.runtime.marketplace.clone();
+                    let guard = marketplace_handle.lock();
+                    if let Ok(mut marketplace) = guard {
+                        let _ = marketplace.install_block(
+                            "official",
+                            &manifest.name,
+                            &manifest.version,
+                            installed.path.display().to_string(),
+                        );
+                    }
+                }
+                self.marketplace_status =
+                    Some(format!("Installed {} v{}", manifest.name, manifest.version));
+                self.add_log(format!(
+                    "Installed {} v{} -> {}",
+                    manifest.name,
+                    manifest.version,
+                    installed.path.display()
+                ));
+            }
+            Err(e) => {
+                self.marketplace_status = Some(format!("Install failed: {e}"));
+                self.add_log(format!("Install {name} failed: {e}"));
+            }
+        }
+        self.sync_marketplace();
+        self.refresh_blocks();
     }
 
+    /// Refresh the installed copy of a block from the catalog. When the
+    /// catalog lists a newer version the store is upgraded and the registry
+    /// binary swapped; otherwise the store copy is re-installed as-is.
     pub fn update_block(&mut self, name: String) {
-        self.add_log(format!("Updating block: {name}"));
-        self.marketplace_status = Some(format!("Updating {name}..."));
+        let installed = match self.runtime.installer.find_installed(&name) {
+            Some(b) => b,
+            None => {
+                self.marketplace_status = Some(format!("{name} is not installed"));
+                self.add_log(format!("Update {name}: not installed"));
+                return;
+            }
+        };
+        let catalog_version = {
+            let Ok(marketplace) = self.runtime.marketplace.lock() else {
+                return;
+            };
+            marketplace
+                .search(&name)
+                .into_iter()
+                .map(|m| m.version.clone())
+                .max()
+        };
+        let Some(target_version) = catalog_version else {
+            self.marketplace_status = Some(format!("{name} is not in the catalog"));
+            return;
+        };
+        if target_version == installed.manifest.version {
+            self.marketplace_status = Some(format!("{name} is up to date (v{target_version})"));
+            self.add_log(format!("Update {name}: already v{target_version}"));
+            return;
+        }
+        self.install_block(name.clone());
+        self.marketplace_status = Some(format!("Updated {name} to v{target_version}"));
+        self.add_log(format!("Updated {name} to v{target_version}"));
     }
 
+    /// Remove a block from the AIOS store and unload it from the registry.
     pub fn uninstall_block(&mut self, name: String) {
-        self.add_log(format!("Uninstalling block: {name}"));
-        self.marketplace_status = Some(format!("Uninstalled {name}"));
+        match self.runtime.installer.uninstall(&name) {
+            Ok(_) => {
+                {
+                    let registry_handle = self.runtime.registry.clone();
+                    let id = {
+                        let guard = registry_handle.lock();
+                        if let Ok(registry) = guard {
+                            registry.find_by_name(&name).map(|e| e.manifest.id)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(id) = id {
+                        let guard = registry_handle.lock();
+                        if let Ok(mut registry) = guard {
+                            let _ = registry.unload_block(id);
+                        }
+                    }
+                }
+                {
+                    let marketplace_handle = self.runtime.marketplace.clone();
+                    let guard = marketplace_handle.lock();
+                    if let Ok(mut marketplace) = guard {
+                        let _ = marketplace.uninstall_block(&name);
+                    }
+                }
+                self.marketplace_status = Some(format!("Uninstalled {name}"));
+                self.add_log(format!("Uninstalled {name}"));
+            }
+            Err(e) => {
+                self.marketplace_status = Some(format!("Uninstall failed: {e}"));
+                self.add_log(format!("Uninstall {name} failed: {e}"));
+            }
+        }
+        self.sync_marketplace();
+        self.refresh_blocks();
     }
 
     pub fn browser_active(&self) -> bool {
@@ -1204,7 +1633,8 @@ impl eframe::App for AiosApp {
         }
 
         self.uptime_secs += 1;
-        self.ipc_traffic = self.ipc_traffic.wrapping_add(1);
+        self.poll_runtime();
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -1473,7 +1903,7 @@ mod tests {
             4096,
         );
         app.add_log("test".into());
-        assert_eq!(app.log_messages.len(), 4);
+        assert_eq!(app.log_messages.len(), 5);
     }
 
     #[test]
@@ -1519,10 +1949,46 @@ mod tests {
             0,
             4096,
         );
-        app.load_block("test".into(), "0.1.0".into());
-        assert!(app.log_messages.last().unwrap().contains("Loading"));
-        app.unload_block(0);
-        assert!(app.log_messages.last().unwrap().contains("Unloading"));
+        app.install_block("scheduler".into());
+        app.load_block("scheduler".into(), "1.0.0".into());
+        assert!(app
+            .log_messages
+            .last()
+            .unwrap()
+            .contains("Loaded scheduler"));
+        let id = app
+            .blocks
+            .iter()
+            .find(|b| b.name == "scheduler")
+            .map(|b| b.id)
+            .expect("scheduler must be registered");
+        app.unload_block(id);
+        assert!(app
+            .log_messages
+            .last()
+            .unwrap()
+            .contains(&format!("Unloaded scheduler (ID {id})")));
+    }
+
+    #[test]
+    fn test_block_load_failure_reported() {
+        let mut app = AiosApp::new(
+            AiTier::Tier1,
+            HardwareProfile::mock_modern(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            4096,
+        );
+        app.load_block("missing".into(), "9.9.9".into());
+        assert!(app
+            .log_messages
+            .last()
+            .unwrap()
+            .contains("Load missing v9.9.9 failed"));
+        app.unload_block(9999);
+        assert!(app.log_messages.last().unwrap().contains("Unload failed"));
     }
 
     #[test]
@@ -1536,16 +2002,7 @@ mod tests {
             0,
             4096,
         );
-        app.marketplace_entries.push(MarketplaceEntry {
-            name: "test-block".into(),
-            version: "1.0.0".into(),
-            author: "test".into(),
-            description: "A test block".into(),
-            status: "Available".into(),
-            tags: vec!["test".into()],
-            downloads: 42,
-        });
-        app.marketplace_search = "test".into();
+        app.marketplace_search = "sched".into();
         app.search_marketplace();
         assert!(app.marketplace_status.as_deref().unwrap().contains("1"));
     }
@@ -1561,8 +2018,56 @@ mod tests {
             0,
             4096,
         );
-        app.install_block("my-block".into());
-        assert!(app.log_messages.last().unwrap().contains("Installing"));
+        app.install_block("scheduler".into());
+        let log = app.log_messages.last().unwrap().clone();
+        assert!(log.contains("Installed scheduler v1.0.0"), "got: {log}");
+        assert!(app
+            .marketplace_entries
+            .iter()
+            .any(|e| e.name == "scheduler" && e.status == "Installed"));
+    }
+
+    #[test]
+    fn test_marketplace_install_and_uninstall() {
+        let mut app = AiosApp::new(
+            AiTier::Tier1,
+            HardwareProfile::mock_modern(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            4096,
+        );
+        app.install_block("hal".into());
+        assert!(app
+            .marketplace_entries
+            .iter()
+            .any(|e| e.name == "hal" && e.status == "Installed"));
+        app.uninstall_block("hal".into());
+        assert!(app.log_messages.last().unwrap().contains("Uninstalled hal"));
+        assert!(app
+            .marketplace_entries
+            .iter()
+            .any(|e| e.name == "hal" && e.status == "Available"));
+    }
+
+    #[test]
+    fn test_hot_swap_requires_store_copy() {
+        let mut app = AiosApp::new(
+            AiTier::Tier1,
+            HardwareProfile::mock_modern(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            4096,
+        );
+        app.hot_swap_block("scheduler".into());
+        assert!(app
+            .log_messages
+            .last()
+            .unwrap()
+            .contains("no installed store copy"));
     }
 
     #[test]

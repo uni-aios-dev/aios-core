@@ -485,6 +485,16 @@ The top bar appends system-control segments after the RAM separator: Wi-Fi state
 - **Per-device details**: driver id, last error, and the interactive **security capability matrix** (checkboxes per `Capability`; any change applies immediately as a per-device override)
 - **Actions**: `Rescan` (re-detect hardware), `Update Driver` (re-fetch/re-provision), `Rollback to Generic`, `Uninstall` (disabled for the protected Generic Fallback Driver)
 
+#### Live kernel runtime (v2.31.2)
+
+Since v2.31.2 the dashboard panels display **real** kernel state instead of placeholder data:
+
+- **Refresh is automatic**: process list, memory usage, IPC packet count and the watchdog indicator are polled from the `GuiRuntime` every 250 ms; manual Refresh buttons re-trigger the same snapshot.
+- **Process actions are real**: Kill / Suspend / Resume operate on live scheduler threads (cooperative `TerminateFlag` / `SuspendFlag` on real OS threads).
+- **Hot-Swap is real**: the WASM Blocks tab reads the installed store copy (path shown in the dialog), performs a SHA-256 verified live-update swap + registry `swap_binary`, and appends an entry to the **Swap history** collapsible panel (old/new version + signature + timestamp + result).
+- **App Store is real**: Install / Update / Uninstall write and delete real `<name>_<version>.wasm` files and registry entries in the local `official` marketplace; Status badges switch `Available → Indexed → Installed`.
+- **Watchdog indicator**: `WD:` shows the real watchdog state (countdown, `Monitoring/Suspended/Recovering`, safe-mode).
+
 ### Status Bar
 
 The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files F9=Hardware`, where N is the live IPC packet counter, plus the last operation result.
@@ -559,6 +569,7 @@ As of v2.30.0 the Web Studio requires a local account before it will load the da
 - **Re-login**: if the server replies `401`, the UI clears the token and returns to the sign-in screen automatically.
 - **Sign out**: the sidebar footer has a *Sign out* button (also shows the current username + avatar).
 - **Server-side protection**: the whole `/api/v1/*` surface is gated by the `require_auth` middleware, except the public `auth/register`, `auth/login`, `health`, `sys/status` and WebSocket telemetry routes. The bridge secret comes from `AIOS_AUTH_SECRET` (fallback derived from the data dir); users live in `<AIOS_DATA_DIR>/users.json`.
+- **WebSocket telemetry auth** (v2.31.2): the `/ws/telemetry` route stays in the middleware allowlist but validates an optional `?token=<session>` query inside the handler; when a user exists, a session missing/invalid token is rejected and the WS connection is closed. `app.js` appends the stored token automatically, so the dashboard connects seamlessly after sign-in.
 - **CORS**: disabled by default (the UI is same-origin) or restricted to a single origin via `AIOS_CORS_ORIGIN`.
 
 ### Requirements

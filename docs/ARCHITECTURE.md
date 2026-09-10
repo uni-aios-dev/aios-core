@@ -621,6 +621,22 @@ Native egui/eframe dashboard with 8 tabs: System Dashboard, WASM Blocks, AI Stud
 - **Files (F8)**: two-panel file manager (`aios-fm`) on `aios-vfs` — toolbar (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), panels with click/double-click selection, modal mkdir/rename dialog, collapsible AI preview, live job progress and capability ACL display
 - **Status bar**: `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files` with a live IPC packet counter
 
+#### Live GUI kernel runtime (`aios-gui/src/runtime.rs`)
+
+Since v2.31.2 every dashboard panel is backed by a **real kernel runtime** (`GuiRuntime`) instead of placeholder data:
+
+- Real `Scheduler` (round-robin, aging threshold 5000 ms, 100 ms time slice) drives the process table, RAM usage and IPC control (`kill/suspend/resume`).
+- Real `BlockRegistry` seeded with native modules (`hal`, `ipc_bus`, `scheduler`, `browser`) and augmented by `boot_discover` scanning `AIOS_BLOCKS_DIR` (default `./blocks`). The WASM Blocks tab loads/unloads/swaps registry entries; Hot-Swap runs `LiveUpdateEngine::perform_swap` (SHA-256 verified, rollback entry stored) against the installed store copy and then `registry.swap_binary`, with a swap-history panel.
+- Real `Watchdog` receives a heartbeat every second (secret `aios_gui_secret`); the top-bar `WD:` indicator mirrors `WatchdogState` (`Monitoring → 0`, `Suspended → 1`, `Recovering → 2`, else safe-mode).
+- Shared `IpcBus` (4096 slots) fed by real OS-thread kernel processes (`ai_orchestrator[High]`, `io_handler[Normal]`, `health_monitor[Low]`, `telemetry_agg[Normal]`) via `spawn_real_process` with cooperative `TerminateFlag`/`SuspendFlag`; the IPC counter drains the bus.
+- `HotReloader` re-scans the blocks dir each UI poll and hot-reloads modified binaries.
+- Local `BlockMarketplace` (`official` repo, 4 internal offers) + `BlockInstaller` persist real `<name>_<version>.wasm`/sidecar manifests; the App Store install/update/uninstall write and delete real store files and registry entries. Test builds redirect the blocks dir to a unique temp directory so unit tests never touch the repository.
+- All background threads start only in `start_runtime()` (invoked from `aios-gui/src/main.rs`), so `AiosApp::new` stays side-effect free and thread-free for tests.
+
+#### WebSocket telemetry auth (`aios-bridge`)
+
+`/ws/telemetry` stays in the `require_auth` allowlist but now validates the optional `?token=<session>` query against the bridge `auth` layer when any user is registered; `aios-studio`'s `app.js` appends the stored token to the WS URL. Bridge `HotSwap` performs a live-update swap (`LiveUpdateEngine::perform_swap`) then `registry.swap_binary`; `WorkflowExecution` runs nested intents sequentially through the same `execute_intent` path.
+
 ---
 
 ## Layer 5: Safety & Security (`aios-watchdog`, `aios-security`, `aios-context`)

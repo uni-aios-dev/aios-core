@@ -57,10 +57,10 @@
 
 ## Планируемые follow-up (из ревью v2.30.0)
 
-- [ ] Аутентификация WebSocket: защитить `/ws/telemetry` сессионным токеном (сейчас намеренно публичный — раскрывается только телеметрия RAM/CPU).
+- [x] Аутентификация WebSocket: защитить `/ws/telemetry` сессионным токеном — сделано (v2.31.2): мост проверяет `?token=<session>` внутри обработчика.
 - [ ] Подтверждения опасных действий в `aios-studio` (kill process, unload block, compact memory) — диалог второго шанса перед деструктивными операциями.
-- [ ] Паритет GUI (`aios-gui`): реальные живые данные + рабочие действия (сейчас фейковые/отключённые); поток повторного входа для веб-клиента из bridge.
-- [ ] Повторно проверить сборку Rust v2.30.0 на машине с MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — заблокировано на этом хосте (нет `link.exe`).
+- [x] Паритет GUI (`aios-gui`): реальные живые данные + рабочие действия — сделано (v2.31.2): `GuiRuntime` (реальные scheduler/registry/watchdog/ipc/live-update/marketplace) питает вкладки процессов/блоков/RAM/IPC/watchdog и действия kill/suspend/resume/load/unload/install/uninstall/update/hot-swap.
+- [x] Повторно проверить сборку Rust v2.30.0 на машине с MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — проверено для всех затронутых крейтов (process-mgr, block-mgr, bridge, gui) на этом хосте; `cargo clippy --workspace` — 0 предупреждений (v2.31.2).
 
 ## Оценка готовности (2026-07-28, обновлено)
 
