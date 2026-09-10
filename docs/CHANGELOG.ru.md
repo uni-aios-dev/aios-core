@@ -1,5 +1,25 @@
 # Журнал разработки AIOS
 
+## v2.31.4 — Скрипт сборки ISO для Linux/macOS + переключатель offline (2026-09-10)
+
+### Добавлено
+- **`scripts/build-live-iso.sh`** — Linux/macOS-аналог PowerShell-обёртки: запускает `live/build.sh` в `rust:alpine` точно так же (`/src`, `/work`, cargo-реестр хоста), автоопределяет `docker` vs `podman` (`PODMAN=1` принудительно podman), выводит путь/размер/SHA256 ISO. Каталог реестра задаётся через `CARGO_REGISTRY_DIR` (по умолчанию `~/.cargo/registry`).
+- **`live/build.sh`** — `CARGO_NET_OFFLINE` стал переопределяемым: `CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE:-true}"` сохраняет offline-поведение по умолчанию для Windows-обёртки, но позволяет онлайн-хостам задать `CARGO_NET_OFFLINE=false` и не предзаполнять реестр.
+
+### Сборка на другой машине
+```
+git clone https://github.com/uni-aios-dev/aios-core.git
+cd aios-core
+./scripts/build-live-iso.sh            # docker/podman, зависимости из сети
+# или полностью offline с предзаполненным реестром:
+CARGO_NET_OFFLINE=true ./scripts/build-live-iso.sh
+# Windows (нужен Docker Desktop + VT-x в UEFI): scripts/build-live-iso.ps1
+```
+Результат: `live/out/aios-live.iso` (гибридный BIOS+UEFI, заливка через Rufus/Ventoy).
+
+### Верификация
+- Скрипт проверен на подводные камни `set -e`; `git update-index --chmod=+x`. Правок Rust нет.
+
 ## v2.31.3 — Подтверждение опасных действий в Studio (2026-09-10)
 
 ### Добавлено

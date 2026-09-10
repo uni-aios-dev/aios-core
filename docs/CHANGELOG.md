@@ -1,5 +1,25 @@
 # AIOS Development Log
 
+## v2.31.4 — Linux/macOS ISO build script + offline toggle (2026-09-10)
+
+### Added
+- **`scripts/build-live-iso.sh`** — Linux/macOS equivalent of the PowerShell wrapper: runs `live/build.sh` in `rust:alpine` the same way (`/src`, `/work`, host cargo registry), auto-detects `docker` vs `podman` (`PODMAN=1` forces podman), reports ISO path / size / SHA256. Registry dir overridable via `CARGO_REGISTRY_DIR` (default `~/.cargo/registry`).
+- **`live/build.sh`** — `CARGO_NET_OFFLINE` is now overridable: `CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE:-true}"` keeps the offline-by-default behavior for the Windows wrapper while letting online hosts set `CARGO_NET_OFFLINE=false` and skip pre-seeding the registry.
+
+### Build on another machine
+```
+git clone https://github.com/uni-aios-dev/aios-core.git
+cd aios-core
+./scripts/build-live-iso.sh            # docker/podman, fetches crates online
+# or fully offline with a pre-seeded registry:
+CARGO_NET_OFFLINE=true ./scripts/build-live-iso.sh
+# Windows hosts (needs Docker Desktop + VT-x in UEFI): scripts/build-live-iso.ps1
+```
+Output: `live/out/aios-live.iso` (hybrid BIOS+UEFI, flash via Rufus/Ventoy).
+
+### Verification
+- Script reviewed against `set -e` pitfalls; `git update-index --chmod=+x`. No Rust changes.
+
 ## v2.31.3 — Destructive-action confirmations in Studio (2026-09-10)
 
 ### Added

@@ -49,6 +49,7 @@
 - [x] Full project audit + program scheme & function map — build/clippy/fmt/test sweep (1338 tests green), flaky RT stress threshold fixed (dual debug/release), new `docs/AUDIT.md` + `docs/SCHEME.md` with per-crate function maps, bilingual (v2.28.1)
 - [x] Phase 55: `aios-sys-control` - system control plane: `NetManager` (simulated/host Wi-Fi via netsh, DHCP craft/parse, lease persistence), `LayoutManager` (EN/RU input hotkeys with per-window overrides), `PowerManager` + thermal governor 80/70 C driving cloud LLM offload, `KeyringVault` (AES-256-GCM redb, TEE-bound sealing); TUI sys status line + `l` hotkey, GUI top-bar segments, bridge REST `/api/v1/sys/{status,wifi/scan,wifi/connect,layout}`; 47 unit + 32 integration tests (v2.29.0)
 - [x] Web authentication for `aios-studio` + CORS lockdown — local accounts (`AIOS_DATA_DIR/users.json`), salted + key-stretched (SHA-256 × 10 000) passwords, self-signed HMAC-SHA256 session tokens (12 h TTL), `require_auth` middleware gating `/api/v1/*`, sign-in / create-account UI, `apiFetch` + `localStorage` token, sidebar user badge / sign-out (v2.30.0; Rust build NOT yet verified on this host)
+- [x] `scripts/build-live-iso.sh` — Linux/macOS Docker/podman ISO build wrapper (v2.31.4); `live/build.sh` offline toggle via `CARGO_NET_OFFLINE`
 
 ## Backlog
 

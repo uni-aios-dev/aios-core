@@ -49,6 +49,7 @@
 - [x] Полный аудит проекта + схема программы и карта функций — прогон build/clippy/fmt/test (1338 тестов зелёные), исправлен «мигающий» порог RT-стресс-теста (двойной debug/release), новые `docs/AUDIT.ru.md` + `docs/SCHEME.ru.md` с картами функций по крейтам, двуязычно (v2.28.1)
 - [x] Phase 55 / `aios-sys-control` — системная управляющая плоскость: `NetManager` (имитируемый/host Wi-Fi через netsh, DHCP craft/parse, сохранение lease), `LayoutManager` (EN/RU-хоткеи ввода с переопределениями по окнам), `PowerManager` + термал-гувернёр 80/70 °C с уходом LLM в облако, `KeyringVault` (AES-256-GCM redb, привязка к TEE); sys-строка статуса в TUI + хоткей `l`, сегменты в top-bar GUI, bridge REST `/api/v1/sys/{status,wifi/scan,wifi/connect,layout}`; 47 юнит + 32 интеграционных теста (v2.29.0)
 - [x] Веб-аутентификация для `aios-studio` + ужесточение CORS — локальные аккаунты (`AIOS_DATA_DIR/users.json`), солёные + key-stretched (SHA-256 × 10 000) пароли, самоподписанные HMAC-SHA256 сессионные токены (TTL 12 ч), middleware `require_auth` для `/api/v1/*`, UI входа/создания аккаунта, `apiFetch` + `localStorage`-токен, user badge / sign-out в сайдбаре (v2.30.0; сборка Rust на этом хосте пока НЕ проверена)
+- [x] `scripts/build-live-iso.sh` — Linux/macOS Docker/podman обёртка сборки ISO (v2.31.4); переключатель offline в `live/build.sh` через `CARGO_NET_OFFLINE`
 
 ## Бэклог
 

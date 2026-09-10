@@ -2,7 +2,7 @@
 set -e
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export CARGO_TARGET_DIR=/tmp/target
-export CARGO_NET_OFFLINE=true
+export CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE:-true}"
 W=/tmp
 
 echo "=== [0] toolchain ==="
