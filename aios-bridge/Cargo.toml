@@ -23,6 +23,8 @@ aios-llm = { path = "../aios-llm" }
 aios-browser = { path = "../aios-browser" }
 aios-search = { path = "../aios-search" }
 aios-store = { path = "../aios-store" }
+aios-ipc = { path = "../aios-ipc" }
+aios-live-update = { path = "../aios-live-update" }
 aios-telemetry = { path = "../aios-telemetry" }
 aios-debug = { path = "../aios-debug" }
 aios-sys-control = { path = "../aios-sys-control" }

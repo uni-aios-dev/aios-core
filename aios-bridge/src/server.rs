@@ -7,7 +7,9 @@ use aios_block_mgr::registry::BlockRegistry;
 use aios_context::telemetry::TelemetryStore;
 use aios_debug::crash_reporter::CrashKind;
 use aios_debug::{CrashReporter, PanicHandler};
+use aios_ipc::bus::IpcBus;
 use aios_llm::{default_config, LlmEngine};
+use aios_live_update::engine::LiveUpdateEngine;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_process_mgr::task::ProcessId;
 use aios_security::access_control::AccessControlLayer;
@@ -19,7 +21,7 @@ use aios_watchdog::watchdog::Watchdog;
 use sha2::{Digest, Sha256};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -56,6 +58,10 @@ pub struct BridgeContext {
     pub blocks_dir: String,
     /// Local user authentication store (register / login / sessions).
     pub auth: AuthHandle,
+    /// Live-update engine backing the hot-swap intent (rollback bookkeeping).
+    pub live_update: Mutex<LiveUpdateEngine>,
+    /// Kernel IPC bus shared by the live-update engine and telemetry feed.
+    pub ipc_bus: Mutex<IpcBus>,
 }
 
 impl BridgeContext {
@@ -94,6 +100,8 @@ impl BridgeContext {
             sys_control: tokio::sync::Mutex::new(aios_sys_control::SysControlHub::defaults()),
             blocks_dir: std::env::var("AIOS_BLOCKS_DIR").unwrap_or_else(|_| "./blocks".to_string()),
             auth,
+            live_update: Mutex::new(LiveUpdateEngine::new(10_000)),
+            ipc_bus: Mutex::new(IpcBus::new(256)),
         }
     }
 
@@ -552,7 +560,13 @@ fn execute_intent(
                     .map(|pid| serde_json::json!({ "spawned": target, "pid": pid.0 }))
                     .map_err(|e| e.to_string()),
                 ProcessAction::AdjustPriority => {
-                    Err("Adjust priority not implemented via bridge yet".into())
+                    let (pid, priority) = parse_adjust_target(&target)?;
+                    scheduler
+                        .set_priority(ProcessId(pid), priority)
+                        .map(|_| {
+                            serde_json::json!({ "pid": pid, "priority": priority.to_string() })
+                        })
+                        .map_err(|e| e.to_string())
                 }
             }
         }
@@ -595,7 +609,61 @@ fn execute_intent(
                         .map(|_| serde_json::json!({ "unloaded": name }))
                         .map_err(|e| e.to_string())
                 }
-                BlockAction::HotSwap => Err("Hot-swap not implemented via bridge yet".into()),
+                BlockAction::HotSwap => {
+                    let name = block_name.as_deref().unwrap_or("unknown");
+                    let wasm_path = wasm_path
+                        .as_ref()
+                        .ok_or_else(|| format!("Hot-swap of '{name}' missing wasm_path"))?;
+                    let new_binary = std::fs::read(wasm_path)
+                        .map_err(|e| format!("Read failed for {:?}: {e}", wasm_path))?;
+                    let binary_len = new_binary.len();
+                    let new_version =
+                        version_from_path(wasm_path, &name).unwrap_or_else(|| "1.0.0".into());
+                    let new_sha256 = aios_core::crypto::compute_sha256_bytes(&new_binary);
+
+                    let old = registry
+                        .find_by_name(name)
+                        .ok_or_else(|| format!("Block not found: {name}"))
+                        .map(|e| (e.manifest.id.0, e.manifest.version.clone(), e.binary.clone()))?;
+                    drop(registry);
+
+                    let (block_id, old_version, old_binary) = old;
+                    let mut queue = state.ipc_bus.lock().map_err(|e| e.to_string())?;
+                    let mut engine = state.live_update.lock().map_err(|e| e.to_string())?;
+                    engine
+                        .perform_swap(
+                            block_id,
+                            old_binary,
+                            old_version.clone(),
+                            Vec::new(),
+                            new_binary.clone(),
+                            new_version.clone(),
+                            new_sha256,
+                            &mut queue,
+                            None,
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let mut registry = state.registry.lock().map_err(|e| e.to_string())?;
+                    let swapped_name = registry
+                        .swap_binary(
+                            aios_core::block::BlockId::new(block_id),
+                            new_binary,
+                            new_version.clone(),
+                        )
+                        .map_err(|e| e.to_string())?
+                        .name;
+                    drop(registry);
+
+                    Ok(serde_json::json!({
+                        "block": swapped_name,
+                        "id": block_id,
+                        "old_version": old_version,
+                        "new_version": new_version,
+                        "swapped": true,
+                        "binary_size": binary_len,
+                    }))
+                }
             }
         }
         UserIntent::SystemQuery { metric } => {
@@ -603,7 +671,15 @@ fn execute_intent(
             let (ram_used, ram_total) = scheduler.ram_usage();
             match metric {
                 MetricType::Cpu => {
-                    Ok(serde_json::json!({ "cpu": "metrics not available from bridge" }))
+                    let running = scheduler.running_count();
+                    let cores = aios_process_mgr::scheduler::Scheduler::available_cpu_cores();
+                    let capacity = (cores * 2).max(1);
+                    let cpu_percent = ((running as f64 / capacity as f64) * 100.0).min(100.0);
+                    Ok(serde_json::json!({
+                        "cpu_percent": cpu_percent,
+                        "running": running,
+                        "cores": cores,
+                    }))
                 }
                 MetricType::Memory => {
                     Ok(serde_json::json!({ "ram_used_mb": ram_used, "ram_total_mb": ram_total }))
@@ -630,8 +706,21 @@ fn execute_intent(
             }
         }
         UserIntent::MemoryCompaction => Ok(serde_json::json!({ "compaction": "triggered" })),
-        UserIntent::WorkflowExecution { .. } => {
-            Err("Workflow execution not implemented via bridge yet".into())
+        UserIntent::WorkflowExecution { steps } => {
+            let mut results = Vec::new();
+            for step in steps {
+                let outcome = execute_intent(state, step);
+                results.push(serde_json::json!({
+                    "success": outcome.is_ok(),
+                    "result": outcome.unwrap_or_else(|e| serde_json::json!({ "error": e })),
+                }));
+            }
+            let successful = results.iter().filter(|r| r["success"] == true).count();
+            Ok(serde_json::json!({
+                "total_steps": results.len(),
+                "successful": successful,
+                "results": results,
+            }))
         }
         UserIntent::Unknown { raw_prompt } => Ok(
             serde_json::json!({ "unknown_intent": raw_prompt, "hint": "Try: 'show processes', 'status', 'kill 2', 'запусти блок'" }),
@@ -639,8 +728,80 @@ fn execute_intent(
     }
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> impl IntoResponse {
+/// Parse an `AdjustPriority` target of the form `"<pid> <priority>"`, e.g.
+/// `"3 Critical"` (the LLM classifier produces `"pid priority"`).
+fn parse_adjust_target(
+    target: &str,
+) -> std::result::Result<(u64, aios_process_mgr::task::Priority), String> {
+    let mut parts = target.split_whitespace();
+    let pid_str = parts
+        .next()
+        .ok_or_else(|| format!("Missing PID in target: '{target}'"))?;
+    let pid: u64 = pid_str
+        .parse()
+        .map_err(|_| format!("Invalid PID: '{target}'"))?;
+    let prio_name = parts
+        .next()
+        .ok_or_else(|| format!("Missing priority in target: '{target}'"))?;
+    let priority = aios_process_mgr::task::Priority::from_name(prio_name)
+        .ok_or_else(|| format!("Unknown priority '{prio_name}'"))?;
+    Ok((pid, priority))
+}
+
+/// Guess a block version from a `<name>_<version>.wasm` path (falls back to
+/// the last `_`-delimited segment when it looks like a version).
+fn version_from_path(path: &std::path::Path, name: &str) -> Option<String> {
+    let stem = path.file_stem().and_then(|s| s.to_str())?;
+    let prefix = format!("{name}_");
+    if let Some(tail) = stem.strip_prefix(&prefix) {
+        if !tail.is_empty() {
+            return Some(tail.to_string());
+        }
+    }
+    stem.rsplit('_')
+        .next()
+        .filter(|v| v.contains('.'))
+        .map(|v| v.to_string())
+}
+
+async fn ws_handler(
+    Query(params): Query<WsAuthParams>,
+    State(state): State<SharedState>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    // Telemetry is a protected surface: enforce the bearer token once any
+    // local user exists, mirroring the REST middleware. When auth is disabled
+    // (no registered users) the feed stays open for local tooling.
+    let auth_enabled = {
+        let store = state.auth.lock().unwrap();
+        store.user_count() > 0
+    };
+    if auth_enabled {
+        let token = params.token.unwrap_or_default();
+        let allowed = {
+            let store = state.auth.lock().unwrap();
+            store.bearer_user(&format!("Bearer {token}")).is_ok()
+        };
+        if !allowed {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": "Invalid or missing telemetry token",
+                })),
+            )
+                .into_response();
+        }
+    }
     ws.on_upgrade(move |socket| handle_ws_socket(socket, state))
+        .into_response()
+}
+
+/// Query parameters accepted by the telemetry WebSocket endpoint.
+#[derive(serde::Deserialize)]
+pub struct WsAuthParams {
+    /// Bearer token obtained from `/api/v1/auth/login` or `/register`.
+    pub token: Option<String>,
 }
 
 async fn handle_ws_socket(mut socket: WebSocket, state: SharedState) {
@@ -1165,4 +1326,167 @@ async fn sys_layout_handler(
         layout,
         error: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aios_block_mgr::loader::BlockLoader;
+    use aios_process_mgr::task::Priority;
+    use aios_security::access_control::AccessControlLayer;
+    use aios_watchdog::watchdog::WatchdogConfig;
+
+    fn test_state() -> SharedState {
+        let scheduler = Arc::new(Mutex::new(Scheduler::new(4096)));
+        let registry = BlockRegistry::new();
+        let acl = AccessControlLayer::new(b"test-secret".to_vec(), 60_000);
+        let watchdog = Watchdog::new(WatchdogConfig::default());
+        let ctx = BridgeContext::new(scheduler, registry, acl, watchdog, 99);
+        Arc::new(ctx)
+    }
+
+    fn run(
+        state: &SharedState,
+        intent: &UserIntent,
+    ) -> std::result::Result<serde_json::Value, String> {
+        execute_intent(state, intent)
+    }
+
+    #[test]
+    fn test_parse_adjust_target() {
+        let (pid, prio) = parse_adjust_target("3 Critical").unwrap();
+        assert_eq!(pid, 3);
+        assert_eq!(prio, Priority::Critical);
+        assert!(parse_adjust_target("3").is_err());
+        assert!(parse_adjust_target("abc High").is_err());
+        assert!(parse_adjust_target("3 unknown").is_err());
+    }
+
+    #[test]
+    fn test_version_from_path() {
+        let p = std::path::Path::new("/tmp/blocks/foo_2.1.0.wasm");
+        assert_eq!(version_from_path(p, "foo").as_deref(), Some("2.1.0"));
+        assert_eq!(version_from_path(p, "bar").as_deref(), Some("2.1.0"));
+        let p2 = std::path::Path::new("blocks/wasm_heap.wasm");
+        assert_eq!(version_from_path(p2, "wasm_heap"), None);
+    }
+
+    #[test]
+    fn test_adjust_priority_via_bridge() {
+        let state = test_state();
+        let pid = state
+            .scheduler
+            .lock()
+            .unwrap()
+            .spawn_process("worker", Priority::Normal, 256)
+            .unwrap();
+        let intent = UserIntent::ProcessControl {
+            action: ProcessAction::AdjustPriority,
+            target: format!("{} Critical", pid.0),
+        };
+        let json = run(&state, &intent).unwrap();
+        assert_eq!(json["priority"], "Critical");
+        let process = {
+            let scheduler = state.scheduler.lock().unwrap();
+            scheduler.get_process(pid).unwrap().clone()
+        };
+        assert_eq!(process.priority, Priority::Critical);
+    }
+
+    #[test]
+    fn test_hot_swap_via_bridge() {
+        let state = test_state();
+        let old_binary = b"old-wasm-binary-v1".to_vec();
+        {
+            let mut registry = state.registry.lock().unwrap();
+            BlockLoader::load_from_binary(&mut registry, "wasm_heap", "1.0.0", old_binary)
+                .unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let new_path = dir.path().join("wasm_heap_2.0.0.wasm");
+        let new_binary = b"new-wasm-binary-v2-bigger".to_vec();
+        std::fs::write(&new_path, &new_binary).unwrap();
+
+        let intent = UserIntent::BlockManagement {
+            action: BlockAction::HotSwap,
+            wasm_path: Some(new_path),
+            block_name: Some("wasm_heap".into()),
+        };
+        let json = run(&state, &intent).unwrap();
+        assert_eq!(json["old_version"], "1.0.0");
+        assert_eq!(json["new_version"], "2.0.0");
+        assert_eq!(json["swapped"], true);
+
+        let (version_on_disk, binary_on_registry) = {
+            let registry = state.registry.lock().unwrap();
+            let entry = registry.find_by_name("wasm_heap").unwrap();
+            (entry.manifest.version.clone(), entry.binary.clone())
+        };
+        assert_eq!(version_on_disk, "2.0.0");
+        assert_eq!(binary_on_registry, new_binary);
+
+        let engine = state.live_update.lock().unwrap();
+        let history = engine.swap_history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].old_version, "1.0.0");
+        assert_eq!(history[0].new_version, "2.0.0");
+        assert!(history[0].success);
+    }
+
+    #[test]
+    fn test_workflow_execution_via_bridge() {
+        let state = test_state();
+        let intent = UserIntent::WorkflowExecution {
+            steps: vec![
+                UserIntent::ProcessControl {
+                    action: ProcessAction::List,
+                    target: String::new(),
+                },
+                UserIntent::BlockManagement {
+                    action: BlockAction::List,
+                    wasm_path: None,
+                    block_name: None,
+                },
+            ],
+        };
+        let json = run(&state, &intent).unwrap();
+        assert_eq!(json["total_steps"], 2);
+        assert_eq!(json["successful"], 2);
+        assert_eq!(json["results"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_cpu_metric_via_bridge() {
+        let state = test_state();
+        let intent = UserIntent::SystemQuery {
+            metric: MetricType::Cpu,
+        };
+        let json = run(&state, &intent).unwrap();
+        assert!(json["cpu_percent"].as_f64().is_some());
+        assert!(json["cores"].as_u64().is_some());
+    }
+
+    #[test]
+    fn test_memory_and_process_metrics_via_bridge() {
+        let state = test_state();
+        let mem = run(
+            &state,
+            &UserIntent::SystemQuery {
+                metric: MetricType::Memory,
+            },
+        )
+        .unwrap();
+        assert!(mem["ram_total_mb"].as_u64().is_some());
+
+        let procs = run(
+            &state,
+            &UserIntent::SystemQuery {
+                metric: MetricType::All,
+            },
+        )
+        .unwrap();
+        assert_eq!(procs["process_count"], 0);
+        assert_eq!(procs["block_count"], 0);
+    }
 }

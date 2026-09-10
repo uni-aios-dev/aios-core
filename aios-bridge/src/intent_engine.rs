@@ -297,6 +297,8 @@ Available intents:
 {\"intent\":\"SystemQuery\",\"metric\":\"Cpu|Memory|Processes|Blocks|All\"}
 - MemoryCompaction: \
 {\"intent\":\"MemoryCompaction\"}
+- WorkflowExecution: \
+{\"intent\":\"WorkflowExecution\",\"steps\":[{\"intent\":\"...
 
 Return ONLY valid JSON, no other text.";
 
@@ -367,6 +369,23 @@ Return ONLY valid JSON, no other text.";
                 Ok(Some(UserIntent::SystemQuery { metric }))
             }
             "MemoryCompaction" => Ok(Some(UserIntent::MemoryCompaction)),
+            "WorkflowExecution" => {
+                let mut steps = Vec::new();
+                if let Some(arr) = parsed["steps"].as_array() {
+                    for item in arr {
+                        let item_json =
+                            serde_json::to_string(item).unwrap_or_else(|_| "{}".to_string());
+                        if let Ok(Some(intent)) = Self::parse_llm_response(&item_json) {
+                            steps.push(intent);
+                        }
+                    }
+                }
+                if steps.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(UserIntent::WorkflowExecution { steps }))
+                }
+            }
             _ => Ok(None),
         }
     }
