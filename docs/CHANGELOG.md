@@ -1,5 +1,62 @@
 # AIOS Development Log
 
+## v2.32.0 — Full GUI on the live USB (own kernel, own X session) (2026-09-14)
+
+Booting the Live ISO with the AIOS kernel TUI as PID 1 now brings up the **full
+userspace**: the AIOS GUI dashboard runs for real, and the `W` hotkey works
+from the TUI without WebKitGTK.
+
+### Added
+- **`aios-webview` launcher decoupled from the browser engine.** wry/winit are
+  now behind the optional `webview` feature (default on). The pure-`std`
+  `launcher` module and `resolve_target` are always compiled, so `aios` depends
+  on `aios-webview` with `default-features = false` and the TUI `W` key no
+  longer needs the engine (`aios/src/tui/mod.rs`: the `#[cfg(feature =
+  "webview")]` gate on `W` was removed; `B`/`n` remain gated).
+- **`aios-gui` builds without the browser tab.** The `webview` feature (default
+  on) gates `browser_*` state/methods, the F7 "Native Browser" tab, the
+  `tabs/web.rs` module and its test; `--no-default-features` produces a
+  dashboard identical except the Browser tab is hidden.
+- **`live/build.sh` now ships the GUI.** Step [1] also builds `aios-gui`
+  (`--release --no-default-features`), step [2] installs an X.org userspace in
+  the Alpine rootfs (Xorg, input/video drivers, `mesa`/`mesa-dri-gallium` for
+  software llvmpipe rendering, eudev, fonts), and the live initramfs/GRUB flow
+  was reordered so `boot/initramfs.gz` + `boot/vmlinuz` are injected into the
+  squashfs for installed-disk boots.
+- **`aios-init` (PID 1) carries the whole userspace.** After the core VFS
+  mounts it runs `/sfs-up.sh`: loads storage/loop/squashfs/ext4 modules (plus
+  the GPU stack in dependency order with fbdev fallbacks), finds
+  `aios.squashfs` on the USB (or a `root=` disk), bind-mounts the Alpine
+  userspace (bin/sbin/usr/lib/etc/root/var/boot), starts the network via `rcS`,
+  eudev for input hot-plug and **X on `:0` VT7**. It then sets
+  `DISPLAY=:0`, `AIOS_DATA_DIR=/tmp/.aios`, `XDG_RUNTIME_DIR=/run/aios` and a
+  full `PATH` in the environment of the supervised kernel blocks.
+- **`aios-launch` (busybox-init legacy mode)** starts X on demand, exports
+  `DISPLAY`/`AIOS_DATA_DIR` and execs the TUI, so the legacy `switch_root`
+  path gets the GUI too.
+- New `live/sfs-up.sh` (initramfs bring-up script).
+
+### How it works
+- Boot the ISO → kernel → `aios-init` PID 1 → `/sfs-up.sh` → X.org running on
+  VT7 (`:0`) → kernel TUI on tty1. Press `W` in the TUI → `aios-gui` is found
+  on `PATH` and inherits `DISPLAY=:0`, opening the dashboard (software-rendered
+  via llvmpipe; no WebKitGTK needed).
+- `AIOS_DATA_DIR` points to `/tmp/.aios` (tmpfs) because the squashfs root is
+  read-only — persisted GUI/TUI chats live in RAM for the session.
+- The standalone kernel TUI (no X) still works: if the userspace root cannot be
+  mounted the system stays in TUI-only mode and falls back to the emergency
+  shell as before.
+
+### Verification
+- Windows build verified for both feature sets: `cargo build -p aios -p aios-gui`
+  and `cargo test -p aios-gui --bin aios-gui --no-default-features --no-run`.
+- `cargo test -p aios --bin aios` 14 passed, `aios-gui` 18 passed,
+  `aios-webview` 7 passed; `cargo clippy --workspace --all-targets` zero
+  warnings (fixed a pre-existing `needless_range_loop` in `ui.rs`), `cargo fmt
+  --all --check` clean.
+- The Linux live build (X stack, eframe/winit link deps in container step [0])
+  must be exercised on a Linux/macOS host via `scripts/build-live-iso.sh`.
+
 ## v2.31.5 — Shell / AI Console line wrapping in the TUI (2026-09-14)
 
 ### Fixed

@@ -3,9 +3,13 @@ name = "aios-webview"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["webview"]
+webview = ["dep:wry", "dep:winit"]
+
 [dependencies]
-wry = { version = "0.56" }
-winit = "0.30"
+wry = { version = "0.56", optional = true }
+winit = { version = "0.30", optional = true }
 url = "2"
 dirs = "6"
 log = { workspace = true }

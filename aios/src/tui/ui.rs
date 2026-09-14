@@ -1184,7 +1184,7 @@ mod render_smoke_tests {
         for (w, h) in sizes {
             let backend = TestBackend::new(w, h);
             let mut terminal = Terminal::new(backend).unwrap();
-            for tab in 0..TITLES.len() {
+            for (tab, title) in TITLES.iter().enumerate() {
                 app.current_tab = tab;
                 terminal
                     .draw(|f| draw(f, &mut app))
@@ -1195,7 +1195,7 @@ mod render_smoke_tests {
                     "status bar missing at {w}x{h} tab {tab}"
                 );
                 assert!(
-                    text.contains(&TITLES[tab].trim().to_string()),
+                    text.contains(title.trim()),
                     "tab title missing at {w}x{h} tab {tab}"
                 );
                 assert!(

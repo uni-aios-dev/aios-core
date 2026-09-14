@@ -6,7 +6,7 @@ publish = false
 
 [features]
 default = ["webview"]
-webview = ["dep:aios-webview"]
+webview = ["aios-webview/webview"]
 
 [dependencies]
 aios-core = { path = "../aios-core" }
@@ -27,7 +27,7 @@ aios-search = { path = "../aios-search" }
 aios-browser = { path = "../aios-browser" }
 aios-context = { path = "../aios-context" }
 aios-debug = { path = "../aios-debug" }
-aios-webview = { path = "../aios-webview", optional = true }
+aios-webview = { path = "../aios-webview", default-features = false }
 aios-cluster = { path = "../aios-cluster" }
 aios-autohal = { path = "../aios-autohal", features = ["tui"] }
 aios-sys-control = { path = "../aios-sys-control" }

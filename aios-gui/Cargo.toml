@@ -3,6 +3,10 @@ name = "aios-gui"
 version = "1.0.0"
 edition = "2021"
 
+[features]
+default = ["webview"]
+webview = ["dep:aios-webview"]
+
 [dependencies]
 aios-core = { path = "../aios-core" }
 aios-ipc = { path = "../aios-ipc" }
@@ -16,7 +20,7 @@ aios-security = { path = "../aios-security" }
 aios-net = { path = "../aios-net" }
 aios-store = { path = "../aios-store" }
 aios-live-update = { path = "../aios-live-update" }
-aios-webview = { path = "../aios-webview" }
+aios-webview = { path = "../aios-webview", optional = true }
 aios-sys-control = { path = "../aios-sys-control" }
 aios-llm = { path = "../aios-llm" }
 aios-net-config = { path = "../aios-net-config" }

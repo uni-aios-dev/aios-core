@@ -1528,7 +1528,6 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
             app.web.input_focused = false;
             app.net_mode = false;
         }
-        #[cfg(feature = "webview")]
         KeyCode::Char('W') => match aios_webview::launcher::launch_gui() {
             Ok(path) => push_log(
                 &app.logs,

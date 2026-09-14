@@ -13,16 +13,22 @@ apk add --no-cache \
   busybox-static \
   grub grub-bios grub-efi xorriso mtools dosfstools \
   util-linux-misc \
-  ca-certificates
+  ca-certificates \
+  libxcb-dev libxkbcommon-dev libxi-dev libxrandr-dev libxcursor-dev \
+  libxinerama-dev libx11-dev libglvnd-dev mesa-dev libwayland-dev \
+  fontconfig-dev libxft-dev libxrender-dev eudev-dev
 
 command -v grub-mkrescue >/dev/null 2>&1 || apk add --no-cache grub-bios
 
-echo "=== [1] building aios (static musl, no webview) ==="
+echo "=== [1] building aios + aios-gui (musl, no webview engine) ==="
 cd /src
 cargo build -p aios --release --no-default-features
+cargo build -p aios-gui --release --no-default-features
 cp "$CARGO_TARGET_DIR/release/aios" "$W/aios-bin"
-ls -la "$W/aios-bin"
+cp "$CARGO_TARGET_DIR/release/aios-gui" "$W/aios-gui-bin"
+ls -la "$W/aios-bin" "$W/aios-gui-bin"
 file "$W/aios-bin" 2>/dev/null || true
+file "$W/aios-gui-bin" 2>/dev/null || true
 
 echo "=== [2] building rootfs ==="
 rm -rf "$W/rootfs" "$W/iso" "$W/initramfs" "$W/out"
@@ -39,15 +45,23 @@ chroot "$W/rootfs" /sbin/apk add --no-cache \
   linux-lts \
   grub grub-bios grub-efi \
   e2fsprogs dosfstools \
-  util-linux-misc util-linux || echo "NOTE: apk trigger errors ignored (grub-probe in chroot)"
+  util-linux-misc util-linux \
+  xorg-server xauth xrandr \
+  xf86-input-evdev xf86-input-libinput libinput \
+  xf86-video-fbdev xf86-video-vesa \
+  mesa mesa-dri-gallium libglvnd \
+  libxcb libx11 libxi libxrandr libxcursor libxinerama libxext \
+  libxkbcommon fontconfig ttf-dejavu \
+  eudev || echo "NOTE: apk trigger errors ignored (grub-probe in chroot)"
 umount "$W/rootfs/dev" 2>/dev/null || true
 umount "$W/rootfs/proc" 2>/dev/null || true
 
-mkdir -p "$W/rootfs/usr/local/bin" "$W/rootfs/etc/init.d" "$W/rootfs/root"
+mkdir -p "$W/rootfs/usr/local/bin" "$W/rootfs/etc/init.d" "$W/rootfs/root" "$W/rootfs/boot"
 cp "$W/aios-bin" "$W/rootfs/usr/local/bin/aios"
+cp "$W/aios-gui-bin" "$W/rootfs/usr/local/bin/aios-gui"
 cp "/work/aios-install" "$W/rootfs/usr/local/bin/aios-install"
 cp "/work/aios-launch" "$W/rootfs/usr/local/bin/aios-launch"
-chmod +x "$W/rootfs/usr/local/bin/aios" "$W/rootfs/usr/local/bin/aios-install" "$W/rootfs/usr/local/bin/aios-launch"
+chmod +x "$W/rootfs/usr/local/bin/aios" "$W/rootfs/usr/local/bin/aios-gui" "$W/rootfs/usr/local/bin/aios-install" "$W/rootfs/usr/local/bin/aios-launch"
 cp "/work/inittab" "$W/rootfs/etc/inittab"
 cp "/work/rcS" "$W/rootfs/etc/init.d/rcS"
 chmod +x "$W/rootfs/etc/init.d/rcS"
@@ -65,28 +79,27 @@ EOF
 cat > "$W/rootfs/etc/profile" <<'EOF'
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export TERM=linux
+export DISPLAY=:0
+export AIOS_DATA_DIR=/tmp/.aios
 EOF
 
 cat > "$W/rootfs/etc/motd" <<'EOF'
 AIOS Live — Type 'aios-install' to install AIOS to a disk.
 EOF
 
-echo "=== [3] squashfs ==="
-mksquashfs "$W/rootfs" "$W/iso/boot/aios.squashfs" -noappend -comp xz
-
-echo "=== [4] initramfs ==="
+echo "=== [3] initramfs (built before squashfs so boot files can be injected) ==="
 mkdir -p "$W/initramfs/bin" "$W/initramfs/dev" "$W/initramfs/proc" "$W/initramfs/sys" "$W/initramfs/tmp" "$W/initramfs/system" "$W/initramfs/lib/modules"
+cp -a "$W/rootfs/lib/modules/." "$W/initramfs/lib/modules/"
 
 if [ "${USE_BUSYBOX_INIT:-0}" = "1" ]; then
-  echo "=== [4a] busybox init mode (legacy): squashfs root + switch_root ==="
+  echo "=== [3a] busybox init mode (legacy): squashfs root + switch_root ==="
   cp /bin/busybox.static "$W/initramfs/bin/busybox"
   "$W/initramfs/bin/busybox" --install -s "$W/initramfs/bin"
   cd "$W"
-  cp -a "$W/rootfs/lib/modules/." "$W/initramfs/lib/modules/"
   cp "/work/init.rs" "$W/initramfs/init"
   chmod +x "$W/initramfs/init"
 else
-  echo "=== [4a] aios-init mode (default): kernel TUI as PID 1 ==="
+  echo "=== [3a] aios-init mode (default): kernel TUI as PID 1 ==="
   cd /src/aios-init
   cargo build --release
   cp "$CARGO_TARGET_DIR/release/aios-init" "$W/initramfs/init"
@@ -96,12 +109,21 @@ else
   cp /bin/busybox.static "$W/initramfs/bin/busybox"
   chmod +x "$W/initramfs/bin/busybox"
   ln -sf busybox "$W/initramfs/bin/sh"
+  cp "/work/sfs-up.sh" "$W/initramfs/sfs-up.sh"
+  chmod +x "$W/initramfs/sfs-up.sh"
 fi
 
 cd "$W/initramfs"
 find . | cpio -o -H newc 2>/dev/null | gzip -9 > "$W/iso/boot/initramfs.gz"
 
-echo "=== [5] iso ==="
+echo "=== [4] injecting boot files into rootfs (installed-disk boot) ==="
+cp "$W/iso/boot/initramfs.gz" "$W/rootfs/boot/initramfs.gz"
+cp "$W/rootfs/boot/vmlinuz-lts" "$W/rootfs/boot/vmlinuz"
+
+echo "=== [5] squashfs ==="
+mksquashfs "$W/rootfs" "$W/iso/boot/aios.squashfs" -noappend -comp xz
+
+echo "=== [6] iso ==="
 if [ "${USE_BUSYBOX_INIT:-0}" = "1" ]; then
   cp "/work/grub.cfg" "$W/iso/boot/grub/grub.cfg"
 else
@@ -123,7 +145,7 @@ fi
 cp "$W/rootfs/boot/vmlinuz-lts" "$W/iso/boot/vmlinuz"
 grub-mkrescue -o "$W/out/aios-live.iso" "$W/iso" -- -volid AIOS-LIVE 2>&1 | tail -5
 
-echo "=== [6] copying to /work ==="
+echo "=== [7] copying to /work ==="
 mkdir -p /work/out
 cp "$W/out/aios-live.iso" /work/out/aios-live.iso
 ls -la /work/out/ /work/out/aios-live.iso

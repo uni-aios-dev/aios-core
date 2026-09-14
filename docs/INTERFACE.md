@@ -89,7 +89,7 @@ Far Manager / Midnight Commander style: top status bar, dual 50/50 panels (tab c
 | `r` | Refresh data |
 | `s` | Show telemetry |
 | `x` | Show status |
-| `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
+| `W` | Launch the AIOS GUI dashboard (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
 | `q` | Quit |
 | `F1` or `?` | Toggle help overlay |
 | `:` | Enter command mode in Shell tab |
@@ -260,7 +260,7 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `Tab` / `F1` / `?` | Next tab / help overlay |
 | `1`-`7` | Direct tab select |
 | `Alt`+`1`-`7` | Direct tab select even while typing in the Shell / Web URL / AI input / net line |
-| `W` | Launch the AIOS GUI dashboard (`aios-gui`) |
+| `W` | Launch the AIOS GUI dashboard (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
 | `Space` | Pause/resume event log |
 | `L` | Toggle EN/RU input layout (the sys status line shows the active pair) |
 | `q` / `F10` / `Ctrl+C` | Quit |
@@ -386,6 +386,8 @@ With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks
 ```bash
 cargo run --bin aios-gui
 ```
+
+When built `--no-default-features` (e.g. the live USB image) the dashboard has **no Native Browser tab** — the sidebar shows System, WASM, AI Studio, App Store, Network, Deps, Files only. The kernel TUI `W` key still opens the GUI in that configuration.
 
 ### Layout
 

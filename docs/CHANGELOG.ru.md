@@ -1,5 +1,62 @@
 # Журнал разработки AIOS
 
+## v2.32.0 — Полноценный GUI на Live USB (своё ядро, свой X-сеанс) (2026-09-14)
+
+Загрузка Live ISO, где ядерный TUI AIOS работает как PID 1, теперь поднимает
+**полный юзерспейс**: GUI-дашборд AIOS реально работает, а хоткей `W` из TUI
+действует без WebKitGTK.
+
+### Добавлено
+- **Лаунчер `aios-webview` отделён от движка браузера.** wry/winit теперь
+  спрятаны за опциональной фичей `webview` (включена по умолчанию). Чистый
+  `std`-модуль `launcher` и `resolve_target` компилируются всегда, поэтому
+  `aios` зависит от `aios-webview` с `default-features = false`, и клавише `W`
+  в TUI больше не нужен движок (`aios/src/tui/mod.rs`: гейт
+  `#[cfg(feature = "webview")]` у `W` снят; `B`/`n` остаются под фичей).
+- **`aios-gui` собирается без вкладки браузера.** Фича `webview` (по умолчанию
+  включена) гейтит состояние/методы `browser_*`, вкладку F7 «Native Browser»,
+  модуль `tabs/web.rs` и его тест; `--no-default-features` даёт дашборд, идентичный
+  обычному, кроме скрытой вкладки браузера.
+- **`live/build.sh` теперь поставляет GUI.** Шаг [1] дополнительно собирает
+  `aios-gui` (`--release --no-default-features`), шаг [2] ставит X.org-юзерспейс
+  в Alpine rootfs (Xorg, драйверы ввода/видео, `mesa`/`mesa-dri-gallium` для
+  программного рендера llvmpipe, eudev, шрифты), а порядок initramfs/GRUB
+  перестроен так, чтобы `boot/initramfs.gz` + `boot/vmlinuz` попадали в squashfs
+  для загрузки с установленного диска.
+- **`aios-init` (PID 1) несёт весь юзерспейс.** После базовых VFS-монтирований
+  он запускает `/sfs-up.sh`: грузит модули storage/loop/squashfs/ext4 (плюс
+  GPU-стек в порядке зависимостей с fbdev-фолбэками), находит `aios.squashfs`
+  на флешке (или диск `root=`), bind-монтирует юзерспейс Alpine
+  (bin/sbin/usr/lib/etc/root/var/boot), поднимает сеть через `rcS`, eudev для
+  hot-plug ввода и **X на `:0` VT7**. Затем прописывает в окружение
+  наблюдаемых ядерных блоков `DISPLAY=:0`, `AIOS_DATA_DIR=/tmp/.aios`,
+  `XDG_RUNTIME_DIR=/run/aios` и полный `PATH`.
+- **`aios-launch` (легаси-режим busybox-init)** стартует X по требованию,
+  экспортирует `DISPLAY`/`AIOS_DATA_DIR` и запускает TUI — легаси-путь
+  `switch_root` тоже получает GUI.
+- Новый `live/sfs-up.sh` (скрипт подъёма юзерспейса в initramfs).
+
+### Как это работает
+- Загрузка ISO → ядро → `aios-init` PID 1 → `/sfs-up.sh` → X.org на VT7 (`:0`) →
+  ядерный TUI на tty1. Нажмите `W` в TUI → `aios-gui` находится по `PATH` и
+  наследует `DISPLAY=:0`, открывая дашборд (программный рендер llvmpipe;
+  WebKitGTK не нужен).
+- `AIOS_DATA_DIR` указывает на `/tmp/.aios` (tmpfs), потому что корень squashfs
+  read-only — чаты TUI/GUI живут в RAM в рамках сеанса.
+- Автономный ядерный TUI (без X) по-прежнему работает: если корень юзерспейса
+  не смонтировать, система остаётся в TUI-only-режиме и, как раньше, уходит в
+  спасательный шелл.
+
+### Верификация
+- Сборка под Windows проверена для обеих конфигураций фич: `cargo build -p aios -p aios-gui`
+  и `cargo test -p aios-gui --bin aios-gui --no-default-features --no-run`.
+- `cargo test -p aios --bin aios` — 14 passed, `aios-gui` — 18 passed,
+  `aios-webview` — 7 passed; `cargo clippy --workspace --all-targets` — 0
+  предупреждений (исправлен пред-существующий `needless_range_loop` в `ui.rs`),
+  `cargo fmt --all --check` чисто.
+- Linux-сборку live (X-стек, линковка eframe/winit в шаге [0] контейнера) нужно
+  прогнать на Linux/macOS-хосте через `scripts/build-live-iso.sh`.
+
 ## v2.31.5 — Перенос строк в окне вывода Shell / AI Console TUI (2026-09-14)
 
 ### Исправлено

@@ -369,6 +369,7 @@
   - [x] GUI Browser tab (F7) in `aios-gui` — omnibox, Back/Forward, Open/Close, status line
   - [x] TUI hotkey `W` (both `aios-tui` and kernel `aios`) launches the GUI dashboard
   - [ ] Future: embed the webview as an in-window child of the egui tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
+  - [ ] Future: native browser in the Live ISO — add WebKitGTK to the Alpine rootfs and build `aios`/`aios-gui` with the `webview` feature enabled so the `B`/`n` keys and the GUI Browser tab work on the live USB too (v2.32.0 ships the image without it)
 
 - [x] **Phase 35: WHATWG HTML Rendering & Web Tab Navigation in TUI — COMPLETE**
   - [x] `HtmlParser` rebuilt on `scraper`/html5ever — structured text (headings `#`, lists `•`/`1.`, tables `|`, `pre`, `hr`, images `[alt]`), WHATWG-compliant

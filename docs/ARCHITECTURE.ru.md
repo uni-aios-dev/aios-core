@@ -607,9 +607,11 @@ TUI не может отображать настоящие веб-страни�
 - `resolve_target()` реализует правило омнибокса, общее с TUI: полный `http(s)`-URL → как есть, голый хост → `https://`, всё остальное → запрос DuckDuckGo (HTML-версия)
 - Модуль `launcher` находит бинарник `aios-gui` (рядом с текущим исполняемым файлом, затем PATH) и запускает дашборд GUI
 
+**Гейт фигуры (v2.32.0):** движок wry/winit живёт в опциональной фиче `webview` (включена по умолчанию). `launcher` и `resolve_target` — на чистом `std` и компилируются всегда, поэтому клавиша `W` в TUI работает даже при выключенном движке; под фичей остаются только `B`/`n` (ядерный `WebBrowser`) и вкладка Browser в GUI. Live-образ собирает и `aios`, и `aios-gui` с `--no-default-features` — зависимости WebKitGTK в Alpine rootfs нет.
+
 ### Графический дашборд (`aios-gui`)
 
-Нативный дашборд на egui/eframe с 8 вкладками: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser, Files. Горячая клавиша `W` в обоих TUI запускает дашборд GUI через `aios_webview::launcher::launch_gui()`.
+Нативный дашборд на egui/eframe с 8 вкладками (7 при сборке `--no-default-features` — без Native Browser): System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser*, Files. Горячая клавиша `W` в обоих TUI запускает дашборд GUI через `aios_webview::launcher::launch_gui()`. `*` — вкладка за фичей `webview`.
 
 - **System Dashboard (F1)**: карточки статистики (RAM, блоки, процессы, watchdog), панель системы (CPU/GPU/хранилище/HW Tier), спарклайн RAM, распределение приоритетов, таблица процессов (PID, Имя, Приоритет, Состояние, RAM, CPU ms, Сбои) с Обновить/Убить/Приостановить/Возобновить, журнал активности
 - **WASM Blocks (F2)**: таблица блоков + Обновить / Загрузить (2-шаговый диалог) / Выгрузить / Горячая замена
@@ -1211,7 +1213,7 @@ User Input (TUI)
 | 1-8 | Прямой выбор вкладки |
 | Alt+1-8 | Прямой выбор вкладки даже при вводе в Shell / URL браузера / AI-запросе / сетевой строке |
 | q / Ctrl+C | Выход |
-| W | Запуск дашборда AIOS GUI (`aios-gui`) |
+| W | Запуск дашборда AIOS GUI (`aios-gui`); ищется по `PATH` или рядом с исполняемым файлом `aios` (на live доступен как сессия `DISPLAY=:0` X/Xorg) |
 | Space | Пауза/возобновление прокрутки логов |
 | r / k / l (Blocks) | Перезапуск / выгрузка / загрузка выбранного блока |
 | g / j / k / o / u / d / b / B / n (Web) | Омнибокс / выбор ссылки / открыть / прокрутка / назад / нативный просмотрщик |
@@ -1248,17 +1250,18 @@ User Input (TUI)
 Каталог `live/` собирает гибридный (BIOS+UEFI) ISO-образ, который грузится сразу в TUI `aios` на Linux — без Windows и без предустановленной системы. Образ воспроизводимо собирается в Docker через `live/build.sh` и записывается на флешку.
 
 ### Структура и цепочка загрузки
-- `live/build.sh` — сборка в Docker: Alpine 3.24 minirootfs (распаковка, `chroot` apk install), static-musl release сборка `aios` (офлайн-крейты через монтирование registry из `CARGO_HOME`, сборка в `/tmp/target` во избежание I/O-ошибок NTFS bind-mount), squashfs из rootfs, кастомный initramfs, GRUB2
-- `live/init.rs` — init busybox: сканирует блочные устройства, монтирует `/dev/aioslivedata` (iso9660) или `/dev/aiosliveiso` (vfat), loop-mount `boot/aios.squashfs`, `switch_root` в него, запуск `rcS`
+- `live/build.sh` — сборка в Docker: Alpine 3.24 minirootfs (распаковка, `chroot` apk install), static-musl release сборки `aios` и `aios-gui` (`--no-default-features`, офлайн-крейты через монтирование registry из `CARGO_HOME`, сборка в `/tmp/target` во избежание I/O-ошибок NTFS bind-mount), X.org-юзерспейс в rootfs, squashfs из rootfs, кастомный initramfs, GRUB2
+- `live/init.rs` — init busybox (легаси, `USE_BUSYBOX_INIT=1`): сканирует блочные устройства, loop-mount `boot/aios.squashfs`, `switch_root` в него, запуск `rcS`
+- `live/sfs-up.sh` — скрипт подъёма юзерспейса для режима aios-init (по умолчанию): грузит модули storage/loop/squashfs/ext4 + GPU (DRM в порядке зависимостей с fbdev-фолбэками), находит `aios.squashfs` на флешке (или диск `root=`), bind-монтирует юзерспейс Alpine под `/`, поднимает сеть (`rcS`), eudev и **X.org на `:0` VT7**
 - `live/rcS` — mount proc/sys/dev, DHCP-сеть на всех ethernet/wifi-интерфейсах, запуск TUI AIOS на `tty1`
-- `live/aios-launch` — запускает `aios` на `tty1`, перезапуск при падении, откат в шелл
+- `live/aios-launch` — легаси/установленный режим: при необходимости поднимает X, экспортирует `DISPLAY=:0` + `AIOS_DATA_DIR=/tmp/.aios`, запускает `aios` на `tty1`, перезапуск при падении, откат в шелл
 - `live/aios-install` — интерактивный установщик: список дисков, выбор цели (например `sda`), разметка GPT (512 МБ EFI + ext4 root), копирование системы, установка GRUB
 - `live/grub.cfg` — меню GRUB: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 с по умолчанию
 - `live/inittab` — без getty: `aios-launch` на tty1, askhell на tty2
 
 ### Жизненный цикл
-- Загрузка: BIOS/UEFI → GRUB → initramfs init → squashfs root (только чтение; `/tmp`, `/run`, `/var/log` на tmpfs) → TUI `aios` → `Esc`/`q` в шелл `#` → `aios-install` для постоянной установки на диск
-- Флаги сборки: `aios` собирается с `--no-default-features` для Live-образа (без webview) — см. feature `webview` в `Cargo.toml` (v2.9.4)
+- Загрузка: BIOS/UEFI → GRUB → initramfs init → `aios-init` (PID 1) монтирует proc/sys/dev/tmp, запускает `sfs-up.sh` (полный юзерспейс: X.org, GUI, инструменты, eudev, сеть через `rcS`), прописывает в окружение наблюдаемых блоков `DISPLAY=:0` / `AIOS_DATA_DIR=/tmp/.aios` / `XDG_RUNTIME_DIR=/run/aios` → ядерный TUI на консоли. `W` находит `aios-gui` по `PATH` (примонтирован из squashfs), наследует `DISPLAY=:0` и открывает дашборд (программный рендер llvmpipe; WebKitGTK не нужен). Корень squashfs только для чтения; `/tmp`, `/run`, `/var/log` на tmpfs. `Esc`/`q` в шелл `#` → `aios-install` для постоянной установки на диск (установленная система грузится с `root=` тем же initramfs и тоже получает GUI)
+- Флаги сборки: `aios`/`aios-gui` собираются с `--no-default-features` для Live-образа. Клавиша запуска GUI `W` продолжает работать, потому что лаунчер `aios-webview` не зависит от wry; выключены только хоткеи браузера `B`/`n` и вкладка Browser в GUI (см. feature `webview`)
 
 ### Сборка на Windows (дополнение к v2.31.1)
 - `scripts/build-live-iso.ps1` оборачивает сборку в Docker выше (монтирует репозиторий, `live/` и host-реестр `~/.cargo/registry` как mount офлайн-крейтов) и выводит ISO/SHA256.
@@ -1272,12 +1275,14 @@ User Input (TUI)
 
 ### Обязанности (порядок загрузки)
 1. Установка обработчиков `sigaction`: SIGTERM/SIGINT/SIGHUP выставляют флаг завершения; SIGCHLD (`SA_NOCLDSTOP`) будит цикл сборки зомби; SIGPIPE игнорируется.
-2. Монтирование базовых VFS: `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs; если недоступна — `mknod` для `/dev/console` 5:1, `/dev/null` 1:3, `/dev/tty` 5:0), `/tmp` (tmpfs).
+2. Монтирование базовых VFS: `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs; если недоступна — `mknod` для `/dev/console` 5:1, `/dev/null` 1:3, `/dev/tty` 5:0), `/tmp` (tmpfs), `/run` (tmpfs).
 3. Открытие `/dev/console` и `dup2` в fd 0/1/2, чтобы все журналы загрузки шли на консоль.
-4. Запуск и супервизия `/system/aios-core` (запасной `/installer`), до 3 перезапусков (задержка 300 мс) при падении.
-5. Сборка каждого потомка через `waitpid(-1, WNOHANG)`, чтобы осиротевшие «внуки» не становились вечными зомби.
-6. По SIGTERM/SIGINT: передача сигнала блоку, ожидание до 5 с, затем SIGKILL.
-7. Аварийный запасной вариант: если блок отсутствует или перезапуски исчерпаны — запуск спасательного шелла (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`); если шелла нет — idle-цикл со сборкой зомби, без паники ядра.
+4. `set_user_env()`: полный `PATH` BusyBox/Alpine, `TERM=linux`, `DISPLAY=:0`, `AIOS_DATA_DIR=/tmp/.aios`, `XDG_RUNTIME_DIR=/run/aios` — чтобы наблюдаемый дашборд и ядерные блоки получали готовое окружение юзерспейса.
+5. `bring_userspace()` (вариант live): spawn + супервизия `/bin/sh /sfs-up.sh` — загрузка модулей storage/loop/squashfs/ext4 и GPU (DRM в порядке зависимостей, фолбэки fbdev/vesa), поиск и bind-mount юзерспейса Alpine из `aios.squashfs`, подъём сети (`rcS`) и eudev, затем запуск **Xorg на `:0`/VT7**. Если юзерспейс недоступен, система остаётся в TUI-only-режиме на консоли (прежнее поведение).
+6. Запуск и супервизия `/system/aios-core` (запасной `/installer`), до 3 перезапусков (задержка 300 мс) при падении.
+7. Сборка каждого потомка через `waitpid(-1, WNOHANG)`, чтобы осиротевшие «внуки» не становились вечными зомби.
+8. По SIGTERM/SIGINT: передача сигнала блоку, ожидание до 5 с, затем SIGKILL.
+9. Аварийный запасной вариант: если блок отсутствует или перезапуски исчерпаны — запуск спасательного шелла (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`); если шелла нет — idle-цикл со сборкой зомби, без паники ядра.
 
 ### Сборка initramfs
 ```
@@ -1290,7 +1295,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 Скрипт выполняет `cargo build --release --target x86_64-unknown-linux-musl` для `aios-init` и (если не задан `--no-aios-core`/`SKIP_AIOS_CORE=1`) `cargo build -p aios --release --target x86_64-unknown-linux-musl --no-default-features` для реального ядерного TUI. Он формирует структуру в `rootfs/`, копирует `aios-init` в `/init` и `aios` в `/system/aios-core`, затем упаковывает `find . | cpio --null -ov --format=newc | gzip -9`. Защита очистки отказывается удалять путь за пределами каталога скрипта; `--keep-rootfs` сохраняет стейджинг-каталог. Когда присутствует `/system/aios-core`, `aios-init` сразу загружает полный ядерный TUI; спасательный шелл остаётся только запасным вариантом (v2.13.0).
 
 ### Вариант Live-образа (aios-init по умолчанию)
-Шаг [4] в `live/build.sh` по умолчанию упаковывает aios-init-initramfs: `aios-init` как `/init`, бинарник `aios` как `/system/aios-core`, busybox только как спасательный шелл — ядро грузится сразу в ядерный TUI без корня squashfs; шаг [5] записывает отдельное GRUB-меню с записями `init=/init console=tty0`. Прежний вариант busybox-initramfs (монтирование squashfs + `switch_root`, `init.rs`) сохранён за флагом-отключением `USE_BUSYBOX_INIT=1` (v2.14.0; в v2.13.0 aios-init включался опционально через `USE_AIOS_INIT=1`).
+Шаг [4] в `live/build.sh` по умолчанию упаковывает aios-init-initramfs: `aios-init` как `/init`, бинарник `aios` как `/system/aios-core`, busybox только как спасательный шелл + скрипт `sfs-up.sh`, копируемый в initramfs (подъём юзерспейса и X.org в `bring_userspace`) — ядро грузится сразу в полный юзерспейс с ядерным TUI на консоли и GUI-дашбордом по `W`; шаг [5] записывает отдельное GRUB-меню с записями `init=/init console=tty0`. Прежний вариант busybox-initramfs (монтирование squashfs + `switch_root`, `init.rs`) сохранён за флагом-отключением `USE_BUSYBOX_INIT=1` (v2.14.0; в v2.13.0 aios-init включался опционально через `USE_AIOS_INIT=1`).
 
 ### Параметры ядра Linux
 - GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`

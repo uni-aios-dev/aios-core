@@ -401,6 +401,7 @@
   - [x] Handle браузера в модульном `OnceLock<Mutex<Option<WebBrowser>>>` — ядро не тронуто
   - [x] `http_client()`: десктопный User-Agent + `Accept: text/html` + таймаут 15с для текстовых загрузок (меньше бот-блокировок, нет зависаний)
   - [ ] Будущее: встроить webview как дочернее окно вкладки Browser в GUI через `build_as_child` (Windows/macOS/X11), заменив companion window
+  - [ ] Будущее: нативный браузер в Live ISO — добавить WebKitGTK в Alpine rootfs и собирать `aios`/`aios-gui` с включённой фичей `webview`, чтобы клавиши `B`/`n` и вкладка GUI Browser работали и на live USB (в v2.32.0 образ поставляется без неё)
   - [x] Будущее: headless render-to-text fallback для JS-тяжёлых сайтов — `aios-browser::headless` дампит DOM в headless-браузере класса Chromium (`msedge`/`chromium`/`google-chrome`, переопределение через `AIOS_HEADLESS_BROWSER`, `--no-sandbox` через `AIOS_HEADLESS_NO_SANDBOX`), когда обычная загрузка не даёт читаемого текста; принимается только если отрендеренный текст заметно богаче (v2.17.0)
 
 - [x] **Фаза 40: Хранилище блоков — источники, каталог, установщик, сервис обновлений — ЗАВЕРШЕНА**

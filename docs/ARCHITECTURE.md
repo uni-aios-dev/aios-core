@@ -607,9 +607,11 @@ The TUI cannot render real web pages (no CSS/JS engine), so the full-featured br
 - `resolve_target()` implements the omnibox rule shared with the TUI: full `http(s)` URL → as-is, bare host → `https://`, anything else → DuckDuckGo (HTML edition) query
 - `launcher` module resolves the `aios-gui` binary (sibling of the current executable, then `PATH`) and spawns the GUI dashboard
 
+**Feature gating (v2.32.0):** the wry/winit engine lives in the optional `webview` feature (default on). `launcher` and `resolve_target` are pure `std` and always compile, so the TUI `W` key works even when the engine is disabled; only `B`/`n` (kernel `WebBrowser`) and the GUI Browser tab are gated. The live image builds both `aios` and `aios-gui` with `--no-default-features` — no WebKitGTK dependency in the Alpine rootfs.
+
 ### GUI Dashboard (`aios-gui`)
 
-Native egui/eframe dashboard with 8 tabs: System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser, Files. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`.
+Native egui/eframe dashboard with 8 tabs (7 when built with `--no-default-features` — no Native Browser): System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser*, Files. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`. `\*` gated behind the `webview` feature.
 
 - **System Dashboard (F1)**: stat cards (RAM, blocks, processes, watchdog), system panel (CPU/GPU/storage/HW tier), RAM sparkline, priority distribution, processes table (PID, Name, Priority, State, RAM, CPU ms, Crashes) with Refresh/Kill/Suspend/Resume, activity log
 - **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap
@@ -1218,7 +1220,7 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 | 1-8 | Direct tab select |
 | Alt+1-8 | Direct tab select even while typing in the Shell / Web URL / AI query / net input line |
 | q / Ctrl+C | Quit |
-| W | Launch the AIOS GUI dashboard (`aios-gui`) |
+| W | Launch the AIOS GUI dashboard (`aios-gui`); found on `PATH` or next to the `aios` executable (exposed on live as `DISPLAY=:0` X/Xorg session) |
 | Space | Pause/resume log scroll |
 | r / k / l (Blocks) | Restart / unload / load selected block |
 | g / j / k / o / u / d / b / B / n (Web) | Omnibox / link nav / open / scroll / back / native viewer |
@@ -1255,17 +1257,18 @@ The browser works out of the box on a fresh machine: no config file, no installe
 The `live/` directory builds a bootable hybrid (BIOS+UEFI) ISO that boots straight into the `aios` TUI on Linux — no Windows, no preinstalled system required. The ISO is built reproducibly in Docker via `live/build.sh` and flashed to a USB stick.
 
 ### Layout & Boot Chain
-- `live/build.sh` — Docker-based build: Alpine 3.24 minirootfs (extracted, `chroot` apk install), static-musl `aios` release build (offline crates via host `CARGO_HOME` registry mount, build in `/tmp/target` to avoid NTFS bind-mount I/O errors), squashfs of the rootfs, custom initramfs, GRUB2
-- `live/init.rs` — busybox init: scans block devices, mounts `/dev/aioslivedata` (iso9660) or `/dev/aiosliveiso` (vfat), loop-mounts `boot/aios.squashfs`, `switch_root` into it, starts `rcS`
+- `live/build.sh` — Docker-based build: Alpine 3.24 minirootfs (extracted, `chroot` apk install), static-musl `aios` + `aios-gui` release builds (`--no-default-features`, offline crates via host `CARGO_HOME` registry mount, build in `/tmp/target` to avoid NTFS bind-mount I/O errors), an X.org userspace in the rootfs, squashfs of the rootfs, custom initramfs, GRUB2
+- `live/init.rs` — busybox init (legacy, `USE_BUSYBOX_INIT=1`): scans block devices, loop-mounts `boot/aios.squashfs`, `switch_root` into it, starts `rcS`
+- `live/sfs-up.sh` — aios-init bring-up script (default mode): loads storage/loop/squashfs/ext4 + GPU (dependency-ordered DRM with fbdev fallbacks) modules, finds `aios.squashfs` on the USB (or a `root=` disk), bind-mounts the Alpine userspace under `/`, starts the network (`rcS`), udev and **X.org on `:0` VT7**
 - `live/rcS` — mount-proc/sys/dev, network DHCP on all ethernet/wifi ifaces, launch AIOS TUI on `tty1`
-- `live/aios-launch` — runs `aios` on `tty1`, restarts on crash, falls back to shell
+- `live/aios-launch` — legacy/installed mode: ensures X is running, exports `DISPLAY=:0` + `AIOS_DATA_DIR=/tmp/.aios`, execs `aios` on `tty1`, restarts on crash, falls back to shell
 - `live/aios-install` — interactive installer: lists disks, targets one (e.g. `sda`), partitions GPT (512 MB EFI + ext4 root), copies system, installs GRUB
 - `live/grub.cfg` — GRUB menu: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 s default
 - `live/inittab` — getty-free: `aios-launch` on tty1, askshell on tty2
 
 ### Lifecycle
-- Boot: BIOS/UEFI → GRUB → initramfs init → squashfs root (read-only; `/tmp`, `/run`, `/var/log` on tmpfs) → `aios` TUI → `Esc`/`q` drops to `#` shell → `aios-install` for persistent install to disk
-- Feature gating: `aios` is built with `--no-default-features` for the Live image (no webview) — see `Cargo.toml` `webview` feature (v2.9.4)
+- Boot: BIOS/UEFI → GRUB → initramfs init → `aios-init` (PID 1) mounts proc/sys/dev/tmp, runs `sfs-up.sh` (full userspace: X.org, GUI, tools, eudev, network via `rcS`), sets `DISPLAY=:0` / `AIOS_DATA_DIR=/tmp/.aios` / `XDG_RUNTIME_DIR=/run/aios` in the environment of the supervised blocks → kernel TUI on the console. `W` finds `aios-gui` on `PATH` (bound from the squashfs), inherits `DISPLAY=:0` and opens the dashboard (llvmpipe-software-rendered; no WebKitGTK needed). The squashfs root is read-only; `/tmp`, `/run`, `/var/log` live on tmpfs. `Esc`/`q` drops to `#` shell → `aios-install` for a persistent install to disk (which boots with `root=` + the same initramfs, so the installed system gets the GUI too)
+- Feature gating: `aios`/`aios-gui` are built with `--no-default-features` for the Live image. The GUI launch key `W` keeps working because the `aios-webview` launcher is wry-free; only the native browser hotkeys `B`/`n` and the GUI Browser tab are compiled out (see `webview` feature)
 
 ### Building on Windows (v2.31.1 addendum)
 - `scripts/build-live-iso.ps1` wraps the Docker build above (mounts the repo, `live/`, and the host `~/.cargo/registry` as the offline-crates mount) and reports the ISO/SHA256.
@@ -1279,12 +1282,14 @@ The `live/` directory builds a bootable hybrid (BIOS+UEFI) ISO that boots straig
 
 ### Responsibilities (boot order)
 1. Install `sigaction` handlers: SIGTERM/SIGINT/SIGHUP set a shutdown flag; SIGCHLD (`SA_NOCLDSTOP`) wakes the reap loop; SIGPIPE ignored.
-2. Mount core VFS: `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs; if unavailable, `mknod` `/dev/console` 5:1, `/dev/null` 1:3, `/dev/tty` 5:0), `/tmp` (tmpfs).
+2. Mount core VFS: `/proc` (proc), `/sys` (sysfs), `/dev` (devtmpfs; if unavailable, `mknod` `/dev/console` 5:1, `/dev/null` 1:3, `/dev/tty` 5:0), `/tmp` (tmpfs), `/run` (tmpfs).
 3. Open `/dev/console` and `dup2` it to fd 0/1/2 so all boot logs reach the console.
-4. Spawn and supervise `/system/aios-core` (fallback `/installer`), restarting up to 3 times (300 ms backoff) on crash.
-5. Reap every child with `waitpid(-1, WNOHANG)` so orphaned grandchildren never become permanent zombies.
-6. On SIGTERM/SIGINT: forward to the block, wait up to 5 s, then SIGKILL.
-7. Emergency fallback: if no block exists or restarts are exhausted, start a rescue shell (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`); if no shell is present, park in an idle reap loop — never a kernel panic.
+4. `set_user_env()`: full BusyBox/Alpine `PATH`, `TERM=linux`, `DISPLAY=:0`, `AIOS_DATA_DIR=/tmp/.aios`, `XDG_RUNTIME_DIR=/run/aios` — so the supervised dashboard and kernel blocks get a ready-to-use userspace environment.
+5. `bring_userspace()` (live variant): spawn + supervise `/bin/sh /sfs-up.sh` — loads storage/loop/squashfs/ext4 and GPU (dependency-ordered DRM, fbdev/vesa fallbacks) modules, finds and bind-mounts the Alpine userspace from `aios.squashfs`, brings up networking (`rcS`) and udev, then starts **Xorg on `:0`/VT7**. When no userspace is available the system stays console TUI-only (previous behavior).
+6. Spawn and supervise `/system/aios-core` (fallback `/installer`), restarting up to 3 times (300 ms backoff) on crash.
+7. Reap every child with `waitpid(-1, WNOHANG)` so orphaned grandchildren never become permanent zombies.
+8. On SIGTERM/SIGINT: forward to the block, wait up to 5 s, then SIGKILL.
+9. Emergency fallback: if no block exists or restarts are exhausted, start a rescue shell (`/bin/sh` → `/bin/busybox sh` → `/bin/ash`); if no shell is present, park in an idle reap loop — never a kernel panic.
 
 ### Building the initramfs
 ```

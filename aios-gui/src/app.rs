@@ -145,13 +145,19 @@ pub struct AiosApp {
     pub dep_load_order: Vec<String>,
     pub dep_edges: Vec<(String, String)>,
 
+    #[cfg(feature = "webview")]
     pub browser: Option<aios_webview::WebBrowser>,
+    #[cfg(feature = "webview")]
     pub browser_addr: String,
+    #[cfg(feature = "webview")]
     pub browser_status: Option<String>,
     /// True while a background thread is still creating the native window, so
     /// repeated clicks do not spawn a second browser.
+    #[cfg(feature = "webview")]
     pub browser_opening: bool,
+    #[cfg(feature = "webview")]
     pending_browser: Arc<Mutex<Option<aios_webview::WebBrowser>>>,
+    #[cfg(feature = "webview")]
     pending_browser_error: Arc<Mutex<Option<String>>>,
 
     pub uptime_secs: u64,
@@ -271,11 +277,17 @@ impl AiosApp {
             dep_blocks,
             dep_load_order,
             dep_edges,
+            #[cfg(feature = "webview")]
             browser: None,
+            #[cfg(feature = "webview")]
             browser_addr: String::new(),
+            #[cfg(feature = "webview")]
             browser_status: None,
+            #[cfg(feature = "webview")]
             browser_opening: false,
+            #[cfg(feature = "webview")]
             pending_browser: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "webview")]
             pending_browser_error: Arc::new(Mutex::new(None)),
             uptime_secs: 0,
             ai_config: aios_llm::default_config(),
@@ -1060,12 +1072,14 @@ impl AiosApp {
         self.refresh_blocks();
     }
 
+    #[cfg(feature = "webview")]
     pub fn browser_active(&self) -> bool {
         self.browser.is_some()
     }
 
     /// Start opening the native browser on a background thread. The UI stays
     /// responsive and repeated calls are ignored while an open is in flight.
+    #[cfg(feature = "webview")]
     fn start_browser_open(&mut self, target: String) {
         if self.browser.is_some() || self.browser_opening {
             return;
@@ -1097,6 +1111,7 @@ impl AiosApp {
     }
 
     /// Pick up the result of a background browser open, if it has finished.
+    #[cfg(feature = "webview")]
     fn poll_browser_open(&mut self) {
         if !self.browser_opening {
             return;
@@ -1127,6 +1142,7 @@ impl AiosApp {
         }
     }
 
+    #[cfg(feature = "webview")]
     pub fn open_browser(&mut self) -> Result<(), String> {
         if self.browser.is_some() {
             return Ok(());
@@ -1136,6 +1152,7 @@ impl AiosApp {
         Ok(())
     }
 
+    #[cfg(feature = "webview")]
     pub fn navigate_browser(&mut self, input: &str) -> Result<(), String> {
         let target = aios_webview::resolve_target(input);
         match self.browser.as_ref() {
@@ -1151,6 +1168,7 @@ impl AiosApp {
         Ok(())
     }
 
+    #[cfg(feature = "webview")]
     pub fn browser_back(&mut self) -> Result<(), String> {
         match self.browser.as_ref() {
             Some(browser) => {
@@ -1162,6 +1180,7 @@ impl AiosApp {
         }
     }
 
+    #[cfg(feature = "webview")]
     pub fn browser_forward(&mut self) -> Result<(), String> {
         match self.browser.as_ref() {
             Some(browser) => {
@@ -1173,6 +1192,7 @@ impl AiosApp {
         }
     }
 
+    #[cfg(feature = "webview")]
     pub fn close_browser(&mut self) {
         self.browser_opening = false;
         if let Ok(mut slot) = self.pending_browser.lock() {
@@ -1609,6 +1629,7 @@ impl eframe::App for AiosApp {
         let theme = AiosTheme::default();
         theme.apply(ctx);
 
+        #[cfg(feature = "webview")]
         self.poll_browser_open();
         self.poll_ai();
         self.poll_fm_acks();
@@ -1711,8 +1732,14 @@ impl eframe::App for AiosApp {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(format!(
-                        "HW Tier: {} | IPC: {} pkts | F6=Deps F7=Browser F8=Files F9=Hardware",
-                        self.ai_tier, self.ipc_traffic
+                        "HW Tier: {} | IPC: {} pkts | F6=Deps {}F8=Files F9=Hardware",
+                        self.ai_tier,
+                        self.ipc_traffic,
+                        if cfg!(feature = "webview") {
+                            "F7=Browser "
+                        } else {
+                            ""
+                        },
                     ))
                     .color(theme.text_dim)
                     .size(11.0),
@@ -1737,17 +1764,17 @@ impl eframe::App for AiosApp {
             )
             .show(ctx, |ui| {
                 ui.add_space(4.0);
-                let tabs = [
+                let mut tabs: Vec<(&str, usize)> = vec![
                     ("\u{2302} System Dashboard", 0),
                     ("\u{2b23} WASM Blocks", 1),
                     ("\u{2728} AI Studio", 2),
                     ("\u{1f4e6} App Store", 3),
                     ("\u{1f4e1} Network Settings", 4),
                     ("\u{2913} Deps", 5),
-                    ("\u{1f310} Native Browser", 6),
-                    ("\u{1f4c1} Files", 7),
-                    ("\u{1f527} Hardware", 8),
                 ];
+                #[cfg(feature = "webview")]
+                tabs.push(("\u{1f310} Native Browser", 6));
+                tabs.extend([("\u{1f4c1} Files", 7), ("\u{1f527} Hardware", 8)]);
 
                 for (label, idx) in tabs {
                     let is_active = self.selected_tab == idx;
@@ -1827,7 +1854,10 @@ impl eframe::App for AiosApp {
                 3 => tabs::marketplace::show(ui, self, &theme),
                 4 => tabs::network::show(ui, self, &theme),
                 5 => tabs::deps::show(ui, self, &theme),
+                #[cfg(feature = "webview")]
                 6 => tabs::web::show(ui, self, &theme),
+                #[cfg(not(feature = "webview"))]
+                6 => tabs::overview::show(ui, self, &theme),
                 7 => tabs::files::show(ui, self, &theme),
                 8 => tabs::hardware::show(ui, self, &theme),
                 _ => tabs::overview::show(ui, self, &theme),
@@ -2070,6 +2100,7 @@ mod tests {
             .contains("no installed store copy"));
     }
 
+    #[cfg(feature = "webview")]
     #[test]
     fn test_browser_closed_actions_error() {
         let mut app = AiosApp::new(

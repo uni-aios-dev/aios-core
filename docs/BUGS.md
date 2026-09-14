@@ -1,5 +1,11 @@
 # AIOS Known Bugs & Workarounds
 
+## KNOWN (v2.32.0): the native browser (TUI `B`/`n`, GUI Browser tab) is not available in the Live ISO
+- **Status:** INTRODUCED LIMITATION — the live image ships `aios`/`aios-gui` built with `--no-default-features` (no wry/WebKitGTK) to keep the Alpine rootfs small and avoid a WebKitGTK system-dependency.
+- **Symptom:** on the live USB the `B`/`n` browser hotkeys in the kernel TUI have no effect and the `aios-gui` dashboard has no "Native Browser" (F7) tab. `W` (launch GUI) and every other tab still work.
+- **Root cause:** building/embedding WebKitGTK for the musl live image is heavy and fragile; the browser engine was made an optional `webview` feature and is simply not enabled in the live build.
+- **Workaround / notes:** planned as a follow-up phase (WebKitGTK in the rootfs + `webview` enabled in the live build), currently tracked in `docs/TODO.md`.
+
 ## RESOLVED: Shell / AI Console output lines were clipped at the right edge of the window (no wrapping)
 - **Status:** FIXED in v2.31.5 (reported by the user: «в окне отображения ответов нет переноса в shell»)
 - **Symptom:** long response and command output lines in the Shell tab (7) and the AI Console (3) were silently truncated at the terminal width — no line wrap, the tail of each line was unreachable.

@@ -6,4 +6,5 @@ pub mod hardware;
 pub mod marketplace;
 pub mod network;
 pub mod overview;
+#[cfg(feature = "webview")]
 pub mod web;

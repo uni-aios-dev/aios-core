@@ -24,6 +24,9 @@ fn run() -> i32 {
     setup_console();
     log("aios-init: AIOS initramfs init (PID 1)");
 
+    set_user_env();
+    bring_userspace();
+
     let targets: [(&CStr, &[&CStr]); 2] = [
         (c"/system/aios-core", &[c"/system/aios-core"]),
         (c"/installer", &[c"/installer"]),
@@ -279,6 +282,8 @@ fn mount_all() {
     ensure_dir(c"/sys");
     ensure_dir(c"/dev");
     ensure_dir(c"/tmp");
+    ensure_dir(c"/run");
+    ensure_dir(c"/mnt");
 
     mount_fs(c"proc", c"/proc", c"proc", MS_NOSUID | MS_NOEXEC | MS_NODEV);
     mount_fs(
@@ -291,6 +296,38 @@ fn mount_all() {
         setup_dev_nodes();
     }
     mount_fs(c"tmpfs", c"/tmp", c"tmpfs", MS_NOSUID | MS_NODEV);
+    mount_fs(c"tmpfs", c"/run", c"tmpfs", MS_NOSUID | MS_NODEV);
+}
+
+/// Set the environment the kernel blocks need to reach the full userspace and
+/// the GUI session: standard PATH, terminal type, `DISPLAY` for X, a writable
+/// `AIOS_DATA_DIR` (the squashfs root is read-only) and an XDG runtime dir.
+fn set_user_env() {
+    let _ = std::env::set_var(
+        "PATH",
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    let _ = std::env::set_var("TERM", "linux");
+    let _ = std::env::set_var("DISPLAY", ":0");
+    let _ = std::env::set_var("AIOS_DATA_DIR", "/tmp/.aios");
+    let _ = std::env::set_var("XDG_RUNTIME_DIR", "/run/aios");
+}
+
+/// Run the userspace bring-up script (`/sfs-up.sh`). It loads storage/loop
+/// modules, mounts the AIOS root (squashfs from the USB stick or a `root=`
+/// disk), bind-mounts the full Alpine userspace (X, GUI, tools), starts the
+/// network and the X server. Failure keeps the system in TUI-only mode: the
+/// supervisor continues and falls back to the emergency shell as before.
+fn bring_userspace() {
+    match spawn(c"/bin/sh", &[c"/bin/sh", c"/sfs-up.sh"]) {
+        Some(pid) => {
+            let code = supervise(pid);
+            log(&format!("aios-init: userspace bring-up exit code {code}"));
+        }
+        None => {
+            log("aios-init: userspace bring-up script unavailable — TUI only");
+        }
+    }
 }
 
 fn mount_fs(source: &CStr, target: &CStr, fstype: &CStr, flags: c_ulong) -> bool {
