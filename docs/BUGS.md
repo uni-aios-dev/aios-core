@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: Shell / AI Console output lines were clipped at the right edge of the window (no wrapping)
+- **Status:** FIXED in v2.31.5 (reported by the user: «в окне отображения ответов нет переноса в shell»)
+- **Symptom:** long response and command output lines in the Shell tab (7) and the AI Console (3) were silently truncated at the terminal width — no line wrap, the tail of each line was unreachable.
+- **Root cause:** `draw_shell_tab`/`draw_ai_output` render the output as a ratatui `List` (which truncates, never wraps), and the shared `wrap_line` split by **character count** instead of display width — fine for ASCII, wrong for multi-byte text (Cyrillic letters were already 1 cell, CJK 2).
+- **Fix:** `wrap_line` in `aios/src/tui/ui.rs` now splits by display width via `unicode-width` (combining marks stay attached to their base char, `width == 0` yields no items), and both the Shell and AI Console output lists wrap each logical line into the available panel width before rendering.
+- **Workaround / notes:** none needed post-fix; covered by `wrap_line_wraps_at_display_width` (ASCII / Cyrillic / CJK / combining / width-0 edge cases).
+
 ## RESOLVED: `F10` re-probe was promised by the UI/docs but unbound (F-key bar lied: `10Quit`)
 - **Status:** FIXED in v2.31.1
 - **Symptom:** the System & HW inspector printed "Press F10 to re-probe" and `docs/INTERFACE.md` claimed `F10` triggers a manual full re-probe, yet pressing `F10` did nothing — the F-key bar label read `10Quit`, but quitting is already `q` (or `Ctrl+C`).

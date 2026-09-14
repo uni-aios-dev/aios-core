@@ -369,7 +369,7 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `help` / `?` | — | Show all available commands |
 | `clear` | — | Clear the shell output |
 
-`Esc` clears the current input line. Every keystroke on the Shell tab is captured by the input line, so `q` quits only from other tabs.
+`Esc` clears the current input line. Every keystroke on the Shell tab is captured by the input line, so `q` quits only from other tabs. Output lines longer than the panel width wrap to the next line instead of being clipped (impacting multi-byte text correctly); the shell keeps the last ~300 lines in its scrollback.
 
 Clustering is enabled by configuring `AIOS_CLUSTER_*` env vars (see `docs/ARCHITECTURE.md`); without `AIOS_CLUSTER_PEERS` the `cluster` commands reply `clustering disabled (set AIOS_CLUSTER_PEERS to enable)`. Remote process spawns run on real `aios-process-mgr` scheduler threads via `SchedulerProcessExecutor`.
 

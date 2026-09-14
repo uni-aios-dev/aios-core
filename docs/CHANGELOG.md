@@ -1,5 +1,13 @@
 # AIOS Development Log
 
+## v2.31.5 — Shell / AI Console line wrapping in the TUI (2026-09-14)
+
+### Fixed
+- **Long lines no longer truncate** in the unified `aios` TUI: `draw_shell_tab` and `draw_ai_output` (`aios/src/tui/ui.rs`) now wrap output to the panel width instead of clipping at the right edge. `wrap_line` was rewritten from a character-count splitter to a **display-width-aware** splitter using `unicode-width`, so multi-byte text (Cyrillic, CJK, emoji) wraps at the correct terminal width and combining marks never get separated from their base char. `unicode-width = "0.2"` added to the `aios` Cargo.toml (already in the tree via ratatui/crossterm; no new lock entries).
+
+### Verification
+- New unit test `wrap_line_wraps_at_display_width` covers ASCII chunks, Cyrillic (width-1), CJK (width-2 per char), combining marks and the `width == 0` edge case; all 5 `render_smoke_tests` pass, `cargo clippy -p aios` zero warnings, `cargo fmt --check` clean.
+
 ## v2.31.4 — Linux/macOS ISO build script + offline toggle (2026-09-10)
 
 ### Added

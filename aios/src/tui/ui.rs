@@ -579,22 +579,28 @@ fn draw_ai_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
 
 fn wrap_line(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
-        return vec![text.to_string()];
+        return Vec::new();
     }
     let mut out = Vec::new();
     let mut cur = String::new();
+    let mut used = 0usize;
     for ch in text.chars() {
-        if cur.chars().count() >= width {
-            out.push(cur);
-            cur = String::new();
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w == 0 {
+            cur.push(ch);
+            continue;
         }
-        cur.push(ch);
+        if used + w > width {
+            out.push(std::mem::take(&mut cur));
+            cur.push(ch);
+            used = w.min(width);
+        } else {
+            cur.push(ch);
+            used += w;
+        }
     }
     if !cur.is_empty() {
         out.push(cur);
-    }
-    if out.is_empty() {
-        out.push(String::new());
     }
     out
 }
@@ -1002,24 +1008,23 @@ fn draw_shell_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .split(area);
 
     let height = chunks[0].height.saturating_sub(2) as usize;
+    let content_width = chunks[0].width.saturating_sub(2) as usize;
     let start = app.shell_output.len().saturating_sub(height);
-    let mut items: Vec<ListItem> = app
-        .shell_output
-        .iter()
-        .skip(start)
-        .map(|l| {
-            let style = if l.starts_with("$ ") {
-                Style::default().fg(Color::Cyan)
-            } else if l.starts_with("AIOS:") {
-                Style::default().fg(Color::DarkGray)
-            } else if l.contains("ERROR") {
-                Style::default().fg(Color::Red)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            ListItem::new(Line::from(Span::styled(l.clone(), style)))
-        })
-        .collect();
+    let mut items: Vec<ListItem> = Vec::new();
+    for l in app.shell_output.iter().skip(start) {
+        let style = if l.starts_with("$ ") {
+            Style::default().fg(Color::Cyan)
+        } else if l.starts_with("AIOS:") {
+            Style::default().fg(Color::DarkGray)
+        } else if l.contains("ERROR") {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        for part in wrap_line(l, content_width) {
+            items.push(ListItem::new(Line::from(Span::styled(part, style))));
+        }
+    }
     if items.is_empty() {
         items.push(ListItem::new(Line::from(
             " Shell ready — type 'help' for the command reference. ",
@@ -1265,5 +1270,27 @@ mod render_smoke_tests {
             assert!(text.contains("AIOS Help"), "help title missing at {w}x{h}");
             assert!(text.contains("F2"), "help F2 line missing at {w}x{h}");
         }
+    }
+
+    #[test]
+    fn wrap_line_wraps_at_display_width() {
+        let wide = "x".repeat(80);
+        let parts = wrap_line(&wide, 20);
+        assert_eq!(parts.len(), 4);
+        assert!(parts.iter().all(|p| p.len() == 20));
+
+        let cyr = "привет мир";
+        let parts = wrap_line(cyr, 6);
+        assert_eq!(parts, vec!["привет", " мир"]);
+        assert_eq!(parts.concat(), cyr);
+
+        let cjk = "日".repeat(5);
+        let parts = wrap_line(&cjk, 6);
+        assert_eq!(parts, vec!["日日日", "日日"]);
+        assert_eq!(parts.concat(), cjk);
+
+        assert!(wrap_line("abc", 2).iter().all(|p| p.len() <= 2));
+        assert_eq!(wrap_line("abc", 0), Vec::<String>::new());
+        assert_eq!(wrap_line("a e\u{301}", 10), vec!["a e\u{301}".to_string()]);
     }
 }

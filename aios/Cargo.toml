@@ -34,6 +34,7 @@ aios-sys-control = { path = "../aios-sys-control" }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+unicode-width = "0.2"
 
 sysinfo = "0.33"
 
