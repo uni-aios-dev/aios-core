@@ -63,7 +63,7 @@
 - [x] Dangerous-action confirmations in `aios-studio` (kill process, unload block, compact memory) — second-chance dialog before destructive ops. Done (v2.31.3): `#confirm-overlay` modal gates the command palette, the blocks-table Stop action, the dashboard Compact Memory quick action, and workflows containing `kill` / `unload_block` / `compact` steps.
 - [x] GUI (`aios-gui`) parity: real live data + working actions — done (v2.31.2): `GuiRuntime` (real scheduler/registry/watchdog/ipc/live-update/marketplace) powers processes/blocks/RAM/IPC/watchdog views and kill/suspend/resume/load/unload/install/uninstall/update/hot-swap.
 - [x] Re-verify the v2.30.0 Rust build on a machine with an MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — verified for all touched crates (process-mgr, block-mgr, bridge, gui) on this host; `cargo clippy --workspace` is clean at 0 warnings (v2.31.2).
-- [ ] Installer robustness follow-ups: LUKS/LVM/software-RAID targets, real-size root partition (not capped to test 1.5 GiB), retry/resume after an interrupted copy, verbose toggle, install journal persisted on the target, and an unattended `--auto` acceptance pass on real (legacy BIOS) hardware.
+- [ ] Installer robustness follow-ups: `verbose` toggle, on-target install journal, reinstall guard and full-size root record — **done (v2.33.1)** (`aios.verbose`, `/aios-install.log` with `AIOS INSTALL COMPLETE`, `Type YES to FORCE reinstall`, root size logged; unattended QEMU acceptance re-verified). Remaining: LUKS/LVM/software-RAID targets, retry/resume after an interrupted copy (currently re-copy), and an unattended `--auto` acceptance pass on real (legacy BIOS) hardware.
 
 ## Readiness Assessment (2026-07-29, updated)
 

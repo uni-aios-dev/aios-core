@@ -1,5 +1,43 @@
 # AIOS Development Log
 
+## v2.33.1 — Installer robustness: verbose mode, on-target install journal, reinstall guard (2026-09-15)
+
+Installer robustness follow-ups from the v2.30.0 review: the installer now writes an
+install journal on the target, supports a verbose mode, records where the root
+partition was placed (rest of disk), protects a previous install from an accidental
+re-wipe (interactive), and re-verifies `--auto` (unattended) installs end-to-end.
+
+### Added
+- **`live/aios-install` — install journal persisted on the target.** Every step is
+  timestamped and appended to `/aios-install.log` on the installed root partition
+  (`AIOS Installer start`, `root size: <bytes> (rest of disk)`, `system copied`,
+  `BIOS/EFI grub rc=...`, `grub.cfg written`, `AIOS INSTALL COMPLETE`), echoed to the
+  console, and printed in full right before the success banner. On a physical install
+  any failure is now readable from the target disk.
+- **Verbose toggle.** `aios.verbose` on the kernel command line (or `--verbose`/`-v`
+  when running `aios-install` directly) makes the installer also dump the final
+  partition table (`sfdisk --dump`) before the copy.
+- **Reinstall guard.** If `${DEV}3` already carries the AIOS label (previous install),
+  an interactive run asks `Type YES to FORCE reinstall`; the unattended `aios.yes`
+  path skips the extra prompt and proceeds (used by the QEMU/scripted acceptance loop).
+- **Full-size root partition.** The root partition uses the rest of the disk by design
+  (`,,` in `sfdisk`); the actual size is now recorded to the journal (verified at
+  1607467008 bytes on the 2 GiB QEMU target).
+
+### Changed
+- **`build_final.py` cmdline injection:** `aios.yes` now also sets `AUTO=1` and
+  `aios.verbose` sets `VERBOSE=1` (`AIOS-dbg` line reports both).
+- **Rebuilt bootable ISO** (Limine two-entry, `rdinit=/installer`) with the new
+  installer, written raw to the physical USB stick and byte-verified head/tail.
+
+### Verified
+- QEMU unattended install (`rdinit=/installer aios.target=sda aios.yes
+  console=ttyS0 panic=5`, 2 GiB vdisk, 2048 MiB RAM): journal with all steps and
+  `AIOS INSTALL COMPLETE`, BIOS grub rc=0, EFI grub rc=0; the installed disk boots to
+  `AIOS TUI mode - starting interactive dashboard`.
+- `aios.verbose` run shows `VERBOSE='1'` and dumps the GPT `label: gpt` table.
+- USB flash: WROTE 368 777 216 bytes, `RESULT: OK` (head+tail match).
+
 ## v2.33.0 — Implemented and verified Bootable AIOS Installer (2026-09-15)
 
 The bootable ISO now carries a two-entry Limine menu (**AIOS Live (kernel TUI)** and

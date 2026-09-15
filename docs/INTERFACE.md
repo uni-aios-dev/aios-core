@@ -10,7 +10,8 @@ The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight i
 - Inside the TUI press `Esc`/`q` to exit to the shell prompt `#`. The system is read-only; only `/tmp`, `/run`, `/var/log` are writable (tmpfs). Changes do not persist across reboots.
 - Network: DHCP is attempted on all ethernet/wifi interfaces at boot (see the TUI Network tab for the assigned address).
 - The **AIOS Installer** entry lists the disks, asks for the target (e.g. `sda`), requires confirmation `YES`, then partitions the disk (GPT: 1 MiB BIOS boot + 512 MiB EFI + ext4 root), copies the system, and installs GRUB (BIOS i386-pc + UEFI x86_64 EFI removable). Reboot after the success message.
-- Automated install: pass `aios.target=<dev>` and `aios.yes` on the kernel command line to skip the interactive prompts (used for unattended/scripted installs).
+- Automated install: pass `aios.target=<dev>` and `aios.yes` on the kernel command line to skip the interactive prompts (used for unattended/scripted installs). `aios.verbose` additionally dumps the final partition table.
+- The installer writes a timestamped **install journal** to `/aios-install.log` on the target root partition (every step up to `AIOS INSTALL COMPLETE`), so any failure of a physical install is readable after booting the target again. If the target root partition already carries the AIOS label, an interactive install asks `Type YES to FORCE reinstall` before wiping.
 
 ### Building the ISO
 

@@ -1380,3 +1380,12 @@ brings up proc/sys, a `tmpfs` `/dev` with busybox `mdev -s`, then `exec`s
 The installed disk then boots SeaBIOS/GRUB → kernel → initramfs → `aios-init`
 (PID 1) → `/system/aios-core` → AIOS TUI. Full loop verified in QEMU and the ISO
 written raw to a physical USB stick.
+
+Every step is timestamped into an install journal at `/aios-install.log` on the
+target root partition (ending with an `AIOS INSTALL COMPLETE` marker), so a failed
+physical install is diagnosable by re-booting the target. `aios.verbose` on the
+cmdline (or `--verbose` passed to `aios-install`) additionally dumps the final GPT
+table via `sfdisk --dump` before the copy. If the target root already carries the
+AIOS label, an interactive run prompts `Type YES to FORCE reinstall` before wiping;
+the unattended `aios.yes` path proceeds without the extra prompt. The root partition
+always takes the rest of the disk and its actual size is recorded in the journal.
