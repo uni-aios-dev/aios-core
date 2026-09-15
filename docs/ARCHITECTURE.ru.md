@@ -1329,3 +1329,48 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   - Panic-обработчик печатает в обе консоли и уходит в `halt_loop`.
 - `aios-kernel-run`: сборщик и производитель BIOS-образа (`BiosBoot::new(elf).create_disk_image`) + запускатор QEMU (`-serial stdio -display none -no-reboot`).
 - Проверка: `cargo run --release` в `aios-kernel-run` — в serial выводятся memory regions, смещение физической памяти, framebuffer, RSDP, `[serial] Milestone 0 OK.`, `[serial] Milestone 1: interrupts online.`, `[serial] Milestone 2: paging + kernel heap online.`, затем `tick 1s/2s/...` каждую секунду; введённые клавиши печатаются как `key 'x' (0xNN)`. Клавиатуру можно проверить через монитор QEMU: `sendkey h`. Строки проверки вехи 2: `[serial] memory manager init, usable regions = N`, `[serial] paging selftest OK.`, `[serial] heap: Vec<u64> 1000 elems, sum=999000`, `[serial] heap: stress 200 strings len_sum=5100, final Vec sum=1498500`.
+
+## Загрузочный установщик AIOS (Live ISO → диск, v2.33.0)
+
+Загрузочный ISO собирается из `iso/stage` (BIOS/UEFI CD-образы Limine, `limine.conf`,
+`vmlinuz`, самопальный `initramfs.cpio.gz`) с помощью `xorriso` (El Torito BIOS + UEFI)
+и `limine.exe bios-install` (isohybrid MBR). Меню Limine из двух пунктов:
+
+- **AIOS Live (ядро TUI)** — `rdinit=/init`: грузит ровно тот initramfs, в котором
+  проводятся live-тесты с флешки/ISO.
+- **AIOS Installer** — `rdinit=/installer` с опциональными флагами автоматизации
+  `aios.target=<dev>` / `aios.yes`.
+
+### Runtime установщика
+
+`/init` или `/installer` — это PID 1 интрамфса; обёртка установщика (`/installer`)
+поднимает proc/sys, `tmpfs` `/dev` с busybox `mdev -s`, затем `exec`-ает
+`aios-install` (`aios-core/live/aios-install`). Подъём устройств без udev:
+
+1. модули ядра storage/filesystem грузятся через busybox `modprobe` (в initramfs
+   лежит дерево модулей ядра, включая `modules.dep`/`modules.symbols`),
+2. `mdev -s` пересоздаёт `/dev`, а `ensure_nodes()` `mknod`-ит партиции напрямую из
+   `/proc/partitions`, потому что devtmpfs гоняется с загрузкой модуля.
+
+### Установка на целевой диск
+
+`aios-install` валидирует устройство, затем:
+
+1. `wipefs -a` + `sfdisk --wipe always` с GPT-разметкой из трёх разделов:
+   **1 МиБ BIOS boot** (`type=21686148-6449-6E6F-744E-656564454649` — обязателен,
+   чтобы GRUB смог встроить BIOS `core.img` на GPT), **512 МиБ EFI System** и
+   остальное как **ext4 root**.
+2. принудительное форматирование: `mkfs.fat -F 32 -I` (EFI) и `mkfs.ext4 -F` (root) —
+   устаревшие сигнатуры ФС никогда не блокируют подтверждением.
+3. `tar`-копия живого rootfs (initramfs, включая `boot/vmlinuz` и встроенный
+   `boot/initramfs.cpio.gz`) на целевой диск.
+4. GRUB ставится для **BIOS** (`--target=i386-pc`) на целевой диск и для **UEFI**
+   (`--target=x86_64-efi --removable`) в `/boot/efi`; stderr уходит в `grub-err.txt`
+   на целевом диске, `rc` печатается.
+5. `grub.cfg` пишется heredoc **без кавычек**, чтобы `${DEV}` раскрылся шеллом в
+   реальное устройство (`root=/dev/sda3 console=ttyS0`,
+   `initrd /boot/initramfs.cpio.gz`).
+
+Установленный диск дальше грузится SeaBIOS/GRUB → ядро → initramfs → `aios-init`
+(PID 1) → `/system/aios-core` → AIOS TUI. Полный цикл проверен в QEMU, ISO записан
+raw-записью на физическую USB-флешку.

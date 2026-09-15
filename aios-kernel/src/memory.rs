@@ -116,6 +116,11 @@ pub fn translate(addr: u64) -> Option<u64> {
 }
 
 /// Maps a single page, allocating page-table frames as needed.
+///
+/// Upper-level entries (PML4E/PDPTE/PDE) created by the bootloader are NOT
+/// user-accessible by default; when `user` is requested the USER flag is
+/// forced into every level the walk touches so ring-3 can actually traverse
+/// the table (a single supervisor upper entry faults the whole walk).
 pub fn map_page(virt: u64, phys: u64, user: bool) -> Result<(), &'static str> {
     if !is_page_aligned(virt) || !is_page_aligned(phys) {
         return Err("map_page: address not page aligned");
@@ -123,12 +128,27 @@ pub fn map_page(virt: u64, phys: u64, user: bool) -> Result<(), &'static str> {
     let flags = PTE_PRESENT | PTE_WRITABLE | if user { PTE_USER } else { 0 };
     let pml4 = cr3() & PTE_FRAME;
     unsafe {
-        let pml4e = ensure_table(pml4, (virt >> 39) & INDEX_MASK, flags)?;
-        let pdpte = ensure_table(pml4e & PTE_FRAME, (virt >> 30) & INDEX_MASK, flags)?;
+        let idx0 = (virt >> 39) & INDEX_MASK;
+        let mut pml4e = ensure_table(pml4, idx0, flags)?;
+        if user {
+            write_entry(pml4, idx0, pml4e | PTE_USER);
+            pml4e |= PTE_USER;
+        }
+        let idx1 = (virt >> 30) & INDEX_MASK;
+        let mut pdpte = ensure_table(pml4e & PTE_FRAME, idx1, flags)?;
+        if user {
+            write_entry(pml4e & PTE_FRAME, idx1, pdpte | PTE_USER);
+            pdpte |= PTE_USER;
+        }
         if pdpte & PTE_HUGE != 0 {
             return Err("map_page: 1GiB page in path");
         }
-        let pde = ensure_table(pdpte & PTE_FRAME, (virt >> 21) & INDEX_MASK, flags)?;
+        let idx2 = (virt >> 21) & INDEX_MASK;
+        let mut pde = ensure_table(pdpte & PTE_FRAME, idx2, flags)?;
+        if user {
+            write_entry(pdpte & PTE_FRAME, idx2, pde | PTE_USER);
+            pde |= PTE_USER;
+        }
         if pde & PTE_HUGE != 0 {
             return Err("map_page: 2MiB page in path");
         }
@@ -178,7 +198,7 @@ unsafe fn ensure_table(parent: u64, index: u64, flags: u64) -> Result<u64, &'sta
         table.add(i).write_volatile(0);
     }
     write_entry(parent, index, frame | flags);
-    Ok(frame)
+    Ok(frame | flags)
 }
 
 unsafe fn read_entry(table_phys: u64, index: u64) -> u64 {

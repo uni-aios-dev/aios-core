@@ -23,6 +23,14 @@ core::arch::global_asm!(include_str!(concat!(env!("OUT_DIR"), "/irq_stubs.S")));
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct InterruptFrame {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
     pub rdi: u64,
     pub rsi: u64,
     pub rbp: u64,
@@ -50,24 +58,23 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
         8 => fatal(frame, "DOUBLE FAULT"),
         13 => fatal(frame, "GENERAL PROTECTION FAULT"),
         14 => page_fault(frame),
-        v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => {
-            match vector {
-                32 => {
-                    TICKS.fetch_add(1, Ordering::Relaxed);
-                    pic_eoi(vector);
-                    crate::sched::tick(frame);
-                }
-                33 => {
-                    LAST_SCANCODE.store(
-                        unsafe { port::inb(KEYBOARD_PORT) } as u64,
-                        Ordering::Relaxed,
-                    );
-                    pic_eoi(vector);
-                }
-                _ => pic_eoi(vector),
+        v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => match vector {
+            32 => {
+                TICKS.fetch_add(1, Ordering::Relaxed);
+                pic_eoi(vector);
+                crate::sched::tick(frame);
             }
-        }
-        128 => crate::ipc::syscall(frame),
+            33 => {
+                LAST_SCANCODE.store(
+                    unsafe { port::inb(KEYBOARD_PORT) } as u64,
+                    Ordering::Relaxed,
+                );
+                pic_eoi(vector);
+            }
+            _ => pic_eoi(vector),
+        },
+        128 => crate::syscalls::syscall(frame),
+        250 => crate::sched::schedule(frame),
         _ => fatal(frame, "UNHANDLED INTERRUPT"),
     }
 }
@@ -75,10 +82,14 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
 fn page_fault(frame: &InterruptFrame) -> ! {
     let cr2 = read_cr2();
     kprintln!(
-        "PAGE FAULT: addr={:#x} ip={:#x} err={:#x}",
+        "PAGE FAULT: addr={:#x} ip={:#x} err={:#x} cs={:#x} ss={:#x} rsp={:#x} rflags={:#x}",
         cr2,
         frame.rip,
-        frame.error_code
+        frame.error_code,
+        frame.cs,
+        frame.ss,
+        frame.rsp,
+        frame.rflags
     );
     vprintln!(
         "PAGE FAULT: addr={:#x} ip={:#x} err={:#x}",

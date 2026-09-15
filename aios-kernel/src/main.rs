@@ -7,11 +7,11 @@ mod gdt;
 mod heap;
 mod idt;
 mod interrupts;
-mod ipc;
 mod memory;
 mod port;
 mod sched;
 mod serial;
+mod syscalls;
 mod user;
 mod vga;
 
@@ -37,7 +37,10 @@ struct KernelStack([u8; KERNEL_STACK_SIZE]);
 #[allow(dead_code)]
 struct DoubleFaultStack([u8; DOUBLE_FAULT_STACK_SIZE]);
 
+#[link_section = ".bss"]
 static KERNEL_STACK: KernelStack = KernelStack([0; KERNEL_STACK_SIZE]);
+
+#[link_section = ".bss"]
 static DOUBLE_FAULT_STACK: DoubleFaultStack = DoubleFaultStack([0; DOUBLE_FAULT_STACK_SIZE]);
 
 fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
@@ -174,30 +177,48 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
 
     vprintln!("Milestone 3 OK: preemptive round-robin scheduler + ring 3 armed");
     vprintln!("Milestone 4 OK: kernel IPC mailboxes behind the int 0x80 gate");
+    vprintln!("Milestone 5 OK: user syscalls (write/getpid/sleep) + idle fallback");
     kprintln!("[serial] Milestone 3 OK: preemptive scheduler online.");
     kprintln!("[serial] Milestone 4 OK: IPC syscalls online.");
+    kprintln!("[serial] Milestone 5 OK: user syscalls (write/getpid/sleep).");
 
-    idle_loop();
+    sched::boot_finished();
+    loop {
+        unsafe {
+            core::arch::asm!("hlt", options(nomem, nostack));
+        }
+    }
 }
 
-/// Ring-0 demo thread: proves kernel tasks are preempted too.
+/// Ring-0 demo thread: proves kernel tasks are preempted too. Yields
+/// cooperatively at fixed intervals so the PIT never needs to switch it while
+/// it is mid-print.
 fn kernel_worker() -> ! {
     let mut alive: u64 = 0;
     loop {
-        for _ in 0..20_000_000u64 {
+        let mut i = 0u64;
+        while i < 20_000_000u64 {
             core::hint::spin_loop();
+            i += 1;
+            if i & 0xFFFFF == 0 {
+                crate::sched::yield_kernel();
+            }
         }
         alive += 1;
         vprintln!("[ktask] alive #{}", alive);
         kprintln!("[serial] [ktask] alive #{}", alive);
+        crate::sched::yield_kernel();
     }
 }
 
-fn idle_loop() -> ! {
+/// Kernel idle task: parked until preempted, prints a rolling tick timestamp
+/// each second. Runs on its own dedicated stack on a fabricated frame.
+pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
     loop {
+        crate::sched::yield_kernel();
         let ticks = interrupts::TICKS.load(Ordering::Relaxed);
         if ticks >= interrupts::TIMER_HZ && ticks - last_tick_print >= interrupts::TIMER_HZ {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
@@ -207,7 +228,7 @@ fn idle_loop() -> ! {
         // Every 5 seconds: scheduler + IPC proof counters.
         let stats_window = 5 * interrupts::TIMER_HZ;
         if ticks >= stats_window && ticks - last_stats_print >= stats_window {
-            let (sent, recv) = ipc::stats();
+            let (sent, recv) = syscalls::stats();
             let switches = sched::switch_count();
             vprintln!(
                 "[stats] switches={} ipc_sent={} ipc_recv={}",
@@ -215,7 +236,12 @@ fn idle_loop() -> ! {
                 sent,
                 recv
             );
-            kprintln!("[serial] [stats] switches={} sent={} recv={}", switches, sent, recv);
+            kprintln!(
+                "[serial] [stats] switches={} sent={} recv={}",
+                switches,
+                sent,
+                recv
+            );
             last_stats_print = ticks;
         }
         let sc = interrupts::LAST_SCANCODE.load(Ordering::Relaxed);

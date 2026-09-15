@@ -32,8 +32,9 @@ echo "Partitioning $DEV (GPT)..."
 wipefs -a "$DEV" 2>/dev/null || true
 sfdisk --wipe always "$DEV" <<'EOF'
 label: gpt
+size=1M, type=21686148-6449-6E6F-744E-656564454649
 size=512M, type=uefi, bootable
-,, type=linux
+,,
 EOF
 
 sleep 2
@@ -41,14 +42,14 @@ partprobe "$DEV" 2>/dev/null || true
 sleep 2
 
 echo "Formatting partitions..."
-mkfs.fat -F 32 -n AIOS-EFI "${DEV}1"
-mkfs.ext4 -L AIOS "${DEV}2"
+mkfs.fat -F 32 -I -n AIOS-EFI "${DEV}2"
+mkfs.ext4 -F -L AIOS "${DEV}3"
 
 echo "Mounting target..."
 mkdir -p /mnt/target /mnt/esp
-mount "${DEV}2" /mnt/target
+mount "${DEV}3" /mnt/target
 mkdir -p /mnt/target/boot/efi
-mount "${DEV}1" /mnt/target/boot/efi
+mount "${DEV}2" /mnt/target/boot/efi
 
 echo "Copying system (this may take a while)..."
 cd /
@@ -57,19 +58,30 @@ tar cf - --exclude=proc --exclude=sys --exclude=dev --exclude=run --exclude=mnt 
          --exclude='var/cache' --exclude='var/run' . | tar xf - -C /mnt/target
 
 echo "Installing GRUB..."
-if [ -d /usr/lib/grub/i386-pc ]; then
-  grub-install --boot-directory=/mnt/target/boot --target=i386-pc --recheck "$DEV" 2>/dev/null || echo "NOTE: BIOS grub skipped"
+if [ -f /usr/sbin/grub-install ]; then
+  echo "-- grub-install found in PATH: $(command -v grub-install)"
+  grub-install --boot-directory=/mnt/target/boot --target=i386-pc "$DEV" > /mnt/target/grub-err.txt 2>&1
+  grub_rc=$?
+  echo "-- BIOS grub rc=$grub_rc"
+  [ $grub_rc -eq 0 ] || tail -30 /mnt/target/grub-err.txt
+else
+  echo "-- grub-install MISSING"
 fi
-if [ -d /usr/lib/grub/x86_64-efi ]; then
-  grub-install --boot-directory=/mnt/target/boot --target=x86_64-efi --removable 2>/dev/null || echo "NOTE: EFI grub skipped"
+if [ -d /usr/lib/grub/x86_64-efi ] && [ -f /usr/sbin/grub-install ]; then
+  grub_err=$(grub-install --boot-directory=/mnt/target/boot --target=x86_64-efi --removable 2>&1)
+  grub_rc=$?
+  echo "-- EFI grub rc=$grub_rc"
+  [ $grub_rc -eq 0 ] || echo "$grub_err" | head -20
 fi
 
+mkdir -p /mnt/target/boot/grub
+echo "-- creating grub.cfg"
 cat > /mnt/target/boot/grub/grub.cfg <<GRUB
 set timeout=5
 set default=0
 menuentry "AIOS" {
-  linux /boot/vmlinuz root=${DEV}2 quiet
-  initrd /boot/initramfs.gz
+  linux /boot/vmlinuz root=${DEV}3 console=ttyS0 quiet
+  initrd /boot/initramfs.cpio.gz
 }
 GRUB
 

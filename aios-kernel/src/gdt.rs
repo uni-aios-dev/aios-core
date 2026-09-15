@@ -69,12 +69,12 @@ impl GdtEntry {
 
     fn tss_high(base: u64) -> Self {
         Self {
-            limit_low: 0,
-            base_low: ((base >> 32) & 0xFFFF) as u16,
-            base_middle: ((base >> 48) & 0xFF) as u8,
+            limit_low: ((base >> 32) & 0xFFFF) as u16,
+            base_low: ((base >> 48) & 0xFFFF) as u16,
+            base_middle: 0,
             access: 0,
             granularity: 0,
-            base_high: ((base >> 56) & 0xFF) as u8,
+            base_high: 0,
         }
     }
 }
@@ -85,7 +85,7 @@ struct Descriptor {
     base: u64,
 }
 
-#[repr(C, align(16))]
+#[repr(C, packed(4))]
 struct TaskStateSegment {
     reserved: u32,
     rsp0: u64,

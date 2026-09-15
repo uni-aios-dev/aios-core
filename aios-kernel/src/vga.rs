@@ -189,6 +189,21 @@ pub fn vga_clear_screen() {
     VGA_LOCK.unlock();
 }
 
+/// Writes raw bytes to the VGA console, sanitizing non-printable characters
+/// to a block glyph (used by the `SYS_WRITE` syscall — a user program must
+/// never be able to corrupt the text buffer with escape sequences).
+pub fn write_bytes(bytes: &[u8]) {
+    VGA_LOCK.lock();
+    let w = unsafe { &mut *core::ptr::addr_of_mut!(VGA_WRITER) };
+    for &byte in bytes {
+        match byte {
+            0x20..=0x7E | b'\n' | b'\t' => w.write_byte(byte),
+            _ => w.write_byte(0xFE),
+        }
+    }
+    VGA_LOCK.unlock();
+}
+
 #[macro_export]
 macro_rules! vprintln {
     () => ($crate::vga::vga_print(format_args!("\n")));

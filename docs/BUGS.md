@@ -515,3 +515,48 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
 - **Fix:** extraction into a pure helper `HardwareProfile::parse_wmic_memory_csv` that requires `parts.len() >= 3` (Node + Capacity + Speed) before touching any index; malformed/short rows are skipped instead of crashing
 - **Tests:** `test_parse_wmic_memory_csv_full_rows` (two DIMMs summed, speed read) and `test_parse_wmic_memory_csv_short_rows_no_panic` (short 2-field row skipped, valid row still parsed)
 - **Affected files:** `aios-hal/src/hardware.rs`
+
+### BUG-040: `grub-install` failed with exit 127 in the live installer environment
+- **Status:** FIXED (v2.33.0)
+- **Symptom:** the installer copied the rootfs to the target, then died at
+  `grub-install` with `exitcode=0x00000100`/`0x7f`; kernel panic "Attempted to kill init".
+- **Root Cause:** the Alpine `grub-install` binary links `liblzma.so.5` and
+  `libdevmapper.so.1.02` (in packages `xz-libs` and `device-mapper-libs`); with
+  only the `xz`/`lvm2` binaries in the image, the dynamic linker refused to start
+  the binary (exit 127). The kernel later loads the `dm` module on demand.
+- **Fix:** ship `xz-libs` and `device-mapper-libs` in the initramfs; grub-install
+  for i386-pc and x86_64-efi now exits 0. Diagnostics were added via a
+  `ldd`-based check in the build-time debug path (`AIOS_DBG=1`), and stderr of
+  grub-install is captured to `/mnt/target/grub-err.txt`.
+- **Affected files:** build tooling (initramfs package list), `live/aios-install`
+
+### BUG-041: `sfdisk` rejects GPT type names with spaces (`type=BIOS boot`)
+- **Status:** FIXED (v2.33.0)
+- **Symptom:** heredoc line `size=1M, type=BIOS boot` aborted partitioning with
+  `>>> line 2: unsupported command`.
+- **Root Cause:** sfdisk parses comma-separated fields; a type name containing a
+  space is not accepted as a bare token.
+- **Fix:** use the raw GUID for the BIOS boot partition type:
+  `type=21686148-6449-6E6F-744E-656564454649`.
+- **Affected files:** `live/aios-install`
+
+### BUG-042: quoted heredoc left `${DEV}` literal in grub.cfg → `root=3`
+- **Status:** FIXED (v2.33.0)
+- **Symptom:** the installed system failed to boot: kernel panic
+  `VFS: Unable to mount root fs on "3" or unknown-block(0,3)`.
+- **Root Cause:** grub.cfg was generated with a quoted heredoc (`cat <<'GRUB'`),
+  so `${DEV}` stayed literal in the file; GRUB then substituted its own (empty)
+  `${DEV}` variable, turning `root=${DEV}3` into `root=3`.
+- **Fix:** generate the heredoc unquoted (`<<GRUB`) so the shell expands `${DEV}`
+  before GRUB reads the file.
+- **Affected files:** `live/aios-install`
+
+### BUG-043: GRUB cannot embed BIOS core.img on GPT without a BIOS Boot partition
+- **Status:** KNOWN LIMITATION, handled (v2.33.0)
+- **Symptom:** `grub-install --target=i386-pc` warned `this GPT partition label
+  contains no BIOS Boot Partition; embedding won't be possible` and exited 1.
+- **Root Cause:** on GPT disks GRUB BIOS has nowhere to embed `core.img` (the
+  post-MBR gap is not usable for GPT layout without a dedicated partition).
+- **Workaround:** the installer creates a dedicated 1 MiB BIOS boot partition
+  (GUID `21686148-...`) as the first partition, so BIOS embedding works. UEFI
+  boots are unaffected (EFI system partition is used).

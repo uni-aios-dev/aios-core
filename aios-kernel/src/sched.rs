@@ -1,22 +1,43 @@
-//! Preemptive round-robin scheduler (Milestone 3).
+//! Preemptive round-robin scheduler (Milestones 3+5), hybrid switching.
 //!
 //! Tasks are full trap-frame snapshots ([`InterruptFrame`]); switching means
-//! saving the frame captured by the timer ISR into the outgoing task and
+//! saving the frame captured by an interrupt into the outgoing task and
 //! overwriting the trap frame on the stack with the incoming task's saved
 //! state, so the final `iretq` resumes (or enters) the chosen task — ring 0
 //! tasks resume inside their interrupted code, ring 3 tasks are entered
 //! through a fabricated user-mode frame (CS=0x1B / SS=0x23).
+//!
+//! Ring-3 tasks are preemptive: the PIT may switch them at any interrupt.
+//! Ring-0 kernel threads switch only cooperatively through [`yield_kernel`]
+//! (`int 0xfa`); a hardware IRQ refreshes their saved frame state but never
+//! switches them away, so every resume lands at a known, rsp-stable
+//! instruction instead of inside transient formatting code.
+//!
+//! Milestone 5 adds a per-task `sleep_until` deadline: a sleeping task is
+//! skipped by the selection loop and stops consuming CPU; when its deadline
+//! passes it is woken in place. With every user task asleep the rotation
+//! naturally falls back to task slot 0 (the idle context), which is logged as
+//! `[sched] idle`.
 
-use crate::interrupts::{TIMER_HZ, TICKS};
+use crate::gdt::{KERNEL_CS, USER_CS, USER_DS};
 use crate::interrupts::InterruptFrame;
-use crate::gdt::{USER_CS, USER_DS};
+use crate::interrupts::{TICKS, TIMER_HZ};
 use crate::{kprintln, vprintln};
 use core::sync::atomic::Ordering;
+
+extern "C" {
+    /// Resumes a ring-0 task from its saved frame: restores all general
+    /// registers, switches to the task's own kernel stack and `iretq`'s.
+    /// Never returns. `rdi` holds the frame pointer on entry.
+    #[allow(dead_code)]
+    fn aios_restore_ring0(frame: *const InterruptFrame) -> !;
+}
 
 /// Switch cadence: preemption fires 4 times per second.
 const SWITCH_DIVIDER: u64 = TIMER_HZ / 4;
 
-pub const MAX_TASKS: usize = 4;
+/// One slot is always reserved for the CPU-wide idle task (slot 0).
+pub const MAX_TASKS: usize = 5;
 
 #[derive(Clone, Copy)]
 struct Task {
@@ -24,6 +45,8 @@ struct Task {
     /// Set once the task's frame holds real state (boot task captures its
     /// frame on the first switch away; spawned frames start fabricated).
     valid_frame: bool,
+    /// Tick at which the task may run again; `0` = runnable now.
+    sleep_until: u64,
     frame: InterruptFrame,
 }
 
@@ -32,7 +55,16 @@ impl Task {
         Self {
             present: false,
             valid_frame: false,
+            sleep_until: 0,
             frame: InterruptFrame {
+                r15: 0,
+                r14: 0,
+                r13: 0,
+                r12: 0,
+                r11: 0,
+                r10: 0,
+                r9: 0,
+                r8: 0,
                 rdi: 0,
                 rsi: 0,
                 rbp: 0,
@@ -58,12 +90,49 @@ static mut TASKS: [Task; MAX_TASKS] = [
     Task::empty(),
     Task::empty(),
     Task::empty(),
+    Task::empty(),
 ];
 
 /// Index of the currently scheduled task (`0` = boot/idle context).
 static mut CURRENT: isize = -1;
 static mut LAST_SWITCH_TICK: u64 = 0;
 static mut SWITCH_COUNT: u64 = 0;
+/// True until <code>kernel_main</code> hands off to <code>idle_loop</code>.
+///
+/// While set, schedule() refuses to capture or switch the boot context (slot
+/// 0): its frame would snapshot mid-startup code whose kernel-stack region is
+/// reused once idle_loop begins, making a later "resume" jump into clobbered
+/// stack frames.
+static mut BOOT_ACTIVE: bool = true;
+
+/// Marks the end of boot: re-anchors slot 0 to a fresh `idle_loop` entry on
+/// its own dedicated kernel stack and deregisters the boot context so its
+/// stack frames are never resumed. Call right before `kernel_main` parks
+/// itself in an idle loop.
+pub fn boot_finished() {
+    unsafe {
+        #[allow(static_mut_refs)]
+        {
+            let idle_top = IDLE_STACK.as_ptr() as usize as u64 + IDLE_STACK.len() as u64;
+            let t = tasks();
+            t[0].present = true;
+            t[0].valid_frame = true;
+            t[0].frame.rip = crate::idle_loop as *const () as u64;
+            t[0].frame.cs = 0x08;
+            t[0].frame.ss = 0x10;
+            t[0].frame.ds = 0x10;
+            t[0].frame.rsp = idle_top;
+            t[0].frame.rflags = 0x202;
+            CURRENT = -1;
+            BOOT_ACTIVE = false;
+        }
+    }
+}
+
+/// Reserved region below the boot context's stack: idle runs here once boot
+/// hands off, so its saved frames never overlap abandoned startup frames.
+const IDLE_STACK_SIZE_BYTES: usize = 32 * 1024;
+static mut IDLE_STACK: [u8; IDLE_STACK_SIZE_BYTES] = [0; IDLE_STACK_SIZE_BYTES];
 
 fn tasks() -> &'static mut [Task; MAX_TASKS] {
     unsafe {
@@ -80,7 +149,10 @@ pub fn init() {
         CURRENT = 0;
         LAST_SWITCH_TICK = 0;
     }
-    vprintln!("[sched] ready (idle=task0, round-robin every {} ticks)", SWITCH_DIVIDER);
+    vprintln!(
+        "[sched] ready (idle=task0, round-robin every {} ticks)",
+        SWITCH_DIVIDER
+    );
     kprintln!("[serial] [sched] ready");
 }
 
@@ -156,57 +228,145 @@ pub fn tick(frame: &mut InterruptFrame) {
     schedule(frame);
 }
 
-fn schedule(frame: &mut InterruptFrame) {
+pub fn schedule(frame: &mut InterruptFrame) {
+    let ticks = TICKS.load(Ordering::Relaxed);
     let t = tasks();
     let cur = unsafe {
         #[allow(static_mut_refs)]
         CURRENT
     };
-    if cur < 0 {
+    unsafe {
+        #[allow(static_mut_refs)]
+        if cur == 0 && BOOT_ACTIVE {
+            return;
+        }
+    }
+
+    // A hardware IRQ (PIT) never switches a running ring-0 kernel task away:
+    // its resume point would land inside transient print/formatting code whose
+    // live stack pointer differs from the frame the task's code was compiled
+    // against (idle_loop hoists an argument anchor at entry). Ring-0 threads
+    // switch only through `yield_kernel` (`int 0xfa`), so every resume happens
+    // at a known, rsp-stable instruction. The boot hand-off (CUR == -1) is the
+    // exception: its frame is abandoned by `boot_finished`, never resumed, so
+    // it may be replaced by the fabricated idle frame.
+    if (32..=47).contains(&frame.vector) && frame.cs == KERNEL_CS as u64 && cur != -1 {
         return;
     }
 
-    // Capture the outgoing context once.
-    if !t[cur as usize].valid_frame {
-        t[cur as usize].frame = *frame;
-        t[cur as usize].valid_frame = true;
-    } else if t[cur as usize].present {
-        // Refresh only CPU-owned fields so fabricated user frames keep their
-        // segment registers while general registers track live progress.
-        let saved = &mut t[cur as usize].frame;
-        saved.rax = frame.rax;
-        saved.rcx = frame.rcx;
-        saved.rdx = frame.rdx;
-        saved.rbx = frame.rbx;
-        saved.rsi = frame.rsi;
-        saved.rdi = frame.rdi;
-        saved.rip = frame.rip;
-        saved.rsp = frame.rsp;
-        saved.cs = frame.cs;
-        saved.ss = frame.ss;
-        saved.rflags = frame.rflags;
+    if cur >= 0 {
+        // In 64-bit mode the CPU always pushes SS/RSP on interrupt entry,
+        // even when the interrupt stays in ring 0, so `frame.rsp` holds the
+        // real pre-interrupt stack pointer for both ring-0 and ring-3
+        // captures. The frame base sits 16 bytes below that (offsets +168..+184).
+        let true_rsp = frame.rsp;
+        if !t[cur as usize].valid_frame {
+            t[cur as usize].frame = *frame;
+            t[cur as usize].frame.rsp = true_rsp;
+            t[cur as usize].valid_frame = true;
+        } else if t[cur as usize].present {
+            // Refresh only CPU-owned fields so fabricated user frames keep their
+            // segment registers while general registers track live progress.
+            let saved = &mut t[cur as usize].frame;
+            saved.r8 = frame.r8;
+            saved.r9 = frame.r9;
+            saved.r10 = frame.r10;
+            saved.r11 = frame.r11;
+            saved.r12 = frame.r12;
+            saved.r13 = frame.r13;
+            saved.r14 = frame.r14;
+            saved.r15 = frame.r15;
+            saved.rax = frame.rax;
+            saved.rcx = frame.rcx;
+            saved.rdx = frame.rdx;
+            saved.rbx = frame.rbx;
+            saved.rbp = frame.rbp;
+            saved.rsi = frame.rsi;
+            saved.rdi = frame.rdi;
+            saved.rip = frame.rip;
+            saved.rsp = true_rsp;
+            saved.cs = frame.cs;
+            saved.ss = frame.ss;
+            saved.rflags = frame.rflags;
+        }
     }
 
-    // Pick the next runnable slot.
+    // Pick the next runnable slot; sleeping tasks are skipped until their
+    // deadline passes, then woken in place. With every other task asleep the
+    // rotation lands on slot 0 (the boot/idle context).
     let mut next: isize = -1;
     for step in 1..=MAX_TASKS as isize {
         let cand = ((cur + step) % MAX_TASKS as isize) as usize;
-        if t[cand].present && cand as isize != cur {
-            next = cand as isize;
-            break;
+        if !t[cand].present || cand as isize == cur {
+            continue;
         }
+        let deadline = t[cand].sleep_until;
+        if deadline != 0 {
+            if deadline <= ticks {
+                t[cand].sleep_until = 0;
+                vprintln!("[sched] pid {} woke", cand);
+                kprintln!("[serial] [sched] pid {} woke", cand);
+            } else {
+                continue;
+            }
+        }
+        next = cand as isize;
+        break;
     }
     if next < 0 || next == cur {
         return;
     }
 
+    if next == 0 {
+        vprintln!("[sched] idle");
+        kprintln!("[serial] [sched] idle");
+    }
+
     let incoming = t[next as usize].frame;
-    *frame = incoming;
     unsafe {
         #[allow(static_mut_refs)]
         {
             CURRENT = next;
             SWITCH_COUNT += 1;
         }
+    }
+    if incoming.cs == KERNEL_CS as u64 {
+        unsafe {
+            aios_restore_ring0(core::ptr::addr_of!(incoming));
+        }
+    }
+    *frame = incoming;
+}
+
+/// Puts the current task to sleep for `ticks` PIT ticks and yields the CPU.
+///
+/// Called from the `SYS_SLEEP` syscall path (interrupts disabled, so the
+/// global task table is safe to touch). The caller must have set the success
+/// status in `frame.rax` beforehand — it is preserved into the task's saved
+/// frame by the outgoing-context refresh above. A zero or negative request
+/// still sleeps for at least one tick so the task always gets rescheduled.
+pub fn sleep_current(frame: &mut InterruptFrame, ticks: u64) {
+    let now = TICKS.load(Ordering::Relaxed);
+    let t = tasks();
+    let cur = unsafe {
+        #[allow(static_mut_refs)]
+        CURRENT
+    };
+    if cur > 0 && t[cur as usize].present {
+        t[cur as usize].sleep_until = now.saturating_add(ticks.max(1));
+    }
+    schedule(frame);
+}
+
+/// Cooperative switch point for ring-0 kernel threads.
+///
+/// Executes `int 0xfa` (interrupt gate 250, DPL 0): the CPU pushes a trap
+/// frame on the caller's own kernel stack exactly like the timer path, so the
+/// scheduler captures the live stack pointer (`frame.rsp`) and later resumes
+/// the task at the instruction right after this call. Ring-0 tasks are never
+/// switched by a hardware IRQ; they switch only here, at a rsp-stable point.
+pub fn yield_kernel() {
+    unsafe {
+        core::arch::asm!("int $$0xfa", options(nostack));
     }
 }

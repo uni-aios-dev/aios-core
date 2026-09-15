@@ -1336,3 +1336,47 @@ A fresh `x86_64-unknown-none` microkernel that boots directly from `bootloader::
   - Panic handler prints via both consoles and `halt_loop`s.
 - `aios-kernel-run`: build runner + BIOS image producer (`BiosBoot::new(elf).create_disk_image`) + QEMU launcher (`-serial stdio -display none -no-reboot`).
 - Verify: `cargo run --release` in `aios-kernel-run` — serial shows memory regions, physical memory offset, framebuffer, RSDP, `[serial] Milestone 0 OK.`, `[serial] Milestone 1: interrupts online.`, `[serial] Milestone 2: paging + kernel heap online.`, then `tick 1s/2s/...` every second; injected keys print as `key 'x' (0xNN)`. Keyboard can be tested via QEMU monitor: `sendkey h`. Milestone 2 check lines: `[serial] memory manager init, usable regions = N`, `[serial] paging selftest OK.`, `[serial] heap: Vec<u64> 1000 elems, sum=999000`, `[serial] heap: stress 200 strings len_sum=5100, final Vec sum=1498500`.
+
+## Bootable AIOS Installer (Live ISO → disk, v2.33.0)
+
+The bootable ISO is built from `iso/stage` (Limine BIOS/UEFI CD images, `limine.conf`,
+`vmlinuz`, self-baked `initramfs.cpio.gz`) with `xorriso` (El Torito BIOS + UEFI) and
+`limine.exe bios-install` (isohybrid MBR). It presents a two-entry Limine menu:
+
+- **AIOS Live (kernel TUI)** — `rdinit=/init`: boots the exact initramfs used for
+  flash/ISO live testing.
+- **AIOS Installer** — `rdinit=/installer` with `aios.target=<dev>` / `aios.yes`
+  accepted as optional automation switches.
+
+### Installer runtime
+
+`/init` or `/installer` are the initramfs PID 1; the installer wrapper (`/installer`)
+brings up proc/sys, a `tmpfs` `/dev` with busybox `mdev -s`, then `exec`s
+`aios-install` (`aios-core/live/aios-install`). Device bring-up has no udev:
+
+1. storage/filesystem kernel modules are loaded with busybox `modprobe` (the
+   initramfs ships the kernel module tree incl. `modules.dep`/`modules.symbols`),
+2. `mdev -s` repopulates `/dev`, and `ensure_nodes()` `mknod`s partition nodes
+   straight from `/proc/partitions` because devtmpfs races the module load.
+
+### Install to a target disk
+
+`aios-install` validates the device, then:
+
+1. `wipefs -a` + `sfdisk --wipe always` with a GPT layout of three partitions:
+   **1 MiB BIOS boot** (`type=21686148-6449-6E6F-744E-656564454649` — mandatory for
+   GRUB to embed a BIOS `core.img` on GPT), **512 MiB EFI System**, and the rest as
+   **ext4 root**.
+2. forced formatting: `mkfs.fat -F 32 -I` (EFI) and `mkfs.ext4 -F` (root) so stale
+   filesystem signatures never block on a confirmation prompt.
+3. `tar` copy of the live rootfs (the initramfs including `boot/vmlinuz` and the
+   baked `boot/initramfs.cpio.gz`) onto the target.
+4. GRUB installed for **BIOS** (`--target=i386-pc`) to the target disk and for
+   **UEFI** (`--target=x86_64-efi --removable`) into `/boot/efi`; stderr is captured
+   to `grub-err.txt` on the target and `rc` echoed.
+5. `grub.cfg` written with an **unquoted heredoc** so `${DEV}` is shell-expanded to
+   the real device (`root=/dev/sda3 console=ttyS0`, `initrd /boot/initramfs.cpio.gz`).
+
+The installed disk then boots SeaBIOS/GRUB → kernel → initramfs → `aios-init`
+(PID 1) → `/system/aios-core` → AIOS TUI. Full loop verified in QEMU and the ISO
+written raw to a physical USB stick.

@@ -35,6 +35,17 @@ pub fn _print(args: fmt::Arguments) {
     SerialWriter.write_fmt(args).unwrap();
 }
 
+/// Writes raw bytes to COM1 without any filtering or formatting (used by the
+/// `SYS_WRITE` syscall to echo user console output).
+pub fn write_bytes(bytes: &[u8]) {
+    for &byte in bytes {
+        unsafe {
+            while port::inb(COM1 + 5) & 0x20 == 0 {}
+            port::outb(COM1, byte);
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! kprint {
     ($($arg:tt)*) => ($crate::serial::_print(format_args!($($arg)*)));

@@ -1,11 +1,14 @@
 # QEMU smoke test for the AIOS freestanding kernel.
 #
 # Builds the BIOS image headlessly and boots it in QEMU, capturing COM1,
-# then asserts the Milestone 3/4 proof lines:
+# then asserts the Milestone 3-5 proof lines:
 #   - ring-3 user tasks enter via the int 0x80 gate
 #   - preemptive scheduler context-switches (frame-copy path)
 #   - IPC mailboxes carry traffic between pids
 #   - a ring-0 kernel worker thread is preempted too
+#   - user console output lands through SYS_WRITE (M5)
+#   - SYS_GETPID reports the right pid (M5)
+#   - SYS_SLEEP blocks a task and the scheduler wakes it / idles (M5)
 #
 # Exit codes: 0 = all checks passed, 1 = checks failed, 2 = skipped (no QEMU).
 #
@@ -35,7 +38,8 @@ if (Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue) {
 } else {
     foreach ($c in @(
         "C:\Program Files\qemu\qemu-system-x86_64.exe",
-        "C:\Program Files (x86)\qemu\qemu-system-x86_64.exe")) {
+        "C:\Program Files (x86)\qemu\qemu-system-x86_64.exe",
+        (Join-Path $root "..\tools\qemu\qemu-system-x86_64.exe"))) {
         if (Test-Path $c) { $qemu = $c; break }
     }
 }
@@ -58,10 +62,14 @@ $serial = Get-Content $log -Raw -ErrorAction SilentlyContinue
 if (-not $serial) { Write-Host "FAIL: no serial output captured at $log"; exit 1 }
 
 $checks = @(
-    @{ Name = "ring3 entry via int 0x80"; Pattern = '\[ring3\] pid \d+ entered ring 3' },
-    @{ Name = "IPC mailbox traffic";      Pattern = '\[stats\][^\r\n]*sent=[1-9]' },
-    @{ Name = "scheduler switching";      Pattern = '\[stats\] switches=\d+' },
-    @{ Name = "kernel worker preempted";  Pattern = '\[ktask\] alive' }
+    @{ Name = "ring3 entry via int 0x80";     Pattern = '\[ring3\] pid \d+ entered ring 3' },
+    @{ Name = "IPC mailbox traffic";          Pattern = '\[stats\][^\r\n]*sent=[1-9]' },
+    @{ Name = "scheduler switching";          Pattern = '\[stats\] switches=\d+' },
+    @{ Name = "kernel worker preempted";      Pattern = '\[ktask\] alive' },
+    @{ Name = "user console output (write)";  Pattern = '\[sysc\] pid \d+ write \d+:' },
+    @{ Name = "user self-id (getpid)";        Pattern = '\[sysc\] pid 3 getpid -> 3' },
+    @{ Name = "task sleep (SYS_SLEEP)";       Pattern = '\[sched\] pid 3 sleep \d+' },
+    @{ Name = "task wake + idle fallback";    Pattern = '\[sched\] pid 3 woke' }
 )
 
 $failed = 0

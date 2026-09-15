@@ -55,6 +55,7 @@
 
 - [x] Сделать подключение `aios-init` + `build_initramfs.sh` в `live/build.sh` шаг [4] как `/init` initramfs режимом по умолчанию (сделано в v2.14.0; прежний путь busybox сохранён за `USE_BUSYBOX_INIT=1`)
 - [x] Защита очистки `rootfs` / флаг `--keep-rootfs` в `build_initramfs.sh` — сделано (v2.13.0)
+- [x] Загрузочный двухпунктовый ISO (Limine **AIOS Live** + **AIOS Installer**) с полностью автоматическим установщиком — сделано (v2.33.0): `rdinit=/installer`, интерактивная или безлюдная (`aios.target=<устройство>` / `aios.yes`) загрузка, GPT (1 МиБ BIOS boot + 512 МиБ EFI + ext4 root), GRUB BIOS+UEFI, проверено end-to-end в QEMU и записано на физическую флешку.
 
 ## Планируемые follow-up (из ревью v2.30.0)
 
@@ -62,6 +63,7 @@
 - [x] Подтверждения опасных действий в `aios-studio` (kill process, unload block, compact memory) — диалог второго шанса перед деструктивными операциями. Сделано (v2.31.3): модальное окно `#confirm-overlay` закрывает командную палитру, Stop в таблице блоков, быстрое действие Compact Memory на дашборде и воркфлоу с шагами `kill` / `unload_block` / `compact`.
 - [x] Паритет GUI (`aios-gui`): реальные живые данные + рабочие действия — сделано (v2.31.2): `GuiRuntime` (реальные scheduler/registry/watchdog/ipc/live-update/marketplace) питает вкладки процессов/блоков/RAM/IPC/watchdog и действия kill/suspend/resume/load/unload/install/uninstall/update/hot-swap.
 - [x] Повторно проверить сборку Rust v2.30.0 на машине с MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — проверено для всех затронутых крейтов (process-mgr, block-mgr, bridge, gui) на этом хосте; `cargo clippy --workspace` — 0 предупреждений (v2.31.2).
+- [ ] Follow-up по надёжности установщика: цели LUKS/LVM/software-RAID, корневой раздел реального размера (не тестовые 1,5 ГиБ), retry/resume после прерванной копии, переключатель verbose, журнал установки на целевой системе и безлюдный приёмочный прогон `--auto` на реальном (legacy BIOS) железе.
 
 ## Оценка готовности (2026-07-28, обновлено)
 

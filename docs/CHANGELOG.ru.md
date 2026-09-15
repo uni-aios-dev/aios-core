@@ -1,5 +1,60 @@
 # Журнал разработки AIOS
 
+## v2.33.0 — Реализован и проверен загрузочный установщик AIOS (2026-09-15)
+
+Загрузочный ISO теперь несёт двухпунктовое меню Limine (**AIOS Live (kernel TUI)** и
+**AIOS Installer**), а установщик ставит AIOS с носителя на локальный диск
+полностью, проверено в QEMU и записано на физическую флешку.
+
+### Добавлено
+- **`live/aios-install` — полноценный автоматический установщик.** Запись ISO
+  «AIOS Installer» загружает тот же initramfs с `rdinit=/installer` (PID 1 →
+  обёртка `/installer` → скрипт установщика):
+  - интерактивные запросы целевого диска и подтверждения `YES`, переопределяемые
+    через `aios.target=<устройство>` и `aios.yes` в командной строке ядра;
+  - разметка GPT: **1 МиБ BIOS boot + 512 МиБ EFI + ext4 root** (BIOS boot-раздел
+    обязателен, чтобы GRUB смог встроить BIOS `core.img` на GPT);
+  - поднятие модулей через busybox `modprobe` по `modules.dep` ядра
+    (драйверы хранилищ + ФС `ext4/fat`), `tmpfs` `/dev` + `mdev -s` и хелпер
+    `ensure_nodes()`, создающий partition-узлы через `mknod` из
+    `/proc/partitions` (udev в live-образе нет);
+  - принудительное форматирование (`mkfs.fat -I`, `mkfs.ext4 -F`), чтобы старые
+    сигнатуры ФС не блокировали процесс вопросом «Proceed anyway?»;
+  - копирование корневой ФС из живого initramfs, затем установка GRUB для
+    **обоих** вариантов: BIOS (`--target=i386-pc`) и UEFI
+    (`--target=x86_64-efi --removable`);
+  - сгенерированный `grub.cfg` с `root=/dev/<устройство>3 console=ttyS0` и
+    `initrd /boot/initramfs.cpio.gz` (встроенный pass-1 initramfs).
+
+### Изменено
+- **`limine.conf`: запись Installer теперь использует `rdinit=/installer`**
+  (и обе записи получили `console=ttyS0`); раньше стояло `init=`, которое не
+  работает для initramfs-образов (нужно именно `rdinit=`).
+- **`live/aios-install`: grub.cfg пишется heredoc-блоком без кавычек.** В
+  `<<'GRUB'` с кавычками `${DEV}` не раскрывался; GRUB затем сам подставлял свою
+  env-переменную `${DEV}` как пустую, получая `root=3` и ошибку монтирования.
+  Форма без кавычек вшивает литеральное устройство, например `/dev/sda3`.
+
+### Исправлено
+- `grub-install` падал с exit 127 в live-образе: ему на рантайме нужны
+  `liblzma.so.5` и `libdevmapper.so.1.02` → в initramfs теперь входят `xz-libs` и
+  `device-mapper-libs` (плюс автоподгрузка модуля ядра `dm`).
+- sfdisk отвергал имена GPT-типов с пробелом (`type=BIOS boot`,
+  «unsupported command») → используется сырой GUID
+  `21686148-6449-6E6F-744E-656564454649`.
+- Результаты GRUB BIOS/EFI (`rc=0`) теперь фиксируются и выводятся (stderr →
+  `grub-err.txt` на целевой системе), так что сбой установки показывает точную
+  ошибку вместо тихого выхода; установленная система загружается в TUI AIOS
+  (проверено в QEMU).
+
+### Проверено
+- Полный цикл установки в QEMU: разметка → форматирование → копия → GRUB
+  (BIOS `rc=0`, EFI `rc=0`) → «AIOS has been installed»; полученный диск затем
+  загружается SeaBIOS/GRUB → ядро → initramfs → режим TUI AIOS.
+- ISO грузит обе записи в QEMU; финальный ISO (368 777 216 байт, El Torito
+  BIOS+UEFI, isohybrid-записи Limine MBR) записан сырьём на Kingston
+  DataTraveler 3.0 и проверен по голове/хвосту OK.
+
 ## v2.32.0 — Полноценный GUI на Live USB (своё ядро, свой X-сеанс) (2026-09-14)
 
 Загрузка Live ISO, где ядерный TUI AIOS работает как PID 1, теперь поднимает

@@ -55,6 +55,7 @@
 
 - [x] Wire `aios-init` + `build_initramfs.sh` into `live/build.sh` step [4] as the initramfs `/init` by default (done in v2.14.0; legacy busybox path kept behind `USE_BUSYBOX_INIT=1`)
 - [x] Add a `rootfs` cleanup guard / `--keep-rootfs` flag to `build_initramfs.sh` — done (v2.13.0)
+- [x] Bootable two-entry ISO (Limine **AIOS Live** + **AIOS Installer**) with a fully automated installer — done (v2.33.0): `rdinit=/installer`, interactive or `aios.target=<dev>` / `aios.yes` boot, GPT (1 MiB BIOS boot + 512 MiB EFI + ext4 root), GRUB BIOS+UEFI, verified end-to-end in QEMU and written to a physical USB stick.
 
 ## Planned follow-ups (from v2.30.0 review)
 
@@ -62,6 +63,7 @@
 - [x] Dangerous-action confirmations in `aios-studio` (kill process, unload block, compact memory) — second-chance dialog before destructive ops. Done (v2.31.3): `#confirm-overlay` modal gates the command palette, the blocks-table Stop action, the dashboard Compact Memory quick action, and workflows containing `kill` / `unload_block` / `compact` steps.
 - [x] GUI (`aios-gui`) parity: real live data + working actions — done (v2.31.2): `GuiRuntime` (real scheduler/registry/watchdog/ipc/live-update/marketplace) powers processes/blocks/RAM/IPC/watchdog views and kill/suspend/resume/load/unload/install/uninstall/update/hot-swap.
 - [x] Re-verify the v2.30.0 Rust build on a machine with an MSVC linker (`cargo test --workspace` + `cargo clippy --workspace`) — verified for all touched crates (process-mgr, block-mgr, bridge, gui) on this host; `cargo clippy --workspace` is clean at 0 warnings (v2.31.2).
+- [ ] Installer robustness follow-ups: LUKS/LVM/software-RAID targets, real-size root partition (not capped to test 1.5 GiB), retry/resume after an interrupted copy, verbose toggle, install journal persisted on the target, and an unattended `--auto` acceptance pass on real (legacy BIOS) hardware.
 
 ## Readiness Assessment (2026-07-29, updated)
 

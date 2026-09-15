@@ -1,5 +1,58 @@
 # AIOS Development Log
 
+## v2.33.0 — Implemented and verified Bootable AIOS Installer (2026-09-15)
+
+The bootable ISO now carries a two-entry Limine menu (**AIOS Live (kernel TUI)** and
+**AIOS Installer**) and the installer installs AIOS from the boot media to a local
+disk end-to-end, verified in QEMU and written to a physical USB stick.
+
+### Added
+- **`live/aios-install` — full unattended installer.** The ISO Installer entry boots
+  the same initramfs with `rdinit=/installer` (PID 1 → `/installer` wrapper → the
+  installer script):
+  - interactive prompts for target disk and `YES` confirmation, overridable via
+    `aios.target=<dev>` and `aios.yes` on the kernel command line;
+  - GPT layout: **1 MiB BIOS boot partition + 512 MiB EFI + ext4 root** (a BIOS boot
+    partition is mandatory for GRUB to embed a BIOS `core.img` on GPT);
+  - module bring-up via busybox `modprobe` using the kernel's `modules.dep`
+    (storage drivers + `ext4/fat` filesystems), `tmpfs` `/dev` + `mdev -s`
+    scan and an `ensure_nodes()` helper that `mknod`s partition nodes from
+    `/proc/partitions` (no udev in the live image);
+  - forced formatting (`mkfs.fat -I`, `mkfs.ext4 -F`) so stale FS signatures do not
+    block with a "Proceed anyway?" prompt;
+  - rootfs copy from the live initramfs, then GRUB installed for **both** BIOS
+    (`--target=i386-pc`) and UEFI (`--target=x86_64-efi --removable`);
+  - generated `grub.cfg` with `root=/dev/<dev>3 console=ttyS0` and
+    `initrd /boot/initramfs.cpio.gz` (the self-baked pass-1 initramfs).
+
+### Changed
+- **`limine.conf`: Installer entry now uses `rdinit=/installer`** (and both entries
+  get `console=ttyS0`); previously `init=` was used, which does not run for
+  initramfs images (must be `rdinit=`).
+- **`live/aios-install`: grub.cfg is written with an unquoted heredoc.** A quoted
+  `<<'GRUB'` left `${DEV}` un-expanded; GRUB then re-expanded its own `${DEV}`
+  env-var to nothing, producing `root=3` and a mount failure. The unquoted form
+  bakes the literal device like `/dev/sda3`.
+
+### Fixed
+- `grub-install` failed with exit 127 in the live image: it needs
+  `liblzma.so.5` and `libdevmapper.so.1.02` at runtime → the initramfs now ships
+  `xz-libs` and `device-mapper-libs` (plus `kernel`'s `dm` auto-load).
+- `sfdisk` GPT type names containing a space (`type=BIOS boot`) are rejected
+  with "unsupported command" → the raw GUID
+  `21686148-6449-6E6F-744E-656564454649` is used instead.
+- GRUB BIOS/EFI `rc=0` is now captured and surfaced (stderr → `grub-err.txt` on
+  the target) so a failing install reports the exact error instead of a silent
+  exit; installed system boots to the AIOS TUI (verified in QEMU).
+
+### Verified
+- Full install loop in QEMU: partition → format → copy → GRUB (BIOS `rc=0`,
+  EFI `rc=0`) → "AIOS has been installed"; the produced disk then boots
+  SeaBIOS/GRUB → kernel → initramfs → AIOS TUI mode.
+- ISO boots both entries from QEMU; final ISO (368,777,216 B, El Torito BIOS +
+  UEFI, Limine isohybrid MBR installed) written raw to a Kingston
+  DataTraveler 3.0 and head/tail-verified OK.
+
 ## v2.32.0 — Full GUI on the live USB (own kernel, own X session) (2026-09-14)
 
 Booting the Live ISO with the AIOS kernel TUI as PID 1 now brings up the **full
