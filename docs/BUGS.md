@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: Live/Installer media showed a black screen after the boot menu on a real laptop
+- **Status:** FIXED in v2.33.2 (user report: «при выборе Live или Installer загружается vmlinuz, потом initramfs — и на этом всё стоит, чёрный экран»)
+- **Symptom:** the Limine boot menu rendered on the laptop screen; choosing either entry loaded `vmlinuz` + `initramfs`; then the screen went black and stayed black — while the machine kept booting invisibly. The same media passed our QEMU tests because the harness captures the serial console.
+- **Root cause:** both `limine.conf` entries set `console=ttyS0` as the *only* console. `aios-init::setup_console()` dup2()'s `/dev/console` onto fds 0/1/2, so every writer (aios-init logs, kernel TUI via `/system/aios-core`, installer, rescue shell) targeted the serial UART — which does not exist on the laptop. `limine.conf` in `iso/stage` and the installed-system `grub.cfg` in `live/aios-install` were both affected.
+- **Fix:** dual console `console=ttyS0 console=tty0` (tty0 last → `/dev/console` = VGA) in both Limine entries (v2.33.2); installed `grub.cfg` uses `console=tty0`.
+- **Workaround / notes:** none needed post-fix. Related known limitation: the hybrid ISO is legacy-MBR (Limine BIOS stage) — pure-UEFI firmware without CSM, and Secure Boot, will not boot it; tracked in `docs/TODO.md` (real-hardware acceptance).
+
 ## KNOWN (v2.32.0): the native browser (TUI `B`/`n`, GUI Browser tab) is not available in the Live ISO
 - **Status:** INTRODUCED LIMITATION — the live image ships `aios`/`aios-gui` built with `--no-default-features` (no wry/WebKitGTK) to keep the Alpine rootfs small and avoid a WebKitGTK system-dependency.
 - **Symptom:** on the live USB the `B`/`n` browser hotkeys in the kernel TUI have no effect and the `aios-gui` dashboard has no "Native Browser" (F7) tab. `W` (launch GUI) and every other tab still work.

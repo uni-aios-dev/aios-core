@@ -1348,6 +1348,10 @@ The bootable ISO is built from `iso/stage` (Limine BIOS/UEFI CD images, `limine.
 - **AIOS Installer** — `rdinit=/installer` with `aios.target=<dev>` / `aios.yes`
   accepted as optional automation switches.
 
+Both entries set `console=ttyS0 console=tty0` (tty0 last): `/dev/console` resolves to the
+VGA screen, so the kernel TUI, installer and rescue shell are visible on real hardware
+(serial-only `console=ttyS0` left the laptop screen black — fixed in v2.33.2).
+
 ### Installer runtime
 
 `/init` or `/installer` are the initramfs PID 1; the installer wrapper (`/installer`)

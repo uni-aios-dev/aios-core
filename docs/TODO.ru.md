@@ -55,7 +55,7 @@
 
 - [x] Сделать подключение `aios-init` + `build_initramfs.sh` в `live/build.sh` шаг [4] как `/init` initramfs режимом по умолчанию (сделано в v2.14.0; прежний путь busybox сохранён за `USE_BUSYBOX_INIT=1`)
 - [x] Защита очистки `rootfs` / флаг `--keep-rootfs` в `build_initramfs.sh` — сделано (v2.13.0)
-- [x] Загрузочный двухпунктовый ISO (Limine **AIOS Live** + **AIOS Installer**) с полностью автоматическим установщиком — сделано (v2.33.0): `rdinit=/installer`, интерактивная или безлюдная (`aios.target=<устройство>` / `aios.yes`) загрузка, GPT (1 МиБ BIOS boot + 512 МиБ EFI + ext4 root), GRUB BIOS+UEFI, проверено end-to-end в QEMU и записано на физическую флешку.
+- [x] Загрузочный двухпунктовый ISO (Limine **AIOS Live** + **AIOS Installer**) с полностью автоматическим установщиком — сделано (v2.33.0): `rdinit=/installer`, интерактивная или безлюдная (`aios.target=<устройство>` / `aios.yes`) загрузка, GPT (1 МиБ BIOS boot + 512 МиБ EFI + ext4 root), GRUB BIOS+UEFI, проверено end-to-end в QEMU и записано на физическую флешку. Чёрный экран на реальном железе после меню загрузки продиагностирован (одиночный `console=ttyS0`; исправлен в v2.33.2 на `console=ttyS0 console=tty0` + в `grub.cfg` — `console=tty0`) — **в ожидании: повторный физический тест Live/Installer на ноутбуке с BIOS, затем безлюдная приёмка установки на реальном железе.**
 
 ## Планируемые follow-up (из ревью v2.30.0)
 

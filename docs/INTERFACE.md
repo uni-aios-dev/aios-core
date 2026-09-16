@@ -2,7 +2,7 @@
 
 ## Live USB (bootable stick)
 
-The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight into the AIOS kernel TUI on `tty1`. There is no login prompt.
+The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight into the AIOS kernel TUI on `tty1`. There is no login prompt. Kernel console, the TUI, the installer and the rescue shell are shown on the VGA screen (`console=ttyS0 console=tty0` in `limine.conf`); the serial head is kept for diagnostics.
 
 - Boot the machine from the USB stick (BIOS/UEFI boot menu → USB). Limine shows a menu (6 s default):
   1. **AIOS Live (kernel TUI)** — boots the AIOS initramfs and auto-launches the AIOS TUI

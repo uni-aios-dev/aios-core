@@ -1341,6 +1341,10 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - **AIOS Installer** — `rdinit=/installer` с опциональными флагами автоматизации
   `aios.target=<dev>` / `aios.yes`.
 
+В обеих записях стоит `console=ttyS0 console=tty0` (tty0 последней): `/dev/console`
+резолвится в VGA-экран, поэтому TUI ядра, установщик и аварийный шелл видны на реальном
+железе (одиночный `console=ttyS0` оставлял экран ноутбука чёрным — исправлено в v2.33.2).
+
 ### Runtime установщика
 
 `/init` или `/installer` — это PID 1 интрамфса; обёртка установщика (`/installer`)

@@ -2,7 +2,7 @@
 
 ## Live USB (загрузочная флешка)
 
-Загрузочная флешка AIOS (`AIOS-LIVE`, гибридный BIOS+UEFI ISO) загружается сразу в TUI ядра AIOS на `tty1`. Промпта входа нет.
+Загрузочная флешка AIOS (`AIOS-LIVE`, гибридный BIOS+UEFI ISO) загружается сразу в TUI ядра AIOS на `tty1`. Промпта входа нет. Консоль ядра, TUI, установщик и аварийный шелл выводятся на VGA-экран (`console=ttyS0 console=tty0` в `limine.conf`); serial-вывод сохранён для диагностики.
 
 - Загрузите машину с флешки (меню загрузки BIOS/UEFI → USB). Limine показывает меню (6 с по умолчанию):
   1. **AIOS Live (kernel TUI)** — загрузка initramfs AIOS и автозапуск TUI AIOS

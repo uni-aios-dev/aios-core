@@ -1,5 +1,36 @@
 # AIOS Development Log
 
+## v2.33.2 — Real-hardware boot fix: a serial-only console left the laptop screen black (2026-09-16)
+
+The bootable media boots fine through QEMU (which logs the serial console), but the first
+physical test on the user's legacy-BIOS laptop showed a black screen right after
+"vmlinuz / initramfs" were handed over to the kernel. Root cause: both Limine entries
+shipped `console=ttyS0` as the **only** console, so `/dev/console` — which `aios-init`
+(`setup_console()` dup2's it onto fds 0/1/2), the kernel TUI knowledge and the installer
+and the emergency shell all write to — pointed at a COM port that does not exist on the
+laptop. The system actually booted and ran invisibly.
+
+### Fixed
+- **`iso/stage/boot/limine/limine.conf`:** both entries (Live + Installer) now use
+  `console=ttyS0 console=tty0` (tty0 last → `/dev/console` = VGA). Kernel printk goes to
+  both consoles; the AIOS Live TUI, the installer and the rescue shell are visible on the
+  laptop screen.
+- **`live/aios-install`:** the `grub.cfg` written to an installed system now uses
+  `console=tty0` instead of the serial-only `console=ttyS0`, so an installed AIOS does
+  not show the same black screen.
+
+### Verified
+- Rebuilt `out/aios-live-v2.iso` (368 777 216 B) and re-installed the Limine MBR on the
+  ISO (partition 1 active, stage 2 @ 0x200).
+- QEMU: the new ISO booted as a raw disk registers both consoles
+  (`printk: legacy console [tty0] enabled`, `[ttyS0] enabled`) and reaches
+  `Run /init as init process`; a direct-kernel boot confirms
+  `aios-init: started block pid …: /system/aios-core` followed by
+  `AIOS TUI mode — starting interactive dashboard`; a VGA screendump through the QEMU
+  monitor shows a live (non-black) display.
+- Reflashed the physical Kingston (Disk 3): flash SHA-256 == ISO SHA-256 ==
+  A73DAD4F…9AA4F9 (byte-identical), MBR sig 55AA, stage 2 @ 0x200 verified.
+
 ## v2.33.1 — Installer robustness: verbose mode, on-target install journal, reinstall guard (2026-09-15)
 
 Installer robustness follow-ups from the v2.30.0 review: the installer now writes an
