@@ -1352,6 +1352,38 @@ Both entries set `console=ttyS0 console=tty0` (tty0 last): `/dev/console` resolv
 VGA screen, so the kernel TUI, installer and rescue shell are visible on real hardware
 (serial-only `console=ttyS0` left the laptop screen black — fixed in v2.33.2).
 
+### Pre-init GPU module loader (v2.33.3)
+
+The initramfs `/init` entry is not the raw `aios-init` binary: it is a `aios-loader` shell
+script that runs *before* any userspace, solving the chicken-and-egg of fbcon needing a
+frame buffer while the GPU module only creates one under a DRM driver. The loader:
+
+1. mounts `proc`, `sys`, `dev` (busybox `mknod /dev/console c 5 1`), then `mkdir -p /dev/shm`
+2. `modprobe`s all five x86 GPU DRM drivers (`radeon`, `nouveau`, `gma500_gfx`, `i915`,
+   `amdgpu`); any that are absent or fail are silently skipped
+3. `dd`-extracts the original `aios-init` ELF binary — **embedded inside the script itself**
+   after a `#BIN\n` marker — into `/tmp/aios-init`, using baked fixed-width 10-digit offsets:
+   `BINOFF:=000000001234` (skip= byte offset of the marker in `/init`), `BINSZ:=0000000382240`
+4. `chmod 755 /tmp/aios-init` and `exec /tmp/aios-init`
+
+The original `aios-init` is therefore still PID 1 and the rest of the boot chain
+(`aios-init` → `bring_userspace()` / sfs-up.sh → `/system/aios-core` → kernel TUI) is
+unchanged; the loader is transparent.
+
+### Kernel initramfs unpacker constraints
+
+Only **in-place content replacement** of the `/init` entry is reliable:
+- The kernel unpacker writes entries until the first `TRAILER!!!`; entries appended after it
+  are silently ignored (the file appears at byte range in the archive but the kernel never
+  creates it on disk).
+- Removing or renaming the `/init` entry (changing its name) makes the kernel reject the
+  entire archive with `VFS: Cannot open root device`.
+- Therefore, the script replaces the raw bytes of the original `/init` entry payload at the
+  same offset in the raw cpio, and the rest of the archive (6657 entries) is untouched.
+- `BINOFF`/`BINSZ` must use **fixed-width** placeholders (`0000000000`) — a variable-width
+  replacement shifts the script length, moves the `#BIN` marker, and causes the wrong bytes
+  to be extracted; `ash` then sees the ELF as a script and falls back to line-by-line parsing.
+
 ### Installer runtime
 
 `/init` or `/installer` are the initramfs PID 1; the installer wrapper (`/installer`)

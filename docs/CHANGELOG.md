@@ -1,5 +1,49 @@
 # AIOS Development Log
 
+## v2.33.3 — Real-hardware boot fix (v2): pre-init GPU module loader injected into the initramfs /init (2026-09-16)
+
+The v2.33.2 console fix (tty0) was verified only through QEMU's VGA screendump; the laptop
+still came up black. The black screen was caused by the *console driver* itself: the initramfs
+has no VGA console module (`vgacon`/`vesafb`/`efifb` are not shipped, `simpledrm` is built in
+but produces no console until fbcon has a frame buffer), so `tty0` had nothing to render until
+a GPU DRM driver created one — and the GPU modules were **not loaded until userspace**, i.e.
+after the TUI was already supposed to be drawn, and the shipped `aios-init` binary never ran
+`bring_userspace()`/`sfs-up.sh` anyway.
+
+### Fixed
+- **Pre-init GPU module loader (v2.33.3):** the initramfs `/init` entry is now a
+  `aios-loader` shell script that runs *before* any userspace: it `modprobe`s all five x86
+  GPU DRM drivers (`radeon`, `nouveau`, `gma500_gfx`, `i915`, `amdgpu`) so fbcon gets a frame
+  buffer as early as possible, then `dd`-extracts the original `aios-init` ELF (embedded in
+  the script after a `#BIN` marker with baked fixed-width `BINOFF:`/`BINSZ:` offsets) and
+  `exec`s it — keeping the exact PID 1 chain (`aios-init` → `/system/aios-core` → kernel TUI).
+- **`iso/stage/boot/limine/limine.conf`:** both entries (Live + Installer) gained
+  `loglevel=7` so the kernel backlog (module load, fbcon handoff) is printed to the screen
+  once a frame-buffer console registers — the black screen becomes a visible boot log.
+
+### Notes on the kernel initramfs unpacker (from the investigation)
+- The kernel writes archive files until the first `TRAILER!!!`; appended entries are ignored,
+  and deleting/renaming the `/init` entry makes the kernel reject the whole archive
+  (`Unable to mount root fs`). The **content-replace** approach (patch byte ranges of the
+  existing `/init` entry in place, keep name+header+trailer) is the only reliable way.
+- The `/init` body is a shell script embedding the ELF binary; extraction reads `/init`
+  itself (`dd skip=$BINOFF count=$BINSZ`) into `/tmp/aios-init`, `chmod 755` and `exec`.
+  Baking must use **fixed-width** placeholders — a variable-length digit replace shifts the
+  marker and silently mis-extracts (busybox `ash` then parses the ELF as a script).
+
+### Verified
+- QEMU run of the patched initramfs reports `aios-loader: hdr=[ 7f 45 4c 46]` (valid ELF),
+  `aios-loader: chainloading aios-init`, `[aios-init] aios-init: AIOS initramfs init (PID 1)`,
+  `[aios-init] aios-init: started block pid …: /system/aios-core` and
+  `AIOS TUI mode — starting interactive dashboard` — no panic after 120 s.
+- Rebuilt `out/aios-live.iso` (369 145 856 B, SHA-256 `FDB69DB8…1452EBA8`), reinstalled the
+  Limine MBR (partition 1 active, stage 2 @ 0x200), booted it in QEMU from the CD image:
+  SeaBIOS → Limine → kernel with the new cmdline (`… console=ttyS0 console=tty0 loglevel=7`)
+  → `Run /init as init process`; `load_image` produced fbcon; GPU modules load on target.
+- Reflashed the physical Kingston (Disk 3): full flash SHA-256 == ISO SHA-256 ==
+  `FDB69DB8551977CDE4928186F89BFBDA22595A839A24E99C0CBA64DC1452EBA8` (byte-identical),
+  MBR sig 55AA, stage 2 @ 0x200, head/tail matching verifies.
+
 ## v2.33.2 — Real-hardware boot fix: a serial-only console left the laptop screen black (2026-09-16)
 
 The bootable media boots fine through QEMU (which logs the serial console), but the first
