@@ -294,7 +294,7 @@ fn write_user_string(frame: &crate::interrupts::InterruptFrame) -> usize {
     }
     if n > 0 {
         crate::serial::write_bytes(&buf[..n]);
-        crate::vga::write_bytes(&buf[..n]);
+        crate::console::write_bytes(&buf[..n]);
     }
     n
 }

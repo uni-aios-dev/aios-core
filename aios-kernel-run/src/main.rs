@@ -1,12 +1,74 @@
+// aios-kernel-run: host tool that builds the AIOS bare-metal kernel, wraps the
+// resulting Limine-protocol ELF into a bootable hybrid ISO (BIOS + UEFI) using
+// the Limine tooling and xorriso, and launches it in QEMU.
+//
+// All external tool locations can be overridden with environment variables:
+//   AIOS_LIMINE_DIR   directory holding limine-bios-cd.bin / limine-uefi-cd.bin
+//   AIOS_LIMINE_TOOL  path to the `limine` host tool (bios-install)
+//   AIOS_XORRISO      path to `xorriso`
+//   AIOS_QEMU         path to `qemu-system-x86_64`
+//   AIOS_KERNEL_TARGET_DIR, AIOS_ISO_OUT, AIOS_SKIP_QEMU, AIOS_QEMU_UEFI
+
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn kernel_manifest_dir() -> PathBuf {
+fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("aios-kernel-run has no parent dir")
-        .join("aios-kernel")
+        .to_path_buf()
+}
+
+fn kernel_manifest_dir() -> PathBuf {
+    repo_root().join("aios-kernel")
+}
+
+fn iso_root() -> PathBuf {
+    repo_root()
+        .parent()
+        .expect("aios-core has no parent dir")
+        .join("iso")
+}
+
+fn env_path(key: &str, default: PathBuf) -> PathBuf {
+    env::var_os(key).map(PathBuf::from).unwrap_or(default)
+}
+
+fn limine_dir() -> PathBuf {
+    env_path(
+        "AIOS_LIMINE_DIR",
+        iso_root().join("limine").join("limine-binary"),
+    )
+}
+
+fn limine_tool() -> PathBuf {
+    env_path(
+        "AIOS_LIMINE_TOOL",
+        limine_dir()
+            .join("limine-tool-windows-x86")
+            .join("limine.exe"),
+    )
+}
+
+fn xorriso() -> PathBuf {
+    env_path(
+        "AIOS_XORRISO",
+        iso_root()
+            .join("msys")
+            .join("usr")
+            .join("bin")
+            .join("xorriso.exe"),
+    )
+}
+
+fn qemu_dir() -> PathBuf {
+    repo_root()
+        .parent()
+        .expect("aios-core has no parent dir")
+        .join("tools")
+        .join("qemu")
 }
 
 fn build_kernel(target_dir: &Path) -> PathBuf {
@@ -27,28 +89,169 @@ fn build_kernel(target_dir: &Path) -> PathBuf {
         .join("aios-kernel")
 }
 
-fn create_bios_image(kernel_elf: &Path, out: &Path) {
-    bootloader::BiosBoot::new(kernel_elf)
-        .create_disk_image(out)
-        .expect("failed to create BIOS disk image");
+/// Windows path -> forward-slash form accepted by native tools.
+fn forward(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Windows path -> MSYS2 form (`C:\a\b` -> `/c/a/b`) for the MSYS xorriso build.
+fn msys_path(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        let drive = s.chars().next().unwrap().to_ascii_lowercase();
+        format!("/{}/{}", drive, s[2..].trim_start_matches('/'))
+    } else {
+        s
+    }
+}
+
+fn stage(kernel_elf: &Path, staging: &Path) -> std::io::Result<()> {
+    if staging.exists() {
+        fs::remove_dir_all(staging)?;
+    }
+    fs::create_dir_all(staging.join("boot"))?;
+    fs::create_dir_all(staging.join("EFI").join("BOOT"))?;
+
+    fs::copy(kernel_elf, staging.join("boot").join("aios-kernel"))?;
+
+    let limine = limine_dir();
+    fs::copy(
+        limine.join("limine-bios-cd.bin"),
+        staging.join("boot").join("limine-bios-cd.bin"),
+    )?;
+    fs::copy(
+        limine.join("limine-uefi-cd.bin"),
+        staging.join("boot").join("limine-uefi-cd.bin"),
+    )?;
+    fs::copy(
+        limine.join("limine-bios.sys"),
+        staging.join("boot").join("limine-bios.sys"),
+    )?;
+    fs::copy(
+        limine.join("BOOTX64.EFI"),
+        staging.join("EFI").join("BOOT").join("BOOTX64.EFI"),
+    )?;
+
+    let conf = "\
+timeout: 3
+
+/AIOS bare-metal kernel (Limine + GOP)
+    protocol: limine
+    kernel_path: boot():/boot/aios-kernel
+";
+    fs::write(staging.join("boot").join("limine.conf"), conf)?;
+    Ok(())
+}
+
+fn create_iso(staging: &Path, iso: &Path) -> std::io::Result<()> {
+    if let Some(parent) = iso.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let status = Command::new(xorriso())
+        .args([
+            "-as",
+            "mkisofs",
+            "-b",
+            "boot/limine-bios-cd.bin",
+            "-no-emul-boot",
+            "-boot-load-size",
+            "4",
+            "-boot-info-table",
+            "--efi-boot",
+            "boot/limine-uefi-cd.bin",
+            "--efi-boot-part",
+            "--efi-boot-image",
+            "--protective-msdos-label",
+            "-V",
+            "AIOS_KERNEL",
+            "-o",
+            &msys_path(iso),
+            &msys_path(staging),
+        ])
+        .status()
+        .expect("failed to spawn xorriso");
+    assert!(status.success(), "xorriso failed to create the ISO");
+
+    let status = Command::new(limine_tool())
+        .arg("bios-install")
+        .arg(forward(iso))
+        .status()
+        .expect("failed to spawn the limine tool");
+    assert!(status.success(), "limine bios-install failed");
+    Ok(())
 }
 
 fn find_qemu() -> PathBuf {
+    if let Some(explicit) = env::var_os("AIOS_QEMU") {
+        return PathBuf::from(explicit);
+    }
+    let local = qemu_dir().join("qemu-system-x86_64.exe");
+    if local.exists() {
+        return local;
+    }
     if let Ok(found) = Command::new("qemu-system-x86_64").arg("--version").output() {
         if found.status.success() {
             return PathBuf::from("qemu-system-x86_64");
         }
     }
-    let candidates = [
+    for c in [
         r"C:\Program Files\qemu\qemu-system-x86_64.exe",
         r"C:\Program Files (x86)\qemu\qemu-system-x86_64.exe",
-    ];
-    for c in candidates {
+    ] {
         if Path::new(c).exists() {
             return PathBuf::from(c);
         }
     }
-    panic!("qemu-system-x86_64 not found on PATH nor in C:\\Program Files\\qemu");
+    panic!("qemu-system-x86_64 not found (set AIOS_QEMU)");
+}
+
+/// Locates the OVMF code + vars firmware, if QEMU ships it.
+fn ovmf() -> Option<(PathBuf, PathBuf)> {
+    let share = qemu_dir().join("share");
+    let code = share.join("edk2-x86_64-code.fd");
+    let vars = share.join("edk2-i386-vars.fd");
+    if code.exists() && vars.exists() {
+        Some((code, vars))
+    } else {
+        None
+    }
+}
+
+fn run_qemu(qemu: &Path, iso: &Path, out_dir: &Path) {
+    let mut cmd = Command::new(qemu);
+    cmd.args(["-cdrom", &forward(iso)])
+        .args(["-boot", "d"])
+        .args(["-m", "512M"])
+        .args(["-vga", "std"])
+        .args(["-serial", "stdio"])
+        .args(["-display", "none"])
+        .args(["-no-reboot"]);
+
+    // UEFI (GOP) by default when OVMF is available; legacy BIOS (VBE) otherwise
+    // or when AIOS_QEMU_UEFI=0.
+    let want_uefi = env::var("AIOS_QEMU_UEFI").map(|v| v != "0").unwrap_or(true);
+    if want_uefi {
+        if let Some((code, vars)) = ovmf() {
+            let vars_copy = out_dir.join("OVMF_VARS.fd");
+            let _ = fs::copy(&vars, &vars_copy);
+            println!("firmware: UEFI (OVMF GOP)");
+            cmd.args(["-drive"])
+                .arg(format!(
+                    "if=pflash,format=raw,readonly=on,file={}",
+                    forward(&code)
+                ))
+                .args(["-drive"])
+                .arg(format!("if=pflash,format=raw,file={}", forward(&vars_copy)));
+        } else {
+            println!("firmware: legacy BIOS (OVMF not found)");
+        }
+    } else {
+        println!("firmware: legacy BIOS (requested)");
+    }
+
+    let status = cmd.status().expect("failed to spawn qemu-system-x86_64");
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 fn main() {
@@ -60,32 +263,21 @@ fn main() {
     let kernel_elf = build_kernel(&target_dir);
     println!("kernel ELF: {}", kernel_elf.display());
 
-    let bios_path = env::var_os("AIOS_BIOS_IMAGE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("bios.img"));
-    create_bios_image(&kernel_elf, &bios_path);
-    println!("BIOS disk image: {}", bios_path.display());
+    let out_dir = env_path("AIOS_ISO_OUT", root.join("out"));
+    fs::create_dir_all(&out_dir).expect("failed to create output dir");
+    let staging = out_dir.join("kernel-iso");
+    let iso = out_dir.join("aios-kernel.iso");
 
-    // Build-only mode for hosts without QEMU (`AIOS_SKIP_QEMU=1`) and for
-    // the smoke-test script that drives QEMU itself.
+    stage(&kernel_elf, &staging).expect("failed to stage the ISO tree");
+    create_iso(&staging, &iso).expect("failed to create the ISO");
+    println!("bootable ISO: {}", iso.display());
+
     if env::var_os("AIOS_SKIP_QEMU").is_some() {
-        println!("AIOS_SKIP_QEMU=1 -> stopping after image creation");
+        println!("AIOS_SKIP_QEMU=1 -> stopping after ISO creation");
         return;
     }
 
     let qemu = find_qemu();
     println!("QEMU: {}", qemu.display());
-
-    let status = Command::new(&qemu)
-        .args([
-            "-drive",
-            &format!("format=raw,file={}", bios_path.display()),
-        ])
-        .args(["-serial", "stdio"])
-        .args(["-display", "none"])
-        .args(["-no-reboot"])
-        .status()
-        .expect("failed to spawn qemu-system-x86_64");
-    let code = status.code().unwrap_or(1);
-    std::process::exit(code);
+    run_qemu(&qemu, &iso, &out_dir);
 }

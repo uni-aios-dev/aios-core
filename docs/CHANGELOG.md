@@ -1,5 +1,57 @@
 # AIOS Development Log
 
+## v2.34.0 — Bare-metal Phase 1: Limine + UEFI GOP boot, native framebuffer console (2026-09-18)
+
+Phase 1 of the bare-metal migration replaces the `bootloader` BIOS disk-image path with
+**Limine** (the same bootloader the Live ISO already uses), so `aios-kernel` boots as a
+Limine-protocol ELF from a hybrid **BIOS + UEFI** ISO. The kernel no longer drives a VGA
+text buffer: it receives the firmware's **GOP/VBE linear framebuffer** and renders through a
+native in-kernel text console (no ratatui/egui — they are `std` libraries).
+
+### Changed
+- **`aios-kernel` now targets the Limine boot protocol.** `main.rs` declares the request
+  statics in `.requests_start`/`.requests`/`.requests_end` (`BaseRevision`, `EntryPoint(_start)`,
+  `StackSize(64 KiB)`, `Hhdm`, `Memmap`, `Rsdp`, `Framebuffer`) and exposes
+  `#[no_mangle] pub unsafe extern "C" fn _start() -> !` — the Limine entry point receives the
+  HHDM offset, RSDP and framebuffer response.
+- **`aios-kernel/linker.ld`** (new) — the Limine higher-half script (`OUTPUT_FORMAT(elf64-x86-64)`,
+  base `0xffffffff80000000`, `ENTRY(_start)`, `KEEP` of the three request sections); linked via
+  the new **`aios-kernel/.cargo/config.toml`** (`-Tlinker.ld`, `--gc-sections`,
+  `codegen-units=1`). `limine = "=0.6.5"` added; `bootloader_api` removed.
+- **Native framebuffer console.** `framebuffer.rs` (new) wraps the Limine framebuffer
+  (`put_pixel`/`fill_rect`/`clear`/`scroll_up`/`read_pixel`, 2/3/4 bytes-per-pixel via the
+  channel masks); `console.rs` (new) is a spin-locked text console on top of it, keeping the
+  `vprintln!` macro name; `vga.rs` was **deleted** and `syscalls.rs` now writes through
+  `console::write_bytes`.
+- **Memory map comes from Limine.** `memory.rs` gained `pub struct MemRegion { start, end }`;
+  `init(physical_offset, &[MemRegion])` builds the bump frame allocator from the
+  `MEMMAP_USABLE` regions; `physical_offset` is `hhdm.offset`. `heap::HEAP_START` and
+  `memory::SELFTEST_ADDR` moved into PML4 slot 510 (`0xffff_ff00_…`) so the kernel's own
+  virtual mappings cannot collide with Limine's huge-page HHDM window (slot 511 is the image).
+- **`aios-kernel-run` produces a Limine ISO.** It builds the kernel
+  (`cargo build --target x86_64-unknown-none --release`), stages `boot/aios-kernel`,
+  `boot/limine.conf`, the Limine BIOS/UEFI CD stages and `EFI/BOOT/BOOTX64.EFI`, creates the
+  hybrid ISO with `xorriso` + `limine bios-install`, and boots it in QEMU — **UEFI/OVMF (real
+  GOP) by default**, legacy BIOS otherwise. Tool paths/behaviour are overridable with
+  `AIOS_LIMINE_DIR`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_SKIP_QEMU`.
+
+### Fixed
+- **`font8x8` 0.3.1 does not build for `x86_64-unknown-none`** (it is a `std` crate and uses
+  `print!`/`println!` in its `Display`/`Debug` impls). Replaced by a vendored public-domain
+  8x8 bitmap font in `aios-kernel/src/font8x8.rs` (`BASIC: [[u8; 8]; 128]`), so the kernel
+  stays `no_std` and dependency-free for rendering.
+
+### Verified
+- `cargo build --target x86_64-unknown-none --release` — clean, 0 warnings; ELF entry
+  `0xFFFFFFFF800047B0` (Limine higher half).
+- UEFI (OVMF) QEMU run: `framebuffer = 1280x800 pitch=5120 bpp=4 usable=true`,
+  `framebuffer self-check OK (readback 0x005ad67a)`, `usable memory regions = 8`,
+  `paging selftest OK.`, `heap online.`, `interrupts online.`, `[sched] ready`,
+  `three ring-3 tasks armed`.
+- Legacy-BIOS QEMU run: identical milestone lines.
+- Screendump pixel histogram: 60 612 foreground / 963 324 background / 64 self-check pixels —
+  the console actually renders on GOP.
+
 ## v2.33.3 — Real-hardware boot fix (v2): pre-init GPU module loader injected into the initramfs /init (2026-09-16)
 
 The v2.33.2 console fix (tty0) was verified only through QEMU's VGA screendump; the laptop

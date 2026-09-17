@@ -1,0 +1,12 @@
+# aios-kernel build configuration (nightly, x86_64-unknown-none).
+#
+# The kernel is a Limine-protocol executable: it is linked as a freestanding
+# higher-half ELF with the Limine linker script, which is also what keeps the
+# `.requests*` sections alive so Limine can discover them.
+
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C", "link-arg=-Tlinker.ld",
+    "-C", "link-arg=--gc-sections",
+    "-C", "codegen-units=1",
+]

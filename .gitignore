@@ -35,3 +35,4 @@ rootfs/
 
 # Bare-metal kernel boot artifacts (aios-kernel-run)
 aios-kernel-run/bios.img
+aios-kernel-run/out/

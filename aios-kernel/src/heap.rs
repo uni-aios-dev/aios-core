@@ -4,7 +4,11 @@ use core::cell::UnsafeCell;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-pub const HEAP_START: u64 = 0xFFFF_8400_0000_0000;
+/// Base virtual address of the kernel heap.
+///
+/// Lives in the unused PML4 slot 510 (below the kernel image at slot 511 and
+/// above Limine's HHDM window), so it never collides with the direct map.
+pub const HEAP_START: u64 = 0xFFFF_FF00_0000_0000;
 pub const HEAP_SIZE: u64 = 2 * 1024 * 1024;
 
 const HEADER_SIZE: usize = 16;

@@ -3,19 +3,22 @@
 # Standalone crate (NOT a workspace member) on purpose: it targets
 # `x86_64-unknown-none` and is built with `cargo build --target x86_64-unknown-none`,
 # so it must not be part of the host workspace profile/target setup.
-# The bootable disk image is assembled by the sibling `aios-kernel-run` crate.
+# It is a Limine-protocol executable (see linker.ld / .cargo/config.toml) and the
+# bootable ISO is assembled by the sibling `aios-kernel-run` crate.
 
 [package]
 name = "aios-kernel"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "AIOS standalone kernel (x86_64) — milestone 0: boot, serial, VGA text console"
+description = "AIOS standalone bare-metal kernel (x86_64, no_std) — Limine + UEFI GOP framebuffer"
 
 [dependencies]
-bootloader_api = "0.11.0"
+limine = "=0.6.5"
 
 [profile.dev]
 panic = "abort"
 
 [profile.release]
 panic = "abort"
+opt-level = 2
+lto = false

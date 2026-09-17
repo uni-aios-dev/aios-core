@@ -1,5 +1,18 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: `font8x8` dependency broke the no_std kernel build
+- **Status:** FIXED in v2.34.0
+- **Symptom:** `cargo build --target x86_64-unknown-none --release` for `aios-kernel` failed inside the dependency source with `error: cannot find macro \`print\` in this scope` / `\`println\`` (e.g. `font8x8-0.3.1/src/block.rs`, `src/box.rs`).
+- **Root cause:** `font8x8` 0.3.1 is a `std`-only crate — its `Display`/`Debug` impls call `print!`/`println!`, so it cannot compile for a freestanding target.
+- **Fix:** dropped the dependency and vendored the public-domain 8x8 bitmap table as `aios-kernel/src/font8x8.rs` (`BASIC: [[u8; 8]; 128]`, Basic Latin); `console.rs` indexes it directly.
+
+## KNOWN (v2.34.0): bare-metal kernel gaps after the Limine + GOP migration
+- **Status:** INTRODUCED LIMITATION — Phase 1 (boot + graphics) is functional; the following are not yet implemented:
+  - the kernel has no explicit `memcpy`/`memset`/`memmove`/`memcmp` (`compiler_builtins` mem functions are provided through the prebuilt `core` for this target, so builds link, but a dedicated `crt` module is still planned);
+  - input is still PS/2 only (no USB-HID/xHCI), storage is not handled (no PCI enumeration / AHCI / NVMe), and there is no PS/2-less fallback;
+  - the Limine HHDM maps physical memory with huge pages, so kernel virtual mappings must stay outside the HHDM window — the kernel's scratch/heap addresses live in PML4 slot 510 (`0xffff_ff00_…`) and the image in slot 511.
+- **Workaround / notes:** none needed for Phase 1; the next bare-metal phase covers PCI enumeration + native storage and USB-HID input.
+
 ## RESOLVED: Live/Installer media showed a black screen after the boot menu on a real laptop
 - **Status:** FIXED in v2.33.3 (user report: «при выборе Live или Installer загружается vmlinuz, потом initramfs — и на этом всё стоит, чёрный экран»)
 - **Symptom:** the Limine boot menu rendered on the laptop screen; choosing either entry loaded `vmlinuz` + `initramfs`; then the screen went black and stayed black — while the machine kept booting invisibly. The same media passed our QEMU tests because the harness captures the serial console.

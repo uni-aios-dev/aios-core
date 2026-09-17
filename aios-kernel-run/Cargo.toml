@@ -1,15 +1,13 @@
-# aios-kernel-run: host tool that builds the kernel ELF, wraps it with the
-# `bootloader` crate into a bootable disk image and launches it in QEMU.
+# aios-kernel-run: host tool that builds the aios-kernel ELF, wraps it into a
+# bootable Limine ISO (BIOS + UEFI) and launches it in QEMU.
 #
-# Standalone crate (NOT a workspace member): it requires the nightly toolchain
-# (the `bootloader` crate uses -Zbuild-std internally) and must not disturb the
-# stable host workspace.
+# Standalone crate (NOT a workspace member): it shells out to a separate cargo
+# invocation for the no_std kernel and must not disturb the stable host build.
 
 [package]
 name = "aios-kernel-run"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "AIOS kernel build/run tool: builds aios-kernel, creates a BIOS disk image, boots it in QEMU"
+description = "AIOS kernel build/run tool: builds aios-kernel, creates a Limine bootable ISO, boots it in QEMU"
 
 [dependencies]
-bootloader = { version = "=0.11.17", default-features = false, features = ["bios"] }

@@ -185,11 +185,11 @@ pub fn spawn_user(entry: u64, stack_top: u64, arg1: u64, arg2: u64) -> Option<us
 
 fn spawn_with(fill: impl FnOnce(&mut InterruptFrame)) -> Option<usize> {
     let t = tasks();
-    for slot in 1..MAX_TASKS {
-        if !t[slot].present {
-            fill(&mut t[slot].frame);
-            t[slot].present = true;
-            t[slot].valid_frame = true;
+    for (slot, task) in t.iter_mut().enumerate().skip(1) {
+        if !task.present {
+            fill(&mut task.frame);
+            task.present = true;
+            task.valid_frame = true;
             return Some(slot);
         }
     }

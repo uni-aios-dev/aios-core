@@ -3,6 +3,9 @@
 
 extern crate alloc;
 
+mod console;
+mod font8x8;
+mod framebuffer;
 mod gdt;
 mod heap;
 mod idt;
@@ -13,105 +16,204 @@ mod sched;
 mod serial;
 mod syscalls;
 mod user;
-mod vga;
 
-use bootloader_api::config::{BootloaderConfig, Mapping};
-use bootloader_api::{self, entry_point};
+use crate::framebuffer::{colors, Framebuffer};
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
-
-pub static BOOTLOADER_CONFIG: BootloaderConfig = {
-    let mut config = BootloaderConfig::new_default();
-    config.mappings.physical_memory = Some(Mapping::Dynamic);
-    config
+use limine::request::{
+    EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, RsdpRequest,
+    StackSizeRequest,
 };
+use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
-const KERNEL_STACK_SIZE: usize = 64 * 1024;
+// --- Limine boot protocol requests ----------------------------------------
+//
+// All of these live in the `.requests*` sections that `linker.ld` keeps alive.
+// Limine scans them between the start/end markers and fills in the response
+// pointers before entering `_start`.
+
+#[used]
+#[link_section = ".requests_start"]
+static REQUESTS_START: RequestsStartMarker = RequestsStartMarker::new();
+
+#[used]
+#[link_section = ".requests"]
+static BASE_REVISION: BaseRevision = BaseRevision::new();
+
+#[used]
+#[link_section = ".requests"]
+static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static MEMMAP_REQUEST: MemmapRequest = MemmapRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static STACK_SIZE_REQUEST: StackSizeRequest = StackSizeRequest::new(64 * 1024);
+
+#[used]
+#[link_section = ".requests"]
+static ENTRY_POINT_REQUEST: EntryPointRequest = EntryPointRequest::new(_start);
+
+#[used]
+#[link_section = ".requests_end"]
+static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
+
+/// Requested kernel stack size, in bytes.
 const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
-
-#[repr(align(16))]
-#[allow(dead_code)]
-struct KernelStack([u8; KERNEL_STACK_SIZE]);
+/// Upper bound on usable memory regions handed to the frame allocator.
+const MAX_USABLE_REGIONS: usize = 64;
 
 #[repr(align(16))]
 #[allow(dead_code)]
 struct DoubleFaultStack([u8; DOUBLE_FAULT_STACK_SIZE]);
 
 #[link_section = ".bss"]
-static KERNEL_STACK: KernelStack = KernelStack([0; KERNEL_STACK_SIZE]);
-
-#[link_section = ".bss"]
 static DOUBLE_FAULT_STACK: DoubleFaultStack = DoubleFaultStack([0; DOUBLE_FAULT_STACK_SIZE]);
 
-fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
-    let phys_offset = boot_info.physical_memory_offset.into_option().unwrap_or(0);
+/// Returns the current stack pointer (captured at kernel entry, i.e. the top of
+/// the stack Limine provided).
+#[inline(always)]
+fn current_rsp() -> u64 {
+    let rsp: u64;
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
+    }
+    rsp
+}
+
+/// Kernel entry point invoked by Limine (via `EntryPointRequest`).
+///
+/// # Safety
+/// Called exactly once by the bootloader with the Limine requests resolved.
+#[no_mangle]
+pub unsafe extern "C" fn _start() -> ! {
+    let kernel_stack_top = current_rsp();
+
     serial::init();
-    vga::vga_init(phys_offset);
-    vga::vga_clear_screen();
+    serial::_print(format_args!("[serial] aios-kernel: Limine handoff\n"));
 
-    vprintln!("AIOS kernel booting...");
-    kprintln!("[serial] AIOS kernel booting...");
-
-    let regions = boot_info.memory_regions.len();
-    vprintln!("Memory regions: {}", regions);
-    kprintln!("[serial] memory regions = {}", regions);
-
-    vprintln!("Physical memory offset: 0x{:x}", phys_offset);
-    kprintln!("[serial] physical memory offset = 0x{:x}", phys_offset);
-
-    match boot_info.framebuffer.as_ref() {
-        Some(fb) => {
-            let info = fb.info();
-            vprintln!("Framebuffer: {}x{}", info.width, info.height);
-            kprintln!("[serial] framebuffer = {}x{}", info.width, info.height);
-        }
-        None => {
-            vprintln!("Framebuffer: none");
-            kprintln!("[serial] framebuffer = none");
-        }
+    if !BASE_REVISION.is_supported() {
+        kprintln!(
+            "[serial] Limine base revision unsupported (actual {:?})",
+            BASE_REVISION.actual_revision()
+        );
     }
 
-    match boot_info.rsdp_addr.into_option() {
+    let hhdm_offset = HHDM_REQUEST.response().map(|r| r.offset).unwrap_or(0);
+    let rsdp = RSDP_REQUEST.response().map(|r| r.address as u64);
+
+    let limine_fb = FRAMEBUFFER_REQUEST
+        .response()
+        .and_then(|r| r.framebuffers().first().copied());
+
+    console::init(limine_fb);
+    console::clear();
+
+    vprintln!("AIOS bare-metal kernel (Limine + GOP)");
+    vprintln!("====================================");
+    kprintln!("[serial] aios-kernel: Limine + GOP boot");
+    kprintln!("[serial] HHDM offset = 0x{:x}", hhdm_offset);
+    match rsdp {
         Some(addr) => {
-            vprintln!("RSDP (ACPI): 0x{:x}", addr);
+            vprintln!("ACPI RSDP: 0x{:x}", addr);
             kprintln!("[serial] rsdp = 0x{:x}", addr);
         }
         None => {
-            vprintln!("RSDP (ACPI): none");
+            vprintln!("ACPI RSDP: none");
             kprintln!("[serial] rsdp = none");
         }
     }
 
-    vprintln!("Milestone 0 OK: serial + VGA console live.");
-    kprintln!("[serial] Milestone 0 OK.");
+    // --- Framebuffer self-check: write a probe pixel, read it back ---------
+    if let Some(fb) = limine_fb {
+        let fb = Framebuffer::new(fb);
+        kprintln!(
+            "[serial] framebuffer = {}x{} pitch={} bpp={} usable={}",
+            fb.width(),
+            fb.height(),
+            fb.pitch(),
+            fb.bytes_per_pixel(),
+            fb.is_usable()
+        );
+        vprintln!(
+            "Framebuffer: {}x{} ({} bpp)",
+            fb.width(),
+            fb.height(),
+            fb.bytes_per_pixel() * 8
+        );
+        if fb.is_usable() {
+            let probe_x = fb.width().saturating_sub(8);
+            let probe_y = fb.height().saturating_sub(8);
+            unsafe { fb.fill_rect(probe_x, probe_y, 8, 8, colors::OK) };
+            let want = fb.pack_color(colors::OK);
+            let got = unsafe { fb.read_pixel(probe_x, probe_y) };
+            if got == want {
+                kprintln!(
+                    "[serial] framebuffer self-check OK (readback 0x{:08x})",
+                    got
+                );
+                vprintln!("GOP framebuffer: writes verified");
+            } else {
+                kprintln!(
+                    "[serial] framebuffer self-check MISMATCH want=0x{:08x} got=0x{:08x}",
+                    want,
+                    got
+                );
+                vprintln!("GOP framebuffer: readback mismatch (0x{:08x})", got);
+            }
+        } else {
+            vprintln!("GOP framebuffer: unsupported pixel format, serial only");
+        }
+    } else {
+        vprintln!("GOP framebuffer: none (serial only)");
+        kprintln!("[serial] framebuffer = none");
+    }
 
-    memory::init(phys_offset, &boot_info.memory_regions);
+    // --- Memory map --------------------------------------------------------
+    let mut usable = [memory::MemRegion { start: 0, end: 0 }; MAX_USABLE_REGIONS];
+    let mut usable_count = 0usize;
+    if let Some(resp) = MEMMAP_REQUEST.response() {
+        for entry in resp.entries() {
+            if entry.type_ != limine::memmap::MEMMAP_USABLE {
+                continue;
+            }
+            if usable_count >= MAX_USABLE_REGIONS {
+                break;
+            }
+            usable[usable_count] = memory::MemRegion {
+                start: entry.base,
+                end: entry.base + entry.length,
+            };
+            usable_count += 1;
+        }
+        vprintln!("Memory map: {} usable regions", usable_count);
+        kprintln!("[serial] usable memory regions = {}", usable_count);
+    } else {
+        vprintln!("Memory map: none!");
+        kprintln!("[serial] memory map missing");
+    }
+
+    memory::init(hhdm_offset, &usable[..usable_count]);
     vprintln!(
-        "Memory manager: {} usable frame regions",
+        "Frame allocator: {} usable regions",
         memory::frame_region_count()
     );
     kprintln!(
-        "[serial] memory manager init, usable regions = {}",
+        "[serial] frame allocator init, usable regions = {}",
         memory::frame_region_count()
     );
 
-    let vga_translated = memory::translate(0xB8000);
-    let kernel_virt = &BOOTLOADER_CONFIG as *const BootloaderConfig as u64;
-    let kernel_translated = memory::translate(kernel_virt);
-    let heap_translated = memory::translate(heap::HEAP_START);
-    vprintln!(
-        "translate: vga=0x{:x?} kernel=0x{:x?} heap_unmapped=0x{:x?}",
-        vga_translated,
-        kernel_translated,
-        heap_translated
-    );
-    kprintln!(
-        "[serial] translate vga=0x{:x?} kernel=0x{:x?} heap_before=0x{:x?}",
-        vga_translated,
-        kernel_translated,
-        heap_translated
-    );
-
+    // --- Paging self-test --------------------------------------------------
     match memory::selftest() {
         Ok(()) => {
             vprintln!("Paging selftest: OK (map/write/read/translate/unmap)");
@@ -123,6 +225,7 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
         }
     }
 
+    // --- Kernel heap -------------------------------------------------------
     heap::init_heap();
     heap::test_heap();
     vprintln!(
@@ -131,10 +234,9 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
         heap::HEAP_START
     );
     kprintln!("[serial] heap online.");
-    vprintln!("Milestone 2: paging + kernel heap online");
-    kprintln!("[serial] Milestone 2: paging + kernel heap online.");
+    vprintln!("Paging + kernel heap online");
 
-    let kernel_stack_top = &KERNEL_STACK as *const KernelStack as u64 + KERNEL_STACK_SIZE as u64;
+    // --- GDT / IDT / interrupts -------------------------------------------
     let double_fault_stack_top =
         &DOUBLE_FAULT_STACK as *const DoubleFaultStack as u64 + DOUBLE_FAULT_STACK_SIZE as u64;
 
@@ -144,14 +246,14 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     interrupts::init_pic();
     interrupts::init_pit();
 
-    vprintln!("Milestone 1: interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
-    kprintln!("[serial] Milestone 1: interrupts online.");
+    vprintln!("Interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
+    kprintln!("[serial] interrupts online.");
 
     unsafe {
         core::arch::asm!("sti", options(nostack, preserves_flags));
     }
 
-    // Milestone 3+4: scheduler, ring-3 demo tasks, IPC syscalls.
+    // --- Scheduler + ring-3 demo tasks + IPC ------------------------------
     sched::init();
 
     static mut WORKER_STACK: [u8; 16 * 1024] = [0; 16 * 1024];
@@ -175,18 +277,14 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
         }
     }
 
-    vprintln!("Milestone 3 OK: preemptive round-robin scheduler + ring 3 armed");
-    vprintln!("Milestone 4 OK: kernel IPC mailboxes behind the int 0x80 gate");
-    vprintln!("Milestone 5 OK: user syscalls (write/getpid/sleep) + idle fallback");
-    kprintln!("[serial] Milestone 3 OK: preemptive scheduler online.");
-    kprintln!("[serial] Milestone 4 OK: IPC syscalls online.");
-    kprintln!("[serial] Milestone 5 OK: user syscalls (write/getpid/sleep).");
+    vprintln!("Preemptive round-robin scheduler + ring 3 armed");
+    vprintln!("Kernel IPC mailboxes behind the int 0x80 gate");
+    vprintln!("User syscalls (write/getpid/sleep) + idle fallback");
+    kprintln!("[serial] scheduler online, IPC + user syscalls armed.");
 
     sched::boot_finished();
     loop {
-        unsafe {
-            core::arch::asm!("hlt", options(nomem, nostack));
-        }
+        core::arch::asm!("hlt", options(nomem, nostack));
     }
 }
 
@@ -277,5 +375,3 @@ fn panic(info: &PanicInfo) -> ! {
     kprintln!("[serial] KERNEL PANIC: {}", info);
     halt_loop();
 }
-
-entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);

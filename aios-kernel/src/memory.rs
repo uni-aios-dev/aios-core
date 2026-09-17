@@ -1,7 +1,17 @@
-use bootloader_api::info::MemoryRegion;
-use bootloader_api::info::MemoryRegionKind;
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+/// A usable physical memory region, `[start, end)`, page-aligned by the caller.
+///
+/// Built by `main.rs` from the Limine memory map (`MEMMAP_USABLE` entries only),
+/// which keeps this module independent of the boot protocol.
+#[derive(Clone, Copy)]
+pub struct MemRegion {
+    /// First physical byte of the region.
+    pub start: u64,
+    /// One past the last physical byte of the region.
+    pub end: u64,
+}
 
 pub const PAGE_SIZE: u64 = 0x1000;
 const PTE_PRESENT: u64 = 1 << 0;
@@ -26,13 +36,14 @@ static mut FRAME_REGIONS: [FrameRegion; MAX_FRAME_REGIONS] =
     [FrameRegion { start: 0, end: 0 }; MAX_FRAME_REGIONS];
 static mut FRAME_REGION_COUNT: usize = 0;
 
-/// Initializes the memory manager from the boot info physical memory offset and memory map.
-pub fn init(physical_offset: u64, regions: &[MemoryRegion]) {
+/// Initializes the memory manager from the bootloader HHDM offset and the list
+/// of usable physical regions.
+pub fn init(physical_offset: u64, regions: &[MemRegion]) {
     PHYS_OFFSET.store(physical_offset, Ordering::Relaxed);
     let mut count = 0;
     for region in regions {
-        if region.kind != MemoryRegionKind::Usable || count >= MAX_FRAME_REGIONS {
-            continue;
+        if count >= MAX_FRAME_REGIONS {
+            break;
         }
         let start = align_up(region.start, PAGE_SIZE);
         let end = align_down(region.end, PAGE_SIZE);
@@ -241,7 +252,13 @@ const fn is_page_aligned(addr: u64) -> bool {
     addr & (PAGE_SIZE - 1) == 0
 }
 
-const SELFTEST_ADDR: u64 = 0xFFFF_8800_0000_0000;
+/// Virtual address used by the paging self-test.
+///
+/// Deliberately placed in the otherwise-unused PML4 slot just below the kernel
+/// image (index 510) so the test never collides with Limine's HHDM (which fills
+/// the lower half of the kernel half of the address space) nor with the kernel
+/// image itself (slot 511).
+const SELFTEST_ADDR: u64 = 0xFFFF_FF00_1000_0000;
 const SELFTEST_PATTERN: u64 = 0xDEAD_BEEF_CAFE_F00D;
 
 /// Exercises map/unmap and translate on a dedicated virtual page.
