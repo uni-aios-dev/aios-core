@@ -1,5 +1,33 @@
 # AIOS Development Log
 
+## v2.35.0 — Bare-metal Milestone 6 (part 1): PCI enumeration + CRT memory primitives (2026-09-18)
+
+First slice of the native input/storage milestone: the microkernel can now discover
+the hardware on the PCI bus, which is the foundation the AHCI/NVMe storage and xHCI
+input drivers will be built on.
+
+### Added
+- **`aios-kernel/src/pci.rs`** — legacy PCI configuration-space access over the
+  `0xCF8`/`0xCFC` I/O ports (`config_read8/16/32`, `config_write32`), full bus/device/
+  function enumeration (multifunction-aware) into a caller-provided fixed array, a
+  `PciDevice` record (vendor/device id, class/subclass/prog-if, header type, six BARs,
+  IRQ) with `is_storage()`/`is_usb()` helpers and a `class_name()` decoder.
+- **`aios-kernel/src/crt.rs`** — strong `memcpy`/`memmove`/`memset`/`memcmp`/`bcmp`
+  definitions (implemented with `core::ptr` intrinsics so the optimizer cannot rewrite
+  them into recursive self-calls), so the kernel owns its C runtime memory primitives.
+- **`aios-kernel/src/port.rs`** — 32-bit `outl`/`inl` port I/O used by the PCI config
+  mechanism.
+- `main.rs` enumerates the bus after the framebuffer self-check and logs every function
+  (`[serial] pci bb:dd.f vvvv:dddd class cc:ss ht=.. pi=.. <name> bar0=0x… irq=…`) plus
+  a `pci devices = N (storage S, usb U)` summary.
+
+### Verified
+- Clean `cargo build`/`clippy` (0 warnings) for `x86_64-unknown-none`.
+- QEMU (UEFI/OVMF) serial: 6 devices found on the default `pc` machine —
+  `8086:1237` host bridge, `8086:7000` ISA bridge, `8086:7010` IDE (storage),
+  `8086:7113` ACPI bridge, `1234:1111` display, `8086:100e` network — matching the
+  QEMU device model.
+
 ## v2.34.0 — Bare-metal Phase 1: Limine + UEFI GOP boot, native framebuffer console (2026-09-18)
 
 Phase 1 of the bare-metal migration replaces the `bootloader` BIOS disk-image path with

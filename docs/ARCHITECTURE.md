@@ -1330,7 +1330,9 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   - `framebuffer` — `Framebuffer` over the Limine GOP/VBE buffer: `put_pixel`/`fill_rect`/`clear`/`scroll_up`/`read_pixel`, 2/3/4 bytes-per-pixel chosen from the Limine channel masks; `colors` palette.
   - `console` — spin-locked text console on the framebuffer (glyphs drawn through the font below, wraps at the screen width, scrolls); `vprintln!`.
   - `font8x8` — vendored public-domain 8x8 bitmap font, `BASIC: [[u8; 8]; 128]` (Basic Latin). The `font8x8` crate 0.3.1 is `std`-only and cannot be used here.
-  - `port` — `outb`/`inb`/`io_wait` helpers for x86 port I/O.
+  - `port` — `outb`/`inb`/`outl`/`inl`/`io_wait` helpers for x86 port I/O.
+  - `crt` — strong `memcpy`/`memmove`/`memset`/`memcmp`/`bcmp` definitions built on `core::ptr` intrinsics; the C runtime memory primitives the compiler lowers to.
+  - `pci` — PCI configuration-space access over the legacy `0xCF8`/`0xCFC` ports; full bus/device/function enumeration into a fixed array of `PciDevice` records (ids, class/subclass/prog-if, BARs, IRQ) with `class_name()` decoding — the discovery layer for the future AHCI/NVMe and xHCI drivers.
   - `gdt` — 7-entry GDT (null, kernel/user code+data, 64-bit TSS with a dedicated double-fault IST stack); `Descriptor` is `#[repr(C, packed)]` so `lgdt` reads the base from the correct offset. `reload_segments` refreshes DS/ES/FS/GS to `0x10`; `ltr` installs the TSS.
   - `idt` — 256-entry IDT built from the assembly-generated `aios_handler_table` (vector stubs in `.text`, table relocated at load); gate 8 uses the double-fault IST.
   - `interrupts` — `aios_interrupt_common` C shim (`aios_handle_interrupt`) dispatches by vector: fatal faults (0/6/8/13/14) print and halt, IRQ range `0x20..=0x2F` is EOI'd, IRQ0 (PIT) bumps `TICKS` at 100 Hz, IRQ1 (keyboard) stores the last scancode. `init_pic` remaps the 8259 PIC to `0x20`/`0x28` and masks all but IRQ0/IRQ1; `init_pit` programs channel 0 for 100 Hz.

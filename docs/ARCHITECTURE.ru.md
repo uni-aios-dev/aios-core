@@ -1323,7 +1323,9 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   - `framebuffer` — `Framebuffer` поверх буфера GOP/VBE Limine: `put_pixel`/`fill_rect`/`clear`/`scroll_up`/`read_pixel`, 2/3/4 байта на пиксель по маскам каналов Limine; палитра `colors`.
   - `console` — текстовая консоль под spin-lock на framebuffer (глифы рисуются шрифтом ниже, перенос по ширине экрана, скролл); `vprintln!`.
   - `font8x8` — вендоренный public-domain bitmap-шрифт 8x8, `BASIC: [[u8; 8]; 128]` (Basic Latin). Крейт `font8x8` 0.3.1 — `std`-only и здесь неприменим.
-  - `port` — хелперы `outb`/`inb`/`io_wait` для портового I/O x86.
+  - `port` — хелперы `outb`/`inb`/`outl`/`inl`/`io_wait` для портового I/O x86.
+  - `crt` — сильные определения `memcpy`/`memmove`/`memset`/`memcmp`/`bcmp` на интринсиках `core::ptr`; C-примитивы памяти, в вызовы которых компилятор понижает код.
+  - `pci` — доступ к конфигурационному пространству PCI через legacy-порты `0xCF8`/`0xCFC`; полное перечисление bus/device/function в фиксированный массив записей `PciDevice` (id, class/subclass/prog-if, BAR, IRQ) с декодированием `class_name()` — слой обнаружения для будущих драйверов AHCI/NVMe и xHCI.
   - `gdt` — GDT на 7 записей (null, код/данные ядра и пользователя, 64-битный TSS с отдельным IST-стеком для double fault); `Descriptor` объявлен как `#[repr(C, packed)]`, поэтому `lgdt` читает базу с корректного смещения. `reload_segments` перезагружает DS/ES/FS/GS в `0x10`; `ltr` устанавливает TSS.
   - `idt` — IDT на 256 записей, строится из ассемблерной `aios_handler_table` (стабы векторов в `.text`, таблица с релокациями при загрузке); для гейта 8 используется double-fault IST.
   - `interrupts` — C-обвязка `aios_interrupt_common` (`aios_handle_interrupt`) диспетчеризует по вектору: фатальные фолты (0/6/8/13/14) печатаются и ядро останавливается, диапазон IRQ `0x20..=0x2F` получает EOI, IRQ0 (PIT) увеличивает `TICKS` на 100 Гц, IRQ1 (клавиатура) сохраняет последний скан-код. `init_pic` ремапит 8259 PIC на `0x20`/`0x28` и маскирует всё, кроме IRQ0/IRQ1; `init_pit` программирует канал 0 на 100 Гц.

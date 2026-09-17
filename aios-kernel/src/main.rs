@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod console;
+mod crt;
 mod font8x8;
 mod framebuffer;
 mod gdt;
@@ -11,6 +12,7 @@ mod heap;
 mod idt;
 mod interrupts;
 mod memory;
+mod pci;
 mod port;
 mod sched;
 mod serial;
@@ -72,6 +74,8 @@ static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
 /// Upper bound on usable memory regions handed to the frame allocator.
 const MAX_USABLE_REGIONS: usize = 64;
+/// Upper bound on PCI functions recorded during enumeration.
+const MAX_PCI_DEVICES: usize = 64;
 
 #[repr(align(16))]
 #[allow(dead_code)]
@@ -178,6 +182,47 @@ pub unsafe extern "C" fn _start() -> ! {
         vprintln!("GOP framebuffer: none (serial only)");
         kprintln!("[serial] framebuffer = none");
     }
+
+    // --- PCI buses ---------------------------------------------------------
+    let mut pci_devices = [pci::PciDevice::EMPTY; MAX_PCI_DEVICES];
+    let pci_count = unsafe { pci::enumerate(&mut pci_devices) };
+    let mut storage_count = 0usize;
+    let mut usb_count = 0usize;
+    for dev in &pci_devices[..pci_count] {
+        if dev.is_storage() {
+            storage_count += 1;
+        }
+        if dev.is_usb() {
+            usb_count += 1;
+        }
+        kprintln!(
+            "[serial] pci {:02x}:{:02x}.{} {:04x}:{:04x} class {:02x}:{:02x} ht={:02x} pi={:02x} {} bar0=0x{:08x} irq={}",
+            dev.bus,
+            dev.device,
+            dev.function,
+            dev.vendor_id,
+            dev.device_id,
+            dev.class,
+            dev.subclass,
+            dev.header_type,
+            dev.prog_if,
+            dev.class_name(),
+            dev.bars[0],
+            dev.irq
+        );
+    }
+    kprintln!(
+        "[serial] pci devices = {} (storage {}, usb {})",
+        pci_count,
+        storage_count,
+        usb_count
+    );
+    vprintln!(
+        "PCI: {} devices ({} storage, {} USB)",
+        pci_count,
+        storage_count,
+        usb_count
+    );
 
     // --- Memory map --------------------------------------------------------
     let mut usable = [memory::MemRegion { start: 0, end: 0 }; MAX_USABLE_REGIONS];

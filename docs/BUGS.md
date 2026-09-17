@@ -7,11 +7,10 @@
 - **Fix:** dropped the dependency and vendored the public-domain 8x8 bitmap table as `aios-kernel/src/font8x8.rs` (`BASIC: [[u8; 8]; 128]`, Basic Latin); `console.rs` indexes it directly.
 
 ## KNOWN (v2.34.0): bare-metal kernel gaps after the Limine + GOP migration
-- **Status:** INTRODUCED LIMITATION — Phase 1 (boot + graphics) is functional; the following are not yet implemented:
-  - the kernel has no explicit `memcpy`/`memset`/`memmove`/`memcmp` (`compiler_builtins` mem functions are provided through the prebuilt `core` for this target, so builds link, but a dedicated `crt` module is still planned);
-  - input is still PS/2 only (no USB-HID/xHCI), storage is not handled (no PCI enumeration / AHCI / NVMe), and there is no PS/2-less fallback;
+- **Status:** INTRODUCED LIMITATION — Phase 1 (boot + graphics) is functional and v2.35.0 added PCI discovery; the following are not yet implemented:
+  - PCI enumeration exists (`pci.rs`), but there is no storage driver yet (no AHCI / NVMe) and input is still PS/2 only (no USB-HID/xHCI, no PS/2-less fallback);
   - the Limine HHDM maps physical memory with huge pages, so kernel virtual mappings must stay outside the HHDM window — the kernel's scratch/heap addresses live in PML4 slot 510 (`0xffff_ff00_…`) and the image in slot 511.
-- **Workaround / notes:** none needed for Phase 1; the next bare-metal phase covers PCI enumeration + native storage and USB-HID input.
+- **Workaround / notes:** none needed for Phase 1; the next bare-metal phase adds the AHCI/NVMe storage driver and USB-HID input.
 
 ## RESOLVED: Live/Installer media showed a black screen after the boot menu on a real laptop
 - **Status:** FIXED in v2.33.3 (user report: «при выборе Live или Installer загружается vmlinuz, потом initramfs — и на этом всё стоит, чёрный экран»)

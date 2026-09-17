@@ -1,5 +1,33 @@
 # Журнал разработки AIOS
 
+## v2.35.0 — Bare-metal веха 6 (часть 1): перечисление PCI + CRT-примитивы памяти (2026-09-18)
+
+Первый срез вехи нативного ввода/хранилища: микроядро теперь умеет обнаруживать
+устройства на шине PCI — это фундамент для будущих драйверов хранилища AHCI/NVMe и
+ввода xHCI.
+
+### Добавлено
+- **`aios-kernel/src/pci.rs`** — доступ к конфигурационному пространству PCI через
+  legacy-порты `0xCF8`/`0xCFC` (`config_read8/16/32`, `config_write32`), полное
+  перечисление bus/device/function (с учётом multifunction) в переданный фиксированный
+  массив, запись `PciDevice` (vendor/device id, class/subclass/prog-if, header type, шесть
+  BAR, IRQ) с хелперами `is_storage()`/`is_usb()` и декодером `class_name()`.
+- **`aios-kernel/src/crt.rs`** — сильные определения `memcpy`/`memmove`/`memset`/`memcmp`/
+  `bcmp` (реализованы через интринсики `core::ptr`, поэтому оптимизатор не превратит их в
+  рекурсивный вызов самих себя), так что ядро владеет своими C-примитивами памяти.
+- **`aios-kernel/src/port.rs`** — 32-битный портовый I/O `outl`/`inl` для механизма
+  конфигурации PCI.
+- `main.rs` перечисляет шину после self-check framebuffer и логирует каждую функцию
+  (`[serial] pci bb:dd.f vvvv:dddd class cc:ss ht=.. pi=.. <name> bar0=0x… irq=…`) плюс
+  сводку `pci devices = N (storage S, usb U)`.
+
+### Проверено
+- Чистые `cargo build`/`clippy` (0 предупреждений) для `x86_64-unknown-none`.
+- Serial QEMU (UEFI/OVMF): найдено 6 устройств на машине `pc` по умолчанию —
+  `8086:1237` host bridge, `8086:7000` ISA bridge, `8086:7010` IDE (хранилище),
+  `8086:7113` ACPI bridge, `1234:1111` дисплей, `8086:100e` сеть — совпадает с моделью
+  устройств QEMU.
+
 ## v2.34.0 — Bare-metal этап 1: загрузка через Limine + UEFI GOP, нативная framebuffer-консоль (2026-09-18)
 
 Этап 1 миграции на голое железо заменяет путь через BIOS-образ `bootloader` на **Limine**
