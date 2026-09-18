@@ -1,5 +1,38 @@
 # AIOS Development Log
 
+## v2.37.0 — Bare-metal Milestone 6 (part 2b): native NVMe block driver (2026-09-18)
+
+Native NVMe storage: the kernel brings up a PCIe NVMe controller, sets up its admin
+queue, identifies the controller and namespace 1, creates one I/O queue pair and reads
+logical blocks. With part 2a (AHCI) the kernel now drives both SATA and NVMe disks at
+boot; USB-HID/xHCI remains.
+
+### Added
+- **`aios-kernel/src/nvme.rs`** — polled NVMe driver (no interrupts). Enables PCI memory
+  space + bus-mastering, maps BAR0 (64-bit) through `memory::map_mmio`, resets the
+  controller (`CC.EN`), programs `AQA`/`ASQ`/`ACQ`, brings it up and waits for `CSTS.RDY`.
+  Issues `Identify Controller` (model `MN`, serial `SN` — ASCII, no word swap),
+  `Create I/O Completion/Submission Queue`, `Identify Namespace` (NSZE + LBA format) and
+  `Read` per block via a PRP1 into one DMA frame. Exposes `Nvme::init`, `drive()` and
+  `read_blocks()` (`NvmeDrive` record).
+- `main.rs` probes class `01:08` (NVMe) after the AHCI block and reports model/serial/
+  capacity plus the LBA0 magic.
+
+### Fixed
+- `AQA` packs `ASQS[11:0]` / `ACQS[27:16]`; the initial `<< 12` made QEMU read `ACQS = 0`
+  and set `CSTS.CFS` on enable (`startfail_acqent_sz_zero`).
+- The completion-entry phase tag is bit 0 of the 16-bit status field (dword bit 16), not
+  bit 31; polling the wrong bit made every admin command time out.
+
+### Verified
+- `cargo build`/`clippy` (0 warnings), `cargo fmt` clean (target `x86_64-unknown-none`).
+- QEMU (UEFI/OVMF, `-device nvme,serial=AIOSNVME,drive=…` + 16 MiB `nvme-test.img`):
+  `model="QEMU NVMe Ctrl"`, `serial="AIOSNVME"`, `blocks=32768 lba=512 (16 MiB)`,
+  `LBA0 = 41 49 4f 53 2d 4e 56 4d | AIOS-NVME-TEST!!`.
+- AHCI + NVMe together: both disks identified and read in one boot (regression check).
+- Baseline (no NVMe/AHCI controller) still logs `nvme: no NVMe controller found` and
+  reaches the scheduler.
+
 ## v2.36.0 — Bare-metal Milestone 6 (part 2a): native AHCI (SATA) block driver (2026-09-18)
 
 The kernel can now talk to a real SATA controller: it brings up AHCI ports, identifies

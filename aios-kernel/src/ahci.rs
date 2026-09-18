@@ -1,10 +1,10 @@
 //! AHCI (SATA) block driver.
 //!
-//! Drives SATA disks behind an AHCI controller discovered through `pci`. All
-//! register and DMA memory is reached through the boot HHDM, so the driver
-//! needs neither page mappings of its own nor more than one BAR from the PCI
-//! layer. Only polled command issue (no interrupts) is implemented, which is
-//! enough for boot-time block access: `IDENTIFY DEVICE` plus `READ DMA EXT`.
+//! Drives SATA disks behind an AHCI controller discovered through `pci`. The
+//! controller BAR is mapped with `memory::map_mmio` (the boot HHDM does not
+//! cover MMIO) while the DMA frames are reached through the HHDM. Only polled
+//! command issue (no interrupts) is implemented, which is enough for boot-time
+//! block access: `IDENTIFY DEVICE` plus `READ DMA EXT`.
 
 use crate::memory;
 use crate::pci::{self, PciDevice};

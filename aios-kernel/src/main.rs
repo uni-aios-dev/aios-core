@@ -12,6 +12,7 @@ mod heap;
 mod idt;
 mod interrupts;
 mod memory;
+mod nvme;
 mod pci;
 mod port;
 mod sched;
@@ -362,6 +363,64 @@ pub unsafe extern "C" fn _start() -> ! {
     } else {
         kprintln!("[serial] ahci: no SATA controller found");
         vprintln!("AHCI: no SATA controller");
+    }
+
+    // --- NVMe driver -------------------------------------------------------
+    if let Some(controller) = pci_devices[..pci_count]
+        .iter()
+        .find(|dev| dev.class == pci::CLASS_STORAGE && dev.subclass == 0x08)
+    {
+        match nvme::Nvme::init(controller) {
+            Ok(mut nvme) => {
+                let drive = *nvme.drive();
+                let mib = drive.bytes() / 1024 / 1024;
+                vprintln!(
+                    "NVMe: {} ({} MiB, {} B blocks)",
+                    drive.model_str(),
+                    mib,
+                    drive.lba_size
+                );
+                kprintln!(
+                    "[serial] nvme controller {:04x}:{:04x} model=\"{}\" serial=\"{}\" blocks={} lba={} ({} MiB)",
+                    controller.vendor_id,
+                    controller.device_id,
+                    drive.model_str(),
+                    drive.serial_str(),
+                    drive.blocks,
+                    drive.lba_size,
+                    mib
+                );
+                let mut sector = [0u8; 512];
+                match nvme.read_blocks(0, 1, &mut sector) {
+                    Ok(()) => {
+                        kprintln!(
+                            "[serial] nvme LBA0 = {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {}",
+                            sector[0],
+                            sector[1],
+                            sector[2],
+                            sector[3],
+                            sector[4],
+                            sector[5],
+                            sector[6],
+                            sector[7],
+                            core::str::from_utf8(&sector[..16]).unwrap_or("?")
+                        );
+                        vprintln!("NVMe read LBA0 OK");
+                    }
+                    Err(e) => {
+                        kprintln!("[serial] nvme read LBA0 FAILED: {}", e);
+                        vprintln!("NVMe read LBA0 FAILED: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                kprintln!("[serial] nvme init failed: {}", e);
+                vprintln!("NVMe init failed: {}", e);
+            }
+        }
+    } else {
+        kprintln!("[serial] nvme: no NVMe controller found");
+        vprintln!("NVMe: no NVMe controller");
     }
 
     // --- Scheduler + ring-3 demo tasks + IPC ------------------------------

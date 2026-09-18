@@ -12,6 +12,12 @@
 - **Root cause:** the Limine HHDM maps only usable RAM, not device MMIO regions, so `hhdm_offset + phys` is unmapped for BARs.
 - **Fix:** added `memory::map_mmio(phys, size)` (maps page-rounded device pages into a dedicated window at `0xffffff00_2000_0000`, PML4 slot 510) and moved driver init **after** `sti` so faults are handled by the kernel.
 
+## RESOLVED: v2.37.0 NVMe bring-up — `CSTS.CFS` on enable and admin-command timeouts
+- **Status:** FIXED in v2.37.0 (driver added)
+- **Symptom:** the NVMe driver set `CSTS.CFS` immediately after writing `CC.EN=1` (`nvme: controller fatal status`) and, once that was fixed, the first admin command timed out.
+- **Root cause:** (1) `AQA` packs `ASQS` in bits 11:0 but `ACQS` in bits **27:16** — the initial `<< 12` left `ACQS = 0`, so QEMU rejected the start (`pci_nvme_err_startfail_acqent_sz_zero`); (2) the completion-entry phase tag is bit 0 of the 16-bit status field (dword bit 16), not the dword's bit 31, so the poll never matched a completion.
+- **Fix:** `AQA = (depth-1) | ((depth-1) << 16)` and the phase test uses `(status >> 16) & 1` (the status field is read as `(status >> 17) & 0x7FFF`). Diagnosed with QEMU `-trace enable=pci_nvme_*`.
+
 ## RESOLVED: `font8x8` dependency broke the no_std kernel build
 - **Status:** FIXED in v2.34.0
 - **Symptom:** `cargo build --target x86_64-unknown-none --release` for `aios-kernel` failed inside the dependency source with `error: cannot find macro \`print\` in this scope` / `\`println\`` (e.g. `font8x8-0.3.1/src/block.rs`, `src/box.rs`).
@@ -20,7 +26,7 @@
 
 ## KNOWN (v2.34.0): bare-metal kernel gaps after the Limine + GOP migration
 - **Status:** INTRODUCED LIMITATION — Phase 1 (boot + graphics) is functional and v2.35.0 added PCI discovery; the following are not yet implemented:
-  - PCI enumeration exists (`pci.rs`), but there is no storage driver yet (no AHCI / NVMe) and input is still PS/2 only (no USB-HID/xHCI, no PS/2-less fallback);
+  - PCI enumeration exists (`pci.rs`), and native AHCI (SATA) and NVMe storage drivers are online (v2.36.0/v2.37.0), but input is still PS/2 only (no USB-HID/xHCI, no PS/2-less fallback);
   - the Limine HHDM maps physical memory with huge pages, so kernel virtual mappings must stay outside the HHDM window — the kernel's scratch/heap addresses live in PML4 slot 510 (`0xffff_ff00_…`) and the image in slot 511.
 - **Workaround / notes:** none needed for Phase 1; the next bare-metal phase adds the AHCI/NVMe storage driver and USB-HID input.
 
