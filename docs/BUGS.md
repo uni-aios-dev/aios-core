@@ -1,5 +1,17 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: v2.35.0 `crt.rs` `memset` hung the boot (circular PLT)
+- **Status:** FIXED in v2.36.0 (module deleted)
+- **Symptom:** the kernel hung mid-boot right after `[serial] heap online.` — `interrupts online.` never appeared and no fault was printed.
+- **Root cause:** the strong `memset` in `aios-kernel/src/crt.rs` was emitted with a PLT stub. The `memset` GOT slot received an `R_X86_64_RELATIVE` relocation pointing at the `memset` PLT stub (`0xffffffff80009ae0`) itself, so the first out-of-line `memset` call (from the `[MemRegion; 64]` array init) jumped into its own stub forever.
+- **Fix:** deleted `aios-kernel/src/crt.rs` and its `mod crt;`; the kernel now uses `compiler_builtins`' weak `memcpy`/`memmove`/`memset`/`memcmp`. Verified by booting past the hang to the scheduler. Note: this module was shipped in **v2.35.0**, so that tag is affected.
+
+## RESOLVED: Limine HHDM does not map MMIO (PCI BAR access page-faults)
+- **Status:** FIXED in v2.36.0
+- **Symptom:** reading the AHCI ABAR through the HHDM alias faulted with `PAGE FAULT: addr=0xffff800081060004 ip=0xffffffff80007420 err=0x0`; earlier the same access triple-faulted because it ran before `sti`.
+- **Root cause:** the Limine HHDM maps only usable RAM, not device MMIO regions, so `hhdm_offset + phys` is unmapped for BARs.
+- **Fix:** added `memory::map_mmio(phys, size)` (maps page-rounded device pages into a dedicated window at `0xffffff00_2000_0000`, PML4 slot 510) and moved driver init **after** `sti` so faults are handled by the kernel.
+
 ## RESOLVED: `font8x8` dependency broke the no_std kernel build
 - **Status:** FIXED in v2.34.0
 - **Symptom:** `cargo build --target x86_64-unknown-none --release` for `aios-kernel` failed inside the dependency source with `error: cannot find macro \`print\` in this scope` / `\`println\`` (e.g. `font8x8-0.3.1/src/block.rs`, `src/box.rs`).

@@ -3,8 +3,8 @@
 
 extern crate alloc;
 
+mod ahci;
 mod console;
-mod crt;
 mod font8x8;
 mod framebuffer;
 mod gdt;
@@ -296,6 +296,72 @@ pub unsafe extern "C" fn _start() -> ! {
 
     unsafe {
         core::arch::asm!("sti", options(nostack, preserves_flags));
+    }
+
+    // --- AHCI SATA driver --------------------------------------------------
+    if let Some(controller) = pci_devices[..pci_count]
+        .iter()
+        .find(|dev| dev.class == pci::CLASS_STORAGE && dev.subclass == 0x06)
+    {
+        match ahci::Ahci::init(controller) {
+            Ok(ahci) => {
+                let drives = ahci.drives();
+                vprintln!("AHCI: {} SATA drive(s)", drives.len());
+                kprintln!(
+                    "[serial] ahci controller {:04x}:{:04x} drives = {}",
+                    controller.vendor_id,
+                    controller.device_id,
+                    drives.len()
+                );
+                for drive in drives {
+                    let mib = drive.sectors / 2048;
+                    vprintln!(
+                        "SATA port {}: {} ({} MiB)",
+                        drive.port,
+                        drive.model_str(),
+                        mib
+                    );
+                    kprintln!(
+                        "[serial] ahci port {} model=\"{}\" sectors={} ({} MiB)",
+                        drive.port,
+                        drive.model_str(),
+                        drive.sectors,
+                        mib
+                    );
+                }
+                if !drives.is_empty() {
+                    let mut sector = [0u8; 512];
+                    match ahci.read_sectors(0, 0, 1, &mut sector) {
+                        Ok(()) => {
+                            kprintln!(
+                                "[serial] ahci LBA0 = {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {}",
+                                sector[0],
+                                sector[1],
+                                sector[2],
+                                sector[3],
+                                sector[4],
+                                sector[5],
+                                sector[6],
+                                sector[7],
+                                core::str::from_utf8(&sector[..16]).unwrap_or("?")
+                            );
+                            vprintln!("AHCI read LBA0 OK");
+                        }
+                        Err(e) => {
+                            kprintln!("[serial] ahci read LBA0 FAILED: {}", e);
+                            vprintln!("AHCI read LBA0 FAILED: {}", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                kprintln!("[serial] ahci init failed: {}", e);
+                vprintln!("AHCI init failed: {}", e);
+            }
+        }
+    } else {
+        kprintln!("[serial] ahci: no SATA controller found");
+        vprintln!("AHCI: no SATA controller");
     }
 
     // --- Scheduler + ring-3 demo tasks + IPC ------------------------------

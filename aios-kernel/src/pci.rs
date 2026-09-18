@@ -102,7 +102,6 @@ pub unsafe fn config_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 
 ///
 /// # Safety
 /// Performs raw port I/O; used to program BARs and enable bus mastering.
-#[allow(dead_code)]
 pub unsafe fn config_write32(bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     let address = 0x8000_0000u32
         | ((bus as u32) << 16)

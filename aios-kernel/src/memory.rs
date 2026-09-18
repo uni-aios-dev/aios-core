@@ -67,6 +67,40 @@ pub fn frame_region_count() -> usize {
     unsafe { FRAME_REGION_COUNT }
 }
 
+/// Offsets a physical address with the bootloader HHDM base.
+///
+/// Used by device drivers to reach physically-contiguous DMA buffers, which
+/// live in usable RAM and are therefore covered by the HHDM. MMIO registers are
+/// *not* covered by the HHDM and must go through [`map_mmio`].
+pub fn physical_to_virtual(phys: u64) -> u64 {
+    PHYS_OFFSET.load(Ordering::Relaxed) + phys
+}
+
+/// Base of the dedicated MMIO window in PML4 slot 510.
+///
+/// The boot HHDM only maps RAM, so device registers reached through a PCI BAR
+/// must be mapped explicitly. The window sits above the kernel heap and the
+/// paging self-test page, both of which also live in slot 510.
+const MMIO_BASE: u64 = 0xFFFF_FF00_2000_0000;
+static MMIO_NEXT: AtomicU64 = AtomicU64::new(MMIO_BASE);
+
+/// Maps `size` bytes of device memory starting at physical `phys` and returns
+/// the virtual address that aliases `phys`.
+///
+/// The mapping is placed in a dedicated supervisor-only MMIO window; the offset
+/// of `phys` within its first page is preserved. Each call consumes fresh
+/// virtual space so that several devices never alias.
+pub fn map_mmio(phys: u64, size: u64) -> Result<u64, &'static str> {
+    let start = align_down(phys, PAGE_SIZE);
+    let offset = phys - start;
+    let pages = (offset + size).div_ceil(PAGE_SIZE);
+    let virt = MMIO_NEXT.fetch_add(pages * PAGE_SIZE, Ordering::Relaxed);
+    for page in 0..pages {
+        map_page(virt + page * PAGE_SIZE, start + page * PAGE_SIZE, false)?;
+    }
+    Ok(virt + offset)
+}
+
 /// Allocates a single physical page frame, returning its physical address.
 pub fn alloc_frame() -> Option<u64> {
     loop {

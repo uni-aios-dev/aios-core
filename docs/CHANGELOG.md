@@ -1,5 +1,40 @@
 # AIOS Development Log
 
+## v2.36.0 — Bare-metal Milestone 6 (part 2a): native AHCI (SATA) block driver (2026-09-18)
+
+The kernel can now talk to a real SATA controller: it brings up AHCI ports, identifies
+attached disks and reads sectors over DMA. This is the storage half of the native
+input/storage milestone (USB-HID/xHCI and NVMe remain).
+
+### Added
+- **`aios-kernel/src/ahci.rs`** — AHCI (SATA) block driver: enables PCI memory space +
+  bus-mastering, resets the HBA and sets `AE`, builds per-port command-list / FIS-receive /
+  command-table frames from `alloc_frame`, starts the port, issues `IDENTIFY DEVICE`
+  (decoding the ATA word-swapped model string and 28/48-bit capacity) and performs
+  `READ DMA EXT` / `WRITE DMA EXT` through a PRDT entry. Exposes `Ahci::init`, `drives()`
+  and `read_sectors()` (`AhciDrive` record).
+- **`memory::map_mmio` / `memory::physical_to_virtual`** — device BARs are mapped into a
+  dedicated MMIO window at `0xffffff00_2000_0000` (PML4 slot 510) because the Limine HHDM
+  does not cover MMIO; `physical_to_virtual` returns the HHDM alias for DMA buffers.
+- `main.rs` initializes storage **after** interrupts are enabled (`sti`) so page faults are
+  handled by the kernel instead of triple-faulting.
+
+### Fixed
+- **Removed `aios-kernel/src/crt.rs`** (shipped in v2.35.0). Its strong `memset` produced a
+  circular PLT — the GOT slot was relocated (`R_X86_64_RELATIVE`) to the `memset` PLT stub
+  itself, so any out-of-line `memset` call became an infinite `jmp` and hung the boot. The
+  kernel now uses `compiler_builtins`' weak `mem*`.
+- Port signature (`PxSIG`) is now read **after** the port is started; reading it beforehand
+  returned `0xffffffff` under QEMU. Ports with an ATAPI/SEMB/PM signature are skipped.
+
+### Verified
+- `cargo build`/`clippy` (0 warnings), `cargo fmt` clean (target `x86_64-unknown-none`).
+- QEMU (UEFI/OVMF, `-device ich9-ahci` + 16 MiB `ide-hd` on `ahci.1`): `drives = 1`,
+  `model="QEMU HARDDISK"`, `sectors=32768 (16 MiB)`, `LBA0 = 41 49 4f 53 2d 41 48 43 |
+  AIOS-AHCI-TEST!!` — matching the test image magic.
+- Baseline (no AHCI controller) still logs `ahci: no SATA controller found` and reaches the
+  scheduler.
+
 ## v2.35.0 — Bare-metal Milestone 6 (part 1): PCI enumeration + CRT memory primitives (2026-09-18)
 
 First slice of the native input/storage milestone: the microkernel can now discover
