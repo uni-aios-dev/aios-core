@@ -19,6 +19,7 @@ mod sched;
 mod serial;
 mod syscalls;
 mod user;
+mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
 use core::panic::PanicInfo;
@@ -290,6 +291,15 @@ pub unsafe extern "C" fn _start() -> ! {
     gdt::init(double_fault_stack_top);
     gdt::set_kernel_stack(kernel_stack_top);
     interrupts::init_pic();
+    unsafe {
+        let master_mask = crate::port::inb(0x21);
+        let slave_mask = crate::port::inb(0xA1);
+        kprintln!(
+            "[serial] [probe] PIC-MASK master=0x{:02X} slave=0x{:02X} (0xFC=IRQ0-unmasked-expected)",
+            master_mask,
+            slave_mask
+        );
+    }
     interrupts::init_pit();
 
     vprintln!("Interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
@@ -298,6 +308,11 @@ pub unsafe extern "C" fn _start() -> ! {
     unsafe {
         core::arch::asm!("sti", options(nostack, preserves_flags));
     }
+
+    let mut rflags: u64 = 0;
+    unsafe { core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nostack, preserves_flags)); }
+    kprintln!("[serial] [probe] RFLAGS.IF={} (bit9) sti-executed-marker", (rflags >> 9) & 1);
+    kprintln!("[serial] [probe] gate32-installed={} (vector-32 present-bit) idt-present-marker", interrupts::idt_gate_installed(32));
 
     // --- AHCI SATA driver --------------------------------------------------
     if let Some(controller) = pci_devices[..pci_count]
@@ -423,6 +438,40 @@ pub unsafe extern "C" fn _start() -> ! {
         vprintln!("NVMe: no NVMe controller");
     }
 
+    // --- xHCI (USB) driver ------------------------------------------------
+    if let Some(controller) = pci_devices[..pci_count]
+        .iter()
+        .find(|dev| dev.class == pci::CLASS_SERIAL_BUS && dev.subclass == 0x03)
+    {
+        match xhci::Xhci::init(controller) {
+            Ok(hid) => {
+                vprintln!(
+                    "USB: xHCI slot {} port {} speed {}",
+                    hid.slot,
+                    hid.port,
+                    hid.speed
+                );
+                kprintln!(
+                    "[serial] xhci controller {:04x}:{:04x} slot={} port={} speed={}",
+                    controller.vendor_id,
+                    controller.device_id,
+                    hid.slot,
+                    hid.port,
+                    hid.speed
+                );
+                vprintln!("USB HID boot keyboard: reports armed");
+                kprintln!("[serial] usb hid boot keyboard armed.");
+            }
+            Err(e) => {
+                kprintln!("[serial] xhci init failed: {}", e);
+                vprintln!("USB HID init failed: {}", e);
+            }
+        }
+    } else {
+        kprintln!("[serial] xhci: no USB controller found");
+        vprintln!("USB: no xHCI controller");
+    }
+
     // --- Scheduler + ring-3 demo tasks + IPC ------------------------------
     sched::init();
 
@@ -485,8 +534,10 @@ pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
+    let mut last_usb_seq = 0u64;
     loop {
         crate::sched::yield_kernel();
+        xhci::poll();
         let ticks = interrupts::TICKS.load(Ordering::Relaxed);
         if ticks >= interrupts::TIMER_HZ && ticks - last_tick_print >= interrupts::TIMER_HZ {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
@@ -523,6 +574,18 @@ pub fn idle_loop() -> ! {
                     vprintln!("[key] scancode 0x{:02x}", sc);
                     kprintln!("[serial] key scancode 0x{:02x}", sc);
                 }
+            }
+        }
+        let usb_seq = xhci::KEY_SEQ.load(Ordering::Relaxed);
+        if usb_seq != last_usb_seq {
+            last_usb_seq = usb_seq;
+            let usb_sc = xhci::KEY_SCANCODE.load(Ordering::Relaxed);
+            if let Some(c) = interrupts::scancode_to_char(usb_sc as u8) {
+                vprintln!("[usb-key] '{}' (0x{:02x})", c, usb_sc);
+                kprintln!("[serial] usb key '{}' (0x{:02x})", c, usb_sc);
+            } else {
+                vprintln!("[usb-key] usage scancode 0x{:02x}", usb_sc);
+                kprintln!("[serial] usb key scancode 0x{:02x}", usb_sc);
             }
         }
         unsafe {

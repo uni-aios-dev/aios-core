@@ -59,7 +59,8 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
         13 => fatal(frame, "GENERAL PROTECTION FAULT"),
         14 => page_fault(frame),
         v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => match vector {
-            32 => {
+                        32 => {
+                kprintln!("[serial] [irq32] PIT-INC TICKS={}", TICKS.load(Ordering::Relaxed));
                 TICKS.fetch_add(1, Ordering::Relaxed);
                 pic_eoi(vector);
                 crate::sched::tick(frame);
@@ -135,6 +136,10 @@ fn read_cr2() -> u64 {
     cr2
 }
 
+pub fn idt_gate_installed(vector: u64) -> bool {
+    crate::idt::gate_installed(vector)
+}
+
 pub fn init_pic() {
     unsafe {
         port::outb(PIC1_CMD, 0x11);
@@ -155,6 +160,20 @@ pub fn init_pic() {
         port::io_wait();
         port::outb(PIC1_DATA, 0xFC);
         port::outb(PIC2_DATA, 0xFF);
+        let (m, s) = pic_masks();
+        kprintln!(
+            "[serial] [probe] PIC1-IMR-master=0x{:02X} PIC2-IMR-slave=0x{:02X} irq0-unmasked-marker (bit7..0) readback-after-pic-init",
+            m,
+            s
+        );
+    }
+}
+
+pub fn pic_masks() -> (u8, u8) {
+    unsafe {
+        let master = port::inb(PIC1_DATA);
+        let slave = port::inb(PIC2_DATA);
+        (master, slave)
     }
 }
 
@@ -164,6 +183,26 @@ pub fn init_pit() {
         port::outb(PIT_CMD, 0x36);
         port::outb(PIT_CH0, (divisor & 0xFF) as u8);
         port::outb(PIT_CH0, (divisor >> 8) as u8);
+        for _ in 0..2_500_000 {
+            core::hint::spin_loop();
+        }
+        unsafe { port::outb(PIT_CMD, 0x00); }
+        let lo1 = unsafe { port::inb(PIT_CH0) };
+        let hi1 = unsafe { port::inb(PIT_CH0) };
+        let val1 = lo1 as u16 | ((hi1 as u16) << 8);
+        for _ in 0..5_000_000 {
+            core::hint::spin_loop();
+        }
+        unsafe { port::outb(PIT_CMD, 0x00); }
+        let lo2 = unsafe { port::inb(PIT_CH0) };
+        let hi2 = unsafe { port::inb(PIT_CH0) };
+        let val2 = lo2 as u16 | ((hi2 as u16) << 8);
+        kprintln!(
+            "[serial] [probe] PIT-CN0 val1=0x{:04X} val2=0x{:04X} delta={} (latch-readback twopass pit-running-marker)",
+            val1,
+            val2,
+            val1.wrapping_sub(val2)
+        );
     }
 }
 

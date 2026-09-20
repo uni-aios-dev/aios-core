@@ -68,6 +68,16 @@ extern "C" {
     static aios_handler_table: [u64; 256];
 }
 
+pub fn gate_installed(vector: u64) -> bool {
+    unsafe {
+        let idt = &*core::ptr::addr_of!(IDT);
+        if (vector as usize) >= idt.entries.len() {
+            return false;
+        }
+        (idt.entries[vector as usize].flags & 0x80) != 0
+    }
+}
+
 pub fn init() {
     unsafe {
         let idt = &mut *core::ptr::addr_of_mut!(IDT);

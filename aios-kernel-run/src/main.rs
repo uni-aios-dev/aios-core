@@ -250,6 +250,15 @@ fn run_qemu(qemu: &Path, iso: &Path, out_dir: &Path) {
         println!("firmware: legacy BIOS (requested)");
     }
 
+    // USB: attach an xHCI controller with a boot keyboard (default on).
+    let want_usb = env::var("AIOS_QEMU_USB").map(|v| v != "0").unwrap_or(true);
+    if want_usb {
+        println!("usb: qemu-xhci + usb-kbd attached");
+        cmd.args(["-device", "qemu-xhci"]).args(["-device", "usb-kbd"]);
+    } else {
+        println!("usb: none (AIOS_QEMU_USB=0)");
+    }
+
     let status = cmd.status().expect("failed to spawn qemu-system-x86_64");
     std::process::exit(status.code().unwrap_or(1));
 }
