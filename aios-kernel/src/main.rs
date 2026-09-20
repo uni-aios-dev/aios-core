@@ -314,6 +314,25 @@ pub unsafe extern "C" fn _start() -> ! {
     kprintln!("[serial] [probe] RFLAGS.IF={} (bit9) sti-executed-marker", (rflags >> 9) & 1);
     kprintln!("[serial] [probe] gate32-installed={} (vector-32 present-bit) idt-present-marker", interrupts::idt_gate_installed(32));
 
+    {
+        // RAW 16-byte gate descriptor dump: vector-32 (broken #GP) vs vector-50 (working soft-int).
+        // Discriminates which byte of the 16-byte IDT descriptor for 0x20 is corrupted.
+        let (off32, sel32) = unsafe { interrupts::idt_raw_gate(32) };
+        let (off50, sel50) = unsafe { interrupts::idt_raw_gate(50) };
+        kprintln!(
+            "[serial] [probe] IDT-RAW-32 offset=0x{:016X} selector=0x{:04X} (vector-32 raw-gate-descriptor-two-words) idt-32raw-marker",
+            off32, sel32
+        );
+        kprintln!(
+            "[serial] [probe] IDT-RAW-50 offset=0x{:016X} selector=0x{:04X} (vector-50 control-gate wholesale-offset-holding) idt-50raw-marker",
+            off50, sel50
+        );
+    }
+    kprintln!("[serial] [probe] SOFT-INT-0x20-SENT (int-instruction vector-0x20=32-decimal, matches-PIT-arm-32 idt-soft-trigger bypasses-PIC)");
+    unsafe {
+        core::arch::asm!("int 0x20");
+    }
+
     // --- AHCI SATA driver --------------------------------------------------
     if let Some(controller) = pci_devices[..pci_count]
         .iter()

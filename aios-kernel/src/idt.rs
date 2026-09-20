@@ -78,6 +78,28 @@ pub fn gate_installed(vector: u64) -> bool {
     }
 }
 
+/// Returns the raw 16-byte IDT gate descriptor for `vector` as two u64 halves:
+/// (lower, upper) = (offset-low-16 | selector-16 | IST+flags-16 | offset-mid-16,
+/// offset-high-32 | reserved-32). Byte-truth discriminator: compares the
+/// descriptor bytes for vector-32 (the PIT IRQ0 gate that never fires) against
+/// vector-50 to spot exactly which byte is corrupt.
+pub fn raw_gate(vector: u64) -> (u64, u64) {
+    unsafe {
+        let idt = &*core::ptr::addr_of!(IDT);
+        if (vector as usize) >= idt.entries.len() {
+            return (0, 0);
+        }
+        let e = &idt.entries[vector as usize];
+        let lower = e.offset_low as u64
+            | ((e.selector as u64) << 16)
+            | ((e.ist as u64) << 32)
+            | ((e.flags as u64) << 40)
+            | ((e.offset_mid as u64) << 48);
+        let upper = (e.offset_high as u64) << 32;
+        (lower, upper)
+    }
+}
+
 pub fn init() {
     unsafe {
         let idt = &mut *core::ptr::addr_of_mut!(IDT);

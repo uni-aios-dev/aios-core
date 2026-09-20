@@ -140,6 +140,13 @@ pub fn idt_gate_installed(vector: u64) -> bool {
     crate::idt::gate_installed(vector)
 }
 
+/// Returns the raw 16-byte IDT descriptor for `vector` as (lower, upper) u64
+/// halves — byte-truth readback used by the boot-time descriptor discriminator
+/// (vector-32 gate corrupt vs healthy neighbor gate).
+pub fn idt_raw_gate(vector: u64) -> (u64, u64) {
+    crate::idt::raw_gate(vector)
+}
+
 pub fn init_pic() {
     unsafe {
         port::outb(PIC1_CMD, 0x11);
