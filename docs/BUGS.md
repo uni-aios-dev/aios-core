@@ -597,3 +597,28 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
 - **Workaround:** the installer creates a dedicated 1 MiB BIOS boot partition
   (GUID `21686148-...`) as the first partition, so BIOS embedding works. UEFI
   boots are unaffected (EFI system partition is used).
+
+### BUG-044: RAW-discriminator — real-hardware GP#13 proves corrupt IDT gate for vector-32 (PIT IRQ0)
+- **Status:** CONFIRMED on real hardware via byte-truth (v0.5.1)
+- **Symptom:** on real USB-flashed hardware the boot reached the discriminator
+  probe, printed RAW IDT gate dumps, then a planned `int 0x20` soft-int fired
+  a #GP (General Protection Fault, vector-13) at non-canonical `ip=0xffffffff000aa2`.
+- **Byte-truth evidence:**
+  - fresh ISO written to USB as raw bytes, read-back verified „mism=0“, contained
+    the markers IDT-RAW-32 and IDT-RAW-50 (RAW=True on the booted image);
+  - vector-50 (the soft-int used by the scheduler probe) is intact;
+  - vector-32 gate descriptor offset is corrupt:  x000aa2 + upper=0xffffffff
+    instead of kernel link address  xffffffff8000xxxx — the mid-16 bits of the
+    handler offset are zeroed, so a soft-int to vector 32 lands at a non-canonical
+    address and #GP/#GP13 fires.
+- **Root Cause (hypothesis, awaiting fix):** the IDT gate descriptor for vector-32
+  is corrupted when it is installed — offset_mid (bits 16..31 of the handler
+  address) is zero despite a correct offset_high=0xffffffff. Vector-50 is built
+  by a separate path and is intact menus; this discriminator proved the corruption
+  is in the raw gate bytes, not in the ISO/limine/bootloader.
+- **Fix direction:** harden/hard-patch vector-32 gate installation in
+  ios-kernel/src/interrupts/idt.rs (set_handler/set_gate) so offset_mid is
+  always derived from the full 64-bit handler (bits 16..31), not truncated; then
+  re-verify via RAW discriminator probe.
+- **Affected files:** ios-kernel/src/interrupts/idt.rs (gate install),
+  ios-kernel-run/src/main.rs (probe).

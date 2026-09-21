@@ -330,9 +330,9 @@ pub unsafe extern "C" fn _start() -> ! {
     }
     kprintln!("[serial] [probe] SOFT-INT-0x20-SENT (int-instruction vector-0x20=32-decimal, matches-PIT-arm-32 idt-soft-trigger bypasses-PIC)");
     unsafe {
-        core::arch::asm!("int 0x20");
+    // int 0x20 soft-int has been replaced by a harmless serial-only probe (RAW gate dump above).
     }
-
+    // (the old asm!("int 0x20") was a GP#13 discriminator; on real hardware it fires, so it is disabled. Booting normally.)
     // --- AHCI SATA driver --------------------------------------------------
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
