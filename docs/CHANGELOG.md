@@ -1,5 +1,31 @@
 # AIOS Development Log
 
+## v2.38.0 — Bare-metal kernel boots from a USB flash drive (2026-09-22)
+
+The bare-metal AIOS kernel (`aios-kernel`) is now a drop-in USB-bootable
+system. The `aios-kernel-run` harness builds a hybrid BIOS+UEFI ISO and a
+byte-identical `aios-kernel-usb.img`; because `limine bios-install` already
+writes the isohybrid MBR, copying the ISO to a stick makes it boot on both
+legacy BIOS (Limine MBR → `limine-bios.sys`) and UEFI (ESP → `BOOTX64.EFI`).
+
+### Added
+- **`aios-kernel-run/src/main.rs`** — produce `out/aios-kernel-usb.img`
+  (byte copy of the isohybrid ISO) after `limine bios-install`. New
+  `AIOS_QEMU_USB=1` QEMU mode attaches the image as a USB mass-storage
+  device (with `bootindex=1`) instead of the CD-ROM, enabling an end-to-end
+  "boot from USB stick" smoke test inside the harness.
+- **`scripts/flash-usb.ps1`** — Windows helper that writes `aios-kernel-usb.img`
+  to a physical USB stick (`\\.\PhysicalDriveN`). Requires Administrator;
+  lists candidate disks, confirms the target, streams the image, and verifies
+  SHA-256 of the written bytes plus the MBR `55 AA` signature.
+
+### Verified
+- QEMU UEFI (OVMF): boot from USB stick image — Boot0001 "QEMU USB HARDDRIVE"
+  → Limine handoff → full kernel boot to `scheduler online`.
+- QEMU legacy BIOS (SeaBIOS): boot from the same USB stick image — MBR →
+  Limine BIOS stage → full kernel boot to `scheduler online`.
+- Harness end-to-end (`AIOS_QEMU_USB=1`) reproduces both UEFI and BIOS paths.
+
 ## v2.37.0 — Bare-metal Milestone 6 (part 2b): native NVMe block driver (2026-09-18)
 
 Native NVMe storage: the kernel brings up a PCIe NVMe controller, sets up its admin

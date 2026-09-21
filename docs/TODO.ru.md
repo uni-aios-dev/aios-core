@@ -51,6 +51,7 @@
 - [x] Веб-аутентификация для `aios-studio` + ужесточение CORS — локальные аккаунты (`AIOS_DATA_DIR/users.json`), солёные + key-stretched (SHA-256 × 10 000) пароли, самоподписанные HMAC-SHA256 сессионные токены (TTL 12 ч), middleware `require_auth` для `/api/v1/*`, UI входа/создания аккаунта, `apiFetch` + `localStorage`-токен, user badge / sign-out в сайдбаре (v2.30.0; сборка Rust на этом хосте пока НЕ проверена)
 - [x] `scripts/build-live-iso.sh` — Linux/macOS Docker/podman обёртка сборки ISO (v2.31.4); переключатель offline в `live/build.sh` через `CARGO_NET_OFFLINE`
 - [x] Phase 56: Bare-metal этап 1 — загрузка через Limine + GOP (`limine` 0.6.5). `aios-kernel` теперь ELF по протоколу Limine, грузится с гибридного BIOS+UEFI ISO; нативная framebuffer-консоль (`framebuffer.rs`/`console.rs`, вендоренный шрифт 8x8) заменила удалённый VGA-драйвер; карта памяти + HHDM берутся из Limine; `aios-kernel-run` собирает ISO (`xorriso` + `limine bios-install`) и грузит его в QEMU под OVMF/GOP или legacy BIOS (v2.34.0)
+- [x] **Bare-metal ядро загружается с USB-флешки (v2.38.0)**: isohybrid ISO копируется байт-в-байт в `aios-kernel-usb.img`; тот же образ загружается на legacy BIOS (MBR Limine → `limine-bios.sys`) и UEFI (ESP → `BOOTX64.EFI`). `aios-kernel-run` производит USB-образ и поддерживает `AIOS_QEMU_USB=1` для полного smoke-теста загрузки с флешки. `scripts\flash-usb.ps1` записывает образ на флешку с проверкой SHA-256 и сигнатуры MBR.
 
 ## Бэклог
 

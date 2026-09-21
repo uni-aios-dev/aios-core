@@ -24,6 +24,12 @@
 - **Root cause:** `font8x8` 0.3.1 is a `std`-only crate — its `Display`/`Debug` impls call `print!`/`println!`, so it cannot compile for a freestanding target.
 - **Fix:** dropped the dependency and vendored the public-domain 8x8 bitmap table as `aios-kernel/src/font8x8.rs` (`BASIC: [[u8; 8]; 128]`, Basic Latin); `console.rs` indexes it directly.
 
+## KNOWN (v2.38.0): xHCI probes only the first USB device when booting from a stick
+- **Status:** INTRODUCED LIMITATION — the bare-metal kernel now boots from a USB flash drive (both legacy BIOS and UEFI) and the xHCI host-controller driver exists; however `xhci.rs` enumerates and arms the **first** device it discovers on the controller. When the boot stick occupies that port the init path fails with `xhci init failed: xhci: no HID interrupt IN endpoint in configuration` and the kernel boots to `scheduler online` with the **keyboard not armed** (no serial keyboard input until the driver is extended to probe all root ports).
+- **Symptom:** on a real laptop with the AIOS stick plugged in, the kernel reaches the scheduler but keyboard events are ignored; the stick's storage works and the kernel can read additional disks after storage drivers attach.
+- **Root cause:** `xhci.rs` calls `init` once against the first enumerated device instead of scanning every port / every device in the DCBAA.
+- **Workaround / notes:** on real hardware the stick and keyboard usually sit on different root ports, so the driver typically picks up the keyboard first and boot proceeds with input armed; if the stick lands on the probed port, boot still completes — keyboard just needs re-arming after storage init. Fix tracked for the next bare-metal iteration (enumerate all devices / port-centric init).
+
 ## KNOWN (v2.34.0): bare-metal kernel gaps after the Limine + GOP migration
 - **Status:** INTRODUCED LIMITATION — Phase 1 (boot + graphics) is functional and v2.35.0 added PCI discovery; the following are not yet implemented:
   - PCI enumeration exists (`pci.rs`), and native AHCI (SATA) and NVMe storage drivers are online (v2.36.0/v2.37.0), but input is still PS/2 only (no USB-HID/xHCI, no PS/2-less fallback);

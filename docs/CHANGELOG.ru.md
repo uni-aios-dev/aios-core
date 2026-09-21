@@ -1,5 +1,33 @@
 # Журнал разработки AIOS
 
+## v2.38.0 — Ядро bare-metal загружается с USB-флешки (2026-09-22)
+
+Ядро bare-metal (`aios-kernel`) теперь является готовой к загрузке с
+USB-флешки системой. Сборщик `aios-kernel-run` производит гибридный
+ISO и байт-в-байт идентичный `aios-kernel-usb.img`; поскольку
+`limine bios-install` уже записывает isohybrid MBR, копия ISO на
+флешку работает как в legacy BIOS (MBR Limine → `limine-bios.sys`),
+так и в UEFI (ESP → `BOOTX64.EFI`).
+
+### Добавлено
+- **`aios-kernel-run/src/main.rs`** — создаёт `out\aios-kernel-usb.img`
+  (копия isohybrid ISO) после `limine bios-install`. Новое окружение
+  `AIOS_QEMU_USB=1` в QEMU подключает образ как USB mass-storage
+  устройство (с `bootindex=1`) вместо CD-ROM, позволяя протестировать
+  загрузку с флешки целиком внутри harness.
+- **`scripts\flash-usb.ps1`** — Windows-скрипт, записывающий
+  `aios-kernel-usb.img` на физическую USB-флешку (`\\.\PhysicalDriveN`).
+  Требует прав Администратора; перечисляет кандидаты, подтверждает цель,
+  потоково записывает образ, проверяет SHA-256 записанных байт и сигнатуру
+  MBR `55 AA`.
+
+### Верифицировано
+- QEMU UEFI (OVMF): загрузка с USB-образа — Boot0001 «QEMU USB HARDDRIVE»
+  → Limine handoff → полное ядро до `scheduler online`.
+- QEMU legacy BIOS (SeaBIOS): загрузка с того же USB-образа — MBR →
+  Limine BIOS stage → полное ядро до `scheduler online`.
+- Harness end-to-end (`AIOS_QEMU_USB=1`) воспроизводит оба пути.
+
 ## v2.37.0 — Bare-metal веха 6 (часть 2b): нативный блочный драйвер NVMe (2026-09-18)
 
 Нативное NVMe-хранилище: ядро поднимает PCIe NVMe-контроллер, настраивает

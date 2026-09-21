@@ -1,13 +1,19 @@
-// aios-kernel-run: host tool that builds the AIOS bare-metal kernel, wraps the
-// resulting Limine-protocol ELF into a bootable hybrid ISO (BIOS + UEFI) using
-// the Limine tooling and xorriso, and launches it in QEMU.
-//
-// All external tool locations can be overridden with environment variables:
-//   AIOS_LIMINE_DIR   directory holding limine-bios-cd.bin / limine-uefi-cd.bin
-//   AIOS_LIMINE_TOOL  path to the `limine` host tool (bios-install)
-//   AIOS_XORRISO      path to `xorriso`
-//   AIOS_QEMU         path to `qemu-system-x86_64`
-//   AIOS_KERNEL_TARGET_DIR, AIOS_ISO_OUT, AIOS_SKIP_QEMU, AIOS_QEMU_UEFI
+//! aios-kernel-run: host tool that builds the AIOS bare-metal kernel, wraps the
+//! resulting Limine-protocol ELF into a bootable hybrid ISO (BIOS + UEFI) using
+//! the Limine tooling and xorriso, and launches it in QEMU.
+//!
+//! The limine `bios-install` step makes the ISO isohybrid, so a byte copy of it
+//! (`aios-kernel-usb.img`) is a bootable USB stick: legacy BIOS boots it through
+//! the Limine MBR, UEFI through the ESP partition's `BOOTX64.EFI`.
+//!
+//! All external tool locations can be overridden with environment variables:
+//!   AIOS_LIMINE_DIR   directory holding limine-bios-cd.bin / limine-uefi-cd.bin
+//!   AIOS_LIMINE_TOOL  path to the `limine` host tool (bios-install)
+//!   AIOS_XORRISO      path to `xorriso`
+//!   AIOS_QEMU         path to `qemu-system-x86_64`
+//!   AIOS_KERNEL_TARGET_DIR, AIOS_ISO_OUT, AIOS_SKIP_QEMU, AIOS_QEMU_UEFI
+//!   AIOS_QEMU_USB     boot the USB-stick image (`aios-kernel-usb.img`) as USB
+//!                     mass storage instead of the ISO as a CD-ROM
 
 use std::env;
 use std::fs;
@@ -182,6 +188,17 @@ fn create_iso(staging: &Path, iso: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Materializes the bootable USB-stick image: the isohybrid ISO is already
+/// bootable from a flash drive (Limine MBR for BIOS + ESP for UEFI), so the
+/// image is a byte copy of it.
+fn create_usb_image(iso: &Path, img: &Path) -> std::io::Result<()> {
+    if let Some(parent) = img.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(iso, img)?;
+    Ok(())
+}
+
 fn find_qemu() -> PathBuf {
     if let Some(explicit) = env::var_os("AIOS_QEMU") {
         return PathBuf::from(explicit);
@@ -218,15 +235,35 @@ fn ovmf() -> Option<(PathBuf, PathBuf)> {
     }
 }
 
-fn run_qemu(qemu: &Path, iso: &Path, out_dir: &Path) {
+fn run_qemu(qemu: &Path, iso: &Path, usb_img: &Path, out_dir: &Path) {
     let mut cmd = Command::new(qemu);
-    cmd.args(["-cdrom", &forward(iso)])
-        .args(["-boot", "d"])
-        .args(["-m", "512M"])
-        .args(["-vga", "std"])
-        .args(["-serial", "stdio"])
-        .args(["-display", "none"])
-        .args(["-no-reboot"]);
+
+    // Boot media: a USB stick image (qemu-xhci + usb-storage, bootindex=1) when
+    // requested, otherwise the ISO as a CD-ROM.
+    let want_usb = env::var("AIOS_QEMU_USB").map(|v| v != "0").unwrap_or(false);
+    if want_usb {
+        println!("boot media: USB stick image {}", usb_img.display());
+        cmd.args(["-m", "512M"])
+            .args(["-vga", "std"])
+            .args(["-serial", "stdio"])
+            .args(["-display", "none"])
+            .args(["-no-reboot"])
+            .args(["-device", "qemu-xhci"])
+            .args(["-drive"])
+            .arg(format!(
+                "if=none,id=aiosusb,format=raw,file={}",
+                forward(usb_img)
+            ))
+            .args(["-device", "usb-storage,drive=aiosusb,bootindex=1"]);
+    } else {
+        cmd.args(["-cdrom", &forward(iso)])
+            .args(["-boot", "d"])
+            .args(["-m", "512M"])
+            .args(["-vga", "std"])
+            .args(["-serial", "stdio"])
+            .args(["-display", "none"])
+            .args(["-no-reboot"]);
+    }
 
     // UEFI (GOP) by default when OVMF is available; legacy BIOS (VBE) otherwise
     // or when AIOS_QEMU_UEFI=0.
@@ -250,13 +287,23 @@ fn run_qemu(qemu: &Path, iso: &Path, out_dir: &Path) {
         println!("firmware: legacy BIOS (requested)");
     }
 
-    // USB: attach an xHCI controller with a boot keyboard (default on).
-    let want_usb = env::var("AIOS_QEMU_USB").map(|v| v != "0").unwrap_or(true);
+    // Keyboard: boot-relevant only when the firmware does not provide PS/2
+    // emulation (BIOS does; OVMF does not). Defaults on.
+    let want_kbd = env::var("AIOS_QEMU_KBD").map(|v| v != "0").unwrap_or(true);
     if want_usb {
+        // The controller is already present for the USB stick.
+        if want_kbd {
+            println!("usb: boot keyboard attached (qemu-xhci from boot media)");
+            cmd.args(["-device", "usb-kbd"]);
+        } else {
+            println!("usb: boot media only (AIOS_QEMU_KBD=0)");
+        }
+    } else if want_kbd {
         println!("usb: qemu-xhci + usb-kbd attached");
-        cmd.args(["-device", "qemu-xhci"]).args(["-device", "usb-kbd"]);
+        cmd.args(["-device", "qemu-xhci"])
+            .args(["-device", "usb-kbd"]);
     } else {
-        println!("usb: none (AIOS_QEMU_USB=0)");
+        println!("usb: none (AIOS_QEMU_USB=0 and AIOS_QEMU_KBD=0)");
     }
 
     let status = cmd.status().expect("failed to spawn qemu-system-x86_64");
@@ -281,12 +328,16 @@ fn main() {
     create_iso(&staging, &iso).expect("failed to create the ISO");
     println!("bootable ISO: {}", iso.display());
 
+    let usb_img = out_dir.join("aios-kernel-usb.img");
+    create_usb_image(&iso, &usb_img).expect("failed to create the USB image");
+    println!("bootable USB image: {}", usb_img.display());
+
     if env::var_os("AIOS_SKIP_QEMU").is_some() {
-        println!("AIOS_SKIP_QEMU=1 -> stopping after ISO creation");
+        println!("AIOS_SKIP_QEMU=1 -> stopping after ISO/USB image creation");
         return;
     }
 
     let qemu = find_qemu();
     println!("QEMU: {}", qemu.display());
-    run_qemu(&qemu, &iso, &out_dir);
+    run_qemu(&qemu, &iso, &usb_img, &out_dir);
 }
