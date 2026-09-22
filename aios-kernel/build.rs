@@ -6,8 +6,7 @@ fn main() {
     let error_vectors = [8u16, 10, 11, 12, 13, 14, 17, 21];
     let mut asm = String::new();
     for vector in 0..=255u16 {
-        asm.push_str(&format!(".hidden aios_handler_{vector}\n"));
-        asm.push_str(&format!(".global aios_handler_{vector}\n"));
+        asm.push_str(&format!(".globl aios_handler_{vector}\n"));
         asm.push_str(&format!("aios_handler_{vector}:\n"));
         if error_vectors.contains(&vector) {
             asm.push_str(&format!("    push {vector}\n"));
@@ -69,8 +68,7 @@ aios_interrupt_common:
 
 .section .data.rel.ro
 .p2align 3
-.hidden aios_handler_table
-.global aios_handler_table
+.globl aios_handler_table
 aios_handler_table:
 "#,
     );
@@ -80,8 +78,7 @@ aios_handler_table:
     asm.push_str(
         r#"
 .section .text
-.global aios_restore_ring0
-.type aios_restore_ring0, @function
+.globl aios_restore_ring0
 aios_restore_ring0:
     cli
     mov rax, [rdi + 112]
