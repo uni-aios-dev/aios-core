@@ -193,16 +193,16 @@ pub fn init_pit() {
         for _ in 0..2_500_000 {
             core::hint::spin_loop();
         }
-        unsafe { port::outb(PIT_CMD, 0x00); }
-        let lo1 = unsafe { port::inb(PIT_CH0) };
-        let hi1 = unsafe { port::inb(PIT_CH0) };
+        port::outb(PIT_CMD, 0x00);
+        let lo1 = port::inb(PIT_CH0);
+        let hi1 = port::inb(PIT_CH0);
         let val1 = lo1 as u16 | ((hi1 as u16) << 8);
         for _ in 0..5_000_000 {
             core::hint::spin_loop();
         }
-        unsafe { port::outb(PIT_CMD, 0x00); }
-        let lo2 = unsafe { port::inb(PIT_CH0) };
-        let hi2 = unsafe { port::inb(PIT_CH0) };
+        port::outb(PIT_CMD, 0x00);
+        let lo2 = port::inb(PIT_CH0);
+        let hi2 = port::inb(PIT_CH0);
         let val2 = lo2 as u16 | ((hi2 as u16) << 8);
         kprintln!(
             "[serial] [probe] PIT-CN0 val1=0x{:04X} val2=0x{:04X} delta={} (latch-readback twopass pit-running-marker)",

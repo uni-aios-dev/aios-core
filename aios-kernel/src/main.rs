@@ -317,8 +317,8 @@ pub unsafe extern "C" fn _start() -> ! {
     {
         // RAW 16-byte gate descriptor dump: vector-32 (broken #GP) vs vector-50 (working soft-int).
         // Discriminates which byte of the 16-byte IDT descriptor for 0x20 is corrupted.
-        let (off32, sel32) = unsafe { interrupts::idt_raw_gate(32) };
-        let (off50, sel50) = unsafe { interrupts::idt_raw_gate(50) };
+        let (off32, sel32) = interrupts::idt_raw_gate(32);
+        let (off50, sel50) = interrupts::idt_raw_gate(50);
         kprintln!(
             "[serial] [probe] IDT-RAW-32 offset=0x{:016X} selector=0x{:04X} (vector-32 raw-gate-descriptor-two-words) idt-32raw-marker",
             off32, sel32
@@ -329,9 +329,7 @@ pub unsafe extern "C" fn _start() -> ! {
         );
     }
     kprintln!("[serial] [probe] SOFT-INT-0x20-SENT (int-instruction vector-0x20=32-decimal, matches-PIT-arm-32 idt-soft-trigger bypasses-PIC)");
-    unsafe {
     // int 0x20 soft-int has been replaced by a harmless serial-only probe (RAW gate dump above).
-    }
     // (the old asm!("int 0x20") was a GP#13 discriminator; on real hardware it fires, so it is disabled. Booting normally.)
     // --- AHCI SATA driver --------------------------------------------------
     if let Some(controller) = pci_devices[..pci_count]

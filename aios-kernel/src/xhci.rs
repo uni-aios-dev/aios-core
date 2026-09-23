@@ -335,33 +335,15 @@ impl Xhci {
             ep1_buf,
         };
 
-        let (port, speed) = reset_port(&mut core, max_ports)?;
+        let (port, speed, slot, maxpkt, interval) = find_hid_port(&mut core, max_ports)?;
         core.port = port;
         core.speed = speed;
-
-        let slot = enable_slot(&mut core)?;
         core.slot = slot;
 
         let maxpkt0 = if speed == 3 { 64 } else { 8 };
         core.ep0_maxpkt = maxpkt0;
-        address_device(&mut core, port, speed)?;
 
-        // Device Descriptor: byte 7 is bMaxPacketSize0, bytes 8-9 idVendor.
-        get_descriptor(&mut core, 0x01, 0, 18)?;
-        let maxpkt0 = frame(core.data)[7];
-        if maxpkt0 == 0 {
-            return Err("xhci: empty bMaxPacketSize0");
-        }
-
-        // Configuration Descriptor: header 9 bytes, then the full blob.
-        get_descriptor(&mut core, 0x02, 0, 9)?;
-        let total = usize::from(read_u16(frame(core.data), 2));
-        if !(18..=4096).contains(&total) {
-            return Err("xhci: bad configuration descriptor length");
-        }
-        get_descriptor(&mut core, 0x02, 0, total as u16)?;
         let config_value = frame(core.data)[5];
-        let (maxpkt, interval) = find_hid_ep(frame(core.data), total)?;
 
         // Bring the device to its configured state.
         ep0_set(&mut core, 0x00, REQ_SET_CONFIGURATION, u16::from(config_value), 0)?;
@@ -635,27 +617,61 @@ fn probe_hid_state() {
     }
 }
 
-fn reset_port(core: &mut Core, max_ports: u8) -> Result<(u8, u8), &'static str> {
+/// Resets a specific root-port device and returns its port number and speed.
+fn reset_port(core: &mut Core, port: u8) -> Result<(u8, u8), &'static str> {
+    let psc = core.op + PORT_BASE + u64::from(port - 1) * 0x10;
+    crate::kprintln!(
+        "[serial] [xhci] port {} portsc=0x{:08x}",
+        port,
+        mmio32(psc)
+    );
+    if mmio32(psc) & PORT_CCS == 0 {
+        return Err("xhci: no device on this port");
+    }
+    let v = mmio32(psc);
+    mmio32w(psc, (v & !PORT_CHANGE) | PORT_POWER | PORT_RESET);
+    spin_until(|| mmio32(psc) & PORT_RC != 0).map_err(|_| "xhci: port reset timeout")?;
+    let v = mmio32(psc);
+    mmio32w(psc, (v & !PORT_CHANGE) | PORT_CHANGE);
+    spin_until(|| mmio32(psc) & PORT_PE != 0).map_err(|_| "xhci: port did not enable")?;
+    let speed = ((mmio32(psc) >> 10) & 0xF) as u8;
+    Ok((port, speed))
+}
+
+/// Finds the first root port with a connected HID keyboard by iterating
+/// all ports, resetting each, and checking the configuration descriptors
+/// for a HID interrupt IN endpoint. Returns the port number, speed, and
+/// the maxpkt/interval for the HID endpoint.
+fn find_hid_port(core: &mut Core, max_ports: u8) -> Result<(u8, u8, u8, u16, u8), &'static str> {
     for port in 1..=max_ports {
-        let psc = core.op + PORT_BASE + u64::from(port - 1) * 0x10;
-        crate::kprintln!(
-            "[serial] [xhci] port {} portsc=0x{:08x}",
-            port,
-            mmio32(psc)
-        );
-        if mmio32(psc) & PORT_CCS == 0 {
+        let (p, speed) = match reset_port(core, port) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let slot = match enable_slot(core) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        core.slot = slot;
+        let maxpkt0 = if speed == 3 { 64 } else { 8 };
+        core.ep0_maxpkt = maxpkt0;
+        address_device(core, p, speed)?;
+        get_descriptor(core, 0x01, 0, 18)?;
+        let _ = frame(core.data)[7];
+        get_descriptor(core, 0x02, 0, 9)?;
+        let total = usize::from(read_u16(frame(core.data), 2));
+        if !(18..=4096).contains(&total) {
             continue;
         }
-        let v = mmio32(psc);
-        mmio32w(psc, (v & !PORT_CHANGE) | PORT_POWER | PORT_RESET);
-        spin_until(|| mmio32(psc) & PORT_RC != 0).map_err(|_| "xhci: port reset timeout")?;
-        let v = mmio32(psc);
-        mmio32w(psc, (v & !PORT_CHANGE) | PORT_CHANGE);
-        spin_until(|| mmio32(psc) & PORT_PE != 0).map_err(|_| "xhci: port did not enable")?;
-        let speed = ((mmio32(psc) >> 10) & 0xF) as u8;
-        return Ok((port, speed));
+        get_descriptor(core, 0x02, 0, total as u16)?;
+        let _config_value = frame(core.data)[5];
+        let (maxpkt, interval) = match find_hid_ep(frame(core.data), total) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        return Ok((p, speed, slot, maxpkt, interval));
     }
-    Err("xhci: no device connected to a root port")
+    Err("xhci: no HID interrupt IN endpoint in configuration")
 }
 
 fn enable_slot(core: &mut Core) -> Result<u8, &'static str> {
