@@ -505,5 +505,10 @@
   (`int 0xfa`) works. Kernel boots to `scheduler online` on real
   hardware. Keyboard still unavailable due to xHCI single-device
   probe limitation (BUG-044).
+- [x] **v2.38.1**: add 0xFFFF timeout to `serial::write_bytes` and
+  `SerialWriter::write_str` in `serial.rs`. On real hardware without
+  a connected serial device, the COM1 LSR THRE bit may never be set,
+  causing an infinite hang at `kprintln!` after `scheduler online`.
+  The timeout allows the kernel to continue without serial output.
 
 ## Historical Issues (Fixed)
