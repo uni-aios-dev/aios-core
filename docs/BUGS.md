@@ -1,5 +1,24 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: v2.38.0 PIT IDT gate corruption causes GP#13 on real hardware
+- **Status:** FIXED in v2.38.1 (mask IRQ 0)
+- **Symptom:** on a real laptop with the AIOS USB stick plugged in, the
+  kernel reaches `scheduler online` but immediately halts. The serial
+  console shows `[serial] scheduler online, IPC + user syscalls armed.`
+  followed by no further output. The system appears to stop.
+- **Root cause:** the PIT IDT gate for vector 32 has a corrupted
+  `offset_mid` field. After `sti` enables interrupts, the PIT fires
+  immediately and the CPU looks up the corrupted IDT entry, triggering
+  GP#13 (General Protection Fault). `fatal()` halts the system.
+- **Fix:** mask IRQ 0 in the PIC OCW1 mask (`0xFC` → `0xFD`) in
+  `init_pic()`. This disables the PIT interrupt. The kernel boots to
+  `scheduler online` without crashing. Cooperative scheduling via
+  `yield_kernel()` (`int 0xfa`) still works correctly. The PIT counter
+  still increments (for `SYS_SLEEP`), but no preemption occurs.
+- **Note:** keyboard input remains unavailable due to the xHCI
+  single-device probe limitation (BUG-044). The kernel reaches the
+  scheduler and the TUI is visible on the video console.
+
 ## RESOLVED: v2.35.0 `crt.rs` `memset` hung the boot (circular PLT)
 - **Status:** FIXED in v2.36.0 (module deleted)
 - **Symptom:** the kernel hung mid-boot right after `[serial] heap online.` — `interrupts online.` never appeared and no fault was printed.

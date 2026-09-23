@@ -499,3 +499,11 @@
 - [x] **Milestone 6, part 2a** (v2.36.0): native storage — AHCI (SATA) block driver (`ahci.rs`: PCI bus-master/mem-space enable, HBA + port bring-up, `IDENTIFY DEVICE`, `READ`/`WRITE DMA EXT` via PRDT) and `memory::map_mmio`/`physical_to_virtual` for device BARs. `crt.rs` (v2.35.0) was **removed** — its strong `memset` self-referenced a PLT stub and hung the boot (see BUGS). Verified in QEMU (`ich9-ahci` + 16 MiB `ide-hd`: 1 drive, `QEMU HARDDISK`, 32768 sectors, LBA0 magic read); baseline (no AHCI) still boots.
 - [x] **Milestone 6, part 2b** (v2.37.0): native NVMe block driver (`nvme.rs`: PCI memory + bus-master enable, 64-bit BAR0 via `map_mmio`, controller reset and `CC.EN` bring-up with `AQA`/`ASQ`/`ACQ`, polled admin queue; `Identify Controller`, `Create I/O CQ`/`SQ`, `Identify Namespace`, `Read` via PRP1). Verified in QEMU (`-device nvme` + 16 MiB `nvme-test.img`: `QEMU NVMe Ctrl`, `AIOSNVME`, 32768 blocks, LBA0 magic read); coexists with AHCI and baseline still boots.
 - [ ] **Milestone 6, part 2c** (next): USB-HID (xHCI) keyboard/mouse replacing PS/2.
+- [x] **v2.38.1**: disable PIT interrupt (mask IRQ 0, `0xFC` → `0xFD`) to
+  prevent GP#13 on real hardware caused by corrupted PIT IDT gate
+  `offset_mid` field. Cooperative scheduling via `yield_kernel()`
+  (`int 0xfa`) works. Kernel boots to `scheduler online` on real
+  hardware. Keyboard still unavailable due to xHCI single-device
+  probe limitation (BUG-044).
+
+## Historical Issues (Fixed)

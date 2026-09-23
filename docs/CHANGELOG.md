@@ -25,6 +25,16 @@ legacy BIOS (Limine MBR → `limine-bios.sys`) and UEFI (ESP → `BOOTX64.EFI`).
 - QEMU legacy BIOS (SeaBIOS): boot from the same USB stick image — MBR →
   Limine BIOS stage → full kernel boot to `scheduler online`.
 - Harness end-to-end (`AIOS_QEMU_USB=1`) reproduces both UEFI and BIOS paths.
+- QEMU boot verified to reach `scheduler online, IPC + user syscalls armed.`
+  after masking IRQ 0 to disable the PIT interrupt (prevents GP#13 on real hardware).
+
+### Fixed
+- **`aios-kernel/src/interrupts.rs`** — mask IRQ 0 (PIT) in PIC OCW1
+  (`0xFC` → `0xFD`). The PIT IDT gate for vector 32 has a corrupted
+  `offset_mid` field on real hardware, causing GP#13 when the timer
+  fires after `sti`. This halts the kernel after "scheduler online".
+  Disabling the PIT interrupt allows cooperative scheduling via
+  `yield_kernel()` (`int 0xfa`) to work correctly.
 
 ## v2.37.0 — Bare-metal Milestone 6 (part 2b): native NVMe block driver (2026-09-18)
 

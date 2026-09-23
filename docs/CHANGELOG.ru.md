@@ -27,6 +27,16 @@ ISO и байт-в-байт идентичный `aios-kernel-usb.img`; поск
 - QEMU legacy BIOS (SeaBIOS): загрузка с того же USB-образа — MBR →
   Limine BIOS stage → полное ядро до `scheduler online`.
 - Harness end-to-end (`AIOS_QEMU_USB=1`) воспроизводит оба пути.
+- QEMU boot verified to reach `scheduler online, IPC + user syscalls armed.`
+  after masking IRQ 0 to disable the PIT interrupt (prevents GP#13 on real hardware).
+
+### Исправлено
+- **`aios-kernel/src/interrupts.rs`** — маскирование IRQ 0 (PIT)
+  в OCW1 PIC (`0xFC` → `0xFD`). IDT-шина для вектора 32 имеет
+  повреждённое поле `offset_mid` на реальном оборудовании, что
+  вызывает GP#13 при срабатывании таймера после `sti`. Ядро
+  зависает после `scheduler online`. Отключение прерывания PIT
+  позволяет кооперативному планировщику работать корректно.
 
 ## v2.37.0 — Bare-metal веха 6 (часть 2b): нативный блочный драйвер NVMe (2026-09-18)
 
