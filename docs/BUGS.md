@@ -13,8 +13,14 @@
 - **Fix:** mask IRQ 0 in the PIC OCW1 mask (`0xFC` → `0xFD`) in
   `init_pic()`. This disables the PIT interrupt. The kernel boots to
   `scheduler online` without crashing. Cooperative scheduling via
-  `yield_kernel()` (`int 0xfa`) still works correctly. The PIT counter
-  still increments (for `SYS_SLEEP`), but no preemption occurs.
+  `yield_kernel()` (`int 0xfa`) still works correctly. TICKS does not
+  increment because the PIT ISR never fires (no preemption occurs).
+  The `IdtEntry` struct is marked `#[repr(C, packed)]` to ensure the
+  IDT gate descriptor layout exactly matches the x86 specification
+  (16 bytes, no padding), which is required for the `lidt` instruction
+  to load correct gate bases on real hardware. The PIT IDT gate
+  corruption (`offset_mid` field) is hardware-specific and does not
+  reproduce in QEMU.
 - **Note:** keyboard input is now available via xHCI multi-port enumeration (BUG-044 fixed in v2.38.1).
 
 ## RESOLVED: v2.35.0 `crt.rs` `memset` hung the boot (circular PLT)
