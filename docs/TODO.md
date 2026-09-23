@@ -510,5 +510,15 @@
   a connected serial device, the COM1 LSR THRE bit may never be set,
   causing an infinite hang at `kprintln!` after `scheduler online`.
   The timeout allows the kernel to continue without serial output.
+- [x] **v2.38.1**: fix `yield_kernel()` `asm!("int $$0xfa")` →
+  `asm!("int 0xfa")` in `sched.rs`. The `$$` escape produces `$0xfa`
+  which is AT&T syntax, but the assembler uses Intel syntax where
+  `$` is not a valid immediate prefix. This produces an invalid
+  instruction (#UD) on real hardware, preventing cooperative
+  scheduling via `yield_kernel()`.
+- [x] **v2.38.1**: add `sti; hlt` to all idle/halt loops in
+  `main.rs`. The bare `hlt` without explicit `sti` could leave
+  interrupts disabled on real hardware where the CPU state differs
+  from QEMU.
 
 ## Historical Issues (Fixed)
