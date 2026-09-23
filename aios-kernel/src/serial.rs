@@ -13,6 +13,7 @@ pub fn init() {
         port::outb(COM1 + 1, 0x00);
         port::outb(COM1 + 3, 0x03);
         port::outb(COM1 + 2, 0xC7);
+        port::io_wait();
         port::outb(COM1 + 4, 0x0B);
     }
 }
@@ -21,7 +22,13 @@ impl Write for SerialWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for byte in s.bytes() {
             unsafe {
-                while port::inb(COM1 + 5) & 0x20 == 0 {}
+                let mut timeout = 0xFFFFu32;
+                while port::inb(COM1 + 5) & 0x20 == 0 {
+                    timeout -= 1;
+                    if timeout == 0 {
+                        return Ok(());
+                    }
+                }
                 port::outb(COM1, byte);
             }
         }
@@ -40,7 +47,13 @@ pub fn _print(args: fmt::Arguments) {
 pub fn write_bytes(bytes: &[u8]) {
     for &byte in bytes {
         unsafe {
-            while port::inb(COM1 + 5) & 0x20 == 0 {}
+            let mut timeout = 0xFFFFu32;
+            while port::inb(COM1 + 5) & 0x20 == 0 {
+                timeout -= 1;
+                if timeout == 0 {
+                    return;
+                }
+            }
             port::outb(COM1, byte);
         }
     }
