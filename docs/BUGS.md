@@ -18,6 +18,14 @@
 - **Note:** keyboard input remains unavailable due to the xHCI
   single-device probe limitation (BUG-044). The kernel reaches the
   scheduler and the TUI is visible on the video console.
+  **Secondary issue:** `serial::write_bytes` polls COM1+5 (LSR
+  THRE bit) with an infinite `while` loop. On real hardware without
+  a connected serial device, THRE may never be set, causing an
+  infinite hang. Fixed by adding a 0xFFFF timeout loop — if THRE
+  doesn't become set, the byte is skipped and writing continues.
+  This affects `kprintln!` after `scheduler online` (line 521 of
+  `main.rs`) which was the last serial write before the kernel
+  would stall.
 
 ## RESOLVED: v2.35.0 `crt.rs` `memset` hung the boot (circular PLT)
 - **Status:** FIXED in v2.36.0 (module deleted)

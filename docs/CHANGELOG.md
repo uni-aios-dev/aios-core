@@ -35,6 +35,12 @@ legacy BIOS (Limine MBR → `limine-bios.sys`) and UEFI (ESP → `BOOTX64.EFI`).
   fires after `sti`. This halts the kernel after "scheduler online".
   Disabling the PIT interrupt allows cooperative scheduling via
   `yield_kernel()` (`int 0xfa`) to work correctly.
+- **`aios-kernel/src/serial.rs`** — `write_bytes` and `SerialWriter::write_str`
+  now have a 0xFFFF timeout on the `while port::inb(COM1+5) & 0x20 == 0`
+  poll loop. On real hardware without a connected serial device, the THRE
+  bit may never be set, causing an infinite hang at `kprintln!` after
+  `scheduler online` (`main.rs:521`). The timeout allows the kernel to
+  continue without serial output if the port doesn't respond.
 
 ## v2.37.0 — Bare-metal Milestone 6 (part 2b): native NVMe block driver (2026-09-18)
 
