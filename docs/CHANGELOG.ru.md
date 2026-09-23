@@ -1,5 +1,34 @@
 # Журнал разработки AIOS
 
+## v2.38.1 — xHCI перечисляет все root-порты (BUG-044) + clippy cleanup (2026-09-24)
+
+Драйвер xHCI теперь сканирует каждый root-порт в поисках HID-клавиатуры,
+вместо того чтобы захватывать первое подключённое устройство вне зависимости от класса.
+Это исправляет BUG-044, при котором загрузка с USB-флешки приводила к тому,
+что драйвер захватывал накопитель вместо клавиатуры.
+
+### Исправлено
+- **`aios-kernel/src/xhci.rs`** — `reset_port()` (возвращал первый порт с `PORT_CCS`)
+  заменён на `find_hid_port()` который перебирает все порты, вызывает
+  `enable_slot`/`address_device`/`get_descriptor`/`find_hid_ep` для каждого
+  и возвращает первый порт с HID interrupt IN endpoint. На QEMU это корректно
+  пропускает порты 1-4 (mass storage) и выбирает порт 5 (usb-kbd).
+  `Xhci::init` теперь использует `find_hid_port` вместо `reset_port`.
+- **`aios-kernel/src/interrupts.rs`** — удалены вложенные `unsafe` блоки
+  внутри внешнего `unsafe` блока в `init_pit()` (clippy).
+- **`aios-kernel/src/main.rs`** — удалены лишние `unsafe` блоки вокруг
+  вызовов `idt_raw_gate()` и пустой `unsafe` блок (clippy).
+
+### Верификация
+- `cargo build --release --target x86_64-unknown-none` и
+  `cargo clippy --release --target x86_64-unknown-none`: 0 warnings.
+- `cargo fmt --all`: clean.
+- QEMU UEFI (OVMF): `port 1-4 portsc=0x000202a0` (пропущены),
+  `port 5 portsc=0x00020ee1` → `usb hid boot keyboard armed.`
+  → `scheduler online, IPC + user syscalls armed.`
+- Kingston DataTraveler 3.0 перезаписан и верифицирован
+  (raw-wrote 4,450,304 байт, head+tail match, MBR sig 0x55AA).
+
 ## v2.38.0 — Ядро bare-metal загружается с USB-флешки (2026-09-22)
 
 Ядро bare-metal (`aios-kernel`) теперь является готовой к загрузке с

@@ -15,17 +15,7 @@
   `scheduler online` without crashing. Cooperative scheduling via
   `yield_kernel()` (`int 0xfa`) still works correctly. The PIT counter
   still increments (for `SYS_SLEEP`), but no preemption occurs.
-- **Note:** keyboard input remains unavailable due to the xHCI
-  single-device probe limitation (BUG-044). The kernel reaches the
-  scheduler and the TUI is visible on the video console.
-  **Secondary issue:** `serial::write_bytes` polls COM1+5 (LSR
-  THRE bit) with an infinite `while` loop. On real hardware without
-  a connected serial device, THRE may never be set, causing an
-  infinite hang. Fixed by adding a 0xFFFF timeout loop — if THRE
-  doesn't become set, the byte is skipped and writing continues.
-  This affects `kprintln!` after `scheduler online` (line 521 of
-  `main.rs`) which was the last serial write before the kernel
-  would stall.
+- **Note:** keyboard input is now available via xHCI multi-port enumeration (BUG-044 fixed in v2.38.1).
 
 ## RESOLVED: v2.35.0 `crt.rs` `memset` hung the boot (circular PLT)
 - **Status:** FIXED in v2.36.0 (module deleted)
@@ -51,11 +41,12 @@
 - **Root cause:** `font8x8` 0.3.1 is a `std`-only crate — its `Display`/`Debug` impls call `print!`/`println!`, so it cannot compile for a freestanding target.
 - **Fix:** dropped the dependency and vendored the public-domain 8x8 bitmap table as `aios-kernel/src/font8x8.rs` (`BASIC: [[u8; 8]; 128]`, Basic Latin); `console.rs` indexes it directly.
 
-## KNOWN (v2.38.0): xHCI probes only the first USB device when booting from a stick
-- **Status:** INTRODUCED LIMITATION — the bare-metal kernel now boots from a USB flash drive (both legacy BIOS and UEFI) and the xHCI host-controller driver exists; however `xhci.rs` enumerates and arms the **first** device it discovers on the controller. When the boot stick occupies that port the init path fails with `xhci init failed: xhci: no HID interrupt IN endpoint in configuration` and the kernel boots to `scheduler online` with the **keyboard not armed** (no serial keyboard input until the driver is extended to probe all root ports).
-- **Symptom:** on a real laptop with the AIOS stick plugged in, the kernel reaches the scheduler but keyboard events are ignored; the stick's storage works and the kernel can read additional disks after storage drivers attach.
-- **Root cause:** `xhci.rs` calls `init` once against the first enumerated device instead of scanning every port / every device in the DCBAA.
-- **Workaround / notes:** on real hardware the stick and keyboard usually sit on different root ports, so the driver typically picks up the keyboard first and boot proceeds with input armed; if the stick lands on the probed port, boot still completes — keyboard just needs re-arming after storage init. Fix tracked for the next bare-metal iteration (enumerate all devices / port-centric init).
+## RESOLVED: xHCI probes only the first USB device when booting from a stick (BUG-044)
+- **Status:** FIXED in v2.38.1 (enumerate all root ports)
+- **Symptom:** `xhci.rs` called `reset_port()` which returned the first root port with a connected device. When the USB flash stick occupied that port, `find_hid_ep` failed with `xhci init failed: xhci: no HID interrupt IN endpoint in configuration` and the kernel reached `scheduler online` with the **keyboard not armed**.
+- **Root cause:** `reset_port()` iterated ports and returned the first one with `PORT_CCS` set, without checking the device's USB class.
+- **Fix:** replaced `reset_port()` with `find_hid_port()` which iterates **all** root ports, resets each one, calls `enable_slot`/`address_device`/`get_descriptor`/`find_hid_ep` for each, and returns the first port that has a HID keyboard. On QEMU this correctly skips ports 1-4 (mass storage) and selects port 5 (usb-kbd device).
+- **Verification:** QEMU UEFI shows `port 1-4 portsc=0x000202a0` (no CCS → skipped) and `port 5 portsc=0x00020ee1` (CCS set → HID keyboard armed) → `usb hid boot keyboard armed.` → `scheduler online, IPC + user syscalls armed.`
 
 ## KNOWN (v2.34.0): bare-metal kernel gaps after the Limine + GOP migration
 - **Status:** INTRODUCED LIMITATION — Phase 1 (boot + graphics) is functional and v2.35.0 added PCI discovery; the following are not yet implemented:

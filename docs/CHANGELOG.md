@@ -1,5 +1,37 @@
 # AIOS Development Log
 
+## v2.38.1 — xHCI enumerate all root ports (BUG-044) + clippy cleanup (2026-09-24)
+
+The xHCI driver now scans every root port to find the HID keyboard,
+instead of grabbing the first connected device regardless of class.
+This fixes BUG-044 where booting from a USB stick caused the driver
+to pick up the mass-storage device instead of the keyboard.
+
+### Fixed
+- **`aios-kernel/src/xhci.rs`** — replaced `reset_port()` (returns
+  the first port with `PORT_CCS` set) with `find_hid_port()` which
+  iterates all ports, calls `enable_slot`/`address_device`/
+  `get_descriptor`/`find_hid_ep` for each, and returns the first
+  port that has a HID interrupt IN endpoint. On QEMU this correctly
+  skips ports 1-4 (mass storage) and selects port 5 (usb-kbd
+  device). `Xhci::init` now uses `find_hid_port` instead of
+  `reset_port`.
+- **`aios-kernel/src/interrupts.rs`** — removed nested `unsafe`
+  blocks inside the outer `unsafe` block in `init_pit()` (clippy).
+- **`aios-kernel/src/main.rs`** — removed unnecessary `unsafe`
+  blocks around `idt_raw_gate()` calls and the empty `unsafe`
+  block (clippy).
+
+### Verified
+- `cargo build --release --target x86_64-unknown-none` and
+  `cargo clippy --release --target x86_64-unknown-none`: 0 warnings.
+- `cargo fmt --all`: clean.
+- QEMU UEFI (OVMF): `port 1-4 portsc=0x000202a0` (skipped),
+  `port 5 portsc=0x00020ee1` → `usb hid boot keyboard armed.`
+  → `scheduler online, IPC + user syscalls armed.`
+- Kingston DataTraveler 3.0 re-flashed and verified (raw-wrote
+  4,450,304 bytes, head+tail match, MBR sig 0x55AA).
+
 ## v2.38.0 — Bare-metal kernel boots from a USB flash drive (2026-09-22)
 
 The bare-metal AIOS kernel (`aios-kernel`) is now a drop-in USB-bootable
