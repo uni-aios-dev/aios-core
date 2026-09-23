@@ -138,7 +138,8 @@ pub fn parse_ack(packet: &[u8]) -> Option<DhcpLease> {
     };
     let dns_servers = opt_find(packet, 6)
         .map(|v| {
-            v.as_chunks::<4>().0
+            v.as_chunks::<4>()
+                .0
                 .iter()
                 .map(|c| Ipv4Addr::from(*c))
                 .collect::<Vec<_>>()
