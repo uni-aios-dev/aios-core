@@ -140,7 +140,7 @@ pub fn parse_ack(packet: &[u8]) -> Option<DhcpLease> {
         .map(|v| {
             v.as_chunks::<4>().0
                 .iter()
-                .filter_map(|c| Some(Ipv4Addr::from(*c)))
+                .map(|c| Ipv4Addr::from(*c))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
