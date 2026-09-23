@@ -7,7 +7,7 @@ pub const SYSCALL_GATE: u8 = 0xEE;
 /// Vector of the syscall gate.
 pub const SYSCALL_VECTOR: usize = 128;
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 struct IdtEntry {
     offset_low: u16,
