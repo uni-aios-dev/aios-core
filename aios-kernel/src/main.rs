@@ -522,7 +522,7 @@ pub unsafe extern "C" fn _start() -> ! {
 
     sched::boot_finished();
     loop {
-        core::arch::asm!("hlt", options(nomem, nostack));
+        unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)); }
     }
 }
 
@@ -616,7 +616,7 @@ pub fn idle_loop() -> ! {
 fn halt_loop() -> ! {
     loop {
         unsafe {
-            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+            core::arch::asm!("sti; hlt", options(nomem, nostack, preserves_flags));
         }
     }
 }

@@ -367,6 +367,6 @@ pub fn sleep_current(frame: &mut InterruptFrame, ticks: u64) {
 /// switched by a hardware IRQ; they switch only here, at a rsp-stable point.
 pub fn yield_kernel() {
     unsafe {
-        core::arch::asm!("int $$0xfa", options(nostack));
+        core::arch::asm!("int 0xfa", options(nostack));
     }
 }
