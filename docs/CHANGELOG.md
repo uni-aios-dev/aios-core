@@ -32,7 +32,31 @@ to pick up the mass-storage device instead of the keyboard.
 - Kingston DataTraveler 3.0 re-flashed and verified (raw-wrote
   4,450,304 bytes, head+tail match, MBR sig 0x55AA).
 
-## v2.38.0 — Bare-metal kernel boots from a USB flash drive (2026-09-22)
+## v2.38.2 — Boot step logging + HALT_REASON + debug port 0x80 (2026-09-24)
+
+Added diagnostic infrastructure to pinpoint exactly where the kernel
+stops on real hardware. The boot flow is now broken into 14 numbered
+steps printed to the framebuffer (`vprintln!`) and serial (`kprintln!`).
+
+### Added
+- **`aios-kernel/src/interrupts.rs`** — added `HALT_REASON: AtomicU32`
+  static, `fatal_with(code: u32, detail: &str)` which stores the code
+  in `HALT_REASON`, writes the low byte to debug port `0x80`, and
+  prints to both serial and framebuffer before halting. Added
+  `debug_port_write()` helper. Updated `fatal()` and `page_fault()`
+  to call `fatal_with()` with appropriate error codes.
+- **`aios-kernel/src/main.rs`** — added `use crate::interrupts` and
+  14-step boot markers (`STEP 1/14` through `STEP 14/14`) via
+  `vprintln!`. Added `interrupts::fatal_with(0x30000001, ...)` on
+  paging selftest failure.
+
+### Verified
+- `cargo build --workspace`: success.
+- `cargo test --workspace`: all pass.
+- `cargo clippy --workspace --all-targets`: 0 warnings.
+- `cargo fmt --all --check`: clean.
+
+## v2.38.1 — xHCI enumerate all root ports (BUG-044) + clippy cleanup
 
 The bare-metal AIOS kernel (`aios-kernel`) is now a drop-in USB-bootable
 system. The `aios-kernel-run` harness builds a hybrid BIOS+UEFI ISO and a

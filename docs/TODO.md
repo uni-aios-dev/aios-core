@@ -52,6 +52,7 @@
 - [x] `scripts/build-live-iso.sh` — Linux/macOS Docker/podman ISO build wrapper (v2.31.4); `live/build.sh` offline toggle via `CARGO_NET_OFFLINE`
 - [x] Phase 56: Bare-metal Phase 1 — Limine + GOP boot (`limine` 0.6.5). `aios-kernel` is now a Limine-protocol ELF booted from a hybrid BIOS+UEFI ISO; a native framebuffer console (`framebuffer.rs`/`console.rs`, vendored 8x8 font) replaces the deleted VGA text driver; the memory map + HHDM come from Limine; `aios-kernel-run` builds the ISO (`xorriso` + `limine bios-install`) and boots it in QEMU under OVMF/GOP or legacy BIOS (v2.34.0)
 - [x] **Bare-metal kernel boots from a USB flash drive (v2.38.0)**: the isohybrid ISO is byte-copied to `aios-kernel-usb.img`; the same image boots on legacy BIOS (Limine MBR → `limine-bios.sys`) and UEFI (ESP → `BOOTX64.EFI`). `aios-kernel-run` produces the USB image and supports `AIOS_QEMU_USB=1` for a full boot-from-USB smoke test. `scripts/flash-usb.ps1` writes the image to a physical stick with SHA-256 + MBR-signature verification.
+- [ ] **Bare-metal USB verification on real hardware (v2.38.2+)**: after flashing Kingston with the latest kernel, verify the TUI renders and keyboard input works on the MSI laptop. If it halts, use the `STEP` markers + `HALT_REASON` + debug port `0x80` to identify the failure point. Fix the root cause (likely PIT IDT gate corruption on real hardware).
 
 ## Backlog
 

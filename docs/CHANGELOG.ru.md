@@ -29,6 +29,31 @@
 - Kingston DataTraveler 3.0 перезаписан и верифицирован
   (raw-wrote 4,450,304 байт, head+tail match, MBR sig 0x55AA).
 
+## v2.38.2 — Логирование шагов загрузки + HALT_REASON + debug port 0x80 (2026-09-24)
+
+Добавлена диагностическая инфраструктура для определения
+точного места остановки ядра на реальном оборудовании.
+Поток загрузки разбит на 14 пронумерованных шагов,
+которые выводятся на framebuffer (`vprintln!`) и serial (`kprintln!`).
+
+### Добавлено
+- **`aios-kernel/src/interrupts.rs`** — добавлен `HALT_REASON: AtomicU32`,
+  `fatal_with(code: u32, detail: &str)` который сохраняет код в
+  `HALT_REASON`, записывает младший байт в debug port `0x80` и
+  выводит на serial и framebuffer перед остановкой. Добавлен
+  хелпер `debug_port_write()`. Обновлены `fatal()` и `page_fault()`
+  для вызова `fatal_with()` с соответствующими кодами ошибок.
+- **`aios-kernel/src/main.rs`** — добавлен `use crate::interrupts`
+  и 14 маркеров шагов загрузки (`STEP 1/14` – `STEP 14/14`).
+  Добавлен `interrupts::fatal_with(0x30000001, ...)` при неудаче
+  self-теста пейджинга.
+
+### Верификация
+- `cargo build --workspace`: success.
+- `cargo test --workspace`: all pass.
+- `cargo clippy --workspace --all-targets`: 0 warnings.
+- `cargo fmt --all --check`: clean.
+
 ## v2.38.0 — Ядро bare-metal загружается с USB-флешки (2026-09-22)
 
 Ядро bare-metal (`aios-kernel`) теперь является готовой к загрузке с
