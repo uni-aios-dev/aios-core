@@ -1,5 +1,5 @@
 use crate::{kprintln, port, vprintln};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 pub const PIC1_CMD: u16 = 0x20;
 pub const PIC1_DATA: u16 = 0x21;
@@ -17,6 +17,41 @@ pub const TIMER_HZ: u64 = 100;
 
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
+
+pub static HALT_REASON: AtomicU32 = AtomicU32::new(0);
+
+const DEBUG_PORT: u16 = 0x80;
+
+#[inline(always)]
+fn debug_port_write(val: u8) {
+    unsafe { port::outb(DEBUG_PORT, val); }
+}
+
+/// Halts the system with a diagnostic error code.
+/// Writes the code to HALT_REASON, serial, framebuffer, and debug port 0x80.
+pub fn fatal_with(code: u32, detail: &str) -> ! {
+    HALT_REASON.store(code, Ordering::Relaxed);
+    debug_port_write((code & 0xFF) as u8);
+    kprintln!("[serial] FATAL code=0x{:08X}: {}", code, detail);
+    vprintln!("[fatal] code=0x{:08X}: {}", code, detail);
+    halt()
+}
+
+/// Prints to the framebuffer console and serial, then halts.
+pub fn fatal(msg: &str) -> ! {
+    kprintln!("[serial] FATAL: {}", msg);
+    vprintln!("[fatal] {}", msg);
+    halt()
+}
+
+fn halt() -> ! {
+    unsafe {
+        core::arch::asm!("cli", options(nostack, preserves_flags));
+        loop {
+            core::arch::asm!("hlt", options(nostack, preserves_flags));
+        }
+    }
+}
 
 core::arch::global_asm!(include_str!(concat!(env!("OUT_DIR"), "/irq_stubs.S")));
 
@@ -46,6 +81,12 @@ pub struct InterruptFrame {
     pub rflags: u64,
     pub rsp: u64,
     pub ss: u64,
+}
+
+fn read_cr2() -> u64 {
+    let cr2: u64;
+    unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack, preserves_flags)); }
+    cr2
 }
 
 #[no_mangle]
@@ -98,25 +139,12 @@ fn page_fault(frame: &InterruptFrame) -> ! {
         frame.rip,
         frame.error_code
     );
-    halt()
+    fatal_with(0x20000000, "PAGE FAULT")
 }
 
 fn fatal(frame: &InterruptFrame, name: &str) -> ! {
-    kprintln!(
-        "{}: vector={} ip={:#x} err={:#x}",
-        name,
-        frame.vector,
-        frame.rip,
-        frame.error_code
-    );
-    vprintln!(
-        "{}: vector={} ip={:#x} err={:#x}",
-        name,
-        frame.vector,
-        frame.rip,
-        frame.error_code
-    );
-    halt()
+    let code = 0x10000000u32.wrapping_add(frame.vector as u32);
+    fatal_with(code, name)
 }
 
 fn halt() -> ! {

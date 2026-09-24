@@ -22,6 +22,7 @@ mod user;
 mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
+use crate::interrupts;
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 use limine::request::{
@@ -125,6 +126,7 @@ pub unsafe extern "C" fn _start() -> ! {
     console::init(limine_fb);
     console::clear();
 
+    vprintln!("STEP 1/14: serial online");
     vprintln!("AIOS bare-metal kernel (Limine + GOP)");
     vprintln!("====================================");
     kprintln!("[serial] aios-kernel: Limine + GOP boot");
@@ -219,14 +221,10 @@ pub unsafe extern "C" fn _start() -> ! {
         storage_count,
         usb_count
     );
-    vprintln!(
-        "PCI: {} devices ({} storage, {} USB)",
-        pci_count,
-        storage_count,
-        usb_count
-    );
+    vprintln!("STEP 2/14: PCI enumerated");
 
     // --- Memory map --------------------------------------------------------
+    vprintln!("STEP 3/14: memory map");
     let mut usable = [memory::MemRegion { start: 0, end: 0 }; MAX_USABLE_REGIONS];
     let mut usable_count = 0usize;
     if let Some(resp) = MEMMAP_REQUEST.response() {
@@ -251,6 +249,7 @@ pub unsafe extern "C" fn _start() -> ! {
     }
 
     memory::init(hhdm_offset, &usable[..usable_count]);
+    vprintln!("STEP 4/14: memory init");
     vprintln!(
         "Frame allocator: {} usable regions",
         memory::frame_region_count()
@@ -269,10 +268,12 @@ pub unsafe extern "C" fn _start() -> ! {
         Err(e) => {
             vprintln!("Paging selftest FAILED: {}", e);
             kprintln!("[serial] paging selftest FAILED: {}", e);
+            interrupts::fatal_with(0x30000001, "PAGING SELFTEST FAILED");
         }
     }
 
     // --- Kernel heap -------------------------------------------------------
+    vprintln!("STEP 5/14: heap init");
     heap::init_heap();
     heap::test_heap();
     vprintln!(
@@ -301,13 +302,14 @@ pub unsafe extern "C" fn _start() -> ! {
         );
     }
     interrupts::init_pit();
-
+    vprintln!("STEP 6/14: interrupts online");
     vprintln!("Interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
     kprintln!("[serial] interrupts online.");
 
     unsafe {
         core::arch::asm!("sti", options(nostack, preserves_flags));
     }
+    vprintln!("STEP 7/14: sti executed");
 
     let mut rflags: u64 = 0;
     unsafe { core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nostack, preserves_flags)); }
@@ -332,6 +334,7 @@ pub unsafe extern "C" fn _start() -> ! {
     // int 0x20 soft-int has been replaced by a harmless serial-only probe (RAW gate dump above).
     // (the old asm!("int 0x20") was a GP#13 discriminator; on real hardware it fires, so it is disabled. Booting normally.)
     // --- AHCI SATA driver --------------------------------------------------
+    vprintln!("STEP 8/14: AHCI");
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
         .find(|dev| dev.class == pci::CLASS_STORAGE && dev.subclass == 0x06)
@@ -398,6 +401,7 @@ pub unsafe extern "C" fn _start() -> ! {
     }
 
     // --- NVMe driver -------------------------------------------------------
+    vprintln!("STEP 9/14: NVMe");
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
         .find(|dev| dev.class == pci::CLASS_STORAGE && dev.subclass == 0x08)
@@ -456,6 +460,7 @@ pub unsafe extern "C" fn _start() -> ! {
     }
 
     // --- xHCI (USB) driver ------------------------------------------------
+    vprintln!("STEP 10/14: xHCI");
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
         .find(|dev| dev.class == pci::CLASS_SERIAL_BUS && dev.subclass == 0x03)
@@ -490,6 +495,7 @@ pub unsafe extern "C" fn _start() -> ! {
     }
 
     // --- Scheduler + ring-3 demo tasks + IPC ------------------------------
+    vprintln!("STEP 11/14: scheduler init");
     sched::init();
 
     static mut WORKER_STACK: [u8; 16 * 1024] = [0; 16 * 1024];
@@ -512,13 +518,16 @@ pub unsafe extern "C" fn _start() -> ! {
             kprintln!("[serial] [user] FAILED: {}", e);
         }
     }
+    vprintln!("STEP 12/14: user init done");
 
+    vprintln!("STEP 13/14: scheduler armed");
     vprintln!("Preemptive round-robin scheduler + ring 3 armed");
     vprintln!("Kernel IPC mailboxes behind the int 0x80 gate");
     vprintln!("User syscalls (write/getpid/sleep) + idle fallback");
     kprintln!("[serial] scheduler online, IPC + user syscalls armed.");
 
     sched::boot_finished();
+    vprintln!("STEP 14/14: ready");
     loop {
         unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)); }
     }
