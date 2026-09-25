@@ -1,5 +1,35 @@
 # AIOS Development Log
 
+## v2.38.4 — Kernel compiles again: repair build.rs/asm + delete dead & duplicated code (2026-09-25)
+
+The bare-metal kernel had NOT compiled since the ring-3 restore commits
+(`80a94dd`/`7d519eb`), so every USB re-flash was silently shipping the
+stale 2026-09-24 image — the PIT/try_lock/heartbeat fixes were never on
+the stick, and the boot never changed regardless of source edits.
+
+### Fixed
+- **`aios-kernel/build.rs`** — the second `r#"..."#` asm block (ring-0 +
+  ring-3 restores) lost its closing `"#,` and the trailing `);` of the
+  `asm.push_str(...)` call; `aios_handler_table` was re-declared inside
+  the string (duplicate symbol). The string is now properly terminated
+  and the stray `.section .data.rel.ro / aios_handler_table:` tail was
+  removed.
+- **`aios-kernel/src/sched.rs`** — `*frame = incoming;` and an extra `}`
+  sat OUTSIDE `schedule()` (unreachable + brace mismatch); removed.
+- **`aios-kernel/src/interrupts.rs`** — `fatal`/`halt`/`read_cr2` were
+  defined twice (E0428) from a bad merge; kept the frame-carrying 2-arg
+  `fatal`, dropped the 1-arg variant and both duplicate pairs.
+- **`aios-kernel/src/main.rs`** — removed redundant `use crate::interrupts;`
+  (E0255: name defined twice with `mod interrupts;`).
+- **`aios-kernel` (rustfmt)** — `cargo fmt` applied for the first time on
+  the (previously never-fmt-checked) crate, incl. `xhci.rs` formatting.
+
+### Verified
+- `cargo build --manifest-path aios-kernel/Cargo.toml --target
+  x86_64-unknown-none --release`: OK.
+- `cargo clippy` (kernel, release): 0 warnings.
+- Bootable ISO + USB image rebuilt fresh (`aios-kernel-run -- AIOS_SKIP_QEMU=1`).
+
 ## v2.38.3 — Always-on boot progress (steps 1-14) + blinking heartbeat (2026-09-25)
 
 Real-hardware boot now shows its exact position without F8 or serial:

@@ -345,8 +345,6 @@ pub fn schedule(frame: &mut InterruptFrame) {
         }
     }
 }
-    *frame = incoming;
-}
 
 /// Puts the current task to sleep for `ticks` PIT ticks and yields the CPU.
 ///

@@ -142,11 +142,8 @@ aios_restore_ring3:
     mov r10, [rdi + 144]
     push r10
     iretq
-
-.section .data.rel.ro
-.p2align 3
-.globl aios_handler_table
-aios_handler_table:
+"#,
+    );
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("irq_stubs.S");
     fs::write(&out, asm).expect("failed to write irq_stubs.S");
     println!("cargo:rerun-if-changed=build.rs");

@@ -1,5 +1,31 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: v2.38.4 kernel never compiled after ring-3 restore commits
+- **Status:** FIXED in v2.38.4
+- **Symptom:** all `cargo build --workspace` invocations passed but the
+  bare-metal kernel did NOT compile (`aios-kernel` is not a workspace
+  member); every USB re-flash silently shipped the stale 2026-09-24 ISO.
+  The on-screen behaviour never changed regardless of source edits, and
+  diagnostic work blamed the hardware for too long. The framebuffer
+  self-check (green square, bottom-right) was visible because it predates
+  the breakage.
+- **Root cause (3 corruption spots from a bad merge):**
+  1. `aios-kernel/build.rs` — second raw asm string was unterminated
+    (`"#,` missing) and its `asm.push_str(` closing `);` was lost;
+    `aios_handler_table` also re-declared inside the string.
+  2. `aios-kernel/src/sched.rs` — `*frame = incoming;` + an extra `}`
+    located after the end of `schedule()`.
+  3. `aios-kernel/src/interrupts.rs` — `fatal`/`halt`/`read_cr2`
+    duplicated (E0428); `main.rs` had `mod interrupts;` + a redundant
+    `use crate::interrupts;` (E0255).
+- **Fix:** properly terminated the asm raw string, deleted the dead code
+  and duplicates, removed the redundant `use`, ran `cargo fmt` on the
+  crate, and rebuilt the ISO from the current source.
+- **Regression guard:** the kernel must be built with `cargo build
+  --manifest-path aios-kernel/Cargo.toml --target x86_64-unknown-none`
+  (NOT just `cargo build --workspace`, which excludes it). The ISO is
+  produced by `aios-kernel-run` with `AIOS_SKIP_QEMU=1`.
+
 ## DIAGNOSTIC: v2.38.3 boot progress strip + blinking heartbeat (real hardware, no serial)
 - **What was observed:** on the MSI laptop the framebuffer self-check probe
   (green 8x8 square, bottom-right) stays lit and static. It is written once

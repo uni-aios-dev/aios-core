@@ -22,7 +22,6 @@ mod user;
 mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
-use crate::interrupts;
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 use limine::request::{
@@ -332,9 +331,17 @@ pub unsafe extern "C" fn _start() -> ! {
     print_step(7, "sti executed");
 
     let mut rflags: u64 = 0;
-    unsafe { core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nostack, preserves_flags)); }
-    kprintln!("[serial] [probe] RFLAGS.IF={} (bit9) sti-executed-marker", (rflags >> 9) & 1);
-    kprintln!("[serial] [probe] gate32-installed={} (vector-32 present-bit) idt-present-marker", interrupts::idt_gate_installed(32));
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nostack, preserves_flags));
+    }
+    kprintln!(
+        "[serial] [probe] RFLAGS.IF={} (bit9) sti-executed-marker",
+        (rflags >> 9) & 1
+    );
+    kprintln!(
+        "[serial] [probe] gate32-installed={} (vector-32 present-bit) idt-present-marker",
+        interrupts::idt_gate_installed(32)
+    );
 
     {
         // RAW 16-byte gate descriptor dump: vector-32 (broken #GP) vs vector-50 (working soft-int).
@@ -550,7 +557,9 @@ pub unsafe extern "C" fn _start() -> ! {
     sched::boot_finished();
     sched::yield_kernel();
     loop {
-        unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("sti; hlt", options(nomem, nostack));
+        }
     }
 }
 

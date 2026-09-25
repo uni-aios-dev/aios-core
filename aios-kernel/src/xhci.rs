@@ -98,8 +98,8 @@ const USBSTS_HCE: u32 = 1 << 12;
 
 // Set-1 scancodes for HID usages 0x04..=0x1D (letters a-z).
 const LETTER_SCANS: [u8; 26] = [
-    0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18,
-    0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
+    0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19,
+    0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
 ];
 
 /// Monotonic counter bumped every time a fresh USB keyboard report arrives
@@ -235,8 +235,7 @@ impl Xhci {
                 .map_err(|_| "xhci: halt timeout")?;
         }
         mmio32w(op + USBCMD, CMD_RESET);
-        spin_until(|| mmio32(op + USBCMD) & CMD_RESET == 0)
-            .map_err(|_| "xhci: reset timeout")?;
+        spin_until(|| mmio32(op + USBCMD) & CMD_RESET == 0).map_err(|_| "xhci: reset timeout")?;
         spin_until(|| mmio32(op + USBSTS) & USBSTS_CNR == 0)
             .map_err(|_| "xhci: controller not ready")?;
 
@@ -346,7 +345,13 @@ impl Xhci {
         let config_value = frame(core.data)[5];
 
         // Bring the device to its configured state.
-        ep0_set(&mut core, 0x00, REQ_SET_CONFIGURATION, u16::from(config_value), 0)?;
+        ep0_set(
+            &mut core,
+            0x00,
+            REQ_SET_CONFIGURATION,
+            u16::from(config_value),
+            0,
+        )?;
         ep0_set(&mut core, 0x21, REQ_SET_PROTOCOL, 0, 0)?;
 
         // Configure Endpoint: add the interrupt IN pipe to slot + EP0.
@@ -620,11 +625,7 @@ fn probe_hid_state() {
 /// Resets a specific root-port device and returns its port number and speed.
 fn reset_port(core: &mut Core, port: u8) -> Result<(u8, u8), &'static str> {
     let psc = core.op + PORT_BASE + u64::from(port - 1) * 0x10;
-    crate::kprintln!(
-        "[serial] [xhci] port {} portsc=0x{:08x}",
-        port,
-        mmio32(psc)
-    );
+    crate::kprintln!("[serial] [xhci] port {} portsc=0x{:08x}", port, mmio32(psc));
     if mmio32(psc) & PORT_CCS == 0 {
         return Err("xhci: no device on this port");
     }
@@ -699,7 +700,11 @@ fn address_device(core: &mut Core, port: u8, speed: u8) -> Result<(), &'static s
     put_u32(slot_start, 4, u32::from(port) << 16);
     // EP0 context at ictx+2*csz.
     let ep0_start = core.in_ctx + 2 * csz;
-    put_u32(ep0_start, 4, ERROR_COUNT | (CTRL_EP << 3) | (core.ep0_maxpkt << 16));
+    put_u32(
+        ep0_start,
+        4,
+        ERROR_COUNT | (CTRL_EP << 3) | (core.ep0_maxpkt << 16),
+    );
     put_u64(ep0_start, 8, core.ep0 | 1);
     put_u32(ep0_start, 16, core.ep0_maxpkt);
 
@@ -738,7 +743,13 @@ fn ep0_ctrl(
     buffer: u64,
 ) -> Result<(), &'static str> {
     let data_in = bm & 0x80 != 0;
-    let trt = if length == 0 { 0 } else if data_in { 2 } else { 3 };
+    let trt = if length == 0 {
+        0
+    } else if data_in {
+        2
+    } else {
+        3
+    };
 
     // Setup stage: transfer length 8, TRT at 16:17, IDT flag in control.
     let dw0 = u32::from(bm) | (u32::from(req) << 8) | (u32::from(value) << 16);
@@ -836,7 +847,11 @@ fn configure_ep(
 
     let ep1_start = core.in_ctx + 4 * csz;
     put_u32(ep1_start, 0, poll_interval(interval_ms) << 16);
-    put_u32(ep1_start, 4, ERROR_COUNT | (INT_IN_EP << 3) | (u32::from(maxpkt) << 16));
+    put_u32(
+        ep1_start,
+        4,
+        ERROR_COUNT | (INT_IN_EP << 3) | (u32::from(maxpkt) << 16),
+    );
     put_u64(ep1_start, 8, core.ep1 | 1);
     put_u32(ep1_start, 16, u32::from(maxpkt));
 

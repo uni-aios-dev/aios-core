@@ -47,7 +47,9 @@ pub fn check_f8() {
 
 #[inline(always)]
 fn debug_port_write(val: u8) {
-    unsafe { port::outb(DEBUG_PORT, val); }
+    unsafe {
+        port::outb(DEBUG_PORT, val);
+    }
 }
 
 /// Halts the system with a diagnostic error code.
@@ -61,10 +63,10 @@ pub fn fatal_with(code: u32, detail: &str) -> ! {
 }
 
 /// Prints to the framebuffer console and serial, then halts.
-pub fn fatal(msg: &str) -> ! {
-    kprintln!("[serial] FATAL: {}", msg);
-    vprintln!("[fatal] {}", msg);
-    halt()
+/// The 2-argument form carrying a frame encodes `0x10000000 + vector`.
+fn fatal(frame: &InterruptFrame, name: &str) -> ! {
+    let code = 0x10000000u32.wrapping_add(frame.vector as u32);
+    fatal_with(code, name)
 }
 
 fn halt() -> ! {
@@ -108,7 +110,9 @@ pub struct InterruptFrame {
 
 fn read_cr2() -> u64 {
     let cr2: u64;
-    unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack, preserves_flags)); }
+    unsafe {
+        core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack, preserves_flags));
+    }
     cr2
 }
 
@@ -123,8 +127,11 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
         13 => fatal(frame, "GENERAL PROTECTION FAULT"),
         14 => page_fault(frame),
         v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => match vector {
-                        32 => {
-                kprintln!("[serial] [irq32] PIT-INC TICKS={}", TICKS.load(Ordering::Relaxed));
+            32 => {
+                kprintln!(
+                    "[serial] [irq32] PIT-INC TICKS={}",
+                    TICKS.load(Ordering::Relaxed)
+                );
                 TICKS.fetch_add(1, Ordering::Relaxed);
                 pic_eoi(vector);
                 crate::sched::tick(frame);
@@ -163,28 +170,6 @@ fn page_fault(frame: &InterruptFrame) -> ! {
         frame.error_code
     );
     fatal_with(0x20000000, "PAGE FAULT")
-}
-
-fn fatal(frame: &InterruptFrame, name: &str) -> ! {
-    let code = 0x10000000u32.wrapping_add(frame.vector as u32);
-    fatal_with(code, name)
-}
-
-fn halt() -> ! {
-    unsafe {
-        core::arch::asm!("cli", options(nostack, preserves_flags));
-        loop {
-            core::arch::asm!("hlt", options(nostack, preserves_flags));
-        }
-    }
-}
-
-fn read_cr2() -> u64 {
-    let cr2: u64;
-    unsafe {
-        core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack, preserves_flags));
-    }
-    cr2
 }
 
 pub fn idt_gate_installed(vector: u64) -> bool {
