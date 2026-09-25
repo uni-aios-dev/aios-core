@@ -131,7 +131,6 @@ aios_restore_ring3:
     mov rsi, [rdi + 72]
     mov rcx, [rdi + 104]
     mov rdx, [rdi + 96]
-    mov rsp, [rdi + 168]
     mov r10, [rdi + 176]
     push r10
     mov r10, [rdi + 168]
