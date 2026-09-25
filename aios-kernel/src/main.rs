@@ -309,7 +309,7 @@ pub unsafe extern "C" fn _start() -> ! {
         let master_mask = crate::port::inb(0x21);
         let slave_mask = crate::port::inb(0xA1);
         kprintln!(
-            "[serial] [probe] PIC-MASK master=0x{:02X} slave=0x{:02X} (0xFD=IRQ0-masked-PIT-disabled)",
+            "[serial] [probe] PIC-MASK master=0x{:02X} slave=0x{:02X} (0xFE=IRQ0-unmasked-PIT-enabled)",
             master_mask,
             slave_mask
         );

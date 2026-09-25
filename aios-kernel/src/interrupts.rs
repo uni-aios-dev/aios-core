@@ -216,7 +216,7 @@ pub fn init_pic() {
         port::io_wait();
         port::outb(PIC2_DATA, 0x01);
         port::io_wait();
-        port::outb(PIC1_DATA, 0xFD);
+        port::outb(PIC1_DATA, 0xFE);
         port::outb(PIC2_DATA, 0xFF);
         let (m, s) = pic_masks();
         kprintln!(
