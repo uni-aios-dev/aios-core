@@ -34,6 +34,11 @@ const WRITE_LOG_EVERY: u64 = 32;
 pub const MAX_PID: usize = 5;
 const MAILBOX_DEPTH: usize = 16;
 
+/// `SYS_SEND`/`SYS_RECV` console+serial lines are emitted every
+/// `IPC_LOG_EVERY`-th transferred value so the live ping-pong between the
+/// ring-3 demo tasks is visible on hardware without flooding the console.
+const IPC_LOG_EVERY: u64 = 8;
+
 /// Wire header mirrored from `aios_core::ipc_protocol` (fixed layout so the
 /// concept survives into the freestanding kernel). The kernel-side mailbox
 /// stores packets in unpacked form; the header documents the on-wire shape
@@ -149,7 +154,7 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
     match frame.rax {
         SYS_SEND => {
             let ok = send(pid, frame.rdi as u32, frame.rcx);
-            if ok && frame.rcx.is_multiple_of(SAMPLE_EVERY) {
+            if ok && frame.rcx.is_multiple_of(IPC_LOG_EVERY) {
                 vprintln!(
                     "[ipc] send pid{} -> pid{} val={}",
                     pid,
@@ -167,7 +172,7 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         }
         SYS_RECV => match recv(pid) {
             Some((src, value)) => {
-                if value % SAMPLE_EVERY == 0 {
+                if value % IPC_LOG_EVERY == 0 {
                     vprintln!("[ipc] recv pid{} <- pid{} val={}", pid, src, value);
                     kprintln!("[serial] [ipc] recv {}<-{} val={}", pid, src, value);
                 }
@@ -209,8 +214,6 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         }
     }
 }
-
-const SAMPLE_EVERY: u64 = 256;
 
 static mut FIRST_SYSCALL_SEEN: [bool; MAX_PID] = [false; MAX_PID];
 

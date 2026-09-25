@@ -1,5 +1,22 @@
 # AIOS Development Log
 
+## v2.38.9 — Visible ring-3 IPC ping-pong sampling (2026-09-25)
+
+The demo IPC already runs on hardware: pid 1 (`SYS_SEND` → pid 2, then
+`SYS_RECV`) and pid 2 (`SYS_RECV`, `SYS_SEND` → pid 1) exchange a monotonically
+increasing payload word every cycle through the per-pid mailboxes. It was
+invisible on the console because the sampled proof lines were gated on
+`SAMPLE_EVERY = 256`, which the demo's small counter values never reach.
+
+### Changed
+- Renamed `SAMPLE_EVERY: u64 = 256` → `IPC_LOG_EVERY: u64 = 8` in
+  `aios-kernel/src/syscalls.rs`. `[ipc] send/recv` + serial lines now appear
+  every 8th transferred value (~2 lines/s at the demo's pace), making the
+  ping-pong end-to-end visible on the MSI while staying non-flooding.
+
+### Verified
+- `cargo build` (kernel, release): OK; `cargo clippy`: 0 warnings.
+
 ## v2.38.8 — Full-panel direct colour test; GOP graphics audit (2026-09-25)
 
 Audited the kernel's display path against the "blank TUI" checklist and
