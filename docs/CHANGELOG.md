@@ -1,5 +1,36 @@
 # AIOS Development Log
 
+## v2.38.8 — Full-panel direct colour test; GOP graphics audit (2026-09-25)
+
+Audited the kernel's display path against the "blank TUI" checklist and
+added a boot-time full-panel solid fill as a one-shot proof:
+
+### Audit results (no changes needed)
+- **Framebuffer mapping** — the kernel renders through the Limine-provided
+  high-half (HHDM) framebuffer pointer in `framebuffer.rs`; the surface is
+  already mapped writable by the boot protocol, so no `phys_to_virt`
+  conversion is needed (`gop.rs` does not exist in this layout). Verified
+  live on MSI hardware: text, glyphs, the OK self-check square and the
+  orange step strip all render.
+- **Embedded font** — glyphs come from the baked-in `font8x8::BASIC`
+  bitmap (public-domain 8×8) in `font8x8.rs`, rendered by `draw_glyph`
+  (`console.rs`) with no external library. Equivalent to an embedded PSF.
+- **`init_tui_test` / flat colour** — the kernel never used `ratatui`;
+  `draw_glyph` + `fill_rect` are self-contained `no_std` primitives.
+
+### Added
+- **Direct colour test (one-shot at boot)** — immediately after the
+  framebuffer self-check, the whole panel is filled solid dark blue
+  (`0x000020C0`) straight into the physical pixel array (no console, no
+  library), then the console text streams over it. Proves the full GOP
+  surface — including edges/letterbox regions — is directly writable from
+  raw pixels, which is all any in-kernel UI drawing needs.
+
+### Verified
+- `cargo build --manifest-path aios-kernel/Cargo.toml --target
+  x86_64-unknown-none --release`: OK.
+- `cargo clippy` (kernel, release): 0 warnings.
+
 ## v2.38.7 — Rate-limit `[sched] idle` console spam (2026-09-25)
 
 With the software-tick fallback active, on the MSI the idle task synthesizes

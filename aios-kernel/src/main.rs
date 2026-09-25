@@ -206,6 +206,22 @@ pub unsafe extern "C" fn _start() -> ! {
         kprintln!("[serial] framebuffer = none");
     }
 
+    // --- Direct colour test -------------------------------------------------
+    // One-shot full-panel solid fill (no console, no library): proves the
+    // entire GOP surface — including corners/letterbox edges — is directly
+    // writable from raw pixels. Blue fills the whole screen, the OK-green
+    // self-check square stays visible at the bottom-right, then the console
+    // text streams over it. `tui`-style rendering needs nothing more than this.
+    if let Some(fb) = limine_fb {
+        let fb = Framebuffer::new(fb);
+        let w = fb.width();
+        let h = fb.height();
+        unsafe {
+            fb.fill_rect(0, 0, w, h, 0x00_00_20_c0);
+        }
+        kprintln!("[serial] direct colour test: full-panel fill 0x000020C0 done");
+    }
+
     // --- PCI buses ---------------------------------------------------------
     let mut pci_devices = [pci::PciDevice::EMPTY; MAX_PCI_DEVICES];
     let pci_count = unsafe { pci::enumerate(&mut pci_devices) };
