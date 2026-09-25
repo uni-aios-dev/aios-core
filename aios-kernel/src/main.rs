@@ -569,11 +569,15 @@ fn kernel_worker() -> ! {
 
 /// Kernel idle task: parked until preempted, prints a rolling tick timestamp
 /// each second. Runs on its own dedicated stack on a fabricated frame.
+/// Also drives a hardware heartbeat: directly writes to the GOP framebuffer
+/// (no console lock, no vprintln) so we can verify the CPU + framebuffer
+/// are alive on real hardware even when the lock-based console is deadlocked.
 pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
     let mut last_usb_seq = 0u64;
+    let mut heartbeat_color = 0u32;
     loop {
         crate::sched::yield_kernel();
         xhci::poll();
@@ -582,6 +586,13 @@ pub fn idle_loop() -> ! {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
+        }
+        // Hardware heartbeat: direct framebuffer write (no CONSOLE_LOCK)
+        unsafe {
+            if let Some(fb) = crate::console::framebuffer() {
+                heartbeat_color = heartbeat_color.wrapping_add(0x00010101);
+                fb.fill_rect(0, 0, 8, 8, heartbeat_color);
+            }
         }
         // Every 5 seconds: scheduler + IPC proof counters.
         let stats_window = 5 * interrupts::TIMER_HZ;

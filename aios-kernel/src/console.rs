@@ -157,6 +157,10 @@ impl SpinLock {
         }
     }
 
+    fn try_lock(&self) -> bool {
+        !self.locked.swap(true, Ordering::Acquire)
+    }
+
     fn unlock(&self) {
         self.locked.store(false, Ordering::Release);
     }
@@ -202,10 +206,19 @@ pub fn is_active() -> bool {
     active
 }
 
+/// Returns a reference to the underlying framebuffer, if one is active.
+/// Does NOT acquire CONSOLE_LOCK, so it is safe to call from interrupt context.
+pub fn framebuffer() -> Option<&'static Framebuffer> {
+    unsafe { (&*core::ptr::addr_of!(CONSOLE)).fb.as_ref() }
+}
+
 /// Formats and prints to the framebuffer console.
+/// Uses try_lock to avoid deadlock when called from interrupt context.
 pub fn print(args: fmt::Arguments) {
     use core::fmt::Write;
-    CONSOLE_LOCK.lock();
+    if !CONSOLE_LOCK.try_lock() {
+        return;
+    }
     let console = unsafe { &mut *core::ptr::addr_of_mut!(CONSOLE) };
     let _ = console.write_fmt(args);
     CONSOLE_LOCK.unlock();
@@ -213,8 +226,11 @@ pub fn print(args: fmt::Arguments) {
 
 /// Writes raw bytes to the console, sanitizing non-printables to `?` (used by
 /// the `SYS_WRITE` syscall so a user program cannot corrupt the console).
+/// Uses try_lock to avoid deadlock when called from interrupt context.
 pub fn write_bytes(bytes: &[u8]) {
-    CONSOLE_LOCK.lock();
+    if !CONSOLE_LOCK.try_lock() {
+        return;
+    }
     let console = unsafe { &mut *core::ptr::addr_of_mut!(CONSOLE) };
     console.write_bytes(bytes);
     CONSOLE_LOCK.unlock();
