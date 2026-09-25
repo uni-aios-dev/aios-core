@@ -104,11 +104,50 @@ aios_restore_ring0:
     mov r10, [rdi + 160]
     push r10
     popfq
+mov r10, [rdi + 144]
+mov rdi, [rdi + 64]
+jmp r10
+
+.section .text
+.globl aios_restore_ring3
+aios_restore_ring3:
+    cli
+    mov rax, [rdi + 112]
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov r15, [rdi + 0]
+    mov r14, [rdi + 8]
+    mov r13, [rdi + 16]
+    mov r12, [rdi + 24]
+    mov r11, [rdi + 32]
+    mov r10, [rdi + 40]
+    mov r9, [rdi + 48]
+    mov r8, [rdi + 56]
+    mov rax, [rdi + 120]
+    mov rbx, [rdi + 88]
+    mov rbp, [rdi + 80]
+    mov rsi, [rdi + 72]
+    mov rcx, [rdi + 104]
+    mov rdx, [rdi + 96]
+    mov rsp, [rdi + 168]
+    mov r10, [rdi + 176]
+    push r10
+    mov r10, [rdi + 168]
+    push r10
+    mov r10, [rdi + 160]
+    push r10
+    mov r10, [rdi + 152]
+    push r10
     mov r10, [rdi + 144]
-    mov rdi, [rdi + 64]
-    jmp r10
-"#,
-    );
+    push r10
+    iretq
+
+.section .data.rel.ro
+.p2align 3
+.globl aios_handler_table
+aios_handler_table:
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("irq_stubs.S");
     fs::write(&out, asm).expect("failed to write irq_stubs.S");
     println!("cargo:rerun-if-changed=build.rs");

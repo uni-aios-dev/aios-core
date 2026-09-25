@@ -31,6 +31,11 @@ extern "C" {
     /// Never returns. `rdi` holds the frame pointer on entry.
     #[allow(dead_code)]
     fn aios_restore_ring0(frame: *const InterruptFrame) -> !;
+    /// Resumes a ring-3 task: restores registers and does `iretq` with
+    /// proper SS:RSP on the stack for the privilege transition.
+    /// Never returns. `rdi` holds the frame pointer on entry.
+    #[allow(dead_code)]
+    fn aios_restore_ring3(frame: *const InterruptFrame) -> !;
 }
 
 /// Switch cadence: preemption fires 4 times per second.
@@ -334,7 +339,12 @@ pub fn schedule(frame: &mut InterruptFrame) {
         unsafe {
             aios_restore_ring0(core::ptr::addr_of!(incoming));
         }
+    } else {
+        unsafe {
+            aios_restore_ring3(core::ptr::addr_of!(incoming));
+        }
     }
+}
     *frame = incoming;
 }
 
