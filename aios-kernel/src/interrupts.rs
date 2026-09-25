@@ -133,6 +133,18 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
                     TICKS.load(Ordering::Relaxed)
                 );
                 TICKS.fetch_add(1, Ordering::Relaxed);
+                // Direct-framebuffer PIT bar (top-right): proves the timer ISR
+                // keeps firing regardless of the console lock. Re-drawn every
+                // tick so scrolled console text cannot hide it.
+                if let Some(fb) = crate::console::framebuffer() {
+                    let ticks = TICKS.load(Ordering::Relaxed);
+                    let h = (ticks % 64) as usize;
+                    let bx = fb.width().saturating_sub(16);
+                    unsafe {
+                        fb.fill_rect(bx, 0, 8, 64, crate::framebuffer::colors::BG);
+                        fb.fill_rect(bx, 64 - h, 8, h, crate::framebuffer::colors::FG);
+                    }
+                }
                 pic_eoi(vector);
                 crate::sched::tick(frame);
             }

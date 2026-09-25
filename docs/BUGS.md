@@ -1,5 +1,27 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN: silent screen after `[sched] idle` on MSI — frozen CPU vs wedged console
+- **Status:** DIAGNOSING in v2.38.5
+- **Symptom:** boot completes on the MSI laptop (all 14 steps; three ring-3
+  tasks run, `getpid`/`write` work, each sleeps 20 ticks), then text output
+  stops at `[sched] idle`. No `[sched] pid N woke`, no `[tick] 1s`, and the
+  heartbeat square appears steady. Because all text goes through the
+  console/serial lock, a frozen screen is ambiguous.
+- **Diagnosis added in v2.38.5** (bypasses the console lock):
+  - A cycling PIT tick bar (top-right, grows/shrinks every IRQ) proves the
+    timer ISR keeps firing when the console is wedged.
+  - The heartbeat now blinks at 2 Hz instead of ~100 Hz (per-iteration toggles
+    integrated into a steady-looking fill).
+- **Interpretation:** PIT bar cycles = CPU alive, console lock wedged (focus
+  on `CONSOLE_LOCK` holders). Heartbeat visibly blinks = idle alive, ticks
+  advancing. Both static green = machine actually hung (PIT stopped), e.g.
+  `cli` left set or the idle switch corrupted RFLAGS.
+- **Open question:** who, if anyone, holds `CONSOLE_LOCK` indefinitely after
+  the last task sleeps? Idle is ring-0 and the ISR guard
+  (`sched.rs:258`) forbids switching ring-0 tasks mid-print, so the classic
+  preempt-while-holding path should be closed; the RFLAGS/IF state after the
+  `aios_restore_ring0` switch into the fabricated idle frame is unverified.
+
 ## RESOLVED: v2.38.4 kernel never compiled after ring-3 restore commits
 - **Status:** FIXED in v2.38.4
 - **Symptom:** all `cargo build --workspace` invocations passed but the

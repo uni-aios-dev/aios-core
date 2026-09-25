@@ -605,15 +605,22 @@ pub fn idle_loop() -> ! {
         }
         // Hardware heartbeat: toggles the bottom-right probe square (direct
         // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if
-        // the lock-based console is wedged.
+        // the lock-based console is wedged. Toggles at 2 Hz (every half-second
+        // tick boundary); a per-iteration toggle would run at ~100 Hz and
+        // integrate into a steady fill that looks "not blinking".
         unsafe {
             if let Some(fb) = crate::console::framebuffer() {
                 static mut HB_ON: bool = false;
-                HB_ON = !HB_ON;
-                let c = if HB_ON { colors::OK } else { colors::BG };
-                let bx = fb.width().saturating_sub(8);
-                let by = fb.height().saturating_sub(8);
-                fb.fill_rect(bx, by, 8, 8, c);
+                static mut HB_PHASE: u64 = u64::MAX;
+                let phase = ticks / (interrupts::TIMER_HZ / 2);
+                if phase != HB_PHASE {
+                    HB_PHASE = phase;
+                    HB_ON = !HB_ON;
+                    let c = if HB_ON { colors::OK } else { colors::BG };
+                    let bx = fb.width().saturating_sub(8);
+                    let by = fb.height().saturating_sub(8);
+                    fb.fill_rect(bx, by, 8, 8, c);
+                }
             }
         }
         // Every 5 seconds: scheduler + IPC proof counters.

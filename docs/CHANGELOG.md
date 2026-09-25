@@ -1,5 +1,36 @@
 # AIOS Development Log
 
+## v2.38.5 — Console-independent liveness indicators on MSI hardware (2026-09-25)
+
+On the MSI laptop the boot completes (all 14 steps, scheduler online, three
+ring-3 tasks running and sleeping on syscalls) but text output stops at
+`[sched] idle`. The tick prints (`[irq32]`, `[tick]`, `[sched] pid N woke`)
+are channeled through the console/serial lock, so a silent screen cannot
+distinguish "CPU frozen" from "console lock wedged". Added two indicators
+that bypass the console entirely:
+
+### Added
+- **PIT tick bar** — the IRQ32 handler now draws a cycling 8x64 bar at the
+  top-right directly into the GOP framebuffer (BG fill + FG bar of height
+  `TICKS % 64`) on every timer interrupt, independent of `CONSOLE_LOCK`.
+  Re-drawn each tick so scrolled console text cannot hide it.
+- **Slow heartbeat** — the idle-loop heartbeat now toggles the bottom-right
+  probe square at 2 Hz (once per half-second tick boundary) instead of per
+  idle iteration. Per-iteration toggling ran at ~100 Hz and integrated into
+  a steady fill that looked like "not blinking".
+
+### Diagnostics enabled
+- If the PIT bar cycles (grows/shrinks top-right) but text stays frozen:
+  the CPU is alive and the console lock is wedged.
+- If the bottom-right square visibly blinks at 2 Hz: idle loop is running
+  and ticks are advancing.
+- If both are static green: the machine actually hung (no ticks).
+
+### Verified
+- `cargo build --manifest-path aios-kernel/Cargo.toml --target
+  x86_64-unknown-none --release`: OK.
+- `cargo clippy` (kernel, release): 0 warnings.
+
 ## v2.38.4 — Kernel compiles again: repair build.rs/asm + delete dead & duplicated code (2026-09-25)
 
 The bare-metal kernel had NOT compiled since the ring-3 restore commits
