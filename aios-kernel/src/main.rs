@@ -539,12 +539,8 @@ pub unsafe extern "C" fn _start() -> ! {
     vprintln!("User syscalls (write/getpid/sleep) + idle fallback");
     kprintln!("[serial] scheduler online, IPC + user syscalls armed.");
 
-    kprintln!("[serial] DEBUG: before boot_finished");
-    vprintln!("DEBUG: before boot_finished");
     sched::boot_finished();
-    kprintln!("[serial] DEBUG: after boot_finished");
-    vprintln!("DEBUG: after boot_finished");
-    print_step(14, "ready");
+    sched::yield_kernel();
     loop {
         unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)); }
     }
