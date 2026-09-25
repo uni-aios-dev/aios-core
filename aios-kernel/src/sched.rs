@@ -323,8 +323,26 @@ pub fn schedule(frame: &mut InterruptFrame) {
     }
 
     if next == 0 {
-        vprintln!("[sched] idle");
-        kprintln!("[serial] [sched] idle");
+        // Rate-limit to one line per second: on a dead-PIC board the idle
+        // task synthesizes a tick every ~10 ms and would spam the console at
+        // ~100 lines/s while tasks sleep.
+        let do_print = unsafe {
+            #[allow(static_mut_refs)]
+            {
+                static mut IDLE_PRINTED: bool = false;
+                static mut LAST_IDLE_PRINT: u64 = 0;
+                let p = !IDLE_PRINTED || ticks.wrapping_sub(LAST_IDLE_PRINT) >= TIMER_HZ;
+                if p {
+                    IDLE_PRINTED = true;
+                    LAST_IDLE_PRINT = ticks;
+                }
+                p
+            }
+        };
+        if do_print {
+            vprintln!("[sched] idle");
+            kprintln!("[serial] [sched] idle");
+        }
     }
 
     let incoming = t[next as usize].frame;

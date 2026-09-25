@@ -1,5 +1,26 @@
 # AIOS Development Log
 
+## v2.38.7 — Rate-limit `[sched] idle` console spam (2026-09-25)
+
+With the software-tick fallback active, on the MSI the idle task synthesizes
+a tick every ~10 ms and, while all three ring-3 tasks sleep, `schedule()`
+picked slot 0 and printed `[sched] idle` on every call — a ~100 lines/s
+logging wall that drowned the on-screen console. The line is now rate-limited
+to at most once per second (per `TIMER_HZ` ticks), keeping the boot log
+readable while the system keeps cycling: idle → `pid N woke` → task runs →
+`pid N sleep 20 ticks` → idle.
+
+### Verified on the MSI (v2.38.6)
+- Multitasking is alive on real hardware: `[ktask] alive #N` advances, all
+  three ring-3 tasks wake, execute user code (`u1` / `*` / `u2`) and return
+  to sleep through `SYS_SLEEP`, with the software-tick fallback (dead legacy
+  PIC / no IRQ32) driving the 100 Hz cadence from the PIT countdown.
+
+### Verified
+- `cargo build --manifest-path aios-kernel/Cargo.toml --target
+  x86_64-unknown-none --release`: OK.
+- `cargo clippy` (kernel, release): 0 warnings.
+
 ## v2.38.6 — Software-tick fallback for boards with a dead 8259 PIC (2026-09-25)
 
 On the MSI laptop both v2.38.5 liveness indicators (top-right PIT bar,

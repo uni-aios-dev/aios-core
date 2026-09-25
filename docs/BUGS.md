@@ -1,18 +1,21 @@
 # AIOS Known Bugs & Workarounds
 
 ## OPEN: PIT IRQ0 never arrives on the MSI laptop — 8259 PIC dead in UEFI APIC mode
-- **Status:** DIAGNOSED in v2.38.6, mitigated by a software-tick fallback
+- **Status:** CONFIRMED in v2.38.6-7, mitigated by a software-tick fallback
 - **Symptom:** boot completes (all 14 steps; three ring-3 tasks run,
   `getpid`/`write` work, each sleeps 20 ticks), then text stops at
   `[sched] idle`. `[tick]`, `[sched] pid N woke` and the 2 Hz heartbeat
   never appear. The v2.38.5 top-right PIT bar stays height-0 (invisible)
   on the MSI.
+- **Confirmation:** with the v2.38.6 software-tick fallback the MSI boot no
+  longer freezes — `[ktask] alive` advances, all three ring-3 tasks wake,
+  run and sleep in a cycle, proving the scheduler was healthy all along and
+  only the hardware timer IRQ was missing. `[sched] idle` was rate-limited
+  to 1/s in v2.38.7 (the fallback printed ~100 idle lines/s).
 - **Root cause:** the legacy 8259 PIC does not deliver IRQ0 to the CPU on
   this UEFI laptop (the line is routed via the unprogrammed IO-APIC),
-  so `TICKS` never changes. All follow-on symptoms (`sleep_until`
-  deadlines never passing, tick-gated heartbeat static) cascade from a
-  frozen tick counter. The scheduler code itself is healthy — this is a
-  hardware timer-routing issue, not a scheduler deadlock.
+  so `TICKS` never changes. All follow-on symptoms cascade from a frozen
+  tick counter.
 - **Proof path added in v2.38.6:** boot now prints on-screen
   `[probe] irq32_seen=.. ticks=..->.. (delta N)` after a ~120 ms PIT
   countdown; `ticks delta 0` + `irq32_seen false` confirms the dead PIC.
