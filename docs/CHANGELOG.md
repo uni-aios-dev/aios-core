@@ -49,12 +49,24 @@ steps printed to the framebuffer (`vprintln!`) and serial (`kprintln!`).
   14-step boot markers (`STEP 1/14` through `STEP 14/14`) via
   `vprintln!`. Added `interrupts::fatal_with(0x30000001, ...)` on
   paging selftest failure.
+- **`aios-kernel/src/interrupts.rs`** — added `DEBUG_MODE: AtomicBool`,
+  `check_f8()` polls the i8042 keyboard controller for F8 make code
+  (`0x38`) at boot time. If F8 is pressed, `DEBUG_MODE` is set and
+  a debug banner is printed at the top-left of the framebuffer.
+- **`aios-kernel/src/console.rs`** — added `set_cursor(x, y)` public
+  method to allow positioning the cursor at the top-left corner for
+  debug banner output.
+- **`aios-kernel/src/main.rs`** — 14-step boot markers now conditionally
+  printed only when `DEBUG_MODE` is active (F8 pressed). When F8 is
+  **not** pressed, normal quiet boot with no console markers (TUI only).
 
 ### Verified
 - `cargo build --workspace`: success.
 - `cargo test --workspace`: all pass.
 - `cargo clippy --workspace --all-targets`: 0 warnings.
 - `cargo fmt --all --check`: clean.
+- Kingston DataTraveler 3.0 re-flashed and verified
+  (raw-wrote 4,450,304 bytes, head+tail match, MBR sig 0x55AA).
 
 ## v2.38.1 — xHCI enumerate all root ports (BUG-044) + clippy cleanup
 

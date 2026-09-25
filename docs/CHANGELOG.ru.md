@@ -47,11 +47,24 @@
   и 14 маркеров шагов загрузки (`STEP 1/14` – `STEP 14/14`).
   Добавлен `interrupts::fatal_with(0x30000001, ...)` при неудаче
   self-теста пейджинга.
+- **`aios-kernel/src/interrupts.rs`** — добавлен `DEBUG_MODE: AtomicBool`,
+  `check_f8()` опрашивает контроллер клавиатуры i8042 на нажатие
+  F8 (make-код `0x38`) при старте ядра. Если F8 нажата,
+  `DEBUG_MODE` активируется и в верхнем-left углу framebuffer
+  выводится debug-баннер с маркерами шагов.
+- **`aios-kernel/src/console.rs`** — добавлен метод `set_cursor(x, y)`
+  для позиционирования курсора в верхнем-left углу.
+- **`aios-kernel/src/main.rs`** — маркеры шагов печатаются только
+  при активном `DEBUG_MODE` (F8 нажата). Без F8 — чистая загрузка
+  (только TUI).
 
 ### Верификация
 - `cargo build --workspace`: success.
 - `cargo test --workspace`: all pass.
 - `cargo clippy --workspace --all-targets`: 0 warnings.
+- `cargo fmt --all --check`: clean.
+- Kingston DataTraveler 3.0 перезаписан и верифицирован
+  (raw-wrote 4,450,304 байт, head+tail match, MBR sig 0x55AA).
 - `cargo fmt --all --check`: clean.
 
 ## v2.38.0 — Ядро bare-metal загружается с USB-флешки (2026-09-22)

@@ -23,11 +23,13 @@
   reproduce in QEMU.
 - **Note:** keyboard input is now available via xHCI multi-port enumeration (BUG-044 fixed in v2.38.1).
 
-## DIAGNOSTIC: v2.38.2 HALT_REASON and boot-step logging
+## DIAGNOSTIC: v2.38.2 F8 debug mode + HALT_REASON and boot-step logging
 - **Purpose:** determine exactly where the kernel stops on real hardware.
-- **Mechanism:** 14 numbered `STEP` markers printed to the framebuffer and serial. On fatal error, `HALT_REASON: AtomicU32` stores a 0x80000000+ code, debug port `0x80` receives the low byte, and both `vprintln!` and `kprintln!` emit the code and detail string before halting.
+- **F8 debug mode:** press **F8** immediately after the BIOS/UEFI boot screen appears and before the kernel starts printing. The i8042 keyboard controller is polled for F8 make code (`0x38`). If detected, `DEBUG_MODE: AtomicBool` is set and a debug banner is printed at the **top-left** corner of the framebuffer showing all 14 `STEP` markers. Without F8, the kernel boots quietly (TUI only, no console markers).
+- **Mechanism:** when debug mode is active, `print_step()` prints `STEP X/14: message` lines only to the framebuffer at the top-left area. `HALT_REASON: AtomicU32` stores a 0x80000000+ code on fatal error, debug port `0x80` receives the low byte, and both `vprintln!` and `kprintln!` emit the code and detail string before halting.
 - **Usage:** on a real laptop, if the system halts at `STEP 7/14` for example, the last printed step identifies the failure region. The debug port `0x80` value can be read with a hardware probe or an external logic analyzer.
 - **Error codes:** `0x10000000 + vector` for interrupt faults, `0x20000000` for page fault, `0x30000001` for paging selftest failure.
+- **Files:** `aios-kernel/src/interrupts.rs`, `aios-kernel/src/console.rs`, `aios-kernel/src/main.rs`.
 
 ## RESOLVED: v2.35.0 `crt.rs` `memset` hung the boot (circular PLT)
 - **Status:** FIXED in v2.36.0 (module deleted)
