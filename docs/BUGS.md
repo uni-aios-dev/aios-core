@@ -1,7 +1,34 @@
 # AIOS Known Bugs & Workarounds
 
-## OPEN: silent screen after `[sched] idle` on MSI — frozen CPU vs wedged console
-- **Status:** DIAGNOSING in v2.38.5
+## OPEN: PIT IRQ0 never arrives on the MSI laptop — 8259 PIC dead in UEFI APIC mode
+- **Status:** DIAGNOSED in v2.38.6, mitigated by a software-tick fallback
+- **Symptom:** boot completes (all 14 steps; three ring-3 tasks run,
+  `getpid`/`write` work, each sleeps 20 ticks), then text stops at
+  `[sched] idle`. `[tick]`, `[sched] pid N woke` and the 2 Hz heartbeat
+  never appear. The v2.38.5 top-right PIT bar stays height-0 (invisible)
+  on the MSI.
+- **Root cause:** the legacy 8259 PIC does not deliver IRQ0 to the CPU on
+  this UEFI laptop (the line is routed via the unprogrammed IO-APIC),
+  so `TICKS` never changes. All follow-on symptoms (`sleep_until`
+  deadlines never passing, tick-gated heartbeat static) cascade from a
+  frozen tick counter. The scheduler code itself is healthy — this is a
+  hardware timer-routing issue, not a scheduler deadlock.
+- **Proof path added in v2.38.6:** boot now prints on-screen
+  `[probe] irq32_seen=.. ticks=..->.. (delta N)` after a ~120 ms PIT
+  countdown; `ticks delta 0` + `irq32_seen false` confirms the dead PIC.
+- **Mitigation:** `idle_loop` software-tick fallback — when no IRQ32 has
+  ever been seen, idle polls the always-running PIT countdown for one
+  tick period (~10 ms) and increments `TICKS` itself, driving sleeps,
+  `[tick]` and the heartbeat on any board.
+- **Exact pending question:** a full fix would program the Local APIC timer
+  or IO-APIC redirection so hardware ticks arrive again; the software
+  fallback keeps the OS functional meanwhile (tick cadence preserved via
+  the PIT countdown, busy-poll in idle only, `hlt` when IRQs work).
+- **Regression guard:** `IRQ32_SEEN` distinguishes a working PIC
+  (`hlt` path, hardware ticks) from a dead one (poll path); no double
+  counting.
+
+## DIAGNOSTIC: v2.38.5 indicators — frozen CPU vs wedged console (superseded)
 - **Symptom:** boot completes on the MSI laptop (all 14 steps; three ring-3
   tasks run, `getpid`/`write` work, each sleeps 20 ticks), then text output
   stops at `[sched] idle`. No `[sched] pid N woke`, no `[tick] 1s`, and the

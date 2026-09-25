@@ -330,6 +330,24 @@ pub unsafe extern "C" fn _start() -> ! {
     }
     print_step(7, "sti executed");
 
+    // On-screen IRQ0 liveness probe (no serial needed): wait ~120 ms and count
+    // how many PIT ticks a real IRQ32 delivered. Some UEFI laptops leave the
+    // legacy 8259 PIC dead (IRQ0 routed via an unprogrammed IO-APIC), so this
+    // tells us whether the hardware timer IRQ will drive scheduling at all.
+    let t0 = interrupts::TICKS.load(Ordering::Relaxed);
+    let seen0 = interrupts::IRQ32_SEEN.load(Ordering::Relaxed);
+    interrupts::delay_ms(120);
+    let t1 = interrupts::TICKS.load(Ordering::Relaxed);
+    let seen1 = interrupts::IRQ32_SEEN.load(Ordering::Relaxed);
+    vprintln!(
+        "[probe] irq32_seen={}->{} ticks={}->{} (delta {})",
+        seen0,
+        seen1,
+        t0,
+        t1,
+        t1 - t0
+    );
+
     let mut rflags: u64 = 0;
     unsafe {
         core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nostack, preserves_flags));
@@ -667,8 +685,18 @@ pub fn idle_loop() -> ! {
                 kprintln!("[serial] usb key scancode 0x{:02x}", usb_sc);
             }
         }
-        unsafe {
-            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+        // Park the CPU. With the PIT IRQ arriving (legacy PIC alive) a plain
+        // `hlt` is woken by each hardware tick. On boards where IRQ0 never
+        // reaches the CPU (UEFI APIC routing), `hlt` would sleep forever, so
+        // the idle loop polls the PIT countdown for one tick period instead
+        // and synthesizes the tick itself. `pit_count` always runs — it is
+        // clocked directly, independent of interrupt delivery.
+        if interrupts::IRQ32_SEEN.load(Ordering::Relaxed) {
+            unsafe {
+                core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+            }
+        } else if !interrupts::wait_for_irq32(1000 / interrupts::TIMER_HZ) {
+            interrupts::TICKS.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

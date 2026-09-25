@@ -1,5 +1,39 @@
 # AIOS Development Log
 
+## v2.38.6 — Software-tick fallback for boards with a dead 8259 PIC (2026-09-25)
+
+On the MSI laptop both v2.38.5 liveness indicators (top-right PIT bar,
+2 Hz heartbeat) stayed static: **no PIT IRQ0 ever reaches the CPU**. The
+legacy 8259 PIC is dead on this UEFI board (IRQ0 is routed through an
+unprogrammed IO-APIC), so `TICKS` stays 0: sleeping tasks never wake, the
+tick-gated heartbeat never toggles and every PIT tick bar has height 0
+(invisible). The scheduler itself was healthy — the whole system collapsed
+only because the timer interrupt never arrived.
+
+### Added
+- **`interrupts::IRQ32_SEEN`** — atomic flag set by the IRQ32 handler the
+  first time it actually runs.
+- **`interrupts::pit_count()`** — latched read of the PIT channel-0
+  countdown (works with or without IRQ delivery; the PIT is clocked
+  directly).
+- **`interrupts::delay_ms()` / `wait_for_irq32()`** — accumulation-safe
+  (16-bit wrap) busy-waits derived from the PIT countdown.
+- **Boot-of-screen IRQ probe** — right after `sti`, `kernel_main` prints
+  `[probe] irq32_seen=..->.. ticks=..->.. (delta N)` after a ~120 ms PIT
+  countdown, proving on the MSI screen itself whether the timer IRQ arrives.
+- **Software-tick fallback in `idle_loop`** — when `IRQ32_SEEN` is false
+  (PIT IRQ lost), the idle task no longer does a hard `hlt`; it polls the
+  PIT countdown for one tick period (~10 ms) and, if no real IRQ arrived,
+  increments `TICKS` itself. This drives sleep deadlines, `[tick]` prints
+  and the 2 Hz heartbeat on any board, PIC-alive or not. On boards where
+  the IRQ works, `IRQ32_SEEN` becomes true and the plain `hlt` path is used
+  — no double counting, no polling overhead.
+
+### Verified
+- `cargo build --manifest-path aios-kernel/Cargo.toml --target
+  x86_64-unknown-none --release`: OK.
+- `cargo clippy` (kernel, release): 0 warnings.
+
 ## v2.38.5 — Console-independent liveness indicators on MSI hardware (2026-09-25)
 
 On the MSI laptop the boot completes (all 14 steps, scheduler online, three

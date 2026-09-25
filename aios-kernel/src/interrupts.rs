@@ -18,6 +18,14 @@ pub const TIMER_HZ: u64 = 100;
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
 
+/// Set by the IRQ32 handler on the first PIT interrupt it actually receives.
+///
+/// Modern UEFI laptops often leave the legacy 8259 PIC dead (the IRQ0 line is
+/// routed through the (unprogrammed) IO-APIC instead), so this flag lets the
+/// idle loop detect a lost timer IRQ and fall back to software ticks derived
+/// from the PIT countdown, which always runs regardless of routing.
+pub static IRQ32_SEEN: AtomicBool = AtomicBool::new(false);
+
 pub static HALT_REASON: AtomicU32 = AtomicU32::new(0);
 
 pub static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
@@ -128,6 +136,7 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
         14 => page_fault(frame),
         v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => match vector {
             32 => {
+                IRQ32_SEEN.store(true, Ordering::Relaxed);
                 kprintln!(
                     "[serial] [irq32] PIT-INC TICKS={}",
                     TICKS.load(Ordering::Relaxed)
@@ -232,6 +241,41 @@ pub fn pic_masks() -> (u8, u8) {
     }
 }
 
+/// Latches and reads the current PIT channel-0 countdown value.
+///
+/// The PIT always counts (it is clocked directly), so this works even when its
+/// IRQ0 line never reaches the CPU — which makes it a usable time source for
+/// the software-tick fallback and for `delay_ms`.
+pub fn pit_count() -> u16 {
+    unsafe {
+        port::outb(PIT_CMD, 0x00);
+        let lo = port::inb(PIT_CH0);
+        let hi = port::inb(PIT_CH0);
+        lo as u16 | ((hi as u16) << 8)
+    }
+}
+
+/// Busy-waits `ms` milliseconds using the PIT channel-0 countdown.
+///
+/// Independent of interrupt delivery (no IRQ required). The 16-bit countdown
+/// wraps every ~55 ms, so the elapsed time is accumulated sample-to-sample to
+/// support arbitrary durations.
+pub fn delay_ms(ms: u64) {
+    let counts_per_ms = 1193182u64 / 1000;
+    let desired = counts_per_ms * ms;
+    let mut last = pit_count();
+    let mut elapsed = 0u64;
+    loop {
+        let now = pit_count();
+        elapsed += last.wrapping_sub(now) as u64;
+        last = now;
+        if elapsed >= desired {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+}
+
 pub fn init_pit() {
     let divisor = (1193182 / TIMER_HZ) as u16;
     unsafe {
@@ -241,23 +285,39 @@ pub fn init_pit() {
         for _ in 0..2_500_000 {
             core::hint::spin_loop();
         }
-        port::outb(PIT_CMD, 0x00);
-        let lo1 = port::inb(PIT_CH0);
-        let hi1 = port::inb(PIT_CH0);
-        let val1 = lo1 as u16 | ((hi1 as u16) << 8);
+        let val1 = pit_count();
         for _ in 0..5_000_000 {
             core::hint::spin_loop();
         }
-        port::outb(PIT_CMD, 0x00);
-        let lo2 = port::inb(PIT_CH0);
-        let hi2 = port::inb(PIT_CH0);
-        let val2 = lo2 as u16 | ((hi2 as u16) << 8);
+        let val2 = pit_count();
         kprintln!(
             "[serial] [probe] PIT-CN0 val1=0x{:04X} val2=0x{:04X} delta={} (latch-readback twopass pit-running-marker)",
             val1,
             val2,
             val1.wrapping_sub(val2)
         );
+    }
+}
+
+/// Waits up to `ms` milliseconds for a real IRQ32 to arrive; returns true if
+/// one did. Used by the idle loop to pick the timer source: hardware ticks when
+/// the PIC delivers IRQ0, software ticks (polling `pit_count`) when it does not.
+pub fn wait_for_irq32(ms: u64) -> bool {
+    let counts_per_ms = 1193182u64 / 1000;
+    let desired = counts_per_ms * ms;
+    let mut last = pit_count();
+    let mut elapsed = 0u64;
+    loop {
+        if IRQ32_SEEN.load(Ordering::Relaxed) {
+            return true;
+        }
+        let now = pit_count();
+        elapsed += last.wrapping_sub(now) as u64;
+        last = now;
+        if elapsed >= desired {
+            return IRQ32_SEEN.load(Ordering::Relaxed);
+        }
+        core::hint::spin_loop();
     }
 }
 
