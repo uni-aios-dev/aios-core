@@ -193,21 +193,25 @@ impl Framebuffer {
         self.fill_rect(0, 0, self.width, self.height, color);
     }
 
-    /// Scrolls the contents up by `pixels` scanlines and blanks the freed rows.
+    /// Scrolls the top `region_height` scanlines up by `pixels` rows and blanks
+    /// the freed bottom rows. The region below `region_height` (the reserved
+    /// overlay strip, e.g. the heartbeat square) is never touched, so scroll
+    /// cannot drag copies of the overlay up the screen.
     ///
     /// Implemented with `ptr::copy` (overlap-safe) so it costs a single memmove
     /// per frame instead of a per-pixel redraw.
     ///
     /// # Safety
     /// The framebuffer must still be mapped.
-    pub unsafe fn scroll_up(&self, pixels: usize, fill: Color) {
-        if !self.is_usable() || pixels == 0 || pixels >= self.height {
+    pub unsafe fn scroll_up(&self, pixels: usize, fill: Color, region_height: usize) {
+        if !self.is_usable() || pixels == 0 || pixels >= region_height {
             return;
         }
-        let move_bytes = (self.height - pixels) * self.pitch;
+        let region = region_height.min(self.height);
+        let move_bytes = (region - pixels) * self.pitch;
         core::ptr::copy(self.base.add(pixels * self.pitch), self.base, move_bytes);
         let packed = self.pack(fill);
-        for row in (self.height - pixels)..self.height {
+        for row in (region - pixels)..region {
             let line = self.base.add(row * self.pitch);
             match self.bytes_per_pixel {
                 4 => {

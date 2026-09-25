@@ -1,5 +1,29 @@
 # AIOS Development Log
 
+## v2.38.10 — Ring-3 demo freeze + heartbeat ghost trail fixed (2026-09-25)
+
+Two real-hardware defects reported from the v2.38.9 MSI boot:
+
+### Fixed
+- **Demo pid3 parked and froze the OS on PIC-less boards.** `build_pid3`
+  ended in `jmp $` (busy spin). With no 8259 PIC there is no preemptive
+  timeslicing (`idle_loop` is the only software-tick source and heartbeat),
+  so a task that never yields stalls `TICKS`, starving sleeping tasks and
+  freezing the whole kernel. pid3 now loops back to its `SYS_SLEEP` cycle
+  (`jmp_self` removed), keeping the scheduler cooperative forever. In QEMU
+  the hardware PIT masked this, which is why it was never seen before.
+- **Console scroll dragged overlay pixels up the screen.** `scroll_up`
+  memmoved the entire framebuffer on every newline, so copies of the
+  bottom-right heartbeat square (and top-right PIT bar) were shifted upward
+  with each scroll — the "green squares riding up and stacking". The
+  console now reserves the bottom `GLYPH_H` row as a fixed overlay strip and
+  `scroll_up(pixels, fill, region_height)` is bounded to the console region,
+  leaving the overlay untouched.
+
+### Verified
+- `cargo build` (kernel, release): OK; `cargo clippy`: 0 warnings; `cargo
+  fmt` applied.
+
 ## v2.38.9 — Visible ring-3 IPC ping-pong sampling (2026-09-25)
 
 The demo IPC already runs on hardware: pid 1 (`SYS_SEND` → pid 2, then

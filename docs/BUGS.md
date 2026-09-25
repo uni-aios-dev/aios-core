@@ -1,5 +1,30 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: ring-3 demo pid3 parked in a busy spin and froze the OS on PIC-less boards
+- **Status:** RESOLVED in v2.38.10
+- **Symptom (MSI, v2.38.9):** after ~8 demo rounds the log stops at
+  `[ktask] alive #8` … `[sched] pid3 woke`; the 2 Hz heartbeat square
+  freezes; green okay-square copies are visible strung up the screen.
+- **Root cause (two bugs):**
+  1. `build_pid3` ended in `jmp $` (infinite spin). On boards without the
+     8259 PIC the scheduler cannot preempt a running task, so a busy-spinning
+     ring-3 task never yields → `idle_loop` (the software-tick source and
+     the heartbeat) never runs → `TICKS` stalls, sleeping pid1/pid2 never
+     wake and the whole kernel looks frozen. In QEMU the hardware PIT
+     preempts, which is why this was never caught: **no preemptive
+     timeslicing exists on PIC-less hardware** — the kernel is cooperative
+     there.
+  2. `scroll_up` memmoved the entire framebuffer, dragging copies of the
+     bottom-right heartbeat overlay (and the top-right PIT bar) up with every
+     console scroll — the "moving green squares".
+- **Fix:** pid3 now loops back to its sleep cycle instead of parking
+  (`jmp_self` removed), so it keeps yielding and the tick economy stays
+  alive forever. The console reserves the bottom `GLYPH_H` row for the
+  heartbeat overlay and `scroll_up` is bounded to the console region, so
+  overlay pixels are never scrolled/ghosted.
+- **Regression guard:** no demo task may end in a busy loop; keep every
+  ring-3 program yielding (`SYS_SLEEP`) at some cadence.
+
 ## OPEN: PIT IRQ0 never arrives on the MSI laptop — 8259 PIC dead in UEFI APIC mode
 - **Status:** CONFIRMED in v2.38.6-7, mitigated by a software-tick fallback
 - **Symptom:** boot completes (all 14 steps; three ring-3 tasks run,

@@ -115,11 +115,6 @@ impl Asm {
         self.buf.extend_from_slice(&(rel as u32).to_le_bytes());
     }
 
-    /// `jmp $` — infinite spin, used once a demo program has done its rounds.
-    fn jmp_self(&mut self) {
-        self.buf.extend_from_slice(&[0xEB, 0xFE]);
-    }
-
     /// Appends a NUL-terminated string, returns its offset in the buffer and
     /// records it so [`Asm::finish`] can resolve `mov esi` placeholders to it.
     fn string(&mut self, s: &[u8]) -> usize {
@@ -218,6 +213,7 @@ fn build_pid3() -> Vec<u8> {
     a.mov_eax(SYS_GETPID);
     a.int80();
 
+    let cycle = a.buf.len();
     a.mov_r8d(SLEEPER_ROUNDS);
     let sleeper = a.buf.len();
     a.mov_eax(SYS_SLEEP);
@@ -230,7 +226,7 @@ fn build_pid3() -> Vec<u8> {
 
     a.dec_r8d();
     a.jnz_back(sleeper);
-    a.jmp_self();
+    a.jmp_back(cycle);
 
     a.string(b"[usleep] up");
     a.string(b"*");

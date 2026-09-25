@@ -1,4 +1,4 @@
-//! Framebuffer text console for the AIOS kernel.
+﻿//! Framebuffer text console for the AIOS kernel.
 //!
 //! This is a small, allocation-free replacement for the old VGA text-mode
 //! console. Glyphs come from the public-domain `font8x8` bitmap font and are
@@ -45,7 +45,10 @@ impl Console {
         self.fb = fb.map(Framebuffer::new);
         if let Some(fb) = self.fb.as_ref().filter(|fb| fb.is_usable()) {
             self.cols = fb.width() / GLYPH_W;
-            self.rows = fb.height() / GLYPH_H;
+            // Reserve the bottom GLYPH_H row for the fixed overlay strip
+            // (heartbeat square). The console never draws there, and scrolling
+            // is bounded so the overlay pixels are never dragged up.
+            self.rows = (fb.height() / GLYPH_H).saturating_sub(1);
         } else {
             self.cols = 0;
             self.rows = 0;
@@ -89,7 +92,7 @@ impl Console {
         self.cursor_x = 0;
         if self.cursor_y + 1 >= self.rows {
             if let Some(fb) = self.fb.as_ref().filter(|fb| fb.is_usable()) {
-                unsafe { fb.scroll_up(GLYPH_H, colors::BG) };
+                unsafe { fb.scroll_up(GLYPH_H, colors::BG, self.rows * GLYPH_H) };
             }
         } else {
             self.cursor_y += 1;
