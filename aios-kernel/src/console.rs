@@ -184,6 +184,15 @@ pub fn clear() {
     CONSOLE_LOCK.unlock();
 }
 
+/// Sets the cursor position in glyph cells.
+pub fn set_cursor(x: usize, y: usize) {
+    CONSOLE_LOCK.lock();
+    let console = unsafe { &mut *core::ptr::addr_of_mut!(CONSOLE) };
+    console.cursor_x = x;
+    console.cursor_y = y;
+    CONSOLE_LOCK.unlock();
+}
+
 /// Whether a usable framebuffer console is active.
 #[allow(dead_code)]
 pub fn is_active() -> bool {

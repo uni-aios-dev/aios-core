@@ -1,5 +1,5 @@
 use crate::{kprintln, port, vprintln};
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 pub const PIC1_CMD: u16 = 0x20;
 pub const PIC1_DATA: u16 = 0x21;
@@ -20,7 +20,30 @@ pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
 
 pub static HALT_REASON: AtomicU32 = AtomicU32::new(0);
 
+pub static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
 const DEBUG_PORT: u16 = 0x80;
+
+/// Checks if F8 is pressed via the i8042 keyboard controller.
+/// Sets DEBUG_MODE if the F8 make code (0x38) is detected.
+pub fn check_f8() {
+    unsafe {
+        let mut tries = 0u32;
+        while tries < 1000 {
+            let status = port::inb(0x64);
+            if status & 0x01 != 0 {
+                let sc = port::inb(0x60);
+                if sc == 0x38 {
+                    DEBUG_MODE.store(true, Ordering::Relaxed);
+                    kprintln!("[serial] F8 pressed -> DEBUG_MODE");
+                }
+                break;
+            }
+            core::hint::spin_loop();
+            tries += 1;
+        }
+    }
+}
 
 #[inline(always)]
 fn debug_port_write(val: u8) {
