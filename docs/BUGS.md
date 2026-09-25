@@ -1,5 +1,22 @@
 # AIOS Known Bugs & Workarounds
 
+## DIAGNOSTIC: v2.38.3 boot progress strip + blinking heartbeat (real hardware, no serial)
+- **What was observed:** on the MSI laptop the framebuffer self-check probe
+  (green 8x8 square, bottom-right) stays lit and static. It is written once
+  in `main.rs` at (width-8, height-8). Because it remains visible, GOP
+  writes ARE reaching the screen and the kernel passed the self-check —
+  but the idle-loop heartbeat (top-left, colour-cycling) never appeared,
+  so execution stops somewhere between the self-check and `idle_loop`.
+- **Fix (instrumentation):** boot status is now visible without F8/serial:
+  `print_step()` always draws an orange square on the bottom-left strip and
+  prints `STEP n/14`; step 14 was added for the ring-3 handoff;
+  the heartbeat now BLINKS the bottom-right square (OK/BG toggle), so a
+  blinking lower-right square means `idle_loop` is actually running.
+- **How to read it:** on the next boot count the orange squares (1..14).
+  The first missing square after the last visible one pinpoints the hung
+  init stage (2=PCI, 8=AHCI, 9=NVMe, 10=xHCI, 11-12=sched/user init,
+  14=ring-3 handoff). No blinking heartbeat = stuck before idle_loop.
+
 ## RESOLVED: v2.38.0 PIT IDT gate corruption causes GP#13 on real hardware
 - **Status:** FIXED in v2.38.1 (mask IRQ 0)
 - **Symptom:** on a real laptop with the AIOS USB stick plugged in, the

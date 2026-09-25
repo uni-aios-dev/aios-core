@@ -1,5 +1,29 @@
 # AIOS Development Log
 
+## v2.38.3 — Always-on boot progress (steps 1-14) + blinking heartbeat (2026-09-25)
+
+Real-hardware boot now shows its exact position without F8 or serial:
+`print_step()` always draws an orange 8x8 square on the bottom-left
+step strip and always prints the step line, and the idle-loop heartbeat
+blinks the bottom-right probe square (OK-green / BG-black) so a live
+CPU is visible even if the lock-based console is wedged.
+
+### Changed
+- **`aios-kernel/src/main.rs`** — `print_step()` no longer gates on
+  `DEBUG_MODE`; it always stamps an orange progress square on the
+  bottom-left and prints `STEP n/14`. Added `STEP 14/14: ring-3 idle
+  handoff` right before `boot_finished()`/`yield_kernel()`. The idle
+  heartbeat now toggles the (width-8, height-8) square between
+  `colors::OK` and `colors::BG` every loop instead of cycling a colour
+  at (0,0) (which was invisible because boot text overwrites row 0).
+- **`aios-kernel/src/framebuffer.rs`** — added `colors::STEP`
+  (orange) to the palette.
+
+### Verified
+- `cargo build --workspace`, `cargo clippy --workspace --all-targets`
+  (0 warnings), `cargo fmt --all --check`: clean.
+- `cargo test --workspace`: all pass.
+
 ## v2.38.1 — xHCI enumerate all root ports (BUG-044) + clippy cleanup (2026-09-24)
 
 The xHCI driver now scans every root port to find the HID keyboard,

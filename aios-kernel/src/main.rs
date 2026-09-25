@@ -98,11 +98,18 @@ fn current_rsp() -> u64 {
     rsp
 }
 
-/// Prints a boot step marker only when DEBUG_MODE is active.
+/// Prints a boot step marker. Always draws an orange square on the bottom-left
+/// of the framebuffer (lock-free, works even without serial/debug mode) and
+/// prints the step line to the console.
 fn print_step(n: u8, msg: &str) {
-    if interrupts::DEBUG_MODE.load(core::sync::atomic::Ordering::Relaxed) {
-        vprintln!("STEP {}/14: {}", n, msg);
+    if let Some(fb) = crate::console::framebuffer() {
+        unsafe {
+            let y = fb.height().saturating_sub(20);
+            let x = usize::from(n - 1).saturating_mul(10);
+            fb.fill_rect(x, y, 8, 8, colors::STEP);
+        }
     }
+    vprintln!("STEP {}/14: {}", n, msg);
 }
 ///
 /// # Safety
@@ -539,6 +546,7 @@ pub unsafe extern "C" fn _start() -> ! {
     vprintln!("User syscalls (write/getpid/sleep) + idle fallback");
     kprintln!("[serial] scheduler online, IPC + user syscalls armed.");
 
+    print_step(14, "ring-3 idle handoff");
     sched::boot_finished();
     sched::yield_kernel();
     loop {
@@ -577,7 +585,6 @@ pub fn idle_loop() -> ! {
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
     let mut last_usb_seq = 0u64;
-    let mut heartbeat_color = 0u32;
     loop {
         crate::sched::yield_kernel();
         xhci::poll();
@@ -587,11 +594,17 @@ pub fn idle_loop() -> ! {
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
         }
-        // Hardware heartbeat: direct framebuffer write (no CONSOLE_LOCK)
+        // Hardware heartbeat: toggles the bottom-right probe square (direct
+        // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if
+        // the lock-based console is wedged.
         unsafe {
             if let Some(fb) = crate::console::framebuffer() {
-                heartbeat_color = heartbeat_color.wrapping_add(0x00010101);
-                fb.fill_rect(0, 0, 8, 8, heartbeat_color);
+                static mut HB_ON: bool = false;
+                HB_ON = !HB_ON;
+                let c = if HB_ON { colors::OK } else { colors::BG };
+                let bx = fb.width().saturating_sub(8);
+                let by = fb.height().saturating_sub(8);
+                fb.fill_rect(bx, by, 8, 8, c);
             }
         }
         // Every 5 seconds: scheduler + IPC proof counters.

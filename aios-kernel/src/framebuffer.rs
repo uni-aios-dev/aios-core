@@ -26,6 +26,8 @@ pub mod colors {
     pub const FG: Color = 0x00_d0_d0_e0;
     /// Success green (used by the boot self-check).
     pub const OK: Color = 0x00_5a_d6_7a;
+    /// Boot-progress squares (bottom-left step counter, drawn lock-free).
+    pub const STEP: Color = 0x00_ff_a0_50;
 }
 
 /// A linear framebuffer with helper drawing primitives.
