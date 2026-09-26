@@ -140,6 +140,15 @@ pub fn stats() -> (u64, u64) {
     }
 }
 
+/// Occupancy of `pid`'s mailbox (0..=MAILBOX_DEPTH, diagnostics/TUI display).
+pub fn mailbox_len(pid: u32) -> usize {
+    let d = pid as usize;
+    if d == 0 || d >= MAX_PID {
+        return 0;
+    }
+    mailbox(d).len
+}
+
 /// `int 0x80` dispatcher invoked from the interrupt path.
 ///
 /// Contract: `eax` selects the syscall. Arguments: `edi` = destination pid for

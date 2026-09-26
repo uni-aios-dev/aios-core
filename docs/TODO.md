@@ -521,5 +521,11 @@
   `main.rs`. The bare `hlt` without explicit `sti` could leave
   interrupts disabled on real hardware where the CPU state differs
   from QEMU.
+- [x] **v2.38.11**: on-screen microkernel dashboard (`src/tui.rs`,
+  `TUI_ROWS = 8`) — live rows for clock/scheduler/IPC/driver/memory + tick
+  progress bar, lock-free, rendered from `idle_loop` at 1 Hz; driver status
+  statics `G_AHCI`/`G_NVME`/`G_XHCI`. Also fixes the demo IPC routing
+  (spawn order now A → B → C, explicit `SLOT_A`/`SLOT_B` send targets) so the
+  `[ipc] send/recv` proof lines finally appear.
 
 ## Historical Issues (Fixed)

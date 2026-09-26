@@ -1,5 +1,44 @@
 # AIOS Development Log
 
+## v2.38.11 — On-screen microkernel dashboard + real IPC ping-pong (2026-09-26)
+
+The microkernel now draws a live status dashboard above the scrolling console
+(`src/tui.rs`, `TUI_ROWS = 8`): a banner/clock row, scheduler row (tick mode,
+switches, current pid, per-task state), IPC row (sent/recv totals + per-task
+mailbox occupancy), driver row (AHCI/NVMe/xHCI status from `G_AHCI`/`G_NVME`/
+`G_XHCI`), memory row (allocated frames) and a 1 Hz tick progress bar. The
+render is lock-free and driven from `idle_loop` once per second, so it works
+on the PIC-less MSI laptop where only software ticks exist.
+
+### Added
+- `aios-kernel/src/tui.rs` — `render()` paints the panel. Data sources are
+  statics/counters in `interrupts`, `sched`, `syscalls`, `memory`, `xhci` and
+  the new `G_AHCI`/`G_NVME`/`G_XHCI` atomic status registers stamped by each
+  driver's init path.
+- `main.rs` — declares the driver status statics (-1 none / 0 failed / 1 ok /
+  2 read-verified), stamps them from the AHCI/NVMe/xHCI init blocks, and calls
+  `tui::render()` on a 1 s cadence inside `idle_loop`.
+- `sched::task_present`/`task_asleep`, `syscalls::mailbox_len`,
+  `memory::frames_allocated`, pub `console::{SCALE, GLYPH_W, GLYPH_H}` +
+  `text_height()`.
+- `console.rs` shrinks its row budget by `TUI_ROWS + 1` so the dashboard panel
+  and the bottom heartbeat overlay never collide with scrolled text.
+
+### Fixed
+- **Demo IPC silently misrouted.** `user::init()` spawned the programs in the
+  order A, C, B, so the runtime slot ids no longer matched the `PID_*`
+  immediates baked into the demo machines: A's `SYS_SEND` targeted its own
+  slot (`src == dst`, dropped) and B's landed in the kernel worker's mailbox —
+  the ping-pong could never print an `[ipc]` line. Programs now spawn A → B →
+  C (worker owns slot 1, tasks land on slots 2/3/4) and A/B send to
+  `SLOT_B`/`SLOT_A` explicitly.
+
+### Verified
+- `cargo build` (kernel, release): OK; `cargo clippy`: 0 warnings; `cargo fmt`
+  applied. QEMU (OVMF/GOP): A/B/C land on slots 2/3/4, then
+  `[ipc] send 3->2`, `send 2->3`, `recv 2<-3`, `recv 3<-2` appear at `val=8`;
+  the dashboard renders and updates with the tick cadence; no panic/halt.
+
 ## v2.38.10 — Ring-3 demo freeze + heartbeat ghost trail fixed (2026-09-25)
 
 Two real-hardware defects reported from the v2.38.9 MSI boot:

@@ -1,5 +1,28 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: demo IPC ping-pong silently misrouted (no `[ipc]` lines ever logged)
+- **Status:** RESOLVED in v2.38.11
+- **Symptom (QEMU and MSI, v2.38.9-10):** the ring-3 send/receive demo runs
+  (`u1`/`u2`/`*` echo every round, all sleep/wake cycles) but the `[ipc]
+  send/recv` proof lines never appear, no matter how long the OS runs; the IPC
+  row of the v2.38.11 dashboard stayed flat at sent=0/recv=0.
+- **Root cause:** the `SYS_SEND` destination baked into the demo machines was
+  a `PID_*` constant (1/2), but at runtime `current_pid()` returns the task's
+  **scheduler slot** (2/3/4 — the kernel worker owns slot 1). `user::init()`
+  spawned the programs in the order **A, C, B**, so A landed on slot 2, B on
+  slot 4. A's send targeted `pid 2` = its own slot → `src == dst`, dropped
+  silently by `send()`; B's send targeted `pid 1` = the kernel worker's
+  mailbox, which nothing drains. Mailbox depth is 16, so the ping-pong could
+  never complete a single delivery — the counter that triggers the `val % 8`
+  sampling never moved.
+- **Fix:** `user::init()` now spawns strictly A → B → C (slots 2/3/4) and the
+  demo machines send to the explicit peer-slot constants `SLOT_A = 2` /
+  `SLOT_B = 3` instead of `PID_*`. The doc comment on `init()` warns that
+  changing the spawn order silently breaks IPC.
+- **Regression guard:** a smoke run must show `[ipc] send …` + `[ipc] recv …`
+  at `val=8` (QEMU ~10 s); the dashboard IPC row must show increasing
+  sent/recv totals.
+
 ## RESOLVED: ring-3 demo pid3 parked in a busy spin and froze the OS on PIC-less boards
 - **Status:** RESOLVED in v2.38.10
 - **Symptom (MSI, v2.38.9):** after ~8 demo rounds the log stops at

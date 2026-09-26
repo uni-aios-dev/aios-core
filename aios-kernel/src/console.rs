@@ -1,4 +1,4 @@
-﻿//! Framebuffer text console for the AIOS kernel.
+//! Framebuffer text console for the AIOS kernel.
 //!
 //! This is a small, allocation-free replacement for the old VGA text-mode
 //! console. Glyphs come from the public-domain `font8x8` bitmap font and are
@@ -16,11 +16,11 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use limine::framebuffer::Framebuffer as LimineFramebuffer;
 
 /// Integer render scale applied to each 8x8 glyph.
-const SCALE: usize = 2;
+pub const SCALE: usize = 2;
 /// Glyph cell width in pixels.
-const GLYPH_W: usize = 8 * SCALE;
+pub const GLYPH_W: usize = 8 * SCALE;
 /// Glyph cell height in pixels.
-const GLYPH_H: usize = 8 * SCALE;
+pub const GLYPH_H: usize = 8 * SCALE;
 
 struct Console {
     fb: Option<Framebuffer>,
@@ -46,9 +46,10 @@ impl Console {
         if let Some(fb) = self.fb.as_ref().filter(|fb| fb.is_usable()) {
             self.cols = fb.width() / GLYPH_W;
             // Reserve the bottom GLYPH_H row for the fixed overlay strip
-            // (heartbeat square). The console never draws there, and scrolling
-            // is bounded so the overlay pixels are never dragged up.
-            self.rows = (fb.height() / GLYPH_H).saturating_sub(1);
+            // (heartbeat square) and the top TUI_ROWS rows for the dashboard.
+            // The console never draws in either, and scrolling is bounded so
+            // the overlay pixels are never dragged up.
+            self.rows = (fb.height() / GLYPH_H).saturating_sub(1 + crate::tui::TUI_ROWS);
         } else {
             self.cols = 0;
             self.rows = 0;
@@ -213,6 +214,12 @@ pub fn is_active() -> bool {
 /// Does NOT acquire CONSOLE_LOCK, so it is safe to call from interrupt context.
 pub fn framebuffer() -> Option<&'static Framebuffer> {
     unsafe { (&*core::ptr::addr_of!(CONSOLE)).fb.as_ref() }
+}
+
+/// Pixel height of the console text region (rows * `GLYPH_H`). The strip at
+/// and above `text_height()` is reserved for the TUI dashboard overlay.
+pub fn text_height() -> usize {
+    unsafe { (&*core::ptr::addr_of!(CONSOLE)).rows * GLYPH_H }
 }
 
 /// Formats and prints to the framebuffer console.

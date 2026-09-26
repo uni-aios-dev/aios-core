@@ -3,11 +3,16 @@
 //! Three tiny user programs are copied into freshly mapped user pages and
 //! entered through the scheduler's fabricated ring-3 frames:
 //!
-//! - program A (pid 1): sends its counter to pid 2, drains its inbox, then
+//! - program A (slot 2): sends its counter to slot 3, drains its inbox, then
 //!   prints `u1` to the kernel console through `SYS_WRITE`;
-//! - program B (pid 2): mirrors A with the roles swapped (`u2`);
-//! - program C (pid 3): prints `[usleep] up` and its pid via `SYS_GETPID`,
-//!   then alternates `SYS_SLEEP(20)` with a `*` echo for 8 rounds.
+//! - program B (slot 3): mirrors A with the roles swapped (`u2`);
+//! - program C (slot 4): prints `[usleep] up` and its pid via `SYS_GETPID`,
+//!   then alternates `SYS_SLEEP(20)` with a `*` echo forever.
+//!
+//! `SYS_SEND` target ids are *scheduler slot ids* (slots 2/3/4 — the kernel
+//! worker owns slot 1); `SLOT_*` constants document the mapping. A and B form
+//! a ping-pong over the per-pid mailboxes whose sampled `[ipc] send/recv`
+//! proof lines appear every 8th transferred value.
 //!
 //! Every program starts by calling `SYS_SLEEP` (20 ticks) so the whole
 //! userspace is briefly asleep at boot — the scheduler must fall back to the
@@ -24,6 +29,13 @@ use crate::{kprintln, vprintln};
 pub const PID_A: u32 = 1;
 pub const PID_B: u32 = 2;
 pub const PID_C: u32 = 3;
+
+/// Runtime slot ids seen by `current_pid()`/`SYS_*` calls. The kernel worker
+/// takes slot 1, then the demo tasks are spawned A → B → C, so they land on
+/// slots 2, 3, 4. `SYS_SEND` distances are the *slot* id of the target
+/// mailbox, which is why the peer constants below differ from `PID_*`.
+pub const SLOT_A: u32 = 2;
+pub const SLOT_B: u32 = 3;
 
 /// Per-task stride so code/stack regions never overlap.
 const REGION_STRIDE: u64 = 0x20_0000; // 2 MiB per task
@@ -150,7 +162,7 @@ fn build_pid1() -> Vec<u8> {
     a.int80();
 
     a.mov_eax(SYS_SEND);
-    a.mov_edi(PID_B as u64);
+    a.mov_edi(SLOT_B as u64);
     a.inc_ecx();
     a.int80();
 
@@ -185,7 +197,7 @@ fn build_pid2() -> Vec<u8> {
     a.int80();
 
     a.mov_eax(SYS_SEND);
-    a.mov_edi(PID_A as u64);
+    a.mov_edi(SLOT_A as u64);
     a.inc_ecx();
     a.int80();
 
@@ -285,12 +297,13 @@ fn spawn_one(pid: u32) -> Result<(), &'static str> {
 
 /// Map + register the three demo tasks.
 ///
-/// Spawn order fixes the scheduler slot assignment (worker owns slot 1): A on
-/// slot 2, C on slot 3 (the pid the smoke proofs watch) and B on slot 4.
+/// Spawn order fixes the scheduler slot assignment (worker owns slot 1):
+/// A = slot 2, B = slot 3, C = slot 4. The `SLOT_*` SEND/RCV targets above
+/// depend on this exact order, so it must not change.
 pub fn init() -> Result<(), &'static str> {
     spawn_one(PID_A)?;
-    spawn_one(PID_C)?;
     spawn_one(PID_B)?;
+    spawn_one(PID_C)?;
     vprintln!("Milestone 3-5 userspace armed: three ring-3 tasks");
     kprintln!("[serial] [user] three ring-3 tasks armed");
     Ok(())

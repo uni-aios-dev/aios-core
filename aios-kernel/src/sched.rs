@@ -220,6 +220,23 @@ pub fn switch_count() -> u64 {
     }
 }
 
+/// True when the slot holds a registered task (`pid` maps 1:1 to the slot).
+pub fn task_present(pid: u32) -> bool {
+    let idx = pid as usize;
+    idx > 0 && idx < MAX_TASKS && tasks()[idx].present
+}
+
+/// True when the task is registered and its sleep deadline is still in the
+/// future (diagnostics/TUI display).
+pub fn task_asleep(pid: u32) -> bool {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return false;
+    }
+    let t = tasks();
+    t[idx].present && t[idx].sleep_until != 0 && t[idx].sleep_until > TICKS.load(Ordering::Relaxed)
+}
+
 /// Called from the timer interrupt path; performs the periodic preemptive
 /// switch by rewriting the trap frame in place.
 pub fn tick(frame: &mut InterruptFrame) {

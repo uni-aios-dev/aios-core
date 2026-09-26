@@ -630,3 +630,34 @@ The daemon performs the same initialisation as `aios-tui` but runs without a ter
 ## Running All Interfaces
 
 All four interfaces (Web, TUI, GUI, Daemon) can run simultaneously. The Web SPA connects to `aios-bridge` via HTTP/WebSocket and is purely a remote client. TUI and GUI are in-process interfaces that create their own `Scheduler` and `BlockRegistry` instances locally.
+
+---
+
+## Bare-Metal Microkernel Dashboard (v2.38.11)
+
+On top of the scrolling console the microkernel draws a **lock-free status
+dashboard** (`src/tui.rs`, 8 rows above the text area), repainted once per
+second from `idle_loop`. There is no input (view-only).
+
+| Row | Contents |
+|-----|----------|
+| 0 | Banner/clock: kernel name, tick counter, `HW-IRQ 100 Hz` or `SOFT` tick mode |
+| 1 | Scheduler: `sw`, current pid, per-task state (`RUN`/`SLEEP`/`idle`/absent) |
+| 2 | IPC: total `send/recv`, per-task mailbox occupancy |
+| 3 | Drivers: `AHCI`/`NVMe`/`xHCI` status (`-` absent, `fail`, `ok`, `read`) |
+| 4 | Memory: allocated frames |
+| 5 | Tick progress bar (fills every tick, resets each second) |
+
+Example when all three demo tasks ping-pong:
+
+```
+       AIOS kernel · ticks=1234 · HW-IRQ 100 Hz
+  sched sw=56 run=2 idle sleep 1     (pid 1)(pid 2)(pid 3)
+  ipc   send 34 recv 33              pid2:2 pid3:1
+  drv   AHCI:- NVMe:- xHCI:ok
+  mem   frames=18
+  [####################] t+0.9s
+```
+
+The bottom `GLYPH_H` strip outside the scrolling region holds the green
+heartbeat square (blinks at ~2 Hz) and the top-right PIT tick bar.

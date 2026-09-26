@@ -18,17 +18,24 @@ mod port;
 mod sched;
 mod serial;
 mod syscalls;
+mod tui;
 mod user;
 mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
 use core::panic::PanicInfo;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicI32, Ordering};
 use limine::request::{
     EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, RsdpRequest,
     StackSizeRequest,
 };
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
+
+// Driver status published for the TUI dashboard: -1 = no controller, 0 = init
+// failed, 1 = online, 2 = online and a sector read-back succeeded.
+pub static G_AHCI: AtomicI32 = AtomicI32::new(-1);
+pub static G_NVME: AtomicI32 = AtomicI32::new(-1);
+pub static G_XHCI: AtomicI32 = AtomicI32::new(-1);
 
 // --- Limine boot protocol requests ----------------------------------------
 //
@@ -402,6 +409,7 @@ pub unsafe extern "C" fn _start() -> ! {
     {
         match ahci::Ahci::init(controller) {
             Ok(ahci) => {
+                G_AHCI.store(1, Ordering::Relaxed);
                 let drives = ahci.drives();
                 vprintln!("AHCI: {} SATA drive(s)", drives.len());
                 kprintln!(
@@ -430,6 +438,7 @@ pub unsafe extern "C" fn _start() -> ! {
                     let mut sector = [0u8; 512];
                     match ahci.read_sectors(0, 0, 1, &mut sector) {
                         Ok(()) => {
+                            G_AHCI.store(2, Ordering::Relaxed);
                             kprintln!(
                                 "[serial] ahci LBA0 = {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {}",
                                 sector[0],
@@ -454,6 +463,7 @@ pub unsafe extern "C" fn _start() -> ! {
             Err(e) => {
                 kprintln!("[serial] ahci init failed: {}", e);
                 vprintln!("AHCI init failed: {}", e);
+                G_AHCI.store(0, Ordering::Relaxed);
             }
         }
     } else {
@@ -469,6 +479,7 @@ pub unsafe extern "C" fn _start() -> ! {
     {
         match nvme::Nvme::init(controller) {
             Ok(mut nvme) => {
+                G_NVME.store(1, Ordering::Relaxed);
                 let drive = *nvme.drive();
                 let mib = drive.bytes() / 1024 / 1024;
                 vprintln!(
@@ -490,6 +501,7 @@ pub unsafe extern "C" fn _start() -> ! {
                 let mut sector = [0u8; 512];
                 match nvme.read_blocks(0, 1, &mut sector) {
                     Ok(()) => {
+                        G_NVME.store(2, Ordering::Relaxed);
                         kprintln!(
                             "[serial] nvme LBA0 = {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {}",
                             sector[0],
@@ -513,6 +525,7 @@ pub unsafe extern "C" fn _start() -> ! {
             Err(e) => {
                 kprintln!("[serial] nvme init failed: {}", e);
                 vprintln!("NVMe init failed: {}", e);
+                G_NVME.store(0, Ordering::Relaxed);
             }
         }
     } else {
@@ -528,6 +541,7 @@ pub unsafe extern "C" fn _start() -> ! {
     {
         match xhci::Xhci::init(controller) {
             Ok(hid) => {
+                G_XHCI.store(1, Ordering::Relaxed);
                 vprintln!(
                     "USB: xHCI slot {} port {} speed {}",
                     hid.slot,
@@ -548,6 +562,7 @@ pub unsafe extern "C" fn _start() -> ! {
             Err(e) => {
                 kprintln!("[serial] xhci init failed: {}", e);
                 vprintln!("USB HID init failed: {}", e);
+                G_XHCI.store(0, Ordering::Relaxed);
             }
         }
     } else {
@@ -628,6 +643,7 @@ pub fn idle_loop() -> ! {
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
     let mut last_usb_seq = 0u64;
+    let mut last_tui_render = 0u64;
     loop {
         crate::sched::yield_kernel();
         xhci::poll();
@@ -636,6 +652,11 @@ pub fn idle_loop() -> ! {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
+        }
+        // TUI dashboard: repaint the fixed top panel once per second.
+        if ticks >= interrupts::TIMER_HZ && ticks - last_tui_render >= interrupts::TIMER_HZ {
+            tui::render();
+            last_tui_render = ticks;
         }
         // Hardware heartbeat: toggles the bottom-right probe square (direct
         // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if

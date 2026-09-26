@@ -25,6 +25,8 @@ const MAX_FRAME_REGIONS: usize = 16;
 static PHYS_OFFSET: AtomicU64 = AtomicU64::new(0);
 static FRAME_NEXT: AtomicU64 = AtomicU64::new(0);
 static FRAME_REGION: AtomicUsize = AtomicUsize::new(0);
+/// Total physical frames allocated since boot (bump allocator, never freed).
+static FRAMES_ALLOC: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy)]
 struct FrameRegion {
@@ -123,8 +125,14 @@ pub fn alloc_frame() -> Option<u64> {
             continue;
         }
         FRAME_NEXT.store(next + PAGE_SIZE, Ordering::Relaxed);
+        FRAMES_ALLOC.fetch_add(1, Ordering::Relaxed);
         return Some(next);
     }
+}
+
+/// Number of physical frames handed out since boot (diagnostics/TUI display).
+pub fn frames_allocated() -> u64 {
+    FRAMES_ALLOC.load(Ordering::Relaxed)
 }
 
 /// Translates a virtual address to its physical address by walking the current page tables.
