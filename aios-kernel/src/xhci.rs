@@ -7,7 +7,10 @@
 //! root-port device: port reset, Enable Slot, Address Device, EP0 control
 //! transfers (device descriptor + configuration descriptor + set
 //! configuration + boot protocol) and a Configure Endpoint command for the
-//! HID boot keyboard's interrupt IN pipe.
+//! HID boot keyboard's interrupt IN pipe. When a boot-mouse (HID interface
+//! protocol 2) is present on another root port, a second slot is enabled,
+//! addressed and given its own interrupt IN ring; [`poll`] harvests both
+//! devices off the shared event ring.
 //!
 //! There is no MSI support in the kernel yet, so the driver is polled: the
 //! init path spins on the event ring waiting for command/transfer completions,
@@ -108,6 +111,10 @@ const REQ_HID_GET_REPORT: u8 = 0x01;
 const IFACE_DIR_IN: u8 = 0xA1;
 const USBSTS_HCE: u32 = 1 << 12;
 
+// HID boot protocol values: 1 = boot keyboard, 2 = boot mouse.
+const BOOT_KEYBOARD: u8 = 1;
+const BOOT_MOUSE: u8 = 2;
+
 // Set-1 scancodes for HID usages 0x04..=0x1D (letters a-z).
 const LETTER_SCANS: [u8; 26] = [
     0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19,
@@ -124,6 +131,19 @@ pub static KEY_SCANCODE: AtomicU64 = AtomicU64::new(0);
 /// Packed 8-byte boot report of the previous poll, for press detection.
 static LAST_REPORT: AtomicU64 = AtomicU64::new(0);
 
+/// Monotonic counter bumped for every fresh boot-mouse report (movement or
+/// button change). The scheduler idle loop watches this to move the cursor.
+pub static MOUSE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Last relative X delta from a boot-mouse report, stored sign-extended.
+pub static MOUSE_DX: AtomicU64 = AtomicU64::new(0);
+
+/// Last relative Y delta from a boot-mouse report, stored sign-extended.
+pub static MOUSE_DY: AtomicU64 = AtomicU64::new(0);
+
+/// Last button byte (bit 0 = left, bit 1 = right, bit 2 = middle).
+pub static MOUSE_BUTTONS: AtomicU64 = AtomicU64::new(0);
+
 static mut XB_OP: u64 = 0;
 static mut XB_RUN: u64 = 0;
 static mut XB_DB: u64 = 0;
@@ -139,6 +159,13 @@ static mut XB_EP1: u64 = 0;
 static mut XB_EP1_DEQ: usize = 0;
 static mut XB_EP1_CYCLE: bool = false;
 static mut XB_EP1_BUF: u64 = 0;
+
+static mut XM_SLOT: u8 = 0;
+static mut XM_PORT: u8 = 0;
+static mut XM_EP1: u64 = 0;
+static mut XM_EP1_DEQ: usize = 0;
+static mut XM_EP1_CYCLE: bool = false;
+static mut XM_EP1_BUF: u64 = 0;
 
 /// GET_REPORT probe cadence: issue one HID GET_REPORT control transfer every
 /// N idle-loop polls so the driver logs what QEMU's device HID queue holds.
@@ -173,6 +200,10 @@ struct Core {
     ep1_deq: usize,
     ep1_cycle: bool,
     ep1_buf: u64,
+    ep1_m: u64,
+    ep1_m_deq: usize,
+    ep1_m_cycle: bool,
+    ep1_m_buf: u64,
 }
 
 /// A brought-up xHCI controller, handed back to the caller for bookkeeping.
@@ -183,6 +214,10 @@ pub struct Xhci {
     pub slot: u8,
     /// USB device speed at the port (1 = full speed).
     pub speed: u8,
+    /// 1-based root hub port the HID boot mouse was found on (0 = none).
+    pub mouse_port: u8,
+    /// Slot index the mouse was assigned to (0 = none).
+    pub mouse_slot: u8,
 }
 
 impl Xhci {
@@ -264,9 +299,12 @@ impl Xhci {
         let ep0 = alloc_zero().ok_or("xhci: no EP0 ring frame")?;
         let ep1 = alloc_zero().ok_or("xhci: no EP1 ring frame")?;
         let ep1_buf = alloc_zero().ok_or("xhci: no EP1 buffer frame")?;
+        let ep1_m = alloc_zero().ok_or("xhci: no mouse EP1 ring frame")?;
+        let ep1_m_buf = alloc_zero().ok_or("xhci: no mouse EP1 buffer frame")?;
         let erst = alloc_zero().ok_or("xhci: no ERST frame")?;
         setup_ring(ep0, true);
         setup_ring(ep1, true);
+        setup_ring(ep1_m, true);
 
         if scratch > 0 {
             let sp_arr = alloc_zero().ok_or("xhci: no scratchpad array frame")?;
@@ -348,9 +386,14 @@ impl Xhci {
             ep1_deq: 0,
             ep1_cycle: true,
             ep1_buf,
+            ep1_m,
+            ep1_m_deq: 0,
+            ep1_m_cycle: true,
+            ep1_m_buf,
         };
 
-        let (port, speed, slot, maxpkt, interval) = find_hid_port(&mut core, max_ports)?;
+        let (port, speed, slot, maxpkt, interval) =
+            find_hid_dev(&mut core, max_ports, BOOT_KEYBOARD, 0)?;
         core.port = port;
         core.speed = speed;
         core.slot = slot;
@@ -371,9 +414,10 @@ impl Xhci {
         ep0_set(&mut core, 0x21, REQ_SET_PROTOCOL, 0, 0)?;
 
         // Configure Endpoint: add the interrupt IN pipe to slot + EP0.
-        configure_ep(&mut core, speed, maxpkt, interval)?;
+        let kbd_ring = core.ep1;
+        configure_ep(&mut core, speed, maxpkt, interval, kbd_ring)?;
 
-        // Persist the state the idle loop needs, then arm the first report.
+        // Persist the state the idle loop needs.
         unsafe {
             XB_OP = core.op;
             XB_RUN = core.run;
@@ -391,20 +435,60 @@ impl Xhci {
             XB_EP1_CYCLE = core.ep1_cycle;
             XB_EP1_BUF = core.ep1_buf;
         }
+
+        // A boot mouse is optional: bring it up the same way on a second
+        // slot, skipping the keyboard's port. Reuses the input/output
+        // contexts — the HC only needs them transiently per command.
+        let mouse_slot = match find_hid_dev(&mut core, max_ports, BOOT_MOUSE, port) {
+            Ok((mport, mspeed, mslot, mmaxpkt, minterval)) => {
+                core.port = mport;
+                core.speed = mspeed;
+                core.slot = mslot;
+                let mcfg = frame(core.data)[5];
+                let mmaxpkt0 = if mspeed == 3 { 64 } else { 8 };
+                core.ep0_maxpkt = mmaxpkt0;
+                ep0_set(&mut core, 0x00, REQ_SET_CONFIGURATION, u16::from(mcfg), 0)?;
+                ep0_set(&mut core, 0x21, REQ_SET_PROTOCOL, u16::from(BOOT_MOUSE), 0)?;
+                let mouse_ring = core.ep1_m;
+                configure_ep(&mut core, mspeed, mmaxpkt, minterval, mouse_ring)?;
+                unsafe {
+                    XM_SLOT = mslot;
+                    XM_PORT = mport;
+                    XM_EP1 = core.ep1_m;
+                    XM_EP1_DEQ = core.ep1_m_deq;
+                    XM_EP1_CYCLE = core.ep1_m_cycle;
+                    XM_EP1_BUF = core.ep1_m_buf;
+                }
+                mslot
+            }
+            Err(e) => {
+                crate::kprintln!("[serial] usb hid boot mouse: {}", e);
+                crate::vprintln!("USB HID boot mouse: none");
+                0
+            }
+        };
+
+        // Arm both interrupt-IN endpoints now that all slots are configured.
         arm_ep1();
+        if unsafe { XM_SLOT } != 0 {
+            arm_ep1_m();
+        }
 
         Ok(Xhci {
-            port: core.port,
-            slot: core.slot,
-            speed: core.speed,
+            port,
+            slot,
+            speed,
+            mouse_port: unsafe { XM_PORT },
+            mouse_slot,
         })
     }
 }
 
-/// Polls the event ring for HID boot reports and re-arms the keyboard endpoint.
+/// Polls the event ring for HID boot reports and re-arms the endpoints.
 ///
-/// Called from the scheduler idle task; only the keyboard interrupt IN pipe is
-/// watched, everything else on the event ring is skipped.
+/// Called from the scheduler idle task; the keyboard's interrupt IN pipe
+/// (slot from `XB_SLOT`) and the mouse's (slot from `XM_SLOT`) are watched,
+/// everything else on the event ring is skipped.
 pub fn poll() {
     if !unsafe { PROBE_ENTERED } {
         unsafe {
@@ -417,6 +501,7 @@ pub fn poll() {
         return;
     }
     let slot = u32::from(unsafe { XB_SLOT });
+    let mslot = u32::from(unsafe { XM_SLOT });
     let ev = unsafe { XB_EV };
     let mut deq = unsafe { XB_EV_DEQ };
     let mut cycle = unsafe { XB_EV_CYCLE };
@@ -455,11 +540,16 @@ pub fn poll() {
             trb[2],
             trb[3]
         );
-        if kind == TRB_TRANSFER && ev_slot == slot && ep_id == 3 {
+        if kind == TRB_TRANSFER && ep_id == 3 {
             let cc = trb[2] >> 24;
             if cc == COMP_SUCCESS || cc == COMP_SHORT_PACKET {
-                harvest_report();
-                arm_ep1();
+                if ev_slot == slot {
+                    harvest_report();
+                    arm_ep1();
+                } else if mslot != 0 && ev_slot == mslot {
+                    harvest_mouse();
+                    arm_ep1_m();
+                }
             }
         }
     }
@@ -469,9 +559,12 @@ pub fn poll() {
         XB_EV_CYCLE = cycle;
     }
 
+    let db = unsafe { XB_DB };
     if slot != 0 {
-        let db = unsafe { XB_DB };
         mmio32w(db + u64::from(slot) * 4, 3);
+    }
+    if mslot != 0 {
+        mmio32w(db + u64::from(mslot) * 4, 3);
     }
 }
 
@@ -566,6 +659,56 @@ fn arm_ep1() {
     mmio32w(db + slot * 4, 3);
 }
 
+/// Reads the 3-byte boot-mouse report (buttons, dX, dY) from the mouse's
+/// interrupt-IN buffer and publishes the deltas as sign-extended values.
+fn harvest_mouse() {
+    let buf = unsafe { XM_EP1_BUF };
+    let src = memory::physical_to_virtual(buf) as *const u8;
+    let mut bytes = [0u8; 3];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = unsafe { ptr::read_volatile(src.add(index)) };
+    }
+    MOUSE_BUTTONS.store(u64::from(bytes[0]), Ordering::Relaxed);
+    MOUSE_DX.store(((bytes[1] as i8) as i64) as u64, Ordering::Relaxed);
+    MOUSE_DY.store(((bytes[2] as i8) as i64) as u64, Ordering::Relaxed);
+    MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Places one 4-byte TRB (the transfer length is the buffer's page, but only
+/// the first 3 report bytes are read) on the mouse's interrupt-IN ring and
+/// re-rings its doorbell.
+fn arm_ep1_m() {
+    let ep1 = unsafe { XM_EP1 };
+    let buf = unsafe { XM_EP1_BUF };
+    let mut deq = unsafe { XM_EP1_DEQ };
+    let mut cycle = unsafe { XM_EP1_CYCLE };
+
+    let trb = [
+        buf as u32,
+        (buf >> 32) as u32,
+        8,
+        trb_type(TRB_NORMAL) | TRB_IOC | cycle as u32,
+    ];
+    trb_write(ep1, deq, &trb);
+    if deq + 1 == TRBS - 1 {
+        deq = 0;
+        cycle = !cycle;
+        set_link_cycle(ep1, cycle, true);
+    } else {
+        deq += 1;
+    }
+    unsafe {
+        XM_EP1_DEQ = deq;
+        XM_EP1_CYCLE = cycle;
+    }
+
+    fence(Ordering::SeqCst);
+    let db = unsafe { XB_DB };
+    let slot = u64::from(unsafe { XM_SLOT });
+    dbg_kprintln!("[serial] [xhci] arm_ep1_m deq={} dbell=3", deq);
+    mmio32w(db + slot * 4, 3);
+}
+
 /// Diagnostic probe: issues an EP0 HID GET_REPORT control transfer and prints
 /// the 8-byte boot report plus USBSTS. Lets us see whether QEMU's device HID
 /// queue actually received injected keys, decoupling input routing from the
@@ -597,6 +740,10 @@ fn probe_hid_state() {
         ep1_deq: 0,
         ep1_cycle: false,
         ep1_buf: 0,
+        ep1_m: 0,
+        ep1_m_deq: 0,
+        ep1_m_cycle: false,
+        ep1_m_buf: 0,
     };
 
     let data = core.data;
@@ -655,12 +802,22 @@ fn reset_port(core: &mut Core, port: u8) -> Result<(u8, u8), &'static str> {
     Ok((port, speed))
 }
 
-/// Finds the first root port with a connected HID keyboard by iterating
-/// all ports, resetting each, and checking the configuration descriptors
-/// for a HID interrupt IN endpoint. Returns the port number, speed, and
-/// the maxpkt/interval for the HID endpoint.
-fn find_hid_port(core: &mut Core, max_ports: u8) -> Result<(u8, u8, u8, u16, u8), &'static str> {
+/// Finds the first root port with a connected HID device exposing the wanted
+/// boot protocol (1 = keyboard, 2 = mouse) by iterating all ports (skipping
+/// `skip`, usually a port already claimed for the other device), resetting
+/// each, and checking the configuration descriptors for a HID interrupt IN
+/// endpoint. Returns the port number, speed, slot, and the maxpkt/interval for
+/// the HID endpoint.
+fn find_hid_dev(
+    core: &mut Core,
+    max_ports: u8,
+    want: u8,
+    skip: u8,
+) -> Result<(u8, u8, u8, u16, u8), &'static str> {
     for port in 1..=max_ports {
+        if port == skip {
+            continue;
+        }
         let (p, speed) = match reset_port(core, port) {
             Ok(v) => v,
             Err(_) => continue,
@@ -682,7 +839,7 @@ fn find_hid_port(core: &mut Core, max_ports: u8) -> Result<(u8, u8, u8, u16, u8)
         }
         get_descriptor(core, 0x02, 0, total as u16)?;
         let _config_value = frame(core.data)[5];
-        let (maxpkt, interval) = match find_hid_ep(frame(core.data), total) {
+        let (maxpkt, interval) = match find_hid_ep(frame(core.data), total, want) {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -848,6 +1005,7 @@ fn configure_ep(
     speed: u8,
     maxpkt: u16,
     interval_ms: u8,
+    ring: u64,
 ) -> Result<(), &'static str> {
     zero_region(core.in_ctx, 256);
     let csz = core.csz;
@@ -868,7 +1026,7 @@ fn configure_ep(
         4,
         ERROR_COUNT | (INT_IN_EP << 3) | (u32::from(maxpkt) << 16),
     );
-    put_u64(ep1_start, 8, core.ep1 | 1);
+    put_u64(ep1_start, 8, ring | 1);
     put_u32(ep1_start, 16, u32::from(maxpkt));
 
     let done = cmd_run(
@@ -915,7 +1073,7 @@ fn packet_count(length: u32, maxpkt: u32) -> u32 {
     }
 }
 
-fn find_hid_ep(config: &[u8], total: usize) -> Result<(u16, u8), &'static str> {
+fn find_hid_ep(config: &[u8], total: usize, want: u8) -> Result<(u16, u8), &'static str> {
     let mut offset = 0usize;
     let mut hid = false;
     while offset + 1 < total {
@@ -927,7 +1085,7 @@ fn find_hid_ep(config: &[u8], total: usize) -> Result<(u16, u8), &'static str> {
         match kind {
             DESC_INTERFACE => {
                 if offset + 8 <= total {
-                    hid = config[offset + 5] == IFACE_CLASS_HID;
+                    hid = config[offset + 5] == IFACE_CLASS_HID && config[offset + 7] == want;
                 }
             }
             DESC_ENDPOINT if hid && offset + 7 <= total => {

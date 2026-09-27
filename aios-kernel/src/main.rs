@@ -219,10 +219,7 @@ pub unsafe extern "C" fn _start() -> ! {
                 let got = fb.read_pixel(0, 0);
                 let want = fb.pack_color(0x00_00_20_c0);
                 if got == want {
-                    kprintln!(
-                        "[serial] direct colour test OK (readback 0x{:08x})",
-                        got
-                    );
+                    kprintln!("[serial] direct colour test OK (readback 0x{:08x})", got);
                 } else {
                     kprintln!(
                         "[serial] direct colour test MISMATCH want=0x{:08x} got=0x{:08x}",
@@ -619,6 +616,14 @@ pub unsafe extern "C" fn _start() -> ! {
                 );
                 vprintln!("USB HID boot keyboard: reports armed");
                 kprintln!("[serial] usb hid boot keyboard armed.");
+                if hid.mouse_slot != 0 {
+                    vprintln!(
+                        "USB HID boot mouse: slot {} port {} reports armed",
+                        hid.mouse_slot,
+                        hid.mouse_port
+                    );
+                    kprintln!("[serial] usb hid boot mouse armed.");
+                }
             }
             Err(e) => {
                 kprintln!("[serial] xhci init failed: {}", e);
@@ -756,11 +761,33 @@ fn kernel_worker() -> ! {
 /// Also drives a hardware heartbeat: directly writes to the GOP framebuffer
 /// (no console lock, no vprintln) so we can verify the CPU + framebuffer
 /// are alive on real hardware even when the lock-based console is deadlocked.
+/// 8x8 up-left arrow that the USB mouse cursor is drawn with.
+fn mouse_cursor_pixels(x: usize, y: usize) -> bool {
+    const ROWS: [u8; 8] = [0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xE8, 0xC8, 0x8C];
+    x < 8 && y < 8 && ROWS[y] & (0x80 >> x) != 0
+}
+
+/// Paints (or erases, `on` false) the 8x8 cursor arrow at `x`,`y`.
+fn paint_mouse_cursor(fb: &Framebuffer, x: usize, y: usize, on: bool) {
+    let color = if on { colors::FG } else { colors::BG };
+    for row in 0..8 {
+        for col in 0..8 {
+            if mouse_cursor_pixels(col, row) {
+                unsafe {
+                    fb.put_pixel(x + col, y + row, color);
+                }
+            }
+        }
+    }
+}
+
 pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
     let mut last_usb_seq = 0u64;
+    let mut last_mouse_seq = 0u64;
+    let mut last_mouse_buttons = 0u8;
     let mut last_tui_render = 0u64;
     loop {
         crate::sched::yield_kernel();
@@ -838,6 +865,46 @@ pub fn idle_loop() -> ! {
             } else {
                 vprintln!("[usb-key] usage scancode 0x{:02x}", usb_sc);
                 kprintln!("[serial] usb key scancode 0x{:02x}", usb_sc);
+            }
+        }
+        let mouse_seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
+        if mouse_seq != last_mouse_seq {
+            last_mouse_seq = mouse_seq;
+            let dx = (xhci::MOUSE_DX.load(Ordering::Relaxed) as i64) as i32;
+            let dy = (xhci::MOUSE_DY.load(Ordering::Relaxed) as i64) as i32;
+            let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
+            if dx != 0 || dy != 0 || buttons != last_mouse_buttons {
+                last_mouse_buttons = buttons;
+                if crate::interrupts::DEBUG_MODE.load(Ordering::Relaxed) {
+                    vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
+                    kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
+                }
+                // Move the cursor: erase the previous arrow, clamp the new
+                // position to the framebuffer, draw it there.
+                unsafe {
+                    if let Some(fb) = crate::console::framebuffer() {
+                        static mut MOUSE_CX_INIT: bool = false;
+                        static mut MOUSE_CX: i32 = 0;
+                        static mut MOUSE_CY: i32 = 0;
+                        static mut MOUSE_CX0: i32 = 0;
+                        static mut MOUSE_CY0: i32 = 0;
+                        if !MOUSE_CX_INIT {
+                            MOUSE_CX = (fb.width() / 2) as i32;
+                            MOUSE_CY = (fb.height() / 4) as i32;
+                            MOUSE_CX0 = MOUSE_CX;
+                            MOUSE_CY0 = MOUSE_CY;
+                            MOUSE_CX_INIT = true;
+                        }
+                        let max_x = (fb.width() as i32).saturating_sub(8);
+                        let max_y = (fb.height() as i32).saturating_sub(8);
+                        MOUSE_CX = (MOUSE_CX + dx).clamp(0, max_x);
+                        MOUSE_CY = (MOUSE_CY + dy).clamp(0, max_y);
+                        paint_mouse_cursor(fb, MOUSE_CX0 as usize, MOUSE_CY0 as usize, false);
+                        paint_mouse_cursor(fb, MOUSE_CX as usize, MOUSE_CY as usize, true);
+                        MOUSE_CX0 = MOUSE_CX;
+                        MOUSE_CY0 = MOUSE_CY;
+                    }
+                }
             }
         }
         // Park the CPU. With the PIT IRQ arriving (legacy PIC alive) a plain

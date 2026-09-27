@@ -1,5 +1,37 @@
 # AIOS Development Log
 
+## v2.38.15 — USB HID boot mouse: second slot, 3-byte reports, on-screen cursor (2026-09-28)
+
+The xHCI driver now brings up a **second** USB-HID device alongside the boot
+keyboard: a boot-mouse (HID interface protocol 2, e.g. QEMU's `usb-mouse`) is
+found on its own root port (the keyboard's port is skipped), assigned a fresh
+slot, set to boot protocol and given its own interrupt-IN ring. Both devices
+share the event ring; the idle poll harvests whichever slot completed a
+transfer. Mouse deltas and buttons are published as sign-extended
+`MOUSE_DX`/`MOUSE_DY` plus `MOUSE_BUTTONS` with a `MOUSE_SEQ` bump per
+report, and the idle loop moves an 8x8 arrow cursor on the framebuffer,
+clamped to its bounds. The dashboard's driver row gained `mouse-seq`.
+
+### Added
+- `xhci.rs` — `find_hid_dev(core, max_ports, want, skip)` generalises the old
+  `find_hid_port` (interface protocol match in `find_hid_ep` ; the skipped port
+  is the one already claimed by the keyboard), a second EP1 ring/buffer pair,
+  `harvest_mouse()` (buttons, sign-extended X/Y), `arm_ep1_m()`, and the
+  `XM_*`/`MOUSE_*` statics; mouse bring-up reuses the input/output contexts
+  transiently and is optional (kernel proceeds with keyboard-only when absent).
+- `main.rs` — `paint_mouse_cursor()` (8x8 up-left arrow glyph) and the
+  idle-loop block that erases the previous arrow, clamps and redraws the cursor
+  on real movement/button changes; movement lines (`usb mouse btns=.. dx=.. dy=..`)
+  print only under F8 debug mode so a clean boot stays quiet.
+- `tui.rs` — the drivers row now appends `mouse-seq=<n>`.
+
+### Verified (host side)
+- `cargo build --target x86_64-unknown-none --release`, `cargo clippy` (0
+  warnings), `cargo fmt --check` clean; workspace `cargo test --workspace`
+  green (all 29+56+47+… unit suites pass); bootable ISO and USB image rebuilt
+  (`AIOS_SKIP_QEMU=1`). QEMU smoke with `usb-mouse` (F8 cursor/log lines) and
+  mouse movement verification are pending per the session plan (tests deferred).
+
 ## v2.38.14 — USB HID keyboard verified end-to-end; xHCI diagnostics gated behind F8 (2026-09-27)
 
 The xHCI boot-keyboard path from earlier milestones is now fully exercised: a

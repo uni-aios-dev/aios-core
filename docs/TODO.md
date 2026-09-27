@@ -507,9 +507,13 @@
   `scancode_to_char`. Per-poll/per-event diagnostics (`POLL ENTER`, `any ev`,
   `arm_ep1`, `GET_REPORT`) are gated behind F8 `DEBUG_MODE` (`dbg_kprintln!`),
   so a normal boot is log-clean.
-- [ ] **Milestone 6, part 2c (mouse)**: HID boot-mouse — second device/interface,
-  3-byte report (buttons + X/Y), input path + on-screen cursor; keyboard input
-  to be confirmed on real hardware (MSI) as well.
+- [x] **Milestone 6, part 2c (mouse)** (v2.38.15): HID boot-mouse — second
+  device on its own slot/root port (skipping the keyboard's port), 3-byte boot
+  report (buttons + relative X/Y) harvested off the shared event ring, deltas
+  published as `MOUSE_DX`/`MOUSE_DY`/`MOUSE_BUTTONS`
+  (`MOUSE_SEQ` bump), and an 8x8 arrow cursor moved on the framebuffer by the
+  idle loop. QEMU smoke with `usb-mouse` (F8-debug `usb mouse ...` lines + cursor
+  movement) and real-hardware (MSI) confirmation still pending.
 - [x] **v2.38.1**: disable PIT interrupt (mask IRQ 0, `0xFC` → `0xFD`) to
   prevent GP#13 on real hardware caused by corrupted PIT IDT gate
   `offset_mid` field. Cooperative scheduling via `yield_kernel()`

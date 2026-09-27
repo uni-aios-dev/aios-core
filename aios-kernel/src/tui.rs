@@ -103,6 +103,7 @@ pub fn render() {
     let frames = crate::memory::frames_allocated();
     let regions = crate::memory::frame_region_count();
     let keyseq = crate::xhci::KEY_SEQ.load(Ordering::Relaxed);
+    let mseq = crate::xhci::MOUSE_SEQ.load(Ordering::Relaxed);
     let ahci = crate::G_AHCI.load(Ordering::Relaxed);
     let nvme = crate::G_NVME.load(Ordering::Relaxed);
     let xhci = crate::G_XHCI.load(Ordering::Relaxed);
@@ -163,11 +164,12 @@ pub fn render() {
         0,
         y0 + 3 * gh,
         &format!(
-            "drv: ahci={} nvme={} xhci={} key-seq={}",
+            "drv: ahci={} nvme={} xhci={} key-seq={} mouse-seq={}",
             driver_status(ahci),
             driver_status(nvme),
             driver_status(xhci),
-            keyseq
+            keyseq,
+            mseq
         ),
         colors::FG,
     );

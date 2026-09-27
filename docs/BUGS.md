@@ -1,5 +1,16 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.38.15): USB mouse cursor can be partially erased by the TUI dashboard redraw
+- **Status:** OPEN — cosmetic, no functional impact
+- **Symptom:** the 8x8 arrow cursor is drawn directly on the framebuffer
+  overlay. The TUI dashboard's top panel and the bottom glyph strip repaint
+  every second (a `PANEL_BG`/background fill covers the whole row), so a
+  cursor parked under them disappears until the next mouse delta redraws it.
+- **Workaround:** move the mouse; the cursor reappears. The serial/input path
+  is unaffected.
+- **Fix direction:** paint the cursor through the console's redraw pipeline
+  (or suspend it over panel rows) once the PSF-console backlog lands.
+
 ## RESOLVED: "black screen" when the kernel graphics/TUI start (investigation, no defect found)
 - **Status:** RESOLVED in v2.38.13 (hardening + boot-time verification)
 - **Symptom (hypothesis):** a blank/black GOP framebuffer under the TUI and

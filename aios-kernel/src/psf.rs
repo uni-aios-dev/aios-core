@@ -63,8 +63,7 @@ impl<'a> PsfFont<'a> {
         if bytes.starts_with(&PSF2_MAGIC) {
             let header_size = u32::from_le_bytes(bytes.get(8..12)?.try_into().ok()?) as usize;
             let glyph_count = u32::from_le_bytes(bytes.get(16..20)?.try_into().ok()?) as usize;
-            let bytes_per_glyph =
-                u32::from_le_bytes(bytes.get(20..24)?.try_into().ok()?) as usize;
+            let bytes_per_glyph = u32::from_le_bytes(bytes.get(20..24)?.try_into().ok()?) as usize;
             let height = u32::from_le_bytes(bytes.get(24..28)?.try_into().ok()?) as usize;
             let width = u32::from_le_bytes(bytes.get(28..32)?.try_into().ok()?) as usize;
             let glyphs = bytes.get(header_size..)?;
@@ -131,8 +130,7 @@ impl<'a> PsfFont<'a> {
             return None;
         }
         let start = index * self.bytes_per_glyph;
-        self.data
-            .get(start..start + self.bytes_per_glyph)
+        self.data.get(start..start + self.bytes_per_glyph)
     }
 }
 
