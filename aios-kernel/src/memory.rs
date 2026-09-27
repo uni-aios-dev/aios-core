@@ -168,6 +168,71 @@ pub fn translate(addr: u64) -> Option<u64> {
     }
 }
 
+/// Result of a multi-page mapping inspection of a virtual range.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RegionCheck {
+    /// Number of 4 KiB pages examined in `[virt, virt + bytes)`.
+    pub pages_total: u64,
+    /// Pages whose leaf entry has the PRESENT flag set.
+    pub pages_present: u64,
+    /// Present pages whose leaf entry also has the WRITABLE flag set.
+    pub pages_writable: u64,
+}
+
+/// Walks the current page tables and reports how many of the 4 KiB pages in
+/// `[virt, virt + bytes)` are mapped present and writable.
+///
+/// Huge-page leaves (2 MiB / 1 GiB) are counted once per 4 KiB sub-page they
+/// cover, taking their flags from the leaf descriptor itself, mirroring exactly
+/// what the hardware would enforce for the range. Missing upper-level entries
+/// count the whole covered span as absent.
+pub fn verify_region(virt: u64, bytes: u64) -> RegionCheck {
+    let start_page = virt / PAGE_SIZE;
+    let end_page = (virt + bytes).div_ceil(PAGE_SIZE);
+    let mut present: u64 = 0;
+    let mut writable: u64 = 0;
+    let pml4 = cr3() & PTE_FRAME;
+    for page in start_page..end_page {
+        let entry = unsafe { walk_leaf(pml4, page * PAGE_SIZE) };
+        if entry & PTE_PRESENT == 0 {
+            continue;
+        }
+        present += 1;
+        if entry & PTE_WRITABLE != 0 {
+            writable += 1;
+        }
+    }
+    RegionCheck {
+        pages_total: end_page - start_page,
+        pages_present: present,
+        pages_writable: writable,
+    }
+}
+
+/// Returns the leaf page-table entry covering `addr` (already past the PML4E),
+/// or 0 for any missing level. Huge pages return their PDE/PDPTE as the leaf.
+unsafe fn walk_leaf(pml4: u64, addr: u64) -> u64 {
+    let pml4e = read_entry(pml4, (addr >> 39) & INDEX_MASK);
+    if pml4e & PTE_PRESENT == 0 {
+        return 0;
+    }
+    let pdpte = read_entry(pml4e & PTE_FRAME, (addr >> 30) & INDEX_MASK);
+    if pdpte & PTE_PRESENT == 0 {
+        return 0;
+    }
+    if pdpte & PTE_HUGE != 0 {
+        return pdpte;
+    }
+    let pde = read_entry(pdpte & PTE_FRAME, (addr >> 21) & INDEX_MASK);
+    if pde & PTE_PRESENT == 0 {
+        return 0;
+    }
+    if pde & PTE_HUGE != 0 {
+        return pde;
+    }
+    read_entry(pde & PTE_FRAME, (addr >> 12) & INDEX_MASK)
+}
+
 /// Maps a single page, allocating page-table frames as needed.
 ///
 /// Upper-level entries (PML4E/PDPTE/PDE) created by the bootloader are NOT

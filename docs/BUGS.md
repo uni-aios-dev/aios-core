@@ -1,5 +1,32 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: "black screen" when the kernel graphics/TUI start (investigation, no defect found)
+- **Status:** RESOLVED in v2.38.13 (hardening + boot-time verification)
+- **Symptom (hypothesis):** a blank/black GOP framebuffer under the TUI and
+  console. **Not reproducible** — rendering was verified good in QEMU smoke runs
+  and on the MSI (v2.38.11 dashboard), so the concern was treated as a
+  prophylactic hardening task.
+- **Findings (fake-fix guard):** Limine hands the kernel a framebuffer whose
+  `address` **already carries the HHDM offset** — the protocol states "all
+  non-NULL pointers point to the object with the Higher Half Direct Map offset
+  already added", and `limine` actually sets
+  `fb.address = fb_phys + direct_map_offset`. AIOS writes through that pointer
+  as-is (`Framebuffer::new` → `base_addr()`), so adding `physical_memory_offset`
+  *again* would double-shift the pointer and fault. Limine maps the HHDM
+  (incl. the framebuffer region) as `-rwx`; `NO_EXECUTE` is therefore not
+  present on VRAM pages by design — a "must be PRESENT|WRITABLE|NX" transplant
+  from another codebase is not applicable here.
+- **Actions taken in v2.38.13:** `memory::verify_region()` walks the live page
+  tables over the whole `pitch * height` VRAM range and the boot log now shows
+  `framebuffer address`, `framebuffer pages: N present, M writable, K total`;
+  the direct colour test became `framebuffer::direct_test()` writing strictly
+  through `core::ptr::write_volatile` with pixel addressing by the physical
+  stride (`pitch / bytes_per_pixel`) plus a `sfence`+readback of pixel (0, 0);
+  `psf.rs` adds `no_std` PSF1/PSF2 parsing and a boot round-trip check.
+- **Regression guard:** boot must log `framebuffer pages: <present==total>
+  present, <writable==total> writable`, `direct colour test OK (readback …)`
+  and `[psf] PSF2 w=8 h=8 glyphs=128 'A'=match`.
+
 ## RESOLVED: `#GP err=0x28` at `iretq` on the first hardware timer tick — Limine CS/SS never reloaded
 - **Status:** RESOLVED in v2.38.12
 - **Symptom (QEMU after `sti`, and real hardware):** the first timer IRQ

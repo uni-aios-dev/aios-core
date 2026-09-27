@@ -1,5 +1,33 @@
 # AIOS: Известные баги и обходные пути
 
+## РЕШЕНО: «Чёрный экран» при старте графики ядра/TUI (расследование, дефект не найден)
+- **Статус:** РЕШЕНО в v2.38.13 (ужесточение + загрузочная верификация)
+- **Симптом (гипотеза):** пустой/чёрный GOP framebuffer под TUI и консолью.
+  **Не воспроизводится** — рендер подтверждён в QEMU-смоуках и на MSI
+  (дашборд v2.38.11), поэтому задание отработано как профилактический
+  hardening.
+- **Находки (защита от фейк-фикса):** Limine передаёт ядру framebuffer, чей
+  `address` **уже содержит off-сет HHDM** — протокол гласит: «все не-null
+  указатели указывают на объект с уже добавленным off-сетом Higher Half
+  Direct Map», и сам загрузчик задаёт `fb.address = fb_phys + direct_map_offset`.
+  AIOS пишет через этот указатель как есть (`Framebuffer::new` →
+  `base_addr()`), поэтому повторное добавление `physical_memory_offset`
+  сдвинуло бы указатель дважды и вызвало фолт. Limine мапит HHDM (включая
+  область framebuffer) как `-rwx`; `NO_EXECUTE` на страницах VRAM не
+  выставляется by design — «требование PRESENT|WRITABLE|NX» из другой
+  кодовой базы здесь неприменимо.
+- **Сделано в v2.38.13:** `memory::verify_region()` проходит по живым
+  таблицам страниц на весь диапазон `pitch * height` VRAM, в лог загрузки
+  добавлены `framebuffer address` и `framebuffer pages: N present, M writable,
+  K total`; прямой цветотест стал `framebuffer::direct_test()` — запись строго
+  через `core::ptr::write_volatile` с адресацией пикселей по физическому
+  stride (`pitch / bytes_per_pixel`), плюс `sfence` и readback пикселя (0, 0);
+  `psf.rs` добавляет `no_std`-парсинг PSF1/PSF2 и загрузочную проверку
+  round-trip.
+- **Защита от регрессий:** при загрузке должны быть `framebuffer pages:
+  <present==total> present, <writable==total> writable`, `direct colour test OK
+  (readback …)` и `[psf] PSF2 w=8 h=8 glyphs=128 'A'=match`.
+
 ## РЕШЕНО: `#GP err=0x28` на `iretq` при первом аппаратном тике — CS/SS от Limine не перезагружались
 - **Статус:** РЕШЕНО в v2.38.12
 - **Симптом (QEMU после `sti` и реальное железо):** первый тик таймера

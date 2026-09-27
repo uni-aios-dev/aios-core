@@ -1,5 +1,52 @@
 # AIOS Development Log
 
+## v2.38.13 — GOP mapping verification, volatile direct-colour test, PSF font parser (2026-09-27)
+
+The "black screen at TUI start" concern is treated as hardening rather than a
+fix: Limine hands the kernel a framebuffer whose `address` already carries the
+Higher Half Direct Map offset (`phys + hhdm`), so AIOS writes through that
+pointer as-is and rendering was already correct on both QEMU and the MSI. This
+release (a) verifies every page of the VRAM range is mapped present + writable,
+(b) replaces the boot direct-colour fill with a `write_volatile`, stride-aware
+test plus a readback check, and (c) adds a `no_std` PSF1/PSF2 parser with a
+boot-time round-trip check against the embedded `font8x8` glyphs.
+
+### Added
+- `memory.rs` — `verify_region(virt, bytes)` returns a `RegionCheck`
+  (`pages_total` / `pages_present` / `pages_writable`) by walking the live CR3
+  page tables; huge-page leaves (2 MiB / 1 GiB) are counted per 4 KiB sub-page
+  with the flags of the leaf descriptor.
+- `framebuffer.rs` — `direct_test(color)`: full-panel fill written strictly
+  through `core::ptr::write_volatile` with pixel addressing honouring the
+  physical stride (`pitch / bytes_per_pixel`), so the compiler cannot elide the
+  stores and the scanline walk matches hardware layout even when
+  `pitch != width * bytes_per_pixel`. Also `base_addr()` returns the HHDM
+  virtual base.
+- `main.rs` boot checks: logs the framebuffer virtual address, runs
+  `verify_region` over the whole `pitch * height` range
+  (`framebuffer pages: ... present, ... writable, ... total`), then
+  `direct_test(0x000020C0)` followed by `sfence` + readback of pixel (0, 0),
+  keeps the OK-green probe readback, and paints the 'A' glyph parsed from a
+  boot-synthesised PSF2 stream at the bottom-centre of the screen.
+- `psf.rs` — `no_std` parsers for both PSF1 (with the 256/512-glyph mode flag)
+  and PSF2 (`72 B5 4A 86` magic; header size, glyph count, bytes/glyph, width,
+  height from the header), a bounds-checked `glyph(index)` accessor, and
+  `synth_psf2_basic()` which builds a valid PSF2 stream from the embedded
+  `font8x8::BASIC` glyphs (no external font binary shipped). Unit tests (PSF1,
+  PSF2, synthetic round-trip, garbage rejection, 512-glyph flag) live in the
+  module.
+
+### Changed
+- `main.rs` — segment-register readout uses `{0:x}` register formatting to
+  silence the `asm_sub_register` lint; the standalone direct-colour-test block
+  is folded into the framebuffer self-check section (fill, readback, probe).
+
+### Notes
+- `BUGS.md` gains a note that Limine's framebuffer `address` is already
+  HHDM-virtual: adding `physical_memory_offset` a second time would double the
+  offset and fault. Limine maps HHDM regions `-rwx`, so `NO_EXECUTE` is not set
+  on VRAM pages by design; the boot check verifies PRESENT/WRITABLE only.
+
 ## v2.38.12 — Local APIC timer + GDT selector reload (root cause of the GP#13 loop) (2026-09-27)
 
 The scheduler is now driven by the **Local APIC timer** at 100 Hz on the

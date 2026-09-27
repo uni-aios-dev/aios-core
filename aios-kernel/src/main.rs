@@ -16,6 +16,7 @@ mod memory;
 mod nvme;
 mod pci;
 mod port;
+mod psf;
 mod sched;
 mod serial;
 mod syscalls;
@@ -132,9 +133,9 @@ pub unsafe extern "C" fn _start() -> ! {
     let mut seg_ss: u16 = 0;
     let mut seg_ds: u16 = 0;
     unsafe {
-        core::arch::asm!("mov {}, cs", out(reg) seg_cs, options(nomem, nostack, preserves_flags));
-        core::arch::asm!("mov {}, ss", out(reg) seg_ss, options(nomem, nostack, preserves_flags));
-        core::arch::asm!("mov {}, ds", out(reg) seg_ds, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {0:x}, cs", out(reg) seg_cs, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {0:x}, ss", out(reg) seg_ss, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {0:x}, ds", out(reg) seg_ds, options(nomem, nostack, preserves_flags));
     }
     kprintln!(
         "[serial] boot selectors cs={:#x} ss={:#x} ds={:#x}",
@@ -184,16 +185,23 @@ pub unsafe extern "C" fn _start() -> ! {
         }
     }
 
-    // --- Framebuffer self-check: write a probe pixel, read it back ---------
+    // --- GOP framebuffer: mapping, direct colour test, readback -------------
+    // `verify_region` must run after `memory::init` (it walks through the HHDM
+    // alias, which needs PHYS_OFFSET); the direct colour test below does not.
+    let mut fb_base: u64 = 0;
+    let mut fb_bytes: u64 = 0;
     if let Some(fb) = limine_fb {
         let fb = Framebuffer::new(fb);
+        fb_base = fb.base_addr();
+        fb_bytes = (fb.pitch().saturating_mul(fb.height())) as u64;
         kprintln!(
-            "[serial] framebuffer = {}x{} pitch={} bpp={} usable={}",
+            "[serial] framebuffer = {}x{} pitch={} bpp={} usable={} addr=0x{:x}",
             fb.width(),
             fb.height(),
             fb.pitch(),
             fb.bytes_per_pixel(),
-            fb.is_usable()
+            fb.is_usable(),
+            fb.base_addr()
         );
         vprintln!(
             "Framebuffer: {}x{} ({} bpp)",
@@ -202,6 +210,28 @@ pub unsafe extern "C" fn _start() -> ! {
             fb.bytes_per_pixel() * 8
         );
         if fb.is_usable() {
+            // Direct colour test: full-panel solid fill using write_volatile
+            // and honouring the physical stride, then a readback of pixel (0,0)
+            // to confirm the writes actually landed.
+            unsafe {
+                fb.direct_test(0x00_00_20_c0);
+                core::arch::asm!("sfence", options(nostack, preserves_flags));
+                let got = fb.read_pixel(0, 0);
+                let want = fb.pack_color(0x00_00_20_c0);
+                if got == want {
+                    kprintln!(
+                        "[serial] direct colour test OK (readback 0x{:08x})",
+                        got
+                    );
+                } else {
+                    kprintln!(
+                        "[serial] direct colour test MISMATCH want=0x{:08x} got=0x{:08x}",
+                        want,
+                        got
+                    );
+                }
+            }
+            // Boot self-check: draw an OK-green probe square and read it back.
             let probe_x = fb.width().saturating_sub(8);
             let probe_y = fb.height().saturating_sub(8);
             unsafe { fb.fill_rect(probe_x, probe_y, 8, 8, colors::OK) };
@@ -229,21 +259,12 @@ pub unsafe extern "C" fn _start() -> ! {
         kprintln!("[serial] framebuffer = none");
     }
 
-    // --- Direct colour test -------------------------------------------------
-    // One-shot full-panel solid fill (no console, no library): proves the
-    // entire GOP surface — including corners/letterbox edges — is directly
-    // writable from raw pixels. Blue fills the whole screen, the OK-green
-    // self-check square stays visible at the bottom-right, then the console
-    // text streams over it. `tui`-style rendering needs nothing more than this.
-    if let Some(fb) = limine_fb {
-        let fb = Framebuffer::new(fb);
-        let w = fb.width();
-        let h = fb.height();
-        unsafe {
-            fb.fill_rect(0, 0, w, h, 0x00_00_20_c0);
-        }
-        kprintln!("[serial] direct colour test: full-panel fill 0x000020C0 done");
-    }
+    // --- Embedded PSF font check -------------------------------------------
+    // Synthesises a PSF2 stream from the baked-in font8x8 glyphs, parses it
+    // back through the no_std PSF parser and draws the 'A' glyph at the bottom
+    // centre (outside the console/TUI/heartbeat regions) so the whole font
+    // path is proven at boot without shipping a separate binary font.
+    psf_check();
 
     // --- PCI buses ---------------------------------------------------------
     let mut pci_devices = [pci::PciDevice::EMPTY; MAX_PCI_DEVICES];
@@ -316,6 +337,21 @@ pub unsafe extern "C" fn _start() -> ! {
         "[serial] frame allocator init, usable regions = {}",
         memory::frame_region_count()
     );
+
+    // --- GOP VRAM mapping verification -------------------------------------
+    // Now that `memory::init` set the HHDM offset, walk the live page tables
+    // over the whole framebuffer range and prove it is mapped present +
+    // writable. The framebuffer address Limine hands out already carries the
+    // HHDM offset, so it must be used as-is (adding it again would fault).
+    if fb_base != 0 {
+        let chk = memory::verify_region(fb_base, fb_bytes);
+        kprintln!(
+            "[serial] framebuffer pages: {} present, {} writable, {} total",
+            chk.pages_present,
+            chk.pages_writable,
+            chk.pages_total
+        );
+    }
 
     // --- Paging self-test --------------------------------------------------
     match memory::selftest() {
@@ -635,6 +671,63 @@ pub unsafe extern "C" fn _start() -> ! {
             core::arch::asm!("sti; hlt", options(nomem, nostack));
         }
     }
+}
+
+/// Synthesises a PSF2 font from `font8x8::BASIC`, parses it back through the
+/// `no_std` PSF parser, verifies the 'A' glyph survives the round-trip and
+/// paints it at the bottom centre of the screen as a persistent boot proof.
+fn psf_check() {
+    let Some(fb) = crate::console::framebuffer() else {
+        kprintln!("[serial] [psf] skipped: no framebuffer");
+        return;
+    };
+    let mut buf = [0u8; 2048];
+    let Some(len) = crate::psf::synth_psf2_basic(&mut buf) else {
+        kprintln!("[serial] [psf] synthesis buffer too small");
+        return;
+    };
+    let Some(font) = crate::psf::PsfFont::parse(&buf[..len]) else {
+        kprintln!("[serial] [psf] parse FAILED");
+        return;
+    };
+    let a_idx = b'A' as usize;
+    let Some(a_psf) = font.glyph(a_idx) else {
+        kprintln!("[serial] [psf] glyph 'A' missing");
+        return;
+    };
+    let a_ref = crate::font8x8::BASIC[a_idx];
+    let roundtrip_ok = a_psf.len() >= 8 && (0..8).all(|i| a_psf[i] == a_ref[i]);
+    let cell = console::GLYPH_W;
+    let gx = fb.width().saturating_sub(cell) / 2;
+    let gy = fb.height().saturating_sub(cell);
+    unsafe {
+        fb.fill_rect(gx, gy, cell, cell, colors::BG);
+        for (row, bits) in a_psf.iter().enumerate().take(8) {
+            for col in 0..8usize {
+                if bits & (1 << col) != 0 {
+                    fb.fill_rect(
+                        gx + col * console::SCALE,
+                        gy + row * console::SCALE,
+                        console::SCALE,
+                        console::SCALE,
+                        colors::OK,
+                    );
+                }
+            }
+        }
+    }
+    let ver = match font.version() {
+        crate::psf::FontVersion::Psf1 => "PSF1",
+        crate::psf::FontVersion::Psf2 => "PSF2",
+    };
+    kprintln!(
+        "[serial] [psf] {} w={} h={} glyphs={} 'A'={} (bottom-centre)",
+        ver,
+        font.width(),
+        font.height(),
+        font.glyph_count(),
+        if roundtrip_ok { "match" } else { "MISMATCH" }
+    );
 }
 
 /// Ring-0 demo thread: proves kernel tasks are preempted too. Yields

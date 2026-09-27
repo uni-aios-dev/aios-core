@@ -109,6 +109,16 @@ impl Framebuffer {
         self.bytes_per_pixel
     }
 
+    /// Virtual (HHDM) address of the framebuffer base.
+    ///
+    /// Limine already adds the higher-half direct map offset to the physical
+    /// framebuffer address before handing it over (`address + hhdm_offset`),
+    /// so the value is directly usable as a raw pointer — no extra translation
+    /// is needed and the offset must NOT be added a second time.
+    pub fn base_addr(&self) -> u64 {
+        self.base as u64
+    }
+
     /// Packs a `0x00RRGGBB` colour into the hardware pixel format.
     /// Public variant used by the boot self-check.
     pub fn pack_color(&self, color: Color) -> u32 {
@@ -191,6 +201,55 @@ impl Framebuffer {
     /// The framebuffer must still be mapped.
     pub unsafe fn clear(&self, color: Color) {
         self.fill_rect(0, 0, self.width, self.height, color);
+    }
+
+    /// One-shot full-panel solid fill that proves the entire GOP surface is
+    /// directly writable from raw pixels.
+    ///
+    /// Unlike [`Self::fill_rect`] / [`Self::clear`], every pixel is written
+    /// with `core::ptr::write_volatile` and addressing honours the physical
+    /// stride (`pixels per scanline = pitch / bytes_per_pixel`), so the
+    /// compiler cannot elide the "useless" stores to the raw surface and the
+    /// scanline walk matches the hardware layout even when
+    /// `pitch != width * bytes_per_pixel`.
+    ///
+    /// # Safety
+    /// The framebuffer must still be mapped.
+    pub unsafe fn direct_test(&self, color: Color) {
+        if !self.is_usable() {
+            return;
+        }
+        let packed = self.pack(color);
+        let stride = self.pitch / self.bytes_per_pixel;
+        match self.bytes_per_pixel {
+            4 => {
+                let base = self.base as *mut u32;
+                for y in 0..self.height {
+                    for x in 0..self.width {
+                        core::ptr::write_volatile(base.add(y * stride + x), packed);
+                    }
+                }
+            }
+            3 => {
+                for y in 0..self.height {
+                    for x in 0..self.width {
+                        let p = self.base.add((y * stride + x) * 3);
+                        core::ptr::write_volatile(p, (packed & 0xff) as u8);
+                        core::ptr::write_volatile(p.add(1), ((packed >> 8) & 0xff) as u8);
+                        core::ptr::write_volatile(p.add(2), ((packed >> 16) & 0xff) as u8);
+                    }
+                }
+            }
+            2 => {
+                let base = self.base as *mut u16;
+                for y in 0..self.height {
+                    for x in 0..self.width {
+                        core::ptr::write_volatile(base.add(y * stride + x), packed as u16);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Scrolls the top `region_height` scanlines up by `pixels` rows and blanks

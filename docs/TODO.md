@@ -527,5 +527,22 @@
   statics `G_AHCI`/`G_NVME`/`G_XHCI`. Also fixes the demo IPC routing
   (spawn order now A → B → C, explicit `SLOT_A`/`SLOT_B` send targets) so the
   `[ipc] send/recv` proof lines finally appear.
+- [x] **v2.38.12**: Local APIC timer (`lapic.rs`) as the primary hardware tick
+  source on any board — x2APIC preferred (IA32_APIC_BASE + extended MSR
+  range), xAPIC MMIO fallback via `memory::map_mmio`; `bus_hz` calibrated
+  against the PIT count; 100 Hz periodic tick on vector `0x90`. Fixes
+  ring-3 preemption being absent on PIC-less hardware. Also reloads CS/SS/DS
+  from Limine's selectors (`gdt::reload_segments`), fixing `#GP err=0x28` on
+  the first `iretq` (see `BUGS.md`).
+- [x] **v2.38.13**: GOP framebuffer hardening — `memory::verify_region()` walks
+  the live page tables over the whole VRAM range (boot log
+  `framebuffer pages: N present, M writable, K total`); the direct colour test
+  became `framebuffer::direct_test()` with strict `core::ptr::write_volatile`
+  stores addressed by the physical stride (`pitch / bytes_per_pixel`) plus
+  `sfence` + readback of pixel (0, 0); new `psf.rs` `no_std` PSF1/PSF2 parser
+  with a boot round-trip check painting 'A' at bottom-centre.
+- [ ] **Backlog**: switch the console from the built-in `font8x8` bitmap to
+  fonts loaded through the `psf` parser (PSF2 from a future `/boot` font or a
+  synthetic stream) so the render path uses the same parser as the boot check.
 
 ## Historical Issues (Fixed)

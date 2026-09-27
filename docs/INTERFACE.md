@@ -662,3 +662,11 @@ Example when all three demo tasks ping-pong:
 The bottom `GLYPH_H` strip outside the scrolling region holds the green
 heartbeat square (blinks at ~2 Hz) and the top-right timer tick bar (driven
 by whichever hardware tick source is active: LAPIC or PIT).
+
+On boot (v2.38.13) the diagnostics stream additionally verifies the GOP
+surface itself: it prints the framebuffer virtual address, the
+`framebuffer pages: … present, … writable, … total` mapping result, the
+`direct colour test OK (readback …)` readback proof and the `[psf] PSF2 …`
+font round-trip line, and paints a green 'A' glyph in the centre of the bottom
+strip (left of the heartbeat square) so the whole boot framebuffer + font path
+is visible without serial.
