@@ -641,7 +641,7 @@ second from `idle_loop`. There is no input (view-only).
 
 | Row | Contents |
 |-----|----------|
-| 0 | Banner/clock: kernel name, tick counter, `HW-IRQ 100 Hz` or `SOFT` tick mode |
+| 0 | Banner/clock: kernel name, tick counter, tick mode — `HW-LAPIC` (Local APIC timer), `HW-IRQ 100 Hz` (PIT IRQ0) or `SOFT` (polled fallback) |
 | 1 | Scheduler: `sw`, current pid, per-task state (`RUN`/`SLEEP`/`idle`/absent) |
 | 2 | IPC: total `send/recv`, per-task mailbox occupancy |
 | 3 | Drivers: `AHCI`/`NVMe`/`xHCI` status (`-` absent, `fail`, `ok`, `read`) |
@@ -651,7 +651,7 @@ second from `idle_loop`. There is no input (view-only).
 Example when all three demo tasks ping-pong:
 
 ```
-       AIOS kernel · ticks=1234 · HW-IRQ 100 Hz
+       AIOS kernel · ticks=1234 · HW-LAPIC
   sched sw=56 run=2 idle sleep 1     (pid 1)(pid 2)(pid 3)
   ipc   send 34 recv 33              pid2:2 pid3:1
   drv   AHCI:- NVMe:- xHCI:ok
@@ -660,4 +660,5 @@ Example when all three demo tasks ping-pong:
 ```
 
 The bottom `GLYPH_H` strip outside the scrolling region holds the green
-heartbeat square (blinks at ~2 Hz) and the top-right PIT tick bar.
+heartbeat square (blinks at ~2 Hz) and the top-right timer tick bar (driven
+by whichever hardware tick source is active: LAPIC or PIT).

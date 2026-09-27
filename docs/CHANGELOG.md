@@ -1,5 +1,50 @@
 # AIOS Development Log
 
+## v2.38.12 — Local APIC timer + GDT selector reload (root cause of the GP#13 loop) (2026-09-27)
+
+The scheduler is now driven by the **Local APIC timer** at 100 Hz on the
+dedicated vector `0x90` instead of the legacy PIC-bound PIT IRQ0 — and the
+headline fix is the one that makes hardware ticks work at all: the kernel
+finally **reloads CS/SS from its own GDT right after `lgdt`**. Limine hands
+off the CPU with `CS=0x28/SS=0x30` (selectors into *Limine's* GDT); AIOS never
+touched them, so the first hardware interrupt saved `cs=0x28/ss=0x30` into the
+interrupt frame, and `iretq` then re-validated `CS=0x28` against AIOS's GDT,
+where slots 5/6 hold the **TSS** — the CPU raised `#GP err=0x28` on the very
+first tick. Every earlier "fix" (IDT byte corruption, 24- vs 40-byte frame,
+struct padding) had been addressing symptoms.
+
+### Added
+- `aios-kernel/src/lapic.rs` — Local APIC timer driver: x2APIC (IA32_APIC_BASE
+  with the extended MSR range) preferred, xAPIC MMIO fallback; calibrates
+  `bus_hz` against the running PIT countdown
+  (`bus_hz = lapic_delta * 1_193_182 / pit_delta`), arms a periodic 100 Hz tick
+  on vector `0x90`. When it comes up, `set_pit_masked(true)` masks PIT IRQ0 in
+  the PIC so exactly one hardware tick source drives the scheduler.
+- `main.rs` logs the Limine handoff selectors on entry
+  (`boot selectors cs=0x28 ss=0x30 ds=0x30`) and the chosen tick source
+  (`interrupts online. timer=LAPIC|PIT`).
+- LAPIC arm in `interrupts.rs`: bumps `TICKS`, draws the timer bar, ACKs via
+  the LAPIC EOI (not the PIC) and feeds `sched::tick` exactly like the PIT
+  path. The first firing logs the saved frame `cs/ss/rip`
+  (`[lapic] tick cs=0x8 ss=0x10 ...`) — a serial-checkable proof that the
+  selector reload worked.
+- `sched.rs` — `hw_tick` predicate (<code>vector 0x20..=0x2F **or 0x90**</code>)
+  so a ring-0 kernel task is never preempted by either hardware tick source.
+  `tui.rs` shows `HW-LAPIC` when the LAPIC timer is the active source.
+
+### Fixed
+- **`#GP err=0x28` at `iretq` on the first hardware timer tick (QEMU and real
+  hardware).** `aios_reload_segments` (`gdt.rs`) now also reloads `ss=0x10` and
+  performs a far return into `CS=0x08` from AIOS's own GDT after `lgdt`.
+  Interrupt frames then save `cs=0x8/ss=0x10` and `iretq` validates them
+  correctly, ending the whole class of "mystery" timer-tick faults. See the
+  RESOLVED entry in `BUGS.md`.
+- **xHCI runtime-space offset.** `rts_off = mmio32(base + 0x18) & 0xFFFF_FFE0`
+  (the dedicated RTSOFF capability register), probing the advertised position
+  before the `base + 0x1000` fallback. The old code derived a runtime offset
+  from the first capability register's HCIVERSION field, which collided with
+  the doorbell space on some controllers.
+
 ## v2.38.11 — On-screen microkernel dashboard + real IPC ping-pong (2026-09-26)
 
 The microkernel now draws a live status dashboard above the scrolling console

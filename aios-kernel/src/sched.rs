@@ -264,15 +264,18 @@ pub fn schedule(frame: &mut InterruptFrame) {
         }
     }
 
-    // A hardware IRQ (PIT) never switches a running ring-0 kernel task away:
-    // its resume point would land inside transient print/formatting code whose
-    // live stack pointer differs from the frame the task's code was compiled
-    // against (idle_loop hoists an argument anchor at entry). Ring-0 threads
-    // switch only through `yield_kernel` (`int 0xfa`), so every resume happens
-    // at a known, rsp-stable instruction. The boot hand-off (CUR == -1) is the
-    // exception: its frame is abandoned by `boot_finished`, never resumed, so
-    // it may be replaced by the fabricated idle frame.
-    if (32..=47).contains(&frame.vector) && frame.cs == KERNEL_CS as u64 && cur != -1 {
+    // A hardware IRQ (PIT or LAPIC timer) never switches a running ring-0
+    // kernel task away: its resume point would land inside transient
+    // print/formatting code whose live stack pointer differs from the frame
+    // the task's code was compiled against (idle_loop hoists an argument
+    // anchor at entry). Ring-0 threads switch only through `yield_kernel`
+    // (`int 0xfa`), so every resume happens at a known, rsp-stable
+    // instruction. The boot hand-off (CUR == -1) is the exception: its frame
+    // is abandoned by `boot_finished`, never resumed, so it may be replaced
+    // by the fabricated idle frame.
+    let hw_tick =
+        (32..=47).contains(&frame.vector) || frame.vector == crate::interrupts::APIC_TIMER_VECTOR;
+    if hw_tick && frame.cs == KERNEL_CS as u64 && cur != -1 {
         return;
     }
 

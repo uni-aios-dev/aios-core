@@ -90,7 +90,9 @@ pub fn render() {
 
     let ticks = TICKS.load(Ordering::Relaxed);
     let uptime_secs = ticks / TIMER_HZ;
-    let mode = if IRQ32_SEEN.load(Ordering::Relaxed) {
+    let mode = if crate::lapic::active() {
+        "HW-LAPIC"
+    } else if IRQ32_SEEN.load(Ordering::Relaxed) {
         "HW-IRQ"
     } else {
         "SOFT"

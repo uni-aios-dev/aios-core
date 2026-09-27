@@ -14,10 +14,16 @@ core::arch::global_asm!(
 .global aios_reload_segments
 aios_reload_segments:
     mov ax, 0x10
+    mov ss, ax
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
+    lea rax, [rip + 1f]
+    push 0x08
+    push rax
+    retfq
+1:
     ret
 "#
 );

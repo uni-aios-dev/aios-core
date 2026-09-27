@@ -11,6 +11,7 @@ mod gdt;
 mod heap;
 mod idt;
 mod interrupts;
+mod lapic;
 mod memory;
 mod nvme;
 mod pci;
@@ -126,6 +127,21 @@ pub unsafe extern "C" fn _start() -> ! {
 
     serial::init();
     serial::_print(format_args!("[serial] aios-kernel: Limine handoff\n"));
+
+    let mut seg_cs: u16 = 0;
+    let mut seg_ss: u16 = 0;
+    let mut seg_ds: u16 = 0;
+    unsafe {
+        core::arch::asm!("mov {}, cs", out(reg) seg_cs, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {}, ss", out(reg) seg_ss, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {}, ds", out(reg) seg_ds, options(nomem, nostack, preserves_flags));
+    }
+    kprintln!(
+        "[serial] boot selectors cs={:#x} ss={:#x} ds={:#x}",
+        seg_cs,
+        seg_ss,
+        seg_ds
+    );
 
     if !BASE_REVISION.is_supported() {
         kprintln!(
@@ -344,9 +360,18 @@ pub unsafe extern "C" fn _start() -> ! {
         );
     }
     interrupts::init_pit();
+    // Bring the Local APIC timer up (x2APIC MSR or xAPIC MMIO) and, once it is
+    // live, mask the PIT IRQ0 in the PIC so a single hardware tick source
+    // drives the scheduler. On boards with a working 8259 the PIT would
+    // otherwise keep double-incrementing alongside the LAPIC ticks.
+    let lapic_active = lapic::init();
+    interrupts::set_pit_masked(lapic_active);
     print_step(6, "interrupts online");
     vprintln!("Interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
-    kprintln!("[serial] interrupts online.");
+    kprintln!(
+        "[serial] interrupts online. timer={}",
+        if lapic_active { "LAPIC" } else { "PIT" }
+    );
 
     unsafe {
         core::arch::asm!("sti", options(nostack, preserves_flags));

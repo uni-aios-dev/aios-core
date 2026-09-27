@@ -14,6 +14,12 @@ pub const IRQ_SLAVE_OFFSET: u8 = 0x28;
 pub const IRQ_BASE: u8 = IRQ_MASTER_OFFSET;
 pub const IRQ_END: u8 = IRQ_SLAVE_OFFSET + 7;
 pub const TIMER_HZ: u64 = 100;
+/// Dedicated vector for the Local APIC timer, outside the PIC range (0x20..0x2F).
+///
+/// The legacy PIT IRQ0 shares vector 32 with the master PIC; the LAPIC timer
+/// uses its own vector so the two hardware tick sources can be told apart and
+/// the PIC EOI path stays untouched for the vectors it owns.
+pub const APIC_TIMER_VECTOR: u64 = 0x90;
 
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
@@ -29,6 +35,9 @@ pub static IRQ32_SEEN: AtomicBool = AtomicBool::new(false);
 pub static HALT_REASON: AtomicU32 = AtomicU32::new(0);
 
 pub static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Guards the one-shot "[lapic] tick IRQ delivered" serial log.
+static LAPIC_TICK_LOGGED: AtomicBool = AtomicBool::new(false);
 
 const DEBUG_PORT: u16 = 0x80;
 
@@ -74,6 +83,19 @@ pub fn fatal_with(code: u32, detail: &str) -> ! {
 /// The 2-argument form carrying a frame encodes `0x10000000 + vector`.
 fn fatal(frame: &InterruptFrame, name: &str) -> ! {
     let code = 0x10000000u32.wrapping_add(frame.vector as u32);
+    kprintln!(
+        "[fatal] {} at rip={:#x} cs={:#x} err={:#x}",
+        name,
+        frame.rip,
+        frame.cs,
+        frame.error_code
+    );
+    vprintln!(
+        "[fatal] {} at rip={:#x} (err={:#x})",
+        name,
+        frame.rip,
+        frame.error_code
+    );
     fatal_with(code, name)
 }
 
@@ -82,6 +104,22 @@ fn halt() -> ! {
         core::arch::asm!("cli", options(nostack, preserves_flags));
         loop {
             core::arch::asm!("hlt", options(nostack, preserves_flags));
+        }
+    }
+}
+
+/// Direct-framebuffer timer bar (top-right): proves the timer ISR keeps firing
+/// regardless of the console lock. Re-drawn every tick so scrolled console
+/// text cannot hide it. Shared by the PIT (vector 32) and LAPIC (vector 0x90)
+/// tick paths.
+fn draw_timer_bar() {
+    if let Some(fb) = crate::console::framebuffer() {
+        let ticks = TICKS.load(Ordering::Relaxed);
+        let h = (ticks % 64) as usize;
+        let bx = fb.width().saturating_sub(16);
+        unsafe {
+            fb.fill_rect(bx, 0, 8, 64, crate::framebuffer::colors::BG);
+            fb.fill_rect(bx, 64 - h, 8, h, crate::framebuffer::colors::FG);
         }
     }
 }
@@ -142,18 +180,7 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
                     TICKS.load(Ordering::Relaxed)
                 );
                 TICKS.fetch_add(1, Ordering::Relaxed);
-                // Direct-framebuffer PIT bar (top-right): proves the timer ISR
-                // keeps firing regardless of the console lock. Re-drawn every
-                // tick so scrolled console text cannot hide it.
-                if let Some(fb) = crate::console::framebuffer() {
-                    let ticks = TICKS.load(Ordering::Relaxed);
-                    let h = (ticks % 64) as usize;
-                    let bx = fb.width().saturating_sub(16);
-                    unsafe {
-                        fb.fill_rect(bx, 0, 8, 64, crate::framebuffer::colors::BG);
-                        fb.fill_rect(bx, 64 - h, 8, h, crate::framebuffer::colors::FG);
-                    }
-                }
+                draw_timer_bar();
                 pic_eoi(vector);
                 crate::sched::tick(frame);
             }
@@ -166,6 +193,26 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
             }
             _ => pic_eoi(vector),
         },
+        v if v == APIC_TIMER_VECTOR => {
+            // LAPIC timer tick: same bookkeeping as the PIT path, but with the
+            // LAPIC EOI instead of the PIC one. Only logs the very first firing
+            // (with the interrupt-frame CS/SS, proving the kernel reloaded its
+            // own GDT selectors after the Limine handoff) so the 100 Hz serial
+            // stream from the PIT path is not duplicated.
+            if !LAPIC_TICK_LOGGED.swap(true, Ordering::Relaxed) {
+                kprintln!(
+                    "[serial] [lapic] tick cs={:#x} ss={:#x} rip={:#x}",
+                    frame.cs,
+                    frame.ss,
+                    frame.rip
+                );
+            }
+            IRQ32_SEEN.store(true, Ordering::Relaxed);
+            TICKS.fetch_add(1, Ordering::Relaxed);
+            draw_timer_bar();
+            crate::lapic::eoi();
+            crate::sched::tick(frame);
+        }
         128 => crate::syscalls::syscall(frame),
         250 => crate::sched::schedule(frame),
         _ => fatal(frame, "UNHANDLED INTERRUPT"),
@@ -238,6 +285,25 @@ pub fn pic_masks() -> (u8, u8) {
         let master = port::inb(PIC1_DATA);
         let slave = port::inb(PIC2_DATA);
         (master, slave)
+    }
+}
+
+/// Masks or unmasks the PIT IRQ0 line in the master PIC.
+///
+/// Used once the Local APIC timer takes over tick delivery so a single
+/// hardware source drives the scheduler (the PIT countdown keeps running and
+/// stays available for `pit_count`/`delay_ms` regardless of routing).
+pub fn set_pit_masked(masked: bool) {
+    unsafe {
+        let master = port::inb(PIC1_DATA);
+        let next = if masked {
+            master | 0x01
+        } else {
+            master & !0x01
+        };
+        if next != master {
+            port::outb(PIC1_DATA, next);
+        }
     }
 }
 

@@ -26,6 +26,7 @@ const TRBS: usize = 32;
 const HCS_OFF: u64 = 0x04;
 const HCC_OFF: u64 = 0x10;
 const DBOFF_OFF: u64 = 0x14;
+const RTSOFF_OFF: u64 = 0x18;
 
 // Operational register offsets (relative to the CAPLENGTH base).
 const USBCMD: u64 = 0x00;
@@ -198,10 +199,14 @@ impl Xhci {
         let op = base + capl;
         let db = base + u64::from(mmio32(base + DBOFF_OFF) & 0xFFFF_FFFC);
 
-        // Some controllers (QEMU's qemu-xhci included) advertise a runtime
-        // offset that collides with the doorbell space; probe the advertised
-        // position first, then fall back to the standard 0x1000 location.
-        let advertised = base + (u64::from(cap >> 16) << 5);
+        // Runtime register space offset comes from the dedicated RTSOFF
+        // capability register (base + 0x18), 32-byte aligned. The lower dword
+        // of the first capability register holds CAPLENGTH (0:7) and
+        // HCIVERSION (16:31); a runtime offset derived from HCIVERSION is
+        // bogus. Probe the advertised position first, then fall back to the
+        // standard 0x1000 location for controllers that ignore RTSOFF.
+        let rts_off = mmio32(base + RTSOFF_OFF) & 0xFFFF_FFE0;
+        let advertised = base + u64::from(rts_off);
         let mut run = 0;
         for candidate in [advertised, base + 0x1000] {
             mmio32w(candidate + ERSTSZ, 1);
@@ -276,12 +281,12 @@ impl Xhci {
         spin_until(|| mmio32(op + USBSTS) & USBSTS_HCH == 0).map_err(|_| "xhci: start timeout")?;
 
         crate::kprintln!(
-            "[serial] [xhci] run=0x{:x} op=0x{:x} db=0x{:x} capl={} rtmsoff={}",
+            "[serial] [xhci] run=0x{:x} op=0x{:x} db=0x{:x} capl={} rts_off=0x{:x}",
             run,
             op,
             db,
             capl,
-            (cap >> 16) << 5
+            rts_off
         );
         crate::kprintln!(
             "[serial] [xhci] ev=0x{:x} cmd=0x{:x} ep0=0x{:x} ep1=0x{:x} dcbaa=0x{:x} erst=0x{:x}",

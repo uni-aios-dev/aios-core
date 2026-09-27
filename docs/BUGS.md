@@ -1,5 +1,37 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED: `#GP err=0x28` at `iretq` on the first hardware timer tick — Limine CS/SS never reloaded
+- **Status:** RESOLVED in v2.38.12
+- **Symptom (QEMU after `sti`, and real hardware):** the first timer IRQ
+  (`vector 0x90`, LAPIC timer; previously `vector 32`, PIT) entered the handler
+  fine, `fatal()` reported `GENERAL PROTECTION FAULT` with the fault at the
+  `iretq` in the irq stub. The frame looked sane: `vector=0x90 error=0`
+  `rip` inside the (\`sti\`-guarded) boot probe, `cs=0x28`, `ss=0x30`,
+  `rflags=0x10246`. The saved frame had Limine's selectors, not AIOS's.
+- **Root cause:** Limine hands off the boot CPU with `CS=0x28/SS=0x30`
+  (selectors into Limine's own GDT, valid kernel code/data descriptors). AIOS
+  installs its own GDT (`lgdt`) but — until this fix — never reloaded CS/SS,
+  so the CPU kept running on Limine's *cached* descriptors (legal in long
+  mode). The first interrupt then pushed the *saved* selector values
+  `cs=0x28/ss=0x30` into the interrupt frame, and `iretq` re-validated
+  `CS=0x28` against AIOS's GDT where slots 5/6 hold the **TSS descriptor** →
+  `#GP err=0x28`. Boot proceeded only because long mode never re-reads the
+  segment descriptors until a load/far-return/`iretq` forces it.
+- **Fix:** `aios_reload_segments` (`gdt.rs`) runs after `lgdt` and now
+  reloads `ss=0x10` plus a far return into `CS=0x08` through AIOS's own GDT.
+  Interrupt frames now save `cs=0x8/ss=0x10`; `iretq` validates them fine.
+  Verified in QEMU: `[lapic] tick cs=0x8 ss=0x10` on the first firing, then
+  thousands of ticks with no fault.
+- **Also explained:** the v2.38.0 "PIT IDT gate corruption" GP#13 on real
+  hardware and the QEMU LAPIC-timer GP in this session were both this same
+  defect — the "corrupt byte" and "24 vs 40-byte frame" theories were
+  symptoms. The v2.38.5 top-right PIT bar staying invisible on the MSI is also
+  explained: the first PIT tick #GP'd inside `iretq` before `draw_timer_bar`
+  could ever run.
+- **Regression guard:** boot must log `boot selectors cs=0x28 ss=0x30
+  ds=0x30` then `[lapic] tick cs=0x8 ss=0x10`; HW ticks must accumulate with
+  no fatal.
+
 ## RESOLVED: demo IPC ping-pong silently misrouted (no `[ipc]` lines ever logged)
 - **Status:** RESOLVED in v2.38.11
 - **Symptom (QEMU and MSI, v2.38.9-10):** the ring-3 send/receive demo runs
@@ -48,8 +80,9 @@
 - **Regression guard:** no demo task may end in a busy loop; keep every
   ring-3 program yielding (`SYS_SLEEP`) at some cadence.
 
-## OPEN: PIT IRQ0 never arrives on the MSI laptop — 8259 PIC dead in UEFI APIC mode
-- **Status:** CONFIRMED in v2.38.6-7, mitigated by a software-tick fallback
+## RESOLVED: PIT IRQ0 never arrives on the MSI laptop — 8259 PIC dead in UEFI APIC mode
+- **Status:** RESOLVED in v2.38.12 by the LAPIC timer (was CONFIRMED in
+  v2.38.6-7, mitigated by the software-tick fallback)
 - **Symptom:** boot completes (all 14 steps; three ring-3 tasks run,
   `getpid`/`write` work, each sleeps 20 ticks), then text stops at
   `[sched] idle`. `[tick]`, `[sched] pid N woke` and the 2 Hz heartbeat
@@ -64,20 +97,22 @@
   this UEFI laptop (the line is routed via the unprogrammed IO-APIC),
   so `TICKS` never changes. All follow-on symptoms cascade from a frozen
   tick counter.
+- **Resolution (v2.38.12):** the Local APIC timer (`lapic.rs`) now delivers
+  real hardware ticks at 100 Hz on vector `0x90`, completely independent of
+  the 8259 PIC — no IO-APIC programming needed, every x86/x86-64 CPU has a
+  Local APIC. The PIT countdown stays as the calibration source and as the
+  software-tick fallback `IRQ32_SEEN` still guards against.
 - **Proof path added in v2.38.6:** boot now prints on-screen
   `[probe] irq32_seen=.. ticks=..->.. (delta N)` after a ~120 ms PIT
   countdown; `ticks delta 0` + `irq32_seen false` confirms the dead PIC.
-- **Mitigation:** `idle_loop` software-tick fallback — when no IRQ32 has
-  ever been seen, idle polls the always-running PIT countdown for one
-  tick period (~10 ms) and increments `TICKS` itself, driving sleeps,
-  `[tick]` and the heartbeat on any board.
-- **Exact pending question:** a full fix would program the Local APIC timer
-  or IO-APIC redirection so hardware ticks arrive again; the software
-  fallback keeps the OS functional meanwhile (tick cadence preserved via
-  the PIT countdown, busy-poll in idle only, `hlt` when IRQs work).
+- **Mitigation (still shipped as fallback):** `idle_loop` software-tick
+  fallback — when no timer IRQ has ever been seen, idle polls the
+  always-running PIT countdown for one tick period (~10 ms) and increments
+  `TICKS` itself, driving sleeps, `[tick]` and the heartbeat on any board.
 - **Regression guard:** `IRQ32_SEEN` distinguishes a working PIC
   (`hlt` path, hardware ticks) from a dead one (poll path); no double
-  counting.
+  counting. `tui.rs` shows `HW-LAPIC`/`HW-IRQ`/`SOFT` so the active tick
+  source is visible on the dashboard.
 
 ## DIAGNOSTIC: v2.38.5 indicators — frozen CPU vs wedged console (superseded)
 - **Symptom:** boot completes on the MSI laptop (all 14 steps; three ring-3
