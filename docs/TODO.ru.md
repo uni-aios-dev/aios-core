@@ -496,7 +496,17 @@
 - [x] **Веха 6, часть 1** (v2.35.0): перечисление PCI (`pci.rs`, `0xCF8`/`0xCFC`, записи `PciDevice` + имена классов) и модуль `crt` (`memcpy`/`memmove`/`memset`/`memcmp`/`bcmp`); в `port.rs` добавлены `outl`/`inl`. Проверено в QEMU (6 устройств на машине `pc` по умолчанию).
 - [x] **Веха 6, часть 2a** (v2.36.0): нативное хранилище — блочный драйвер AHCI (SATA) (`ahci.rs`: включение bus-master/mem-space PCI, подъём HBA и портов, `IDENTIFY DEVICE`, `READ`/`WRITE DMA EXT` через PRDT) и `memory::map_mmio`/`physical_to_virtual` для BAR устройств. `crt.rs` (v2.35.0) **удалён** — его сильный `memset` ссылался на собственный PLT-стаб и вешал загрузку (см. BUGS). Проверено в QEMU (`ich9-ahci` + 16 МиБ `ide-hd`: 1 диск, `QEMU HARDDISK`, 32768 секторов, чтение магии LBA0); базовый запуск (без AHCI) по-прежнему грузится.
 - [x] **Веха 6, часть 2b** (v2.37.0): нативный блочный драйвер NVMe (`nvme.rs`: включение memory + bus-master PCI, 64-битный BAR0 через `map_mmio`, сброс контроллера и подъём `CC.EN` с `AQA`/`ASQ`/`ACQ`, admin-очередь с опросом; `Identify Controller`, `Create I/O CQ`/`SQ`, `Identify Namespace`, `Read` через PRP1). Проверено в QEMU (`-device nvme` + 16 МиБ `nvme-test.img`: `QEMU NVMe Ctrl`, `AIOSNVME`, 32768 блоков, чтение магии LBA0); уживается с AHCI, базовый запуск по-прежнему грузится.
-- [ ] **Веха 6, часть 2c** (следующая): USB-HID (xHCI) клавиатура/мышь вместо PS/2.
+- [x] **Веха 6, часть 2c (клавиатура)** (v2.38.14): путь HID boot-клавиатуры
+  xHCI (заложенный в ранних вехах) проверен сквозно в QEMU: загрузка
+  с `qemu-xhci` + `usb-kbd`, monitor-команды `sendkey a/b/s` →
+  `usb key 'a' (0x1e)`, `'b' (0x30)`, `'s' (0x1f)` через
+  репорт → `usage_to_scancode` → `KEY_SEQ`/`KEY_SCANCODE` →
+  `scancode_to_char`. По-poll/событийные диагностики (`POLL ENTER`, `any ev`,
+  `arm_ep1`, `GET_REPORT`) убраны за F8 `DEBUG_MODE` (`dbg_kprintln!`) —
+  обычная загрузка логируется чисто.
+- [ ] **Веха 6, часть 2c (мышь)**: HID boot-mouse — второе устройство/интерфейс,
+  3-байтный репорт (кнопки + X/Y), путь ввода + курсор на экране; ввод
+  с клавиатуры дополнительно подтвердить на реальном железе (MSI).
 - [x] **v2.38.1**: исправлен `yield_kernel()` — `asm!("int $$0xfa")` →
   `asm!("int 0xfa")` в `sched.rs`. `$$` экранирует `$`, но `$0xfa`
   — это AT&T синтаксис, а ассемблер использует Intel синтаксис

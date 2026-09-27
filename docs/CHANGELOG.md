@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## v2.38.14 — USB HID keyboard verified end-to-end; xHCI diagnostics gated behind F8 (2026-09-27)
+
+The xHCI boot-keyboard path from earlier milestones is now fully exercised: a
+QEMU smoke boots with `qemu-xhci` + `usb-kbd`, arms the HID interrupt-IN pipe
+(`usb hid boot keyboard armed.`), then injects real key events through the QEMU
+monitor (`sendkey a/b/s`) and the kernel's `[usb-key]` serial lines confirm each
+key reaches the input path via the HID boot report → `usage_to_scancode` →
+`KEY_SEQ`/`KEY_SCANCODE` → `scancode_to_char`. The per-poll/per-event
+diagnostics that previously spammed the normal boot log (`POLL ENTER`, `any ev`,
+`arm_ep1`, `GET_REPORT`) are now gated behind the F8 `DEBUG_MODE` flag, so a
+clean boot shows only the bring-up proof lines.
+
+### Changed
+- `xhci.rs` — new local `dbg_kprintln!` macro routes the per-poll/per-event
+  diagnostics (`POLL ENTER`, per-event-ring `any ev`, per-rearm `arm_ep1`, the
+  periodic `GET_REPORT` probe and its error line) through
+  `interrupts::DEBUG_MODE`; one-time bring-up lines (capability/operational
+  readback, per-port `portsc`) still print on every boot as before.
+
+### Verified
+- QEMU (OVMF, `qemu-xhci` + `usb-kbd`, `-display none`, monitor `sendkey`):
+  boot is log-clean (0 xHCI spam lines across 781 serial lines), and
+  `usb key 'a' (0x1e)`, `usb key 'b' (0x30)`, `usb key 's' (0x1f)` confirm the
+  full USB → HID → scancode → char path.
+
 ## v2.38.13 — GOP mapping verification, volatile direct-colour test, PSF font parser (2026-09-27)
 
 The "black screen at TUI start" concern is treated as hardening rather than a

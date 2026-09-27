@@ -19,6 +19,17 @@ use crate::pci::{self, PciDevice};
 use core::ptr;
 use core::sync::atomic::{fence, AtomicU64, Ordering};
 
+/// Prints `kprintln!` only when the F8 debug mode is active, so a normal boot
+/// shows just the bring-up proof lines and stays quiet on the per-poll/per-event
+/// diagnostics below.
+macro_rules! dbg_kprintln {
+    ($($arg:tt)*) => {
+        if crate::interrupts::DEBUG_MODE.load(Ordering::Relaxed) {
+            crate::kprintln!($($arg)*);
+        }
+    };
+}
+
 const SPIN_LIMIT: u32 = 200_000_000;
 const TRBS: usize = 32;
 
@@ -399,7 +410,7 @@ pub fn poll() {
         unsafe {
             PROBE_ENTERED = true;
         }
-        crate::kprintln!("[serial] [xhci] POLL ENTER");
+        dbg_kprintln!("[serial] [xhci] POLL ENTER");
     }
     let run = unsafe { XB_RUN };
     if run == 0 {
@@ -434,7 +445,7 @@ pub fn poll() {
         let kind = (trb[3] >> 10) & 0x3F;
         let ev_slot = (trb[3] >> 24) & 0xFF;
         let ep_id = (trb[3] >> 16) & 0x1F;
-        crate::kprintln!(
+        dbg_kprintln!(
             "[serial] [xhci] any ev kind={} slot={} ep={} w={:08x} {:08x} {:08x} {:08x}",
             kind,
             ev_slot,
@@ -551,7 +562,7 @@ fn arm_ep1() {
     fence(Ordering::SeqCst);
     let db = unsafe { XB_DB };
     let slot = u64::from(unsafe { XB_SLOT });
-    crate::kprintln!("[serial] [xhci] arm_ep1 deq={} dbell=3", deq);
+    dbg_kprintln!("[serial] [xhci] arm_ep1 deq={} dbell=3", deq);
     mmio32w(db + slot * 4, 3);
 }
 
@@ -600,7 +611,7 @@ fn probe_hid_state() {
                 };
             }
             let usbsts = mmio32(core.op + USBSTS);
-            crate::kprintln!(
+            dbg_kprintln!(
                 "[serial] [xhci] GET_REPORT {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} usbsts={:08x}{}",
                 bytes[0],
                 bytes[1],
@@ -615,7 +626,7 @@ fn probe_hid_state() {
             );
         }
         Err(e) => {
-            crate::kprintln!("[serial] [xhci] GET_REPORT failed: {}", e);
+            dbg_kprintln!("[serial] [xhci] GET_REPORT failed: {}", e);
         }
     }
 

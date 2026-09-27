@@ -670,3 +670,9 @@ surface itself: it prints the framebuffer virtual address, the
 font round-trip line, and paints a green 'A' glyph in the centre of the bottom
 strip (left of the heartbeat square) so the whole boot framebuffer + font path
 is visible without serial.
+
+USB-HID boot-keyboard input (v2.38.14): when an xHCI boot keyboard is found
+(`usb hid boot keyboard armed.`) each freshly-pressed key is printed as
+`usb key '<c>' (0x<scancode>)` through the same `scancode_to_char` path as
+PS/2. Per-poll/per-event xHCI diagnostics only appear when F8 debug mode is
+active.

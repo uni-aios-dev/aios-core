@@ -1,5 +1,31 @@
 # Журнал разработки AIOS
 
+## v2.38.14 — USB-HID клавиатура проверена сквозно; диагностика xHCI убрана за F8 (2026-09-27)
+
+Путь boot-клавиатуры xHCI из ранних милстоунов теперь проверен целиком: смоук
+загружается с `qemu-xhci` + `usb-kbd`, поднимает interrupt-IN канал HID
+(`usb hid boot keyboard armed.`), затем в monitor QEMU инжектятся реальные
+нажатия (`sendkey a/b/s`), и serial-строки `[usb-key]` подтверждают, что каждая
+клавиша доходит до пути ввода: boot-репорт HID → `usage_to_scancode` →
+`KEY_SEQ`/`KEY_SCANCODE` → `scancode_to_char`. По-poll/событийные
+диагностики, которые раньше захламляли обычный лог загрузки (`POLL ENTER`,
+`any ev`, `arm_ep1`, `GET_REPORT`), теперь за флагом F8 `DEBUG_MODE` — чистая
+загрузка печатает только proof-строки подъёма.
+
+### Изменено
+- `xhci.rs` — новый локальный макрос `dbg_kprintln!` направляет
+  по-poll/событийные диагностики (`POLL ENTER`, `any ev` на каждый event
+  ring, `arm_ep1` на каждый re-arm, периодический пробник `GET_REPORT` и его
+  строку ошибки) через `interrupts::DEBUG_MODE`; одноразовые строки подъёма
+  (readback capability/operational, `portsc` по портам) печатаются каждую
+  загрузку как раньше.
+
+### Проверено
+- QEMU (OVMF, `qemu-xhci` + `usb-kbd`, `-display none`, monitor `sendkey`):
+  лог загрузки чистый (0 строк спама xHCI на 781 serial-строке), и
+  `usb key 'a' (0x1e)`, `usb key 'b' (0x30)`, `usb key 's' (0x1f)`
+  подтверждают весь путь USB → HID → scancode → символ.
+
 ## v2.38.13 — Верификация маппинга GOP, volatile-тест прямой закраски, парсер PSF-шрифта (2026-09-27)
 
 Опасение «чёрного экрана при старте TUI» закрыто как ужесточение (hardening),
