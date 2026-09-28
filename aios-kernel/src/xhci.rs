@@ -220,6 +220,24 @@ pub struct Xhci {
     pub mouse_slot: u8,
 }
 
+/// Probes the BAR aperture size (bytes) from PCI configuration space using the
+/// write-all-ones mask technique. A 64-bit BAR spanning BAR0/BAR1 is combined
+/// into a single size; a degenerate mask yields 0.
+fn pci_bar_size(dev: &PciDevice) -> u64 {
+    unsafe {
+        pci::config_write32(dev.bus, dev.device, dev.function, 0x10, 0xFFFF_FFFF);
+        let low = pci::config_read32(dev.bus, dev.device, dev.function, 0x10);
+        pci::config_write32(dev.bus, dev.device, dev.function, 0x10, dev.bars[0]);
+        if dev.bars[0] & 0x4 != 0 {
+            pci::config_write32(dev.bus, dev.device, dev.function, 0x14, 0xFFFF_FFFF);
+            let high = pci::config_read32(dev.bus, dev.device, dev.function, 0x14);
+            pci::config_write32(dev.bus, dev.device, dev.function, 0x14, dev.bars[1]);
+            return (!((u64::from(high) << 32) | u64::from(low & 0xFFFF_FFF0))).wrapping_add(1);
+        }
+        !u64::from(low & 0xFFFF_FFF0).wrapping_add(1)
+    }
+}
+
 impl Xhci {
     /// Probes an xHCI PCI function, brings the controller up and configures
     /// the first boot keyboard found on a root port.
@@ -239,12 +257,19 @@ impl Xhci {
             pci::config_write32(dev.bus, dev.device, dev.function, 0x04, command | 0x6);
         }
 
-        let base = memory::map_mmio(bar, 0x8000)?;
-        let mapped = memory::verify_region(base, 0x8000);
+        // Some real controllers advertise a runtime-register offset (RTSOFF)
+        // far beyond 32 KiB (an MSI-family xHCI reports 0xED000), so map the
+        // whole BAR aperture instead of a fixed window. The aperture is probed
+        // from PCI config with the write-all-ones mask technique and capped so
+        // a bogus/degenerate BAR can never swallow the MMIO window.
+        let map_size = pci_bar_size(dev).clamp(0x8000, 0x100000);
+        let base = memory::map_mmio(bar, map_size)?;
+        let mapped = memory::verify_region(base, map_size);
         crate::kprintln!(
-            "[serial] [xhci] dbg bar=0x{:016x} mbar=0x{:016x} mmio_used=0x{:x} map={}/{}/{}",
+            "[serial] [xhci] dbg bar=0x{:016x} mbar=0x{:016x} size=0x{:x} mmio_used=0x{:x} map={}/{}/{}",
             bar,
             base,
+            map_size,
             memory::mmio_used(),
             mapped.pages_present,
             mapped.pages_writable,
@@ -254,6 +279,9 @@ impl Xhci {
         let capl = u64::from(cap & 0xFF);
         let op = base + capl;
         let db = base + u64::from(mmio32(base + DBOFF_OFF) & 0xFFFF_FFFC);
+        if db >= base + map_size {
+            return Err("xhci: doorbell offset outside mapped BAR");
+        }
 
         // Runtime register space offset comes from the dedicated RTSOFF
         // capability register (base + 0x18), 32-byte aligned. The lower dword
@@ -265,6 +293,9 @@ impl Xhci {
         let advertised = base + u64::from(rts_off);
         let mut run = 0;
         for candidate in [advertised, base + 0x1000] {
+            if candidate + 0x4000 > base + map_size {
+                continue;
+            }
             mmio32w(candidate + ERSTSZ, 1);
             if mmio32(candidate + ERSTSZ) & 0xFFFF == 1 {
                 run = candidate;

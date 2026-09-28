@@ -1,5 +1,34 @@
 # AIOS Development Log
 
+## v2.38.18 — MSI xHCI page fault fixed: map the full BAR aperture (2026-09-28)
+
+The v2.38.17 diagnostics run reproduced the crash on the MSI with a fresh
+image, proving a deterministic bug rather than a stale stick. Serial showed
+`PAGE FAULT: addr=0xffffff00200ed028 ip=0xffffffff8000e81c err=0x2` at the xHCI
+step; disassembling the release ELF at that IP locates the faulting write
+exactly: `movl $0x1, 0x28(%r12,%rax)` — the `mmio32w(candidate + ERSTSZ, 1)`
+probe in the runtime-register search. `%r12` is the MMIO-window base and `%rax`
+is the controller's advertised runtime offset (RTSOFF, base+0x18): the MSI xHCI
+reports **RTSOFF = 0xED000**, so the write lands at window+0xED028 — outside the
+previously fixed `map_mmio(bar, 0x8000)` mapping (QEMU's `qemu-xhci` reports
+0x1000, which is why the smoke run was green).
+
+### Changed
+- `xhci.rs` — the BAR is now mapped at its **probed aperture size**: a new
+  `pci_bar_size()` helper reads the size from PCI config using the
+  write-all-ones mask technique (32-bit + combined 64-bit BAR), and the result
+  is clamped to `[0x8000, 1 MiB]` so a degenerate BAR cannot swallow the MMIO
+  window. The `[xhci] dbg` line now also prints the mapped size.
+- `xhci.rs` — the runtime register search bounds-checks every candidate against
+  the actual mapped range before the probe write, and the doorbell offset is
+  validated before use, so no register write can fault outside the mapping.
+- docs en/ru — CHANGELOG, BUGS.
+
+### Fixed
+MSI real-hardware xHCI boot page fault (regression from the QEMU-only mapping
+size): root cause was the fixed 32 KiB xHCI mapping vs the hardware's 0xED000
+runtime offset.
+
 ## v2.38.17 — MSI page-fault diagnostics (2026-09-28)
 
 First real-hardware (MSI) boot of v2.38.16 crashes during the xHCI step with
