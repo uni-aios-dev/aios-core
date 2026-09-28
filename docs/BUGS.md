@@ -1,5 +1,26 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.38.17): real-hardware (MSI) boot page fault in the xHCI step
+- **Status:** OPEN — under investigation; v2.38.17 adds serial diagnostics to
+  pinpoint the faulting path on the next MSI boot.
+- **Symptom:** first boot of v2.38.16 on the MSI crashes at the xHCI step:
+  `PAGE FAULT: addr=0xffffff00200ed028 ip=0xffffffff8000c75f err=0x2` (write to
+  a not-present supervisor page).
+- **What is already ruled out in the code:** BAR0 is mapped before any register
+  access via `memory::map_mmio(bar, 0x8000)` (xhci.rs:242) as a dedicated
+  PRESENT|WRITABLE|NO_EXECUTE window mapping; all register writes go through
+  the mapped window base, and the faulting address `0xffffff00200ed028` lies
+  neither in that window (only `<0x9000` bytes consumed before xHCI) nor in any
+  HHDM-covered RAM frame reachable from the xHCI init path.
+- **Binary staleness hypothesis:** disassembly of the v2.38.16 ELF at the crash
+  IP shows LAPIC (timer) instructions, with `ip` one byte *inside* a `movzbl`
+  — an impossible instruction boundary — suggesting the booted image differs
+  from the committed build or the interrupt frame was corrupted.
+- **v2.38.17 diagnostics:** the page-fault handler dumps 16 raw instruction
+  bytes at `rip`; xHCI logs BAR0 + mapped window base + `mmio_used()` +
+  `verify_region` before the first MMIO access. Next MSI run will confirm
+  whether the stick actually contained the current image and which write faults.
+
 ## OPEN (v2.38.15): USB mouse cursor can be partially erased by the TUI dashboard redraw
 - **Status:** OPEN — cosmetic, no functional impact
 - **Symptom:** the 8x8 arrow cursor is drawn directly on the framebuffer

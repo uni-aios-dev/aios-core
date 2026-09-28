@@ -103,6 +103,11 @@ pub fn map_mmio(phys: u64, size: u64) -> Result<u64, &'static str> {
     Ok(virt + offset)
 }
 
+/// Bytes of the MMIO window consumed so far (diagnostics).
+pub fn mmio_used() -> u64 {
+    MMIO_NEXT.load(Ordering::Relaxed) - MMIO_BASE
+}
+
 /// Allocates a single physical page frame, returning its physical address.
 pub fn alloc_frame() -> Option<u64> {
     loop {

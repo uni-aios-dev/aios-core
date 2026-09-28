@@ -240,6 +240,16 @@ impl Xhci {
         }
 
         let base = memory::map_mmio(bar, 0x8000)?;
+        let mapped = memory::verify_region(base, 0x8000);
+        crate::kprintln!(
+            "[serial] [xhci] dbg bar=0x{:016x} mbar=0x{:016x} mmio_used=0x{:x} map={}/{}/{}",
+            bar,
+            base,
+            memory::mmio_used(),
+            mapped.pages_present,
+            mapped.pages_writable,
+            mapped.pages_total
+        );
         let cap = mmio32(base);
         let capl = u64::from(cap & 0xFF);
         let op = base + capl;

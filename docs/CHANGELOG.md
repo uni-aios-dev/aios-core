@@ -1,5 +1,33 @@
 # AIOS Development Log
 
+## v2.38.17 — MSI page-fault diagnostics (2026-09-28)
+
+First real-hardware (MSI) boot of v2.38.16 crashes during the xHCI step with
+`PAGE FAULT: addr=0xffffff00200ed028 ip=0xffffffff8000c75f err=0x2` (write to a
+not-present page). The current code already maps BAR0 through `memory::map_mmio`
+(xhci.rs init) with a PRESENT|WRITABLE|NO_EXECUTE supervisor mapping, and the
+faulting virtual address matches neither the dedicated MMIO window (only
+`<0x9000` bytes consumed there before xHCI) nor any HHDM RAM frame. A
+disassembly of the crash IP shows LAPIC (timer) instructions with the IP one
+byte into a `movzbl` — indicating either a stale image on the stick or a
+corrupted interrupt frame. This release adds targeted diagnostics so the next
+MSI boot pinpoints the exact faulting path instead of guessing.
+
+### Changed
+- `interrupts.rs` — the page-fault handler now dumps 16 raw instruction bytes
+  at `rip` (kernel-frame, cs=0x08 only), so the faulty binary's bytes can be
+  compared against the build.
+- `xhci.rs` — before the first MMIO register access, logs the physical BAR0,
+  the mapped window base, the bytes consumed in the MMIO window and a
+  `verify_region` page-table proof (present/writable/total) for the mapping.
+- `memory.rs` — public `mmio_used()` exposing consumed MMIO-window bytes.
+- docs en/ru — CHANGELOG.
+
+### Bug under investigation (see BUGS)
+MSI real-hardware xHCI-boot page fault: root cause not yet confirmed; image
+staleness on the flash drive versus a genuine mapping issue is being
+differentiated with the new serial diagnostics.
+
 ## v2.38.16 — QEMU smoke for the USB boot mouse: reports, deltas and framebuffer cursor verified (2026-09-28)
 
 The deferred QEMU smoke for the boot mouse is done (session plan, v2.38.15
