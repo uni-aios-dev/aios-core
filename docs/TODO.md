@@ -512,8 +512,11 @@
   report (buttons + relative X/Y) harvested off the shared event ring, deltas
   published as `MOUSE_DX`/`MOUSE_DY`/`MOUSE_BUTTONS`
   (`MOUSE_SEQ` bump), and an 8x8 arrow cursor moved on the framebuffer by the
-  idle loop. QEMU smoke with `usb-mouse` (F8-debug `usb mouse ...` lines + cursor
-  movement) and real-hardware (MSI) confirmation still pending.
+  idle loop. QEMU smoke done (v2.38.16): serial proves `usb mouse btns=0x0
+  dx=40 dy=25` from monitor `mouse_move 40 25`, and a framebuffer readback
+  reproduces the arrow tile exactly; real-hardware (MSI) **visual** cursor
+  confirmation still pending — QEMU `-display none` screendumps repeat the
+  console region and cannot show the overlay (see BUGS).
 - [x] **v2.38.1**: disable PIT interrupt (mask IRQ 0, `0xFC` → `0xFD`) to
   prevent GP#13 on real hardware caused by corrupted PIT IDT gate
   `offset_mid` field. Cooperative scheduling via `yield_kernel()`

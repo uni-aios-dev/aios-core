@@ -680,8 +680,10 @@ active.
 USB-HID boot-mouse (v2.38.15): when a boot mouse is present
 (`usb hid boot mouse armed.`, found on its own root port) its relative
 movement drives an on-screen 8x8 arrow cursor, clamped to the framebuffer
-bounds; left/right/middle clicks update the buttons byte. Under F8 debug mode
-each change prints `usb mouse btns=.. dx=.. dy=..` to serial; in a normal boot
-only the cursor moves (the TUI driver row shows `mouse-seq=<n>`, a per-report
-counter). A note: reports arrive periodically, but the cursor only redraws on
-an actual delta or button change, so an idle mouse produces no output.
+bounds; left/right/middle clicks update the buttons byte. Since v2.38.16 each
+change prints `usb mouse btns=.. dx=.. dy=..` to serial unconditionally
+(mirroring the `usb key ...` lines — no F8 debug mode required); the TUI driver
+row shows `mouse-seq=<n>`, a per-report counter. Reports arrive periodically,
+but the cursor and the log line only fire on an actual delta or button change,
+so an idle mouse produces no output. Verified in QEMU (v2.38.16): `dx=40 dy=25`
+from monitor `mouse_move 40 25`; framebuffer readback matches the arrow tile.

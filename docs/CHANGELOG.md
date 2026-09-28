@@ -1,5 +1,39 @@
 # AIOS Development Log
 
+## v2.38.16 — QEMU smoke for the USB boot mouse: reports, deltas and framebuffer cursor verified (2026-09-28)
+
+The deferred QEMU smoke for the boot mouse is done (session plan, v2.38.15
+todo). Booting with `qemu-xhci` + `usb-kbd` + `usb-mouse`, the serial log
+matches the expected sequence end-to-end:
+
+```
+[serial] usb hid boot mouse armed.
+[serial] usb mouse btns=0x0 dx=40 dy=25
+```
+
+The second line appears exactly after a monitor `mouse_move 40 25` — proving
+enumerate → `SET_PROTOCOL=2` → EP1 interrupt-IN report → `harvest_mouse()`
+→ sign-extended deltas → idle-loop cursor logic. A framebuffer **readback** of
+the painted 8x8 tile (read_pixel over the arrow's 64 cells) reproduces the arrow
+bitmap 1:1, so the cursor is genuinely present on the kernel's surface.
+
+### Changed
+- `main.rs` — mouse movement lines now print **unconditionally** (mirrors the
+  `usb key ...` keyboard lines instead of being F8-gated), so a mouse trace is
+  visible in serial without debug mode; zero-idle reports still produce no
+  output because the cursor/line only fires on a real delta or button change.
+- docs en/ru — CHANGELOG, TODO (mouse smoke done, MSI confirmation still
+  pending), BUGS (QEMU `-display none` screendump note).
+
+### Known environment quirk (see BUGS)
+QEMU `-display none` screendumps render the GOP console region with a
+16-pixel-period **vertical repeat** (one short console line appears repeated
+down the whole console area), so a one-shot
+overlay like the mouse arrow is not visible in screenshots even though the
+framebuffer itself is correct (kernel readback matches, text/dashboard live
+updates do render). Visual cursor confirmation therefore falls to real
+hardware (MSI), exactly as planned.
+
 ## v2.38.15 — USB HID boot mouse: second slot, 3-byte reports, on-screen cursor (2026-09-28)
 
 The xHCI driver now brings up a **second** USB-HID device alongside the boot
@@ -29,8 +63,9 @@ clamped to its bounds. The dashboard's driver row gained `mouse-seq`.
 - `cargo build --target x86_64-unknown-none --release`, `cargo clippy` (0
   warnings), `cargo fmt --check` clean; workspace `cargo test --workspace`
   green (all 29+56+47+… unit suites pass); bootable ISO and USB image rebuilt
-  (`AIOS_SKIP_QEMU=1`). QEMU smoke with `usb-mouse` (F8 cursor/log lines) and
-  mouse movement verification are pending per the session plan (tests deferred).
+  (`AIOS_SKIP_QEMU=1`). The QEMU smoke (reports + `dx/dy` via monitor
+  `mouse_move`, framebuffer readback of the cursor tile) landed in v2.38.16;
+  real-hardware (MSI) mouse confirmation remains pending.
 
 ## v2.38.14 — USB HID keyboard verified end-to-end; xHCI diagnostics gated behind F8 (2026-09-27)
 

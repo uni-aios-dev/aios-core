@@ -11,6 +11,22 @@
 - **Fix direction:** paint the cursor through the console's redraw pipeline
   (or suspend it over panel rows) once the PSF-console backlog lands.
 
+## OPEN (v2.38.16): QEMU `-display none` screendumps repeat console rows vertically
+- **Status:** OPEN — environment/test-harness quirk, kernel is unaffected
+- **Symptom:** in QEMU under `-display none`, `screendump` renders the GOP
+  console region (y < text_height) with a 16-pixel-period vertical repeat: one
+  short console line appears duplicated down the whole console area, so a
+  one-shot overlay such as the 8x8 mouse arrow is not visible in screenshots.
+- **Evidence it is a render-path quirk, not a kernel defect:** the mouse smoke
+  (v2.38.16) proved both ends independently — serial shows
+  `usb mouse btns=0x0 dx=40 dy=25` after a monitor `mouse_move 40 25`, and a
+  kernel framebuffer readback of the painted 8x8 tile reproduces the arrow
+  bitmap 1:1. The TUI dashboard (redrawn every second) does render live in the
+  same screendumps — only the console region is repeated.
+- **Workaround/fix direction:** accept serial + readback as the QEMU proof and
+  validate the cursor visually on real hardware (MSI); optionally re-check with
+  a real display backend (e.g. `-display gtk`) when a window is available.
+
 ## RESOLVED: "black screen" when the kernel graphics/TUI start (investigation, no defect found)
 - **Status:** RESOLVED in v2.38.13 (hardening + boot-time verification)
 - **Symptom (hypothesis):** a blank/black GOP framebuffer under the TUI and

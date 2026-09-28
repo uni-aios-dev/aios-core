@@ -875,10 +875,8 @@ pub fn idle_loop() -> ! {
             let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
             if dx != 0 || dy != 0 || buttons != last_mouse_buttons {
                 last_mouse_buttons = buttons;
-                if crate::interrupts::DEBUG_MODE.load(Ordering::Relaxed) {
-                    vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
-                    kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
-                }
+                vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
+                kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
                 // Move the cursor: erase the previous arrow, clamp the new
                 // position to the framebuffer, draw it there.
                 unsafe {
