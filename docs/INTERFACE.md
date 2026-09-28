@@ -633,57 +633,43 @@ All four interfaces (Web, TUI, GUI, Daemon) can run simultaneously. The Web SPA 
 
 ---
 
-## Bare-Metal Microkernel Dashboard (v2.38.11)
+## Bare-Metal Microkernel Interactive TUI (v2.38.19)
 
-On top of the scrolling console the microkernel draws a **lock-free status
-dashboard** (`src/tui.rs`, 8 rows above the text area), repainted once per
-second from `idle_loop`. There is no input (view-only).
+Below the scrolling console the microkernel draws an **interactive TUI**
+(`src/tui.rs`, a 10-glyph-row panel plus a status bar in the reserved bottom
+strip), repainted at ~20 Hz (every 5 ticks) from `idle_loop`. Unlike v2.38.11-18
+(a view-only static dashboard), the panel is driven by keyboard and USB mouse
+input.
 
-| Row | Contents |
-|-----|----------|
-| 0 | Banner/clock: kernel name, tick counter, tick mode — `HW-LAPIC` (Local APIC timer), `HW-IRQ 100 Hz` (PIT IRQ0) or `SOFT` (polled fallback) |
-| 1 | Scheduler: `sw`, current pid, per-task state (`RUN`/`SLEEP`/`idle`/absent) |
-| 2 | IPC: total `send/recv`, per-task mailbox occupancy |
-| 3 | Drivers: `AHCI`/`NVMe`/`xHCI` status (`-` absent, `fail`, `ok`, `read`) |
-| 4 | Memory: allocated frames |
-| 5 | Tick progress bar (fills every tick, resets each second) |
+### Tabs
 
-Example when all three demo tasks ping-pong:
+| # | Tab | Contents |
+|---|-----|----------|
+| 1 | System | banner, uptime, tick counter, tick mode (`HW-LAPIC`/`HW-IRQ`/`SOFT`), allocated frames, frame regions, IPC totals |
+| 2 | Sched | switch counter, current pid, per-task state (`running`/`sleep`/`ready`/absent) |
+| 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
+| 4 | IPC | total send/recv, per-task mailbox occupancy |
+| 5 | Storage | AHCI/NVMe controller + LBA-read state (`none`/`error`/`ready`/`ready+rw`), MMIO window bytes used |
+| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`) |
+| 7 | About | version banner, controls help |
 
-```
-       AIOS kernel · ticks=1234 · HW-LAPIC
-  sched sw=56 run=2 idle sleep 1     (pid 1)(pid 2)(pid 3)
-  ipc   send 34 recv 33              pid2:2 pid3:1
-  drv   AHCI:- NVMe:- xHCI:ok
-  mem   frames=18
-  [####################] t+0.9s
-```
+### Input
 
-The bottom `GLYPH_H` strip outside the scrolling region holds the green
-heartbeat square (blinks at ~2 Hz) and the top-right timer tick bar (driven
-by whichever hardware tick source is active: LAPIC or PIT).
+- `1`-`7` (outside the Shell tab) switch tabs.
+- A **left-click** on the tab bar switches tabs; the mouse 8x8 arrow is clamped
+  to the framebuffer and is redrawn on top of every panel repaint, so switching
+  tabs or refreshing the status bar can never erase it.
+- In the Shell tab: printable keys append to the prompt, `Enter` (0x1C) runs
+  the command, `Backspace` (0x0E) edits, `Esc` (0x01) clears the line.
+- Keys consumed by the TUI are kept out of the console echo; unconsumed keys
+  still print `[key] …` / `usb key …` to the console and serial as before.
 
-On boot (v2.38.13) the diagnostics stream additionally verifies the GOP
-surface itself: it prints the framebuffer virtual address, the
-`framebuffer pages: … present, … writable, … total` mapping result, the
-`direct colour test OK (readback …)` readback proof and the `[psf] PSF2 …`
-font round-trip line, and paints a green 'A' glyph in the centre of the bottom
-strip (left of the heartbeat square) so the whole boot framebuffer + font path
-is visible without serial.
+Text is rendered on the PSF path across the whole panel: the embedded
+synthesized PSF2 stream (round-trip validated at boot) is parsed back and used
+as the glyph source, with the `font8x8` table as the fallback.
 
-USB-HID boot-keyboard input (v2.38.14): when an xHCI boot keyboard is found
-(`usb hid boot keyboard armed.`) each freshly-pressed key is printed as
-`usb key '<c>' (0x<scancode>)` through the same `scancode_to_char` path as
-PS/2. Per-poll/per-event xHCI diagnostics only appear when F8 debug mode is
-active.
-
-USB-HID boot-mouse (v2.38.15): when a boot mouse is present
-(`usb hid boot mouse armed.`, found on its own root port) its relative
-movement drives an on-screen 8x8 arrow cursor, clamped to the framebuffer
-bounds; left/right/middle clicks update the buttons byte. Since v2.38.16 each
-change prints `usb mouse btns=.. dx=.. dy=..` to serial unconditionally
-(mirroring the `usb key ...` lines — no F8 debug mode required); the TUI driver
-row shows `mouse-seq=<n>`, a per-report counter. Reports arrive periodically,
-but the cursor and the log line only fire on an actual delta or button change,
-so an idle mouse produces no output. Verified in QEMU (v2.38.16): `dx=40 dy=25`
-from monitor `mouse_move 40 25`; framebuffer readback matches the arrow tile.
+The bottom `GLYPH_H` strip hosts a two-sided status bar (version, active
+`tab n/7`, tick counter, tick mode, PIT countdown on the left; last PS/2
+scancode, USB key and mouse sequence on the right) that leaves the central cell
+free for the boot-time green 'A' glyph and the far-right 2 Hz heartbeat square.
+The top-right timer tick bar is untouched.

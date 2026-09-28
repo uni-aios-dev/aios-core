@@ -756,31 +756,6 @@ fn kernel_worker() -> ! {
     }
 }
 
-/// Kernel idle task: parked until preempted, prints a rolling tick timestamp
-/// each second. Runs on its own dedicated stack on a fabricated frame.
-/// Also drives a hardware heartbeat: directly writes to the GOP framebuffer
-/// (no console lock, no vprintln) so we can verify the CPU + framebuffer
-/// are alive on real hardware even when the lock-based console is deadlocked.
-/// 8x8 up-left arrow that the USB mouse cursor is drawn with.
-fn mouse_cursor_pixels(x: usize, y: usize) -> bool {
-    const ROWS: [u8; 8] = [0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xE8, 0xC8, 0x8C];
-    x < 8 && y < 8 && ROWS[y] & (0x80 >> x) != 0
-}
-
-/// Paints (or erases, `on` false) the 8x8 cursor arrow at `x`,`y`.
-fn paint_mouse_cursor(fb: &Framebuffer, x: usize, y: usize, on: bool) {
-    let color = if on { colors::FG } else { colors::BG };
-    for row in 0..8 {
-        for col in 0..8 {
-            if mouse_cursor_pixels(col, row) {
-                unsafe {
-                    fb.put_pixel(x + col, y + row, color);
-                }
-            }
-        }
-    }
-}
-
 pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
@@ -798,8 +773,10 @@ pub fn idle_loop() -> ! {
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
         }
-        // TUI dashboard: repaint the fixed top panel once per second.
-        if ticks >= interrupts::TIMER_HZ && ticks - last_tui_render >= interrupts::TIMER_HZ {
+        // TUI dashboard: repaint the interactive panel at ~20 Hz (every 5
+        // ticks) so tab/status/clock state stays live while keys and the USB
+        // mouse are handled below.
+        if ticks >= interrupts::TIMER_HZ && ticks - last_tui_render >= 5 {
             tui::render();
             last_tui_render = ticks;
         }
@@ -846,6 +823,9 @@ pub fn idle_loop() -> ! {
         if sc != last_scancode {
             last_scancode = sc;
             if sc & 0x80 == 0 {
+                if tui::handle_scancode(sc as u8) {
+                    continue;
+                }
                 if let Some(c) = interrupts::scancode_to_char(sc as u8) {
                     vprintln!("[key] '{}' (0x{:02x})", c, sc);
                     kprintln!("[serial] key '{}' (0x{:02x})", c, sc);
@@ -859,12 +839,14 @@ pub fn idle_loop() -> ! {
         if usb_seq != last_usb_seq {
             last_usb_seq = usb_seq;
             let usb_sc = xhci::KEY_SCANCODE.load(Ordering::Relaxed);
-            if let Some(c) = interrupts::scancode_to_char(usb_sc as u8) {
-                vprintln!("[usb-key] '{}' (0x{:02x})", c, usb_sc);
-                kprintln!("[serial] usb key '{}' (0x{:02x})", c, usb_sc);
-            } else {
-                vprintln!("[usb-key] usage scancode 0x{:02x}", usb_sc);
-                kprintln!("[serial] usb key scancode 0x{:02x}", usb_sc);
+            if !tui::handle_scancode(usb_sc as u8) {
+                if let Some(c) = interrupts::scancode_to_char(usb_sc as u8) {
+                    vprintln!("[usb-key] '{}' (0x{:02x})", c, usb_sc);
+                    kprintln!("[serial] usb key '{}' (0x{:02x})", c, usb_sc);
+                } else {
+                    vprintln!("[usb-key] usage scancode 0x{:02x}", usb_sc);
+                    kprintln!("[serial] usb key scancode 0x{:02x}", usb_sc);
+                }
             }
         }
         let mouse_seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
@@ -877,32 +859,11 @@ pub fn idle_loop() -> ! {
                 last_mouse_buttons = buttons;
                 vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
                 kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
-                // Move the cursor: erase the previous arrow, clamp the new
-                // position to the framebuffer, draw it there.
-                unsafe {
-                    if let Some(fb) = crate::console::framebuffer() {
-                        static mut MOUSE_CX_INIT: bool = false;
-                        static mut MOUSE_CX: i32 = 0;
-                        static mut MOUSE_CY: i32 = 0;
-                        static mut MOUSE_CX0: i32 = 0;
-                        static mut MOUSE_CY0: i32 = 0;
-                        if !MOUSE_CX_INIT {
-                            MOUSE_CX = (fb.width() / 2) as i32;
-                            MOUSE_CY = (fb.height() / 4) as i32;
-                            MOUSE_CX0 = MOUSE_CX;
-                            MOUSE_CY0 = MOUSE_CY;
-                            MOUSE_CX_INIT = true;
-                        }
-                        let max_x = (fb.width() as i32).saturating_sub(8);
-                        let max_y = (fb.height() as i32).saturating_sub(8);
-                        MOUSE_CX = (MOUSE_CX + dx).clamp(0, max_x);
-                        MOUSE_CY = (MOUSE_CY + dy).clamp(0, max_y);
-                        paint_mouse_cursor(fb, MOUSE_CX0 as usize, MOUSE_CY0 as usize, false);
-                        paint_mouse_cursor(fb, MOUSE_CX as usize, MOUSE_CY as usize, true);
-                        MOUSE_CX0 = MOUSE_CX;
-                        MOUSE_CY0 = MOUSE_CY;
-                    }
-                }
+                // Hand the report to the interactive TUI (moves + repaints the
+                // arrow, switches tabs on a click) and then redraw the panel
+                // so the arrow is freshly composited over it.
+                tui::on_mouse(dx, dy, buttons);
+                tui::render();
             }
         }
         // Park the CPU. With the PIT IRQ arriving (legacy PIC alive) a plain

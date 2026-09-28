@@ -558,8 +558,17 @@
   stores addressed by the physical stride (`pitch / bytes_per_pixel`) plus
   `sfence` + readback of pixel (0, 0); new `psf.rs` `no_std` PSF1/PSF2 parser
   with a boot round-trip check painting 'A' at bottom-centre.
-- [ ] **Backlog**: switch the console from the built-in `font8x8` bitmap to
-  fonts loaded through the `psf` parser (PSF2 from a future `/boot` font or a
-  synthetic stream) so the render path uses the same parser as the boot check.
+- [x] **v2.38.19**: interactive microkernel TUI (`src/tui.rs`, `TUI_ROWS` 8 →
+  10) — the dashboard becomes a 7-tab panel (System / Sched / USB / IPC /
+  Storage / Shell / About) plus a two-sided status bar. Keys (`1`-`7` switch
+  tabs) and USB mouse (arrow + left-click on the tab bar) drive it; an
+  in-kernel command shell lives on tab 6 (`help`/`tabs`/`info`/`ver`/`clear`/
+  `echo …`). Panel text renders through the `psf` parser (`ensure_font()` parses
+  the synthesized PSF2 stream back at first draw) with `font8x8` fallback. The
+  mouse arrow is repainted last so panel refreshes can never erase it.
+- [ ] **Backlog**: switch the console text area (above the TUI panel) from the
+  built-in `font8x8` bitmap to fonts loaded through the `psf` parser (PSF2 from
+  a future `/boot` font or a synthetic stream) so the console render path uses
+  the same parser as the TUI panel and the boot check.
 
 ## Historical Issues (Fixed)

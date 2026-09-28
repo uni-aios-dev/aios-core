@@ -23,16 +23,17 @@
 - **Verification:** serial on v2.38.18+ prints `[xhci] dbg bar=... size=...`
   with `map=N/N/N`; revalidate on the MSI (expected), QEMU smoke unchanged.
 
-## OPEN (v2.38.15): USB mouse cursor can be partially erased by the TUI dashboard redraw
-- **Status:** OPEN — cosmetic, no functional impact
+## RESOLVED (v2.38.19): USB mouse cursor could be partially erased by the TUI dashboard redraw
+- **Status:** RESOLVED in v2.38.19 — the interactive TUI composites the cursor
+  last: every panel repaint (`tui::render()`) finishes by redrawing the 8x8
+  arrow on top, so a cursor parked over the panel, the status bar or the bottom
+  strip survives all refreshes and only moves on a real mouse delta.
 - **Symptom:** the 8x8 arrow cursor is drawn directly on the framebuffer
-  overlay. The TUI dashboard's top panel and the bottom glyph strip repaint
-  every second (a `PANEL_BG`/background fill covers the whole row), so a
-  cursor parked under them disappears until the next mouse delta redraws it.
-- **Workaround:** move the mouse; the cursor reappears. The serial/input path
-  is unaffected.
-- **Fix direction:** paint the cursor through the console's redraw pipeline
-  (or suspend it over panel rows) once the PSF-console backlog lands.
+  overlay. The on-screen panel and the bottom glyph strip repaint every second
+  (a `PANEL_BG`/background fill covers the whole row), so a cursor parked under
+  them disappeared until the next mouse delta redrew it.
+- **Workaround (pre-fix):** move the mouse; the cursor reappears. The
+  serial/input path was unaffected.
 
 ## OPEN (v2.38.16): QEMU `-display none` screendumps repeat console rows vertically
 - **Status:** OPEN — environment/test-harness quirk, kernel is unaffected

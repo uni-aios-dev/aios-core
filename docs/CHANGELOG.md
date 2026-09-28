@@ -1,5 +1,42 @@
 # AIOS Development Log
 
+## v2.38.19 — Interactive kernel TUI: 7 tabs, Shell, mouse, PSF glyphs (2026-09-28)
+
+The microkernel's static view-only dashboard becomes a fully interactive TUI.
+`src/tui.rs` is rewritten around a 7-tab panel (System / Sched / USB / IPC /
+Storage / Shell / About) below the scrolling console, repainted ~20 Hz (every 5
+ticks) and driven by the PS/2 and USB-HID keyboard plus the USB mouse.
+
+### Added
+- `tui.rs` — 7-tab interactive panel: `1`-`7` switch tabs (outside the Shell
+  tab); an in-kernel command shell on tab 6 (`help`/`tabs`/`info`/`ver`/
+  `clear`/`echo …`, `Enter`=0x1C runs, `Backspace`=0x0E edits, `Esc`=0x01
+  clears); a bottom status bar (version, active tab, tick counter, tick mode,
+  PIT countdown, last PS/2 scancode, USB key/mouse sequence) in the reserved
+  bottom strip; per-tab live telemetry (scheduler, IPC mailboxes, xHCI
+  controller/keyboard/mouse counters, AHCI/NVMe state, memory frames).
+- `tui.rs` — panel text renders through the PSF path: the embedded synthesized
+  PSF2 stream is parsed back at first draw (`ensure_font()`) and used as the
+  glyph source with `font8x8` as fallback.
+- `main.rs` — `idle_loop` routes both key sources through `tui::handle_scancode`
+  (consumed keys stop echoing) and every mouse report through `tui::on_mouse`
+  (moves/repaints the arrow and switches tabs on a left-click landing on the
+  tab bar); TUI cadence raised from 1 Hz to ~20 Hz. The old 1 Hz view-only
+  dashboard repaint and the duplicated `paint_mouse_cursor` path are removed.
+- The mouse arrow is redrawn last on every repaint, so panel refreshes cannot
+  erase it (resolves the v2.38.11-16 cursor-erasure annoyance permanently).
+- docs en/ru — INTERFACE (rewritten microkernel section), CHANGELOG.
+
+### Changed
+- `tui.rs` — `TUI_ROWS` 8 → 10 (console shrinks to match; reserved bottom strip
+  still hosts the status bar, the centre 'A' glyph and the 2 Hz heartbeat).
+
+### Notes
+- Digits `1`-`7` type into the Shell tab instead of switching tabs while it is
+  active; switch away with a mouse click or a preceding digit from another tab.
+- On the MSI (v2.38.18 fix), boot reaches the idle loop with xHCI mapped at its
+  real aperture size; the interactive TUI relies on that same mapping.
+
 ## v2.38.18 — MSI xHCI page fault fixed: map the full BAR aperture (2026-09-28)
 
 The v2.38.17 diagnostics run reproduced the crash on the MSI with a fresh
