@@ -21,6 +21,10 @@ pub const SCALE: usize = 2;
 pub const GLYPH_W: usize = 8 * SCALE;
 /// Glyph cell height in pixels.
 pub const GLYPH_H: usize = 8 * SCALE;
+/// Number of glyph rows reserved for the boot/console log at the top of the
+/// screen. The interactive TUI panel owns the whole remaining height, so the
+/// log strip stays compact and the panel is the primary screen.
+pub const CONSOLE_TOP_ROWS: usize = 6;
 
 struct Console {
     fb: Option<Framebuffer>,
@@ -45,11 +49,11 @@ impl Console {
         self.fb = fb.map(Framebuffer::new);
         if let Some(fb) = self.fb.as_ref().filter(|fb| fb.is_usable()) {
             self.cols = fb.width() / GLYPH_W;
-            // Reserve the bottom GLYPH_H row for the fixed overlay strip
-            // (heartbeat square) and the top TUI_ROWS rows for the dashboard.
-            // The console never draws in either, and scrolling is bounded so
-            // the overlay pixels are never dragged up.
-            self.rows = (fb.height() / GLYPH_H).saturating_sub(1 + crate::tui::TUI_ROWS);
+            // Keep a compact boot/log strip on top (CONSOLE_TOP_ROWS); the
+            // interactive TUI panel below occupies every row to the bottom
+            // status strip, so the console never draws past its own rows and
+            // scrolling is bounded to the strip (panel pixels are untouched).
+            self.rows = CONSOLE_TOP_ROWS.min((fb.height() / GLYPH_H).saturating_sub(2));
         } else {
             self.cols = 0;
             self.rows = 0;
@@ -220,6 +224,11 @@ pub fn framebuffer() -> Option<&'static Framebuffer> {
 /// and above `text_height()` is reserved for the TUI dashboard overlay.
 pub fn text_height() -> usize {
     unsafe { (&*core::ptr::addr_of!(CONSOLE)).rows * GLYPH_H }
+}
+
+/// Number of glyph rows the console/panel log actually occupies.
+pub fn rows() -> usize {
+    unsafe { (&*core::ptr::addr_of!(CONSOLE)).rows }
 }
 
 /// Formats and prints to the framebuffer console.

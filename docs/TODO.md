@@ -579,6 +579,13 @@
   QEMU smoke green (acpi/thermal/ps2 ok, `[lid] ec unresponsive` expected);
   MSI calibration of the lid offset/bit + real temperature pending real-hardware
   boot.
+- [x] **v2.38.21**: TUI becomes the primary screen — `tui.rs` replaces the
+  `TUI_ROWS = 10` const with a dynamic `panel_rows()` computed from the live
+  framebuffer height, and `console.rs` bounds the scrolling log to a compact top
+  strip (`CONSOLE_TOP_ROWS` = 6). Panel + status bar now fill the screen from
+  below the log strip to the bottom; full tab content always visible. QEMU smoke
+  green (serial ~72 KB, pixel-column scan: console rows 0–5, tab bar row 6,
+  `PANEL_BG` through the bottom status strip).
 - [ ] **Backlog**: switch the console text area (above the TUI panel) from the
   built-in `font8x8` bitmap to fonts loaded through the `psf` parser (PSF2 from
   a future `/boot` font or a synthetic stream) so the console render path uses

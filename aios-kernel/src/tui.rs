@@ -1,7 +1,9 @@
 //! Interactive framebuffer TUI for the AIOS kernel.
 //!
-//! Rendered on its own `TUI_ROWS`-row panel at the bottom of the screen, below
-//! the scrolling console. Seven tabs mirror the host AIOS TUI (System / Sched /
+//! The TUI is the primary screen: a compact boot-log strip (a few rows) sits at
+//! the top and the interactive panel fills every row below it down to the
+//! bottom status strip, so the whole tab content is always visible. Seven tabs
+//! mirror the host AIOS TUI (System / Sched /
 //! USB / IPC / Storage / Shell / About). Keys and the USB mouse drive the panel
 //! directly: `1`-`7` (outside the Shell tab) or a left-click on a tab switches
 //! tabs; the Shell tab collects text input (`Enter` runs the command,
@@ -23,11 +25,21 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// Number of glyph rows reserved for the dashboard at the bottom of the screen.
-pub const TUI_ROWS: usize = 10;
+/// Number of glyph rows the interactive panel owns. The TUI is the primary
+/// screen: a compact `CONSOLE_TOP_ROWS` boot-log strip sits on top and every
+/// row below it (down to the bottom status strip) belongs to the panel, so the
+/// full tab contents are always visible regardless of the framebuffer height.
+pub fn panel_rows() -> usize {
+    let total = console::framebuffer()
+        .map(|fb| fb.height() / console::GLYPH_H)
+        .unwrap_or(0);
+    total
+        .saturating_sub(1 + console::rows())
+        .max(4)
+}
 
 /// Version banner shown on the About tab and the status bar.
-const VERSION: &str = "AIOS kernel v2.38.20";
+const VERSION: &str = "AIOS kernel v2.38.21";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -369,7 +381,7 @@ fn content_origin() -> (usize, usize) {
 }
 
 fn content_height() -> usize {
-    (TUI_ROWS - 1) * console::GLYPH_H
+    (panel_rows().saturating_sub(1)) * console::GLYPH_H
 }
 
 /// Maps a click pixel position onto a tab (`0..=6`), mirroring `draw_tabs`.
@@ -487,7 +499,7 @@ fn line(
     color: Color,
     max_px: usize,
 ) {
-    if *y + console::GLYPH_H <= tab_bar_y() + TUI_ROWS * console::GLYPH_H {
+    if *y + console::GLYPH_H <= tab_bar_y() + panel_rows() * console::GLYPH_H {
         draw_text(fb, x, *y, text, color, PANEL_BG, max_px);
     }
     *y += console::GLYPH_H;
@@ -662,7 +674,7 @@ fn ctl_str(v: i32) -> &'static str {
 
 fn render_shell(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     let s = unsafe { &*core::ptr::addr_of!(SHELL) };
-    let budget = TUI_ROWS.saturating_sub(2);
+    let budget = panel_rows().saturating_sub(2);
     let start = s.history.len().saturating_sub(budget);
     for entry in s.history.iter().skip(start).take(budget) {
         line(fb, y, 0, entry, colors::FG, max_px);

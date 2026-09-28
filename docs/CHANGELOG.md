@@ -1,5 +1,35 @@
 # AIOS Development Log
 
+## v2.38.21 — TUI becomes the primary screen; console shrinks to a top strip (2026-09-28)
+
+The interactive TUI is no longer a 10-row strip stranded at the bottom of a
+log-filled screen — it is now the **primary screen**. The scrolling console owns
+only a compact top strip (`CONSOLE_TOP_ROWS` = 6 glyph rows) and the panel
+(`panel_rows()` = total glyph rows − log strip − status bar) fills the whole
+remaining height, so the full tab content is always visible on any framebuffer
+(QEMU's 1280x800 → 42 content rows, the MSI's screen even taller). The version
+banner is bumped `v2.38.20 → v2.38.21`.
+
+### Changed
+- `console.rs` — new `CONSOLE_TOP_ROWS = 6`; `init()` bounds the console to that
+  top strip (previously `total rows − 1 − TUI_ROWS`, so the log owned almost the
+  whole screen and the panel got 10 rows). New `rows()` accessor. Scrolling stays
+  bounded inside the strip, so panel pixels are never touched.
+- `tui.rs` — `TUI_ROWS` (const 10) replaced by `panel_rows()` computed from the
+  live framebuffer height; the panel runs from below the top strip down to the
+  bottom status bar. `content_height()`, the `line()` draw guard and the Shell
+  tab history budget all use the dynamic value. Module doc updated to describe
+  the primary-screen layout.
+- docs en/ru — CHANGELOG, ARCHITECTURE (tui + console bullets), INTERFACE
+  (layout section).
+
+### Notes
+- QEMU smoke (1280x800) confirms the swap via pixel-column scan: console text in
+  rows 0–5, selected-tab bar at row 6, `PANEL_BG` from row 7 down to the bottom
+  status strip. All v2.38.20 platform markers still green (`[acpi] rev=2 XSDT`,
+  `[thermal]` CRITICAL↔normal cycling, `[ps2] aux/mouse up id=0x00` +
+  `i8042 ready`, `[lid] ec unresponsive`).
+
 ## v2.38.20 — Platform sensors: lid, CPU temperature, native PS/2 touchpad+keyboard (2026-09-28)
 
 The microkernel gains three real-hardware input/thermal capabilities so the MSI

@@ -635,9 +635,12 @@ All four interfaces (Web, TUI, GUI, Daemon) can run simultaneously. The Web SPA 
 
 ## Bare-Metal Microkernel Interactive TUI (v2.38.19)
 
-Below the scrolling console the microkernel draws an **interactive TUI**
-(`src/tui.rs`, a 10-glyph-row panel plus a status bar in the reserved bottom
-strip), repainted at ~20 Hz (every 5 ticks) from `idle_loop`. Unlike v2.38.11-18
+The microkernel TUI is the **primary screen**: a compact boot-log strip
+(`CONSOLE_TOP_ROWS` = 6 glyph rows) sits at the top and the interactive panel
+fills the whole remaining height down to the bottom status strip, so the full
+tab content is always visible regardless of the framebuffer size. The panel
+(`src/tui.rs`, `panel_rows()` = total rows − log strip − status bar) is
+repainted at ~20 Hz (every 5 ticks) from `idle_loop`. Unlike v2.38.11-18
 (a view-only static dashboard), the panel is driven by keyboard and USB mouse
 input.
 
