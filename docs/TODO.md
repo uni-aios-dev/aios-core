@@ -566,6 +566,19 @@
   `echo …`). Panel text renders through the `psf` parser (`ensure_font()` parses
   the synthesized PSF2 stream back at first draw) with `font8x8` fallback. The
   mouse arrow is repainted last so panel refreshes can never erase it.
+- [x] **v2.38.20**: platform sensors + native input — `acpi.rs` walks RSDP →
+  XSDT/RSDT → FADT (RSDP accepted already-HHDM or physical, `virt_addr`);
+  `ec.rs` probes the ACPI EC on the fixed 0x62/0x66 ports with bounded waits and
+  dumps all 256 RAM bytes; `lid.rs` pins the lid bit via a first-bit-flip scan
+  of the EC RAM; `thermal.rs` reads TjMax/DTS through a #GP-safe RDMSR assembly
+  probe (QEMU advertises DTS but faults on the MSRs) with a 45..92 °C simulated
+  fallback and `critical()` throttling; `ps2.rs` raises the i8042 AUX port
+  (native touchpad/mouse, real device ID via 0xF2) plus the keyboard on the
+  polled path. `sched.rs` skips ring-3 tasks while `thermal::critical()`;
+  status bar right side and the System tab show `lid=… T=…c sim=… ps2mouse=id0x..`.
+  QEMU smoke green (acpi/thermal/ps2 ok, `[lid] ec unresponsive` expected);
+  MSI calibration of the lid offset/bit + real temperature pending real-hardware
+  boot.
 - [ ] **Backlog**: switch the console text area (above the TUI panel) from the
   built-in `font8x8` bitmap to fonts loaded through the `psf` parser (PSF2 from
   a future `/boot` font or a synthetic stream) so the console render path uses

@@ -1,0 +1,255 @@
+//! i8042 (PS/2) support for the native laptop keyboard and touchpad/mouse,
+//! driven by polling the controller status port.
+//!
+//! The classic IRQ1/IRQ12 lines are often inert on UEFI laptops (the 8259 PIC
+//! is left unprogrammed), so everything is polled from the idle loop: bytes are
+//! classified by the controller status flags (bit 5 = AUX/mouse output buffer,
+//! bit 0 = keyboard output buffer). Keyboard bytes are treated exactly like the
+//! IRQ path's scancodes; AUX bytes are reassembled into standard three-byte
+//! PS/2 packets (buttons + 9-bit signed X/Y deltas). The aux device is enabled
+//! via the controller's "-A8" port-raise command and identified through 0xF2.
+//! All device waits are bounded, so hosts without a controller or pointer
+//! (some SMBus touchpads) simply report `ok = false`.
+
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use crate::kprintln;
+
+/// Keyboard/aux data port.
+const DATA: u16 = 0x60;
+/// Controller status/command port.
+const CMD: u16 = 0x64;
+/// Input buffer full flag in the status port.
+const IBF: u8 = 0x02;
+/// Keyboard output buffer full flag.
+const OBF: u8 = 0x01;
+/// Mouse (AUX) output buffer full flag.
+const MOBF: u8 = 0x20;
+/// Command: write the controller command byte.
+const CMD_READ_CCB: u8 = 0x20;
+/// Command: enable the AUX (mouse) port.
+const CMD_ENABLE_AUX: u8 = 0xA8;
+/// Byte prefix routing the next DATA byte to the AUX device.
+const AUX_PREFIX: u8 = 0xD4;
+/// Device command: enable data reporting.
+const SET_REPORTING: u8 = 0xF4;
+/// Device command: get device ID.
+const GET_ID: u8 = 0xF2;
+
+/// True once the controller accepted the keyboard/mouse bring-up.
+static PS2_OK: AtomicBool = AtomicBool::new(false);
+/// Keyboard: monotonically increasing make-code sequence.
+static KEY_SEQ: AtomicU32 = AtomicU32::new(0);
+/// Keyboard: last make-code seen (scancode set 1).
+static KEY_SCANCODE: AtomicU32 = AtomicU32::new(0);
+/// Mouse: monotonically increasing packet sequence.
+static MOUSE_SEQ: AtomicU32 = AtomicU32::new(0);
+/// Mouse: horizontal delta of the newest packet (9-bit signed).
+static MOUSE_DX: AtomicI32 = AtomicI32::new(0);
+/// Mouse: vertical delta of the newest packet (9-bit signed, screen Y grows
+/// downward so the value is already sign-inverted).
+static MOUSE_DY: AtomicI32 = AtomicI32::new(0);
+/// Mouse: button bits of the newest packet (bit0 left, bit1 right, bit2 mid).
+static MOUSE_BUTTONS: AtomicU32 = AtomicU32::new(0);
+/// Identified AUX device ID (0 = standard mouse, 3 = IntelliMouse, 4 = 5-button).
+static MOUSE_ID: AtomicU32 = AtomicU32::new(0);
+
+static mut MOUSE_PKT: [u8; 3] = [0; 3];
+static mut MOUSE_IDX: usize = 0;
+
+/// Keyboard make-code sequence (increments per processed byte).
+pub fn key_seq() -> u32 {
+    KEY_SEQ.load(Ordering::Relaxed)
+}
+
+/// Latest keyboard make-code.
+pub fn key_scancode() -> u32 {
+    KEY_SCANCODE.load(Ordering::Relaxed)
+}
+
+/// Mouse packet sequence (increments per decoded packet).
+pub fn mouse_seq() -> u32 {
+    MOUSE_SEQ.load(Ordering::Relaxed)
+}
+
+/// Latest mouse horizontal delta.
+pub fn mouse_dx() -> i32 {
+    MOUSE_DX.load(Ordering::Relaxed)
+}
+
+/// Latest mouse vertical delta (screen-space, already Y-inverted).
+pub fn mouse_dy() -> i32 {
+    MOUSE_DY.load(Ordering::Relaxed)
+}
+
+/// Latest mouse button state.
+pub fn mouse_buttons() -> u32 {
+    MOUSE_BUTTONS.load(Ordering::Relaxed)
+}
+
+/// Identified AUX device ID (0 when unknown).
+pub fn mouse_id() -> u32 {
+    MOUSE_ID.load(Ordering::Relaxed)
+}
+
+fn status() -> u8 {
+    unsafe { crate::port::inb(CMD) }
+}
+
+fn wait_ibf_clear() -> bool {
+    for _ in 0..10_000 {
+        if status() & IBF == 0 {
+            return true;
+        }
+        core::hint::spin_loop();
+    }
+    false
+}
+
+fn wait_obf() -> Option<u8> {
+    for _ in 0..100_000 {
+        if status() & OBF != 0 {
+            return Some(unsafe { crate::port::inb(DATA) });
+        }
+        core::hint::spin_loop();
+    }
+    None
+}
+
+fn write_cmd(b: u8) -> bool {
+    if !wait_ibf_clear() {
+        return false;
+    }
+    unsafe {
+        crate::port::outb(CMD, b);
+    }
+    true
+}
+
+fn write_data(b: u8) -> bool {
+    if !wait_ibf_clear() {
+        return false;
+    }
+    unsafe {
+        crate::port::outb(DATA, b);
+    }
+    true
+}
+
+/// Sends one command byte to the AUX device (prefix + byte) and returns the
+/// device ACK, or `None` when the device does not answer.
+fn aux_cmd(b: u8) -> Option<u8> {
+    if write_cmd(AUX_PREFIX) && write_data(b) {
+        wait_obf()
+    } else {
+        None
+    }
+}
+
+/// Reads the AUX device ID: expects ACK then one identifier byte. The ACK is
+/// drained separately so a silent device yields 0 without pinning a stray ACK.
+fn read_aux_id() -> u32 {
+    if aux_cmd(GET_ID).is_none() {
+        return 0;
+    }
+    match (wait_obf(), wait_obf()) {
+        (Some(_ack), Some(id)) => u32::from(id),
+        _ => 0,
+    }
+}
+
+/// Brings up the PS/2 port pair. The keyboard keeps its existing reporting;
+/// the AUX port is raised and, when a device answers, moved into report mode
+/// and identified. Each wait is bounded so boards without a PS/2 pointer
+/// (SMBus touchpads) degrade to "keyboard only".
+pub fn init() {
+    if !write_cmd(CMD_READ_CCB) {
+        kprintln!("[serial] [ps2] controller unresponsive");
+        return;
+    }
+    // Bake touchpad/mouse on: port enable, then a report-mode handshake.
+    let mouse_ok = write_cmd(CMD_ENABLE_AUX) && aux_cmd(SET_REPORTING).is_some();
+    let id = if mouse_ok { read_aux_id() } else { 0 };
+    MOUSE_ID.store(id, Ordering::Relaxed);
+    if mouse_ok {
+        kprintln!(
+            "[serial] [ps2] aux/mouse up id=0x{:02x} (0x00=PS/2 0x03=Intelli 0x04=5btn)",
+            id
+        );
+    }
+    // Keyboard reporting is usually already on; ask anyway and accept silence.
+    write_data(SET_REPORTING);
+    PS2_OK.store(true, Ordering::Relaxed);
+    kprintln!(
+        "[serial] [ps2] i8042 ready (kbd+{}), IRQ-free polled path",
+        if mouse_ok { "mouse" } else { "no-mouse" }
+    );
+}
+
+/// Drains pending i8042 output. Keyboard bytes bump `KEY_SEQ`; AUX bytes feed
+/// the three-byte packet decoder. Bounded to 32 reads so a wedged controller
+/// cannot stall the idle loop.
+pub fn drain() {
+    if !PS2_OK.load(Ordering::Relaxed) {
+        return;
+    }
+    for _ in 0..32 {
+        let st = status();
+        if st & OBF == 0 {
+            break;
+        }
+        let byte = unsafe { crate::port::inb(DATA) };
+        if st & MOBF != 0 {
+            feed_mouse(byte);
+        } else {
+            feed_key(byte);
+        }
+    }
+}
+
+fn feed_key(byte: u8) {
+    if byte & 0x80 == 0 {
+        KEY_SCANCODE.store(u32::from(byte), Ordering::Relaxed);
+        KEY_SEQ.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn feed_mouse(byte: u8) {
+    #[allow(static_mut_refs)]
+    unsafe {
+        let pkt = &mut *core::ptr::addr_of_mut!(MOUSE_PKT);
+        let idx = &mut *core::ptr::addr_of_mut!(MOUSE_IDX);
+        if *idx == 0 {
+            if byte & 0x08 == 0 {
+                return;
+            }
+            pkt[*idx] = byte;
+            *idx += 1;
+        } else {
+            pkt[*idx] = byte;
+            if *idx + 1 < 3 {
+                *idx += 1;
+                return;
+            }
+            decode_packet(pkt);
+            *idx = 0;
+        }
+    }
+}
+
+fn sign9(negative: bool, data: u8) -> i32 {
+    if negative {
+        i32::from(data) - 256
+    } else {
+        i32::from(data)
+    }
+}
+
+fn decode_packet(pkt: &[u8; 3]) {
+    let b0 = pkt[0];
+    let dx = sign9(b0 & 0x10 != 0, pkt[1]);
+    let dy = -sign9(b0 & 0x20 != 0, pkt[2]);
+    MOUSE_DX.store(dx, Ordering::Relaxed);
+    MOUSE_DY.store(dy, Ordering::Relaxed);
+    MOUSE_BUTTONS.store(u32::from(b0 & 0x07), Ordering::Relaxed);
+    MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
+}

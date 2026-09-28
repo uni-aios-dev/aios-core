@@ -35,6 +35,48 @@
 - **Workaround (pre-fix):** move the mouse; the cursor reappears. The
   serial/input path was unaffected.
 
+## OPEN (v2.38.20): lid heuristic must be calibrated from the MSI EC RAM dump
+- **Status:** OPEN — board-specific constants pending real-hardware boot
+- **Symptom:** `lid.rs` pins the lid switch by scanning the ACPI EC RAM for the
+  first bit flip, but both the EC RAM offset *and* the open/closed polarity are
+  board-specific. On the MSI the serial `[ec]` 256-byte dump must be inspected to
+  pin the real offset/bit and flip `LID_OPEN` polarity if needed (`lid_detail()`
+  already prints `1@0x..b` for calibration). Until then the TUI `lid=` value may
+  be wrong or stuck.
+- **Workaround/fix direction:** boot v2.38.20 on the MSI, read `[ec] dump_full`
+  rows, locate the byte that flips with the lid, set the offset/bit (and
+  polarity) constants, then verify `lid=0/1` on the laptop.
+
+## OPEN (v2.38.20): touchpads on SMBus/I2C only (no PS/2 aux) fall back to keyboard-only
+- **Status:** OPEN
+- **Symptom:** some modern laptops expose the touchpad over the system
+  management bus (e.g. Elan/HID-I2C) and leave the PS/2 aux port empty. `ps2.rs`
+  then logs at most `i8042 ready (kbd+mouse …)` with no aux device and the
+  touchpad stays dead until a USB-legacy mouse or a future SMBus/I2C driver
+  exists.
+- **Workaround/fix direction:** confirmed via `[ps2] aux/mouse up` — pairing a
+  `ps2mouse=id0x..` read is the hardware confirmation. A later milestone adds an
+  HID-over-I2C/SMBus probe.
+
+## RESOLVED (v2.38.20): ACPI RSDP dereference raised #GP(0) — Limine RSDP is already HHDM-offset
+- **Status:** RESOLVED in v2.38.20
+- **Symptom:** on QEMU the kernel crashed right after the first LAPIC tick with
+  `GENERAL PROTECTION FAULT rip=… err=0x0` before any `[acpi]` line, and after
+  the first fix the XSDT walk page-faulted (`PAGE FAULT: addr=0x1f77d0ec`,
+  physical address of the XSDT length slot).
+- **Root cause:** Limine hands the RSDP pointer already carrying the HHDM offset
+  (`rsdp = 0xffff80001f77e014`), so the old `physical_to_virtual(rsdp)` applied
+  the offset twice → non-canonical `0xffff0000_1f77e014` → #GP(0). The follow-up
+  XSDT length read faulted because `find_entry` dereferenced the *physical* root
+  address without the HHDM offset at all.
+- **Fix:** `acpi.rs::virt_addr()` accepts either form (raw physical or already
+  offset), and `find_entry` maps the root table through
+  `memory::physical_to_virtual` before reading its header/entry slots; FADT
+  fields already went through the mapping. Boot now logs `[acpi] rev=2 XSDT@…`
+  and `fadt rev=1` on QEMU.
+- **Verification:** QEMU smoke (v2.38.20) reaches the idle loop with all four
+  platform modules logged; revalidate on the MSI.
+
 ## OPEN (v2.38.16): QEMU `-display none` screendumps repeat console rows vertically
 - **Status:** OPEN — environment/test-harness quirk, kernel is unaffected
 - **Symptom:** in QEMU under `-display none`, `screendump` renders the GOP

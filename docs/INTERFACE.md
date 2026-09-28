@@ -645,7 +645,7 @@ input.
 
 | # | Tab | Contents |
 |---|-----|----------|
-| 1 | System | banner, uptime, tick counter, tick mode (`HW-LAPIC`/`HW-IRQ`/`SOFT`), allocated frames, frame regions, IPC totals |
+| 1 | System | banner, uptime, tick counter, tick mode (`HW-LAPIC`/`HW-IRQ`/`SOFT`), allocated frames, frame regions, IPC totals, lid state, CPU temperature (`temp=… tjmax=… sim=…`), PS/2 keyboard/mouse status (`ps2key=… ps2mouse=id0x..`) |
 | 2 | Sched | switch counter, current pid, per-task state (`running`/`sleep`/`ready`/absent) |
 | 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
 | 4 | IPC | total send/recv, per-task mailbox occupancy |
@@ -670,6 +670,29 @@ as the glyph source, with the `font8x8` table as the fallback.
 
 The bottom `GLYPH_H` strip hosts a two-sided status bar (version, active
 `tab n/7`, tick counter, tick mode, PIT countdown on the left; last PS/2
-scancode, USB key and mouse sequence on the right) that leaves the central cell
-free for the boot-time green 'A' glyph and the far-right 2 Hz heartbeat square.
-The top-right timer tick bar is untouched.
+scancode `k=0x..`, USB key `uk=…` and PS/2/USB mouse sequences `m=`/`pm=`,
+lid state `lid=…`, live CPU temperature `T=…c` on the right) that leaves the
+central cell free for the boot-time green 'A' glyph and the far-right 2 Hz
+heartbeat square. The top-right timer tick bar is untouched.
+
+### Platform sensors (v2.38.20)
+
+At boot the kernel walks the ACPI tables (`acpi::init`, serial `[acpi] rev=…
+XSDT@… fadt rev=…`), then brings up three platform-sensor/input modules: the
+embedded-controller probe (`ec`, `[ec] …` / `[lid] …`), the CPU digital thermal
+sensor (`thermal`, `[thermal] dts tjmax=…` or the simulated fallback), and the
+PS/2 i8042 pair (`ps2`, `[ps2] aux/mouse up id=…` + `[ps2] i8042 ready
+(kbd+mouse)`).
+
+- **Lid**: shown as `lid=0`/`lid=1` (closed/open) in the status bar and System
+  tab, driven by the EC RAM scan heuristic. On boards without an ACPI EC the
+  value stays `--` (e.g. QEMU logs `[lid] ec unresponsive (0 bytes), lid n/a`).
+- **Temperature**: `T=…c` in the status bar and `temp=… tjmax=… sim=…` in the
+  System tab. When the CPU has no DTS (or the MSR faults), `sim=1` marks the
+  synthetic 45..92 °C demo wave; at ≥ 90 °C the scheduler pauses ring-3 tasks
+  (`[serial] [thermal] CRITICAL temp=… (ring-3 paused)` ↔ resumed).
+- **Touchpad/keyboard**: the laptop's native PS/2 devices feed the same input
+  paths as USB — keys reach `handle_scancode` (Shell tab, tab switching), the
+  touchpad relocates the mouse arrow and left-click switches tabs. The PS/2
+  mouse ID (`0x00` PS/2, `0x03` IntelliMouse, `0x04` five-button) is shown as
+  `ps2mouse=id0x..`.

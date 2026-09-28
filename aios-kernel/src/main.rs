@@ -3,8 +3,10 @@
 
 extern crate alloc;
 
+mod acpi;
 mod ahci;
 mod console;
+mod ec;
 mod font8x8;
 mod framebuffer;
 mod gdt;
@@ -12,14 +14,17 @@ mod heap;
 mod idt;
 mod interrupts;
 mod lapic;
+mod lid;
 mod memory;
 mod nvme;
 mod pci;
 mod port;
+mod ps2;
 mod psf;
 mod sched;
 mod serial;
 mod syscalls;
+mod thermal;
 mod tui;
 mod user;
 mod xhci;
@@ -411,6 +416,19 @@ pub unsafe extern "C" fn _start() -> ! {
     }
     print_step(7, "sti executed");
 
+    // --- ACPI / EC / thermal / PS/2 (platform sensors & input) ------------
+    // No IRQ wiring required: the ACPI walk reads tables, the thermal probe
+    // reads MSRs, and the i8042 controller is polled IRQ-free (UEFI laptops
+    // often leave the 8259 PIC lines dead). Order matters: lid needs the FADT.
+    if let Some(addr) = rsdp {
+        acpi::init(addr);
+    } else {
+        kprintln!("[serial] [acpi] rsdp missing, platform sensors unavailable");
+    }
+    thermal::init();
+    ps2::init();
+    lid::init();
+
     // On-screen IRQ0 liveness probe (no serial needed): wait ~120 ms and count
     // how many PIT ticks a real IRQ32 delivered. Some UEFI laptops leave the
     // legacy 8259 PIC dead (IRQ0 routed via an unprogrammed IO-APIC), so this
@@ -763,10 +781,14 @@ pub fn idle_loop() -> ! {
     let mut last_usb_seq = 0u64;
     let mut last_mouse_seq = 0u64;
     let mut last_mouse_buttons = 0u8;
+    let mut last_ps2_seq = 0u32;
+    let mut last_ps2m_seq = 0u32;
+    let mut last_ps2m_buttons = 0u8;
     let mut last_tui_render = 0u64;
     loop {
         crate::sched::yield_kernel();
         xhci::poll();
+        ps2::drain();
         let ticks = interrupts::TICKS.load(Ordering::Relaxed);
         if ticks >= interrupts::TIMER_HZ && ticks - last_tick_print >= interrupts::TIMER_HZ {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
@@ -775,8 +797,11 @@ pub fn idle_loop() -> ! {
         }
         // TUI dashboard: repaint the interactive panel at ~20 Hz (every 5
         // ticks) so tab/status/clock state stays live while keys and the USB
-        // mouse are handled below.
+        // mouse are handled below. The lid and thermal probes refresh at the
+        // same cadence (cheap: a few EC/MSR reads per call).
         if ticks >= interrupts::TIMER_HZ && ticks - last_tui_render >= 5 {
+            lid::poll();
+            thermal::poll();
             tui::render();
             last_tui_render = ticks;
         }
@@ -849,6 +874,21 @@ pub fn idle_loop() -> ! {
                 }
             }
         }
+        // PS/2 native keyboard (i8042 IRQ-free path): mirrors the USB key band.
+        let ps2_seq = ps2::key_seq();
+        if ps2_seq != last_ps2_seq {
+            last_ps2_seq = ps2_seq;
+            let ps2_sc = ps2::key_scancode();
+            if !tui::handle_scancode(ps2_sc as u8) {
+                if let Some(c) = interrupts::scancode_to_char(ps2_sc as u8) {
+                    vprintln!("[ps2-key] '{}' (0x{:02x})", c, ps2_sc);
+                    kprintln!("[serial] ps2 key '{}' (0x{:02x})", c, ps2_sc);
+                } else {
+                    vprintln!("[ps2-key] scancode 0x{:02x}", ps2_sc);
+                    kprintln!("[serial] ps2 key scancode 0x{:02x}", ps2_sc);
+                }
+            }
+        }
         let mouse_seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
         if mouse_seq != last_mouse_seq {
             last_mouse_seq = mouse_seq;
@@ -862,6 +902,22 @@ pub fn idle_loop() -> ! {
                 // Hand the report to the interactive TUI (moves + repaints the
                 // arrow, switches tabs on a click) and then redraw the panel
                 // so the arrow is freshly composited over it.
+                tui::on_mouse(dx, dy, buttons);
+                tui::render();
+            }
+        }
+        // PS/2 pointer (native laptop touchpad in PS/2 mode): same wiring as
+        // the USB mouse band above.
+        let ps2m_seq = ps2::mouse_seq();
+        if ps2m_seq != last_ps2m_seq {
+            last_ps2m_seq = ps2m_seq;
+            let dx = ps2::mouse_dx();
+            let dy = ps2::mouse_dy();
+            let buttons = ps2::mouse_buttons() as u8;
+            if dx != 0 || dy != 0 || buttons != last_ps2m_buttons {
+                last_ps2m_buttons = buttons;
+                vprintln!("[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}", ps2::mouse_id(), buttons, dx, dy);
+                kprintln!("[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}", ps2::mouse_id(), buttons, dx, dy);
                 tui::on_mouse(dx, dy, buttons);
                 tui::render();
             }

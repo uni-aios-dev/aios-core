@@ -170,7 +170,13 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
         0 => fatal(frame, "DIVIDE BY ZERO"),
         6 => fatal(frame, "INVALID OPCODE"),
         8 => fatal(frame, "DOUBLE FAULT"),
-        13 => fatal(frame, "GENERAL PROTECTION FAULT"),
+        13 => {
+            if crate::thermal::probe_active() {
+                crate::thermal::on_probe_gp(frame);
+                return;
+            }
+            fatal(frame, "GENERAL PROTECTION FAULT")
+        }
         14 => page_fault(frame),
         v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => match vector {
             32 => {

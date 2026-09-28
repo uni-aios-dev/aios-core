@@ -1,5 +1,87 @@
 # AIOS Development Log
 
+## v2.38.20 — Platform sensors: lid, CPU temperature, native PS/2 touchpad+keyboard (2026-09-28)
+
+The microkernel gains three real-hardware input/thermal capabilities so the MSI
+laptop exposes its own sensors and native input instead of only USB. ACPI tables
+are walked (RSDP → XSDT/RSDT → FADT) to gate an embedded-controller probe, a CPU
+digital thermal sensor is read with a #GP-safe RDMSR guard, and the PS/2 i8042
+aux path is raised for the laptop's native touchpad/mouse and keyboard.
+
+### Added
+- `acpi.rs` — minimal table walk: RSDP signature/revision check, root system
+  table (XSDT 8-byte or RSDT 4-byte entries) and FADT lookup. The RSDP address
+  from Limine is accepted in either form (already HHDM-offset or raw physical)
+  via `virt_addr()`; table-entry addresses always go through the HHDM.
+  Publishes `acpi_found()`, FADT revision, DSDT physical address. Gate for the
+  EC probe (fixed ports 0x62/0x66).
+- `ec.rs` — ACPI Embedded Controller probe over the fixed 0x62/0x66 ports
+  (ACPI EC is not listed in the FADT): point reads (`read_ram`) with every wait
+  bounded (IBF/OBF spin up to 1,000,000 iterations), `dump_full()` reads all 256
+  RAM bytes and `probe()` logs the full dump as 16-byte rows. Boards without an
+  EC (QEMU) time out cleanly to `ec unresponsive`. `active()` is true when FADT
+  is present and 16+ bytes were read back.
+- `lid.rs` — lid switch detection from the EC RAM: a slow 8-byte scan window
+  rings through the 256-byte RAM space, the first bit flip pins a candidate
+  (offset + bit) and the live polarity is exposed as `lid_open()`; candidates
+  stay pinned on later scans of the same bit. `lid_state()` produces
+  `--`/`?`/`0`/`1`, `lid_detail()` `1@0x..b`. Board-neutral: the EC RAM layout
+  and the open/closed polarity differ per platform and are calibrated from the
+  serial dump on the MSI.
+- `thermal.rs` — CPU digital thermal sensor (DTS): gated on CPUID leaf 1 EDX
+  bit 22, TjMax from `IA32_TEMPERATURE_TARGET` (0x1A2), live die temperature
+  from `IA32_THERM_STATUS` (0x19C, 7-bit delta). Every RDMSR runs inside a
+  **#GP-safe probe**: a small assembly stub (`_aios_probe_rdmsr`) executes the
+  read and, when the CPU raises vector 13, the interrupt dispatcher redirects
+  the frame to `_aios_probe_rdmsr_fault` and the probe reports a miss — QEMU
+  advertises the DTS bit but faults on the thermal MSRs. Without DTS a
+  synthetic 45..92 °C triangle wave (`sim_temp`) exercises the full path.
+  `critical()` (≥ `THRESHOLD_C` = 90 °C) pauses ring-3 tasks.
+- `ps2.rs` — IRQ-free polled PS/2 driver: reads the i8042 status port 0x64,
+  raises the AUX port (`CMD_ENABLE_AUX` 0xA8), puts the mouse into report mode
+  (`SET_REPORTING` 0xF4) and reads its ID over 0xF2 (ACK drained separately, so
+  the stored ID is the real device ID: 0x00 = standard PS/2, 0x03 = IntelliMouse,
+  0x04 = 5-button). `drain()` harvests up to 32 bytes per idle-loop call and
+  decodes 3-byte packets (sign-extended dx/dy via `sign9`, y inverted); keys go
+  through the same `scancode_to_char` path as USB. Prints `[ps2] aux/mouse up
+  id=…` / `i8042 ready (kbd+mouse)`.
+- `main.rs` — platform-sensor init block after `print_step(7)`: `acpi::init(addr)`
+  (when RSDP was handed over), then `thermal::init()`, `ps2::init()`,
+  `lid::init()`. `idle_loop` drains PS/2 every pass (`ps2::drain()`) and polls
+  lid/thermal with the TUI refresh (~20 Hz); PS/2 keys and mouse reports feed
+  the same `tui::handle_scancode` / `tui::on_mouse` paths as their USB
+  counterparts (`last_ps2_seq` / `last_ps2m_seq` / `last_ps2m_buttons` locals).
+  `pci devices` line unchanged.
+- `sched.rs` — thermal gating: the scheduler skips ring-3 tasks while
+  `thermal::critical()` is set (kernel tasks and idle keep running), so the demo
+  tasks freeze on a hot die instead of contributing heat.
+- `tui.rs` — status bar right side now `k=0x.. uk=… pk=… m=… pm=… lid=… T=…c`
+  (last PS/2 scancode, PS/2 USB key/mouse seqs, lid state, live temperature);
+  System tab adds a `lid=… temp=… tjmax=… sim=… ps2key=… ps2mouse=id0x..` line
+  via `lid_state()`/`lid_detail()`; version bumped `v2.38.19 → v2.38.20`.
+- `interrupts.rs` — vector 13 arm consults `thermal::probe_active()` first and
+  hands a probing RDMSR fault to `thermal::on_probe_gp` instead of halting.
+- docs en/ru — CHANGELOG, ARCHITECTURE (acpi/ec/lid/thermal/ps2 bullets + sched
+  gating), INTERFACE (microkernel status bar + System tab), TODO, BUGS.
+
+### Fixed
+- ACPI RSDP read faulted on QEMU: Limine hands the RSDP pointer already
+  HHDM-offset, and the previous `physical_to_virtual(rsdp)` applied the offset a
+  second time, producing a non-canonical address → `#GP(0)`. Now accepted as-is
+  (`virt_addr` handles both forms); XSDT/RSDT entry slots and FADT fields are
+  still reached via the plain HHDM offset (entry-slot reads were also missing it
+  on the first attempted fix).
+
+### Notes
+- On QEMU the smoke run is: `[acpi] rev=2 XSDT@…` + `fadt rev=1`; `[thermal] no
+  dts, simulated 45..92`; `[ps2] aux/mouse up id=0x00` + `i8042 ready`; `[lid]
+  ec unresponsive (0 bytes), lid n/a` — all four modules are exercised without
+  the hardware. On the MSI the EC RAM dump calibrates the lid offset/bit and the
+  real TjMax/delta replaces the simulation.
+- The EC scan heuristic is board-specific (see BUGS): first-bit-flip pinning
+  needs the MSI dump, and SMBus/I2C-only touchpads (no PS/2 aux) still fall back
+  to keyboard-only.
+
 ## v2.38.19 — Interactive kernel TUI: 7 tabs, Shell, mouse, PSF glyphs (2026-09-28)
 
 The microkernel's static view-only dashboard becomes a fully interactive TUI.

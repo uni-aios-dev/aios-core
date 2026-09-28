@@ -27,7 +27,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 pub const TUI_ROWS: usize = 10;
 
 /// Version banner shown on the About tab and the status bar.
-const VERSION: &str = "AIOS kernel v2.38.19";
+const VERSION: &str = "AIOS kernel v2.38.20";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -326,6 +326,39 @@ fn tick_mode() -> &'static str {
     }
 }
 
+/// Lid state for the status bar: `--` no EC, `?` scanning, `0`/`1` candidate
+/// bit value once a transition was observed (polarity is board-specific).
+fn lid_state() -> &'static str {
+    if !crate::lid::active() {
+        "--"
+    } else if crate::lid::known() {
+        if crate::lid::lid_open() {
+            "1"
+        } else {
+            "0"
+        }
+    } else {
+        "?"
+    }
+}
+
+/// Verbose lid state for the System tab: appends the pinned EC RAM offset and
+/// bit once a transition has been observed.
+fn lid_detail() -> String {
+    if !crate::lid::active() {
+        String::from("-- (no EC)")
+    } else if crate::lid::known() {
+        format!(
+            "{}@{:02x}.{}",
+            if crate::lid::lid_open() { "1" } else { "0" },
+            crate::lid::candidate_offset(),
+            crate::lid::candidate_bit()
+        )
+    } else {
+        String::from("? (scanning)")
+    }
+}
+
 /// Row of the dashboard occupied by the tab bar (its first panel row).
 fn tab_bar_y() -> usize {
     console::text_height()
@@ -388,10 +421,14 @@ fn draw_status(fb: &Framebuffer) {
     );
     draw_text(fb, 0, y, &helm, TEXT_DIM, STATUS_BG, midx);
     let right = format!(
-        "key=0x{:02x} usb-key={} mouse={}",
+        "k=0x{:02x} uk={} pk={} m={} pm={} lid={} T={}c",
         LAST_SCANCODE.load(Ordering::Relaxed),
         crate::xhci::KEY_SEQ.load(Ordering::Relaxed),
+        crate::ps2::key_seq(),
         crate::xhci::MOUSE_SEQ.load(Ordering::Relaxed),
+        crate::ps2::mouse_seq(),
+        lid_state(),
+        crate::thermal::temp_c(),
     );
     draw_text(
         fb,
@@ -465,6 +502,22 @@ fn render_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         y,
         0,
         &format!("uptime {}s  ticks={}  clock={}", ticks / TIMER_HZ, ticks, tick_mode()),
+        colors::FG,
+        max_px,
+    );
+    line(
+        fb,
+        y,
+        0,
+        &format!(
+            "lid={}  temp={}C tjmax={} sim={}  ps2key={} ps2mouse=id0x{:02x}",
+            lid_detail(),
+            crate::thermal::temp_c(),
+            crate::thermal::tjmax_c(),
+            crate::thermal::simulated() as u8,
+            crate::ps2::key_seq(),
+            crate::ps2::mouse_id()
+        ),
         colors::FG,
         max_px,
     );

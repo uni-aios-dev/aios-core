@@ -335,6 +335,12 @@ pub fn schedule(frame: &mut InterruptFrame) {
                 continue;
             }
         }
+        // Thermal protection: at or above the critical temperature ring-3 user
+        // tasks are skipped so user work pauses while the package cools;
+        // kernel tasks and the idle context keep rotating as usual.
+        if crate::thermal::critical() && t[cand].frame.cs == USER_CS as u64 {
+            continue;
+        }
         next = cand as isize;
         break;
     }
