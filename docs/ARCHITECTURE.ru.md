@@ -1329,7 +1329,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   - `ec` — (v2.38.20) проба ACPI Embedded Controller по фиксированным портам 0x62/0x66 (в FADT EC не перечисляется): точечные чтения `read_ram(off)` с ограниченными ожиданиями IBF/OBF (до 1 000 000 итераций, чтобы платы без EC чисто деградировали), `dump_full()` читает все 256 байт RAM, `probe()` логирует полный дамп строками по 16 байт. `active()` = FADT найден и прочитано 16+ байт.
   - `lid` — (v2.38.20) детект крышки по RAM EC: окно скана 8 байт кольцуется по 256 байтам; первый битовый флип пинит кандидата оффсет+бит, последующие сканы того же бита подтверждают полярность. Живое значение `lid_open()`, `candidate_offset()`/`candidate_bit()` для калибровки на MSI, `lid_state()` (`--`/`?`/`0`/`1`) и `lid_detail()` (`1@0x..b`) питают TUI. Раскладка RAM и полярность открытия платформо-специфичны (см. BUGS).
   - `thermal` — (v2.38.20) цифровой датчик температуры CPU: затвор по CPUID leaf 1 EDX bit 22, TjMax из MSR 0x1A2 (биты 16:23), живая температура из MSR 0x19C (цифровая дельта 7 бит, `temp = TjMax - delta`). Каждый RDMSR выполняется внутри **#GP-безопасного asm-пробника** (`_aios_probe_rdmsr` / `_aios_probe_rdmsr_fault`): ветка вектора 13 диспетчера перенаправляет фолт на fault-метку, так что MSR, дающий #GP (QEMU рекламирует DTS, но фолтится на термальных MSR), деградирует к синтетической треугольной волне 45..92 °C вместо остановки. `critical()` (≥ `THRESHOLD_C` = 90 °C) управляет затвором планировщика.
-  - `ps2` — (v2.38.20) IRQ-free поллинг-драйвер PS/2 поверх i8042 (статус 0x64 bit5 MOBF = aux / bit0 OBF = клавиатура): `drain()` забирает до 32 байт за вызов, `init()` поднимает AUX-порт (`CMD_ENABLE_AUX` 0xA8), переводит мышь в режим репортов (`SET_REPORTING` 0xF4) и читает ID по `GET_ID` 0xF2 (ACK сливается отдельно, так что в хранимом ID — реальный: 0x00 PS/2, 0x03 IntelliMouse, 0x04 five-button). 3-байтные пакеты декодируются с sign-extended `sign9` dx/dy (y инвертирован); клавиши переиспользуют `scancode_to_char`. Атомарно публикует `KEY_SEQ`/`KEY_SCANCODE`, `MOUSE_SEQ`/`MOUSE_DX`/`MOUSE_DY`/`MOUSE_BUTTONS`, `MOUSE_ID`.
+  - `ps2` — (v2.38.20) IRQ-free поллинг-драйвер PS/2 поверх i8042 (статус 0x64 bit5 MOBF = aux / bit0 OBF = клавиатура): `drain()` забирает до 32 байт за вызов, `init()` поднимает AUX-порт (`CMD_ENABLE_AUX` 0xA8), переводит мышь в режим репортов (`SET_REPORTING` 0xF4) и читает ID по `GET_ID` 0xF2 (ACK сливается отдельно, так что в хранимом ID — реальный: 0x00 PS/2, 0x03 IntelliMouse, 0x04 five-button). 3-байтные пакеты декодируются с sign-extended `sign9` dx/dy (y инвертирован); клавиши переиспользуют `scancode_to_char`. С v2.38.23 `feed_key` держит одноключевой latch `EXT`, который гасит extended-префиксы (0xE0/0xE1) и их нагрузку, так что `KEY_SCANCODE` несёт только простые make-коды set-1 (клавиши Windows/стрелок/Fn отбрасываются и не доходят до таблиц GUI/TUI). Атомарно публикует `KEY_SEQ`/`KEY_SCANCODE`, `MOUSE_SEQ`/`MOUSE_DX`/`MOUSE_DY`/`MOUSE_BUTTONS`, `MOUSE_ID`.
   - `crt` — **удалён в v2.36.0**: сильные определения `memcpy`/`memmove`/`memset`/`memcmp`/`bcmp` из этого модуля порождали циклический PLT для `memset` и вешали загрузку (см. BUGS); ядро теперь использует слабые `mem*` из `compiler_builtins`.
   - `pci` — доступ к конфигурационному пространству PCI через legacy-порты `0xCF8`/`0xCFC`; полное перечисление bus/device/function в фиксированный массив записей `PciDevice` (id, class/subclass/prog-if, BAR, IRQ) с декодированием `class_name()` — слой обнаружения для драйверов AHCI/NVMe и xHCI.
   - `ahci` — блочный драйвер AHCI (SATA) (v2.36.0): включает memory space + bus-mastering PCI, сбрасывает HBA (`GHC.HR`/`AE`), строит на порт кадры command-list / FIS-receive / command-table через `memory::alloc_frame`, запускает каждый реализованный порт, читает `PxSIG` после запуска (пропуская ATAPI/SEMB/PM), выполняет `IDENTIFY DEVICE` (модель с попарным свопом байт + объём 28/48 бит) и перемещает сектора командами `READ`/`WRITE DMA EXT` через элемент PRDT; `AhciDrive`/`read_sectors()`. BAR контроллера доступен через `memory::map_mmio`.
@@ -1368,7 +1368,8 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   очищает). Текст панели рендерится через парсер `psf` (`ensure_font()`
   разбирает загрузочный синтезированный PSF2-поток в кэшированный шрифт) с
   таблицей `font8x8` как фолбэком.
-- `gui` — оконный рабочий стол (v2.38.22): полноэкранная альтернатива
+- `gui` — оконный рабочий стол (v2.38.22; с v2.38.23 рендер по damage):
+  полноэкранная альтернатива
   консоли/TUI, запускается из шелла ядра командой `gui` (возврат — `tui` или
   `Esc` без сфокусированного окна). Пока `gui::active()`, путь `vprintln!`
   консоли обходится и heartbeat приостанавливается. Владеет фоном рабочего
@@ -1378,9 +1379,14 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   тело), рисуется PSF-текстовыми хелперами TUI (`draw_text`/`draw_glyph`/
   `paint_cursor`, `pub(crate)`). Ввод: `Tab` циклит фокус, `Esc` закрывает/
   выходит, печатные клавиши печатают в сфокусированное окно; клики мыши
-  открывают/фокусируют/закрывают/перетаскивают. `render()` — полный repaint
-  кадра ~20 Гц из `idle_loop` плюс немедленный repaint после каждого репорта
-  мыши, стрелка рисуется последней. Окно System переиспользует
+  открывают/фокусируют/закрывают/перетаскивают. С v2.38.23 `render()`
+  работает по damage: каждая мутация регистрирует грязный `Rect`
+  (`dirty_all`/`dirty_rect`/`dirty_window`), и на кадре ~20 Гц из `idle_loop`
+  (плюс немедленный repaint после каждого репорта мыши) перерисовываются
+  только пересекающиеся области, а непрерывные пути (курсор, перетаскивание,
+  живые окна System/Uptime) отмечают только свои прямоугольники через
+  `mark_live_dirty()`. Extended-сканкоды (0xE0/0xE1) гасятся до таблиц GUI/TUI
+  (см. `ps2`/`main`). Окно System переиспользует
   `tui::tick_mode()`/`lid_state()` и `VERSION`.
 - `main` — читает ответы framebuffer/rsdp/hhdm Limine, выполняет self-check чтения framebuffer, фильтрует карту памяти в `[MemRegion; 64]`, затем инициализирует память и кучу, GDT/TSS (с перезагрузкой CS/SS), IDT, PIC и PIT, поднимает LAPIC-таймер (`lapic::init()`) и маскирует PIT IRQ0, когда тот жив, `sti`, печатает на экран показания живости `[probe] irq32_seen/ticks delta`, перечисляет шину PCI и поднимает драйверы хранилища AHCI и NVMe (после `sti`, чтобы исключения обрабатывались), планирует kernel worker и три ring-3 задачи, объявляет атомарные статики статуса драйверов `G_AHCI`/`G_NVME`/`G_XHCI` (проставляются init-кодом драйверов) и входит в `idle_loop`, где работают квадрат heartbeat и `tui::render()`. В serial логирует селекторы передачи от Limine (`boot selectors cs/ss/ds`) и выбранный источник тиков (`timer=LAPIC|PIT`). С v2.38.13 раздел framebuffer дополнительно логирует виртуальный адрес и `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), выполняет `write_volatile`-тест `direct_test` со `sfence` и readback пикселя (0, 0) плюс OK-зелёную пробу, затем `psf_check()` синтезирует PSF2-поток из `font8x8::BASIC`, парсит его обратно, проверяет round-trip глифа 'A' и рисует его в центре нижней полосы экрана.
   - Panic-обработчик печатает в framebuffer-консоль и serial, затем уходит в `halt_loop`.

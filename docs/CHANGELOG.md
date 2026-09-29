@@ -1,5 +1,50 @@
 # AIOS Development Log
 
+## v2.38.23 — GUI flicker fixed + Win-key panic hardened (2026-09-29)
+
+Field feedback on the v2.38.22 GUI was: the desktop flickers on the real panel
+and pressing "extra" keys (e.g. the Windows key) hard-crashes the kernel. Two
+fixes landed in `src/gui.rs`, `src/ps2.rs`, `src/main.rs`, `src/interrupts.rs`
+and `src/console.rs`.
+
+### Fixed
+- **GUI flicker** — `gui::render()` is now damage-based: every mutation records
+  a dirty rectangle (`Rect`/`DIRTY`, `dirty_all`/`dirty_rect`/`dirty_window`)
+  and the renderer repaints only what intersects it (desktop fill, then icons,
+  the task-bar strip if touched, then windows overlapping the damage, arrow
+  last). Discrete actions (enter/leave/spawn/close/focus) do a single full
+  repaint; continuous paths (cursor movement, title drag, live System/Uptime
+  telemetry) only touch their own rectangles via `mark_live_dirty()`. An idle
+  frame no longer rewrites the whole framebuffer at ~20 Hz.
+- **Top-right timer-bar strobe** — the IRQ-time `interrupts::draw_timer_bar()`
+  (which redraws a 64 px bar every tick ≈ 100 Hz, i.e. roughly twice per GUI
+  frame) is now skipped while `gui::active()`, matching the heartbeat square.
+- **Win-key (extended keys) crash** — extended scan codes are consumed at the
+  source on both key paths: `ps2::feed_key` carries a one-key `EXT` latch
+  (0xE0/0xE1 plus the following byte are dropped, so `ps2::KEY_SCANCODE` only
+  ever holds a plain set-1 code), and the `LAST_SCANCODE` (IRQ) band in
+  `idle_loop` gets a matching `last_sc_ext` filter. The GUI/TUI character tables
+  never see Win/arrow/Fn scancodes again.
+- **Panic visible on real hardware** — a crash while the GUI owns the screen was
+  invisible (framebuffer console print is gated while the GUI is active, and the
+  MSI board has no serial). `console::panic_report`/`panic_screen` now render a
+  `KERNEL PANIC: …` / `FATAL …` line straight onto the framebuffer (allocation-
+  free, bypassing the lock and the GUI gate), wired into the `#[panic_handler]`
+  and into `interrupts::fatal`/`fatal_with`.
+- **Window body text placement** — `gui::text_line` drew every window's text at
+  absolute screen column x=8 instead of inside its own window; it now draws at
+  `win.x + 8`.
+
+### Notes
+- Verified in QEMU via the monitor (UEFI/OVMF, `sendkey 6` → Shell, `g u i ret`
+  → `gui`): the screendump shows the desktop and, 1 s apart, the static desktop
+  area and the (gated) timer-bar corner are byte-identical between frames while
+  the live System window pixels change — i.e. repaints are confined to the dirty
+  region. `sendkey meta_l/meta_l/meta_r` after entering the GUI produced zero
+  `KERNEL PANIC`/`FATAL` lines and the kernel kept ticking (496 s).
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.22 — Windowed kernel GUI: `gui` shell command opens a desktop (2026-09-29)
 
 A full-screen windowed GUI joins the microkernel on top of the console/TUI. The

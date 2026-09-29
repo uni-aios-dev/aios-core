@@ -35,16 +35,49 @@
 - **Workaround (pre-fix):** move the mouse; the cursor reappears. The
   serial/input path was unaffected.
 
-## OPEN (v2.38.22): kernel GUI is a demo desktop — no damage repaint, no client windows, no resize
+## RESOLVED (v2.38.23): GUI flickers on a real panel + Windows-key (extended scan code) kernel panic
+
+- **Status:** RESOLVED in v2.38.23.
+- **Symptom (real hardware, MSI):** the v2.38.22 windowed GUI flickered on the
+  laptop panel, and pressing an "extra" key (most notably the Windows key) hard
+  crashed the kernel.
+- **Root cause / fix:**
+  - Flicker — `gui::render()` redrew the entire framebuffer at ~20 Hz (every
+    cadence tick) plus after every mouse report. Now rendering is damage-based:
+    every mutation marks a dirty rectangle (`Rect`/`DIRTY`,
+    `dirty_all`/`dirty_rect`/`dirty_window`), the renderer repaints only regions
+    intersecting the damage, and continuous paths (cursor, drag, live
+    System/Uptime telemetry) mark only their own rectangles via
+    `mark_live_dirty()`. An idle frame no longer touches the whole framebuffer.
+    The ~100 Hz IRQ `interrupts::draw_timer_bar()` was a second flicker source
+    on top of the GUI and is now skipped while `gui::active()`.
+  - Win-key panic — extended scan codes (0xE0/0xE1 prefixes, e.g. Win = 0x5B)
+    used to fall through to the GUI/TUI ASCII tables and index out of bounds.
+    They are now consumed at the source on both input paths: `ps2::feed_key`
+    keeps a one-key `EXT` latch (the extended byte plus its payload are
+    dropped), and the `LAST_SCANCODE` (IRQ) band in `idle_loop` has a matching
+    `last_sc_ext` filter. `ps2::KEY_SCANCODE`/`KEY_SEQ` only ever carry plain
+    set-1 codes.
+  - Invisible crashes — since the MSI board has no serial and the framebuffer
+    console print is gated while the GUI owns the screen, a panic looked like a
+    frozen desktop. `console::panic_report`/`panic_screen` now paint
+    `KERNEL PANIC: …`/`FATAL …` straight to the framebuffer (lock-free,
+    allocation-free, bypassing the GUI gate), wired into `#[panic_handler]` and
+    `interrupts::fatal`/`fatal_with`.
+  - Bonus fix found along the way: `gui::text_line` drew every window's body
+    text at absolute column x=8; it now draws inside its own window at
+    `win.x + 8`.
+- **Verification:** QEMU monitor smoke (UEFI/OVMF): after entering the GUI,
+  screendumps 1 s apart are byte-identical in the static desktop area and the
+  gated timer-bar corner while the live System window pixels change (repaints
+  confined to the dirty region); `sendkey meta_l` + `meta_r` produced zero
+  `KERNEL PANIC`/`FATAL` lines and `[serial] tick` kept advancing (496 s).
+
+## OPEN (v2.38.22): kernel GUI is a demo desktop — no client windows, no resize
 
 The windowed GUI (`gui` command) is functionally complete for a demo but is
 explicitly a first step:
 
-- **Full-frame repaint every ~50 ms** — `gui::render()` redraws the whole
-  framebuffer (desktop + icons + task bar + all windows) on every cadence tick
-  and after every mouse report. On a slow panel this may flicker; a
-  backframebuffer + per-window damage regions are planned (TODO, GUI
-  roadmap).
 - **Windows are kernel-internal only** — ring-3 processes cannot create or
   present windows. A `SYS_GUI` style syscall (or a kernel window server over
   the IPC bus) plus a compositor is needed for real applications.

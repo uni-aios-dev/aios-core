@@ -261,6 +261,80 @@ pub fn write_bytes(bytes: &[u8]) {
     CONSOLE_LOCK.unlock();
 }
 
+/// Renders a panic/fatal message straight onto the framebuffer, bypassing the
+/// console lock and the GUI screen gate, so a crash is visible even while the
+/// windowed GUI owns the screen and even when no serial port is attached.
+/// Allocation-free: works from an interrupt handler or `#[panic_handler]`.
+pub fn panic_screen(msg: &str) {
+    let Some(fb) = framebuffer() else {
+        return;
+    };
+    if !fb.is_usable() {
+        return;
+    }
+    let cols = (fb.width() / GLYPH_W).max(1);
+    const ROWS: usize = 8;
+    unsafe {
+        fb.fill_rect(0, 0, fb.width(), ROWS * GLYPH_H, colors::BG);
+    }
+    let (mut cx, mut cy) = (0usize, 0usize);
+    for &byte in msg.as_bytes() {
+        if byte == b'\n' || cx >= cols {
+            if cy + 1 >= ROWS {
+                break;
+            }
+            cy += 1;
+            cx = 0;
+            if byte == b'\n' {
+                continue;
+            }
+        }
+        let bits = crate::tui::glyph_bits(byte);
+        let px = cx * GLYPH_W;
+        let py = cy * GLYPH_H;
+        unsafe {
+            fb.fill_rect(px, py, GLYPH_W, GLYPH_H, colors::BG);
+        }
+        for (row, bits) in bits.iter().enumerate() {
+            for col in 0..8usize {
+                if bits & (1 << col) != 0 {
+                    unsafe {
+                        fb.fill_rect(px + col * SCALE, py + row * SCALE, SCALE, SCALE, colors::FG);
+                    }
+                }
+            }
+        }
+        cx += 1;
+    }
+}
+
+/// Formats a one-line panic report into a stack buffer and paints it with
+/// [`panic_screen`]. Never allocates.
+pub fn panic_report(prefix: &str, detail: core::fmt::Arguments<'_>) {
+    let mut buf = [0u8; 240];
+    struct PanicBuf<'a>(&'a mut [u8], usize);
+    impl core::fmt::Write for PanicBuf<'_> {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            for &b in s.as_bytes() {
+                let i = self.1;
+                if i < self.0.len() {
+                    self.0[i] = b;
+                    self.1 = i + 1;
+                }
+            }
+            Ok(())
+        }
+    }
+    let msg = {
+        let mut w = PanicBuf(&mut buf, 0);
+        let _ = w.write_str(prefix);
+        let _ = w.write_fmt(detail);
+        let n = w.1;
+        core::str::from_utf8(&buf[..n]).unwrap_or("panic report")
+    };
+    panic_screen(msg);
+}
+
 /// Prints a line to the framebuffer console (companion to `kprintln!`).
 #[macro_export]
 macro_rules! vprintln {

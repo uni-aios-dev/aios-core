@@ -8,13 +8,17 @@
 //! background, a left icon column (one tile per app), a bottom task bar and a
 //! z-ordered list of windows with a title bar, close button and draggable body.
 //!
-//! Rendering is a full repaint every ~20 Hz from `idle_loop` (like the TUI),
-//! plus an immediate repaint after every mouse report, so the 8x8 arrow is
-//! composited last and can never be erased. Text uses the same PSF path as the
-//! TUI (`tui::draw_text`). Input comes from both key sources (PS/2 + USB-HID)
-//! via `handle_scancode` (Tab cycles focus, `Esc` closes / leaves, printable
-//! keys type into the focused `Welcome` window) and from the mouse via
-//! `on_mouse` (icon/close/task-bar clicks, title-bar drag).
+//! Rendering is damage-based: every change records a dirty rectangle and
+//! `render()` repaints only what intersects it (desktop background, then icons
+//! and the task bar strip, then every window whose rectangle overlaps, then the
+//! 8x8 arrow last), instead of redrawing the whole framebuffer every ~20 Hz —
+//! this is what removes the full-screen flicker on a real LCD panel. The live
+//! System/Uptime windows re-dirty themselves each render so their telemetry
+//! keeps refreshing at ~20 Hz while the static desktop stays untouched. Text
+//! uses the same PSF path as the TUI (`tui::draw_text`). Input comes from both
+//! key sources (PS/2 + USB-HID) via `handle_scancode` (Tab cycles focus, `Esc`
+//! closes / leaves, printable keys type into the focused `Welcome` window) and
+//! from the mouse via `on_mouse` (icon/close/task-bar clicks, title-bar drag).
 
 use crate::framebuffer::{colors, Color, Framebuffer};
 use crate::interrupts::{TICKS, TIMER_HZ};
@@ -75,6 +79,58 @@ static mut CUR_VIS: bool = false;
 static mut LAST_BTNS: u8 = 0;
 static mut DRAG: Option<usize> = None;
 
+/// Axis-aligned damage rectangle (`x1`/`y1` exclusive) that the next
+/// `render()` has to repaint. Starts full-screen so the first frame paints
+/// everything; every mutation unions its affected region into it.
+#[derive(Clone, Copy)]
+struct Rect {
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+static mut DIRTY: Rect = Rect {
+    x0: 0,
+    y0: 0,
+    x1: usize::MAX,
+    y1: usize::MAX,
+};
+
+/// Marks the whole screen dirty (used by discrete structural changes: entering
+/// / leaving, opening / closing / focusing windows).
+fn dirty_all() {
+    unsafe {
+        *core::ptr::addr_of_mut!(DIRTY) = Rect {
+            x0: 0,
+            y0: 0,
+            x1: usize::MAX,
+            y1: usize::MAX,
+        };
+    }
+}
+
+/// Unions a pixel rectangle into the pending damage.
+fn dirty_rect(x: usize, y: usize, w: usize, h: usize) {
+    unsafe {
+        let d = &mut *core::ptr::addr_of_mut!(DIRTY);
+        d.x0 = d.x0.min(x);
+        d.y0 = d.y0.min(y);
+        d.x1 = d.x1.max(x.saturating_add(w));
+        d.y1 = d.y1.max(y.saturating_add(h));
+    }
+}
+
+/// Unions a whole window rectangle into the pending damage.
+fn dirty_window(win: &Window) {
+    dirty_rect(win.x, win.y, win.w, win.h);
+}
+
+/// Whether rectangle `(x, y, w, h)` overlaps the damage region.
+fn rect_overlaps(d: &Rect, x: usize, y: usize, w: usize, h: usize) -> bool {
+    x.saturating_add(w) > d.x0 && y.saturating_add(h) > d.y0 && x < d.x1 && y < d.y1
+}
+
 /// Whether the windowed GUI currently owns the screen.
 pub fn active() -> bool {
     ACTIVE.load(Ordering::Relaxed)
@@ -128,6 +184,7 @@ fn spawn(kind: WinKind) {
     let Some(slot) = open_slot() else {
         return;
     };
+    dirty_all();
     let n = window_count();
     let fb_w = console::framebuffer().map(|fb| fb.width()).unwrap_or(800);
     let fb_h = console::framebuffer().map(|fb| fb.height()).unwrap_or(600);
@@ -157,6 +214,7 @@ fn spawn(kind: WinKind) {
 }
 
 fn focus_window(i: usize) {
+    dirty_all();
     unsafe {
         let wins = &mut *core::ptr::addr_of_mut!(WINS);
         for win in wins.iter_mut().flatten() {
@@ -170,6 +228,7 @@ fn focus_window(i: usize) {
 }
 
 fn unfocus_all() {
+    dirty_all();
     unsafe {
         for win in (*core::ptr::addr_of_mut!(WINS)).iter_mut().flatten() {
             win.focused = false;
@@ -178,6 +237,7 @@ fn unfocus_all() {
 }
 
 fn close_window(i: usize) {
+    dirty_all();
     unsafe {
         if let Some(w) = core::ptr::addr_of!(DRAG).read() {
             if w == i {
@@ -271,11 +331,18 @@ pub fn handle_scancode(sc: u8) -> bool {
             return true;
         }
         0x0E => {
-            unsafe {
-                let wins = &mut *core::ptr::addr_of_mut!(WINS);
-                if let Some(win) = wins.iter_mut().flatten().find(|w| w.focused) {
-                    if win.note_len > 0 {
-                        win.note_len -= 1;
+            if let Some(i) = focused_idx() {
+                unsafe {
+                    if let Some(win) = (*core::ptr::addr_of!(WINS))[i].as_ref() {
+                        dirty_window(win);
+                    }
+                }
+                unsafe {
+                    let wins = &mut *core::ptr::addr_of_mut!(WINS);
+                    if let Some(win) = wins[i].as_mut() {
+                        if win.note_len > 0 {
+                            win.note_len -= 1;
+                        }
                     }
                 }
             }
@@ -288,6 +355,13 @@ pub fn handle_scancode(sc: u8) -> bool {
     };
     if c.is_control() {
         return true;
+    }
+    if let Some(i) = focused_idx() {
+        unsafe {
+            if let Some(win) = (*core::ptr::addr_of!(WINS))[i].as_ref() {
+                dirty_window(win);
+            }
+        }
     }
     unsafe {
         let wins = &mut *core::ptr::addr_of_mut!(WINS);
@@ -314,11 +388,13 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
             *core::ptr::addr_of_mut!(CUR_Y) = fb.height() / 2;
             *core::ptr::addr_of_mut!(CUR_VIS) = true;
         }
+        let ox = *core::ptr::addr_of!(CUR_X);
+        let oy = *core::ptr::addr_of!(CUR_Y);
         let max_x = (fb.width() as i32).saturating_sub(8);
         let max_y = (fb.height() as i32).saturating_sub(8);
-        let nx = (*core::ptr::addr_of!(CUR_X) as i32 + dx).clamp(0, max_x) as usize;
-        let ny = (*core::ptr::addr_of!(CUR_Y) as i32 + dy).clamp(0, max_y) as usize;
-        let moved = nx != *core::ptr::addr_of!(CUR_X) || ny != *core::ptr::addr_of!(CUR_Y);
+        let nx = (ox as i32 + dx).clamp(0, max_x) as usize;
+        let ny = (oy as i32 + dy).clamp(0, max_y) as usize;
+        let moved = nx != ox || ny != oy;
         *core::ptr::addr_of_mut!(CUR_X) = nx;
         *core::ptr::addr_of_mut!(CUR_Y) = ny;
         if moved {
@@ -327,10 +403,20 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
                 if let Some(win) = wins[i].as_mut() {
                     let max_x = fb.width().saturating_sub(win.w.min(fb.width()));
                     let max_y = fb.height().saturating_sub(win.h + TASKBAR_H);
+                    let old = Rect {
+                        x0: win.x,
+                        y0: win.y,
+                        x1: win.x + win.w,
+                        y1: win.y + win.h,
+                    };
                     win.x = (win.x as i32 + dx).clamp(0, max_x as i32) as usize;
                     win.y = (win.y as i32 + dy).clamp(0, max_y as i32) as usize;
+                    dirty_rect(old.x0, old.y0, old.x1 - old.x0, old.y1 - old.y0);
+                    dirty_rect(win.x, win.y, win.w, win.h);
                 }
             }
+            dirty_rect(ox, oy, 8, 8);
+            dirty_rect(nx, ny, 8, 8);
         }
         let prev = *core::ptr::addr_of!(LAST_BTNS);
         let down = buttons & 0x01 != 0;
@@ -440,30 +526,104 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
     }
 }
 
-/// Paints the whole desktop from live kernel state, arrow last.
+/// Repaints only the regions dirtied since the last call: desktop background,
+/// then intersecting icons, the task-bar strip (redrawn whole if touched), then
+/// every window whose rectangle overlaps the damage (drawn bottom-up so the
+/// z-order stays correct), then the arrow last. Idle repaints are therefore
+/// limited to the live telemetry windows instead of the whole screen, which
+/// removes the full-screen flicker the old every-frame redraw caused on a real
+/// LCD panel.
 pub fn render() {
     let Some(fb) = console::framebuffer() else {
         return;
     };
-    unsafe {
-        fb.fill_rect(0, 0, fb.width(), fb.height(), DESK_BG);
-    }
-    draw_icons(fb);
-    draw_taskbar(fb);
-    for i in 0..MAX_WINS {
-        let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
-        if let Some(win) = win {
-            draw_window(fb, win);
+    let d = unsafe { *core::ptr::addr_of!(DIRTY) };
+    let full = d.x0 == 0 && d.y0 == 0 && d.x1 >= fb.width() && d.y1 >= fb.height();
+    if !full {
+        let w = d.x1.min(fb.width()).saturating_sub(d.x0);
+        let h = d.y1.min(fb.height()).saturating_sub(d.y0);
+        if w == 0 || h == 0 {
+            mark_live_dirty();
+            return;
+        }
+        unsafe {
+            fb.fill_rect(d.x0, d.y0, w, h, DESK_BG);
+        }
+        draw_icons(fb, &d);
+        let task_y = fb.height().saturating_sub(TASKBAR_H);
+        if rect_overlaps(&d, 0, task_y, fb.width(), TASKBAR_H) {
+            draw_taskbar(fb);
+        }
+        for i in 0..MAX_WINS {
+            let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
+            if let Some(win) = win {
+                if rect_overlaps(&d, win.x, win.y, win.w, win.h) {
+                    draw_window(fb, win);
+                }
+            }
+        }
+        unsafe {
+            if *core::ptr::addr_of!(CUR_VIS)
+                && rect_overlaps(
+                    &d,
+                    *core::ptr::addr_of!(CUR_X),
+                    *core::ptr::addr_of!(CUR_Y),
+                    8,
+                    8,
+                )
+            {
+                tui::paint_cursor(
+                    fb,
+                    *core::ptr::addr_of!(CUR_X),
+                    *core::ptr::addr_of!(CUR_Y),
+                    true,
+                );
+            }
+        }
+    } else {
+        unsafe {
+            fb.fill_rect(0, 0, fb.width(), fb.height(), DESK_BG);
+        }
+        draw_icons(fb, &d);
+        draw_taskbar(fb);
+        for i in 0..MAX_WINS {
+            let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
+            if let Some(win) = win {
+                draw_window(fb, win);
+            }
+        }
+        unsafe {
+            if *core::ptr::addr_of!(CUR_VIS) {
+                tui::paint_cursor(
+                    fb,
+                    *core::ptr::addr_of!(CUR_X),
+                    *core::ptr::addr_of!(CUR_Y),
+                    true,
+                );
+            }
         }
     }
     unsafe {
-        if *core::ptr::addr_of!(CUR_VIS) {
-            tui::paint_cursor(
-                fb,
-                *core::ptr::addr_of!(CUR_X),
-                *core::ptr::addr_of!(CUR_Y),
-                true,
-            );
+        *core::ptr::addr_of_mut!(DIRTY) = Rect {
+            x0: 0,
+            y0: 0,
+            x1: 0,
+            y1: 0,
+        };
+    }
+    mark_live_dirty();
+}
+
+/// Re-dirties the live telemetry windows (System / Uptime) after every repaint,
+/// so the idle ~20 Hz refresh keeps updating them without touching the rest of
+/// the desktop.
+fn mark_live_dirty() {
+    for i in 0..MAX_WINS {
+        if let Some(win) = unsafe { &(*core::ptr::addr_of!(WINS))[i] } {
+            match win.kind {
+                WinKind::System | WinKind::Clock => dirty_window(win),
+                _ => {}
+            }
         }
     }
 }
@@ -477,13 +637,16 @@ fn icon_label(kind: WinKind) -> &'static str {
     }
 }
 
-fn draw_icons(fb: &Framebuffer) {
+fn draw_icons(fb: &Framebuffer, clip: &Rect) {
     let icons = [
         (WinKind::System, 20, 40),
         (WinKind::Clock, 20, 108),
         (WinKind::About, 20, 176),
     ];
     for (kind, ix, iy) in icons {
+        if !rect_overlaps(clip, ix, iy, ICON_W, ICON_H) {
+            continue;
+        }
         unsafe {
             fb.fill_rect(ix, iy, ICON_W, ICON_H, 0x00_0e_16_28);
             fb.fill_rect(ix, iy, ICON_W, 5, ICON_ACC);
@@ -555,23 +718,41 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
     let mut y = win.y + TITLE_H + 8;
     match win.kind {
         WinKind::Welcome => draw_welcome(fb, win, &mut y, max_px),
-        WinKind::System => draw_system(fb, &mut y, max_px),
-        WinKind::Clock => draw_clock(fb, &mut y, max_px),
-        WinKind::About => draw_about(fb, &mut y, max_px),
+        WinKind::System => draw_system(fb, win.x + 8, &mut y, max_px),
+        WinKind::Clock => draw_clock(fb, win.x + 8, &mut y, max_px),
+        WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
     }
 }
 
-fn text_line(fb: &Framebuffer, y: &mut usize, s: &str, fg: Color, bg: Color, max_px: usize) {
-    tui::draw_text(fb, 8, *y, s, fg, bg, max_px);
+fn text_line(
+    fb: &Framebuffer,
+    x: usize,
+    y: &mut usize,
+    s: &str,
+    fg: Color,
+    bg: Color,
+    max_px: usize,
+) {
+    tui::draw_text(fb, x, *y, s, fg, bg, max_px);
     *y += console::GLYPH_H;
 }
 
 fn draw_welcome(fb: &Framebuffer, win: &Window, y: &mut usize, max_px: usize) {
-    text_line(fb, y, "This is the microkernel GUI.", TEXT, WIN_BG, max_px);
-    let msg = core::str::from_utf8(&win.note[..win.note_len]).unwrap_or("?");
-    text_line(fb, y, &format!("message: {}", msg), TEXT, WIN_BG, max_px);
+    let x = win.x + 8;
     text_line(
         fb,
+        x,
+        y,
+        "This is the microkernel GUI.",
+        TEXT,
+        WIN_BG,
+        max_px,
+    );
+    let msg = core::str::from_utf8(&win.note[..win.note_len]).unwrap_or("?");
+    text_line(fb, x, y, &format!("message: {}", msg), TEXT, WIN_BG, max_px);
+    text_line(
+        fb,
+        x,
         y,
         "mouse: click icon to open, drag title to move",
         TEXT_DIM,
@@ -580,6 +761,7 @@ fn draw_welcome(fb: &Framebuffer, win: &Window, y: &mut usize, max_px: usize) {
     );
     text_line(
         fb,
+        x,
         y,
         "keys: Tab focus, Esc close/leave, text types here",
         TEXT_DIM,
@@ -596,10 +778,11 @@ fn uptime_hms() -> String {
     format!("{:02}:{:02}:{:02}", hh, mm, ss)
 }
 
-fn draw_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
+fn draw_system(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
     let (sent, recv) = crate::syscalls::stats();
     text_line(
         fb,
+        x,
         y,
         &format!(
             "tick {}  mode {}",
@@ -612,6 +795,7 @@ fn draw_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
     text_line(
         fb,
+        x,
         y,
         &format!(
             "switches {}  ipc s/r {}/{}",
@@ -625,6 +809,7 @@ fn draw_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
     text_line(
         fb,
+        x,
         y,
         &format!(
             "temp {}c  lid {}",
@@ -637,6 +822,7 @@ fn draw_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
     text_line(
         fb,
+        x,
         y,
         &format!(
             "key ps2 {}  usb {}  mouse id 0x{:02x}",
@@ -650,6 +836,7 @@ fn draw_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
     text_line(
         fb,
+        x,
         y,
         &format!("frames {}", crate::memory::frames_allocated()),
         TEXT_DIM,
@@ -658,10 +845,11 @@ fn draw_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
 }
 
-fn draw_clock(fb: &Framebuffer, y: &mut usize, max_px: usize) {
-    text_line(fb, y, &uptime_hms(), TEXT, WIN_BG, max_px);
+fn draw_clock(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
+    text_line(fb, x, y, &uptime_hms(), TEXT, WIN_BG, max_px);
     text_line(
         fb,
+        x,
         y,
         &format!("ticks {}", TICKS.load(Ordering::Relaxed)),
         TEXT_DIM,
@@ -670,10 +858,11 @@ fn draw_clock(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
 }
 
-fn draw_about(fb: &Framebuffer, y: &mut usize, max_px: usize) {
-    text_line(fb, y, tui::VERSION, colors::OK, WIN_BG, max_px);
+fn draw_about(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
+    text_line(fb, x, y, tui::VERSION, colors::OK, WIN_BG, max_px);
     text_line(
         fb,
+        x,
         y,
         "windowed GUI on the raw framebuffer",
         TEXT,
@@ -682,6 +871,7 @@ fn draw_about(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     );
     text_line(
         fb,
+        x,
         y,
         "no GPU/no compositor: software text + rects",
         TEXT_DIM,

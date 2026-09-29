@@ -207,6 +207,23 @@ pub fn drain() {
 }
 
 fn feed_key(byte: u8) {
+    // Extended keys (0xE0/0xE1 prefix + the byte that follows: Win/arrow/Fn
+    // scancodes) are dropped entirely — they must never reach the key consumer
+    // (TUI/GUI/LAST_SCANCODE), on hardware where the byte-follows rule is the
+    // only thing preventing an out-of-range entry.
+    static mut EXT: bool = false;
+    if unsafe { *core::ptr::addr_of!(EXT) } {
+        unsafe {
+            *core::ptr::addr_of_mut!(EXT) = false;
+        }
+        return;
+    }
+    if byte == 0xE0 || byte == 0xE1 {
+        unsafe {
+            *core::ptr::addr_of_mut!(EXT) = true;
+        }
+        return;
+    }
     if byte & 0x80 == 0 {
         KEY_SCANCODE.store(u32::from(byte), Ordering::Relaxed);
         KEY_SEQ.fetch_add(1, Ordering::Relaxed);

@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.38.22";
+pub(crate) const VERSION: &str = "AIOS kernel v2.38.23";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -76,7 +76,7 @@ fn ensure_font() {
 
 /// Glyph bitmap for one byte (8 rows, MSB-first), preferring the parsed PSF
 /// glyph over the raw `font8x8` table.
-fn glyph_bits(byte: u8) -> [u8; 8] {
+pub(crate) fn glyph_bits(byte: u8) -> [u8; 8] {
     let mut out = [0u8; 8];
     let idx = byte as usize;
     if let Some(f) = unsafe { &*core::ptr::addr_of!(PSF_FONT) } {

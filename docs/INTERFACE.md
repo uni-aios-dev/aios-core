@@ -689,11 +689,23 @@ focused) returns to the console/TUI.
   - Keyboard: `Tab` cycles window focus; `Esc` closes the focused window and,
     with no windows left, returns to the TUI; printable keys (incl. after
     `Enter`) type into the focused window.
-- **Behaviour**: one instance per window kind; full-frame repaint at ~20 Hz with
-  a repaint after every mouse report; the arrow composites last. While the GUI
-  is active the kernel log (`vprintln!`) and heartbeat pause — the desktop owns
-  the screen; serial logging keeps running so `[serial] tick …` still proves
-  liveness.
+- **Behaviour**: one instance per window kind; the arrow composites last. While
+  the GUI is active the kernel log (`vprintln!`) and heartbeat pause — the
+  desktop owns the screen; serial logging keeps running so `[serial] tick …`
+  still proves liveness.
+- **Repaint (v2.38.23)**: rendering is damage-based — discrete actions
+  (open/close/focus/leave) repaint the whole frame once, while continuous paths
+  (cursor, drag, the live System/Uptime windows) refresh only their own dirty
+  rectangles at ~20 Hz; an idle frame never rewrites the framebuffer (no LCD
+  flicker). The IRQ timer bar (top-right, ~100 Hz) is suppressed while the GUI
+  owns the screen.
+- **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
+  Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
+  paths and never reach the GUI/TUI: they type nothing and cannot crash the
+  kernel. Plain printable keys still type into the focused window as above.
+- **No serial, no serial**: if the kernel ever panics or faults while the GUI is
+  active, the screen clears to show a `KERNEL PANIC: …` / `FATAL …` line instead
+  of freezing on the desktop.
 
 Text is rendered on the PSF path across the whole panel: the embedded
 synthesized PSF2 stream (round-trip validated at boot) is parsed back and used

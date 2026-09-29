@@ -76,6 +76,10 @@ pub fn fatal_with(code: u32, detail: &str) -> ! {
     debug_port_write((code & 0xFF) as u8);
     kprintln!("[serial] FATAL code=0x{:08X}: {}", code, detail);
     vprintln!("[fatal] code=0x{:08X}: {}", code, detail);
+    crate::console::panic_report(
+        "FATAL ",
+        core::format_args!("code=0x{:08X}: {}", code, detail),
+    );
     halt()
 }
 
@@ -96,6 +100,10 @@ fn fatal(frame: &InterruptFrame, name: &str) -> ! {
         frame.rip,
         frame.error_code
     );
+    crate::console::panic_report(
+        "FATAL ",
+        core::format_args!("{} rip={:#x} err={:#x}", name, frame.rip, frame.error_code),
+    );
     fatal_with(code, name)
 }
 
@@ -113,6 +121,9 @@ fn halt() -> ! {
 /// text cannot hide it. Shared by the PIT (vector 32) and LAPIC (vector 0x90)
 /// tick paths.
 fn draw_timer_bar() {
+    if crate::gui::active() {
+        return;
+    }
     if let Some(fb) = crate::console::framebuffer() {
         let ticks = TICKS.load(Ordering::Relaxed);
         let h = (ticks % 64) as usize;

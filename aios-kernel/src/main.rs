@@ -779,6 +779,7 @@ pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
     let mut last_scancode = 0u64;
+    let mut last_sc_ext = false;
     let mut last_usb_seq = 0u64;
     let mut last_mouse_seq = 0u64;
     let mut last_mouse_buttons = 0u8;
@@ -854,6 +855,17 @@ pub fn idle_loop() -> ! {
         let sc = interrupts::LAST_SCANCODE.load(Ordering::Relaxed);
         if sc != last_scancode {
             last_scancode = sc;
+            // Extended scan codes come as 0xE0/0xE1 followed by the real code;
+            // drop the prefix and swallow the next byte so Win/arrow/Fn keys
+            // can never reach the TUI/GUI character tables.
+            if sc == 0xE0 || sc == 0xE1 {
+                last_sc_ext = true;
+                continue;
+            }
+            if last_sc_ext {
+                last_sc_ext = false;
+                continue;
+            }
             if sc & 0x80 == 0 {
                 let consumed = if gui::active() {
                     gui::handle_scancode(sc as u8)
@@ -995,5 +1007,6 @@ fn halt_loop() -> ! {
 fn panic(info: &PanicInfo) -> ! {
     vprintln!("KERNEL PANIC: {}", info);
     kprintln!("[serial] KERNEL PANIC: {}", info);
+    crate::console::panic_report("KERNEL PANIC: ", core::format_args!("{}", info));
     halt_loop();
 }
