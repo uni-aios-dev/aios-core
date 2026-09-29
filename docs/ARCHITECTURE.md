@@ -1373,7 +1373,8 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   `Backspace`=0x0E edits, `Esc`=0x01 clears). Panel text renders through the
   `psf` parser (`ensure_font()` re-parses the boot-synthesised PSF2 stream into a
   cached font) with the `font8x8` table as fallback.
-- `gui` — windowed desktop (v2.38.22, damage-based repaint since v2.38.23): a
+- `gui` — windowed desktop (v2.38.22; damage-based repaint since v2.38.23; RAM
+  backbuffer + dirty-rect blit + 60 FPS cadence since v2.38.24): a
   full-screen alternative to the
   console/TUI launched from the kernel shell (`gui` command; `tui` or `Esc`
   with no window focused returns). While `gui::active()` the console's
@@ -1383,12 +1384,25 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   list (title bar, close button, draggable body) rendered with the TUI's PSF
   text helpers (`draw_text`/`draw_glyph`/`paint_cursor`, `pub(crate)`). Input:
   `Tab` cycles focus, `Esc` closes/leaves, printable keys type into the focused
-  window; mouse clicks open/focus/close/drag. Since v2.38.23 `render()` is
-  damage-based: every mutation records a dirty `Rect` (`dirty_all`/`dirty_rect`/
-  `dirty_window`), repainting only intersecting regions on each ~20 Hz cadence
-  from `idle_loop` plus an immediate repaint after every mouse report, while
-  continuous paths (cursor, drag, live System/Uptime windows) mark only their
-  own rectangles via `mark_live_dirty()`. Extended (0xE0/0xE1) scan codes are
+  window; mouse clicks open/focus/close/drag. Input is read from both key/mouse
+  sources via lock-free atomics and never blocks the idle loop; the GUI and the
+  renderer are decoupled (input events only mutate window state + a dirty `Rect`,
+  painting happens later in `render()`). Since v2.38.23 every mutation records a
+  dirty `Rect` (`dirty_all`/`dirty_rect`/`dirty_window`). Since v2.38.24
+  `render()` paints the whole frame into a RAM backbuffer
+  (`Framebuffer::from_ram`, `ensure_backbuffer` — mapped once from the frame
+  allocator at `BACKBUF_BASE = 0xFFFF_FF00_0040_0000`, never freed; 4 MiB for a
+  1280×800 panel; failure degrades to direct-VRAM painting via `BACKBUF_FAIL`)
+  and pushes only the damaged rectangle to VRAM with
+  `Framebuffer::blit_region` (one `copy_nonoverlapping` per scanline) — the
+  panel sees only complete frames, so there is no flicker or tearing. VRAM is
+  written exactly once per dirty row. Continuous paths (cursor, drag, live
+  System/Uptime windows) mark only their own rectangles via
+  `mark_live_dirty()`. `idle_loop` drives `gui::render()` on its own cadence —
+  every tick of the 100 Hz timer (≈100 FPS) since v2.38.24 — plus an immediate
+  repaint after every mouse report, while the TUI keeps its ~20 Hz gate and the
+  lid/thermal probes run on a separate 5-tick gate. Extended (0xE0/0xE1) scan
+  codes are
   dropped before the GUI/TUI tables ever see them (see `ps2`/`main`).
   System window reuses `tui::tick_mode()`/`lid_state()`
   and `VERSION`.

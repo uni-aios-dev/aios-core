@@ -157,6 +157,78 @@ impl Framebuffer {
         }
     }
 
+    /// Builds a dense RAM surface (software backbuffer) with the same pixel
+    /// format as `model`: identical `bytes_per_pixel`, channel shifts/sizes and
+    /// packed layout, but `pitch == width * bytes_per_pixel` (no padding), so
+    /// every pixel stores exactly the packed bytes that [`Self::blit_region`]
+    /// copies into a physical framebuffer.
+    ///
+    /// All drawing primitives work on the returned handle unchanged, which lets
+    /// the GUI render a whole frame off-screen and then publish it to VRAM in
+    /// one atomic push per dirty row.
+    ///
+    /// # Safety
+    /// `base` must point to at least `width * height * bytes_per_pixel`
+    /// writable bytes, aligned like the hardware format, for the lifetime of
+    /// the returned handle.
+    pub unsafe fn from_ram(
+        base: *mut u8,
+        width: usize,
+        height: usize,
+        model: &Framebuffer,
+    ) -> Self {
+        let bpp = model.bytes_per_pixel.max(1);
+        Self {
+            base,
+            width,
+            height,
+            pitch: width.saturating_mul(bpp),
+            bytes_per_pixel: bpp,
+            red_shift: model.red_shift,
+            red_size: model.red_size,
+            green_shift: model.green_shift,
+            green_size: model.green_size,
+            blue_shift: model.blue_shift,
+            blue_size: model.blue_size,
+        }
+    }
+
+    /// Atomically publishes rectangle `(x0, y0)..(x1, y1)` from the dense
+    /// software surface `src` into `self` (VRAM), copying raw packed bytes one
+    /// scanline at a time so each row is written with a single
+    /// `copy_nonoverlapping` and the scanout buffer is never painted
+    /// incrementally (no torn rows, no flicker from partial draws).
+    ///
+    /// Both surfaces must use the same `bytes_per_pixel` (by construction for
+    /// [`Self::from_ram`]); the walk honours each surface's own pitch.
+    ///
+    /// # Safety
+    /// `src` and `self` must be writable for the touched ranges.
+    pub unsafe fn blit_region(
+        &self,
+        src: &Framebuffer,
+        x0: usize,
+        y0: usize,
+        mut x1: usize,
+        mut y1: usize,
+    ) {
+        if !self.is_usable() || !src.is_usable() || self.bytes_per_pixel != src.bytes_per_pixel {
+            return;
+        }
+        x1 = x1.min(self.width).min(src.width);
+        y1 = y1.min(self.height).min(src.height);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let bpp = self.bytes_per_pixel;
+        let bytes = (x1 - x0) * bpp;
+        for row in y0..y1 {
+            let dst = self.base.add(row * self.pitch + x0 * bpp);
+            let src_row = src.base.add(row * src.pitch + x0 * bpp);
+            core::ptr::copy_nonoverlapping(src_row, dst, bytes);
+        }
+    }
+
     /// Reads back a pixel in hardware format (used by the boot self-check).
     ///
     /// # Safety

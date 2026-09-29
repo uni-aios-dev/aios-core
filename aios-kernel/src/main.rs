@@ -787,6 +787,8 @@ pub fn idle_loop() -> ! {
     let mut last_ps2m_seq = 0u32;
     let mut last_ps2m_buttons = 0u8;
     let mut last_tui_render = 0u64;
+    let mut last_gui_render = 0u64;
+    let mut last_sensor_render = 0u64;
     loop {
         crate::sched::yield_kernel();
         xhci::poll();
@@ -797,18 +799,29 @@ pub fn idle_loop() -> ! {
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
         }
-        // Monitor: (a) either the TUI panel or the windowed GUI is repainted
-        // at ~20 Hz (every 5 ticks), (b) the lid and thermal probes refresh at
-        // the same cadence (cheap: a few EC/MSR reads per call).
-        if ticks >= interrupts::TIMER_HZ && ticks - last_tui_render >= 5 {
-            lid::poll();
-            thermal::poll();
-            if gui::active() {
-                gui::render();
-            } else {
-                tui::render();
+        // Monitor: the windowed GUI repaints at (at least) the 60 FPS target —
+        // every tick of the 100 Hz LAPIC/PIT timer with the RAM-backbuffer
+        // damage blit the cost is a memcpy of the live windows only. The TUI
+        // (which redraws straight to VRAM) keeps its ~20 Hz gate, and the lid /
+        // thermal probes refresh on their own 5-tick cadence regardless of the
+        // screen owner. Mouse motion additionally triggers an immediate render
+        // in the report bands below, so pointer feedback never waits a frame.
+        if ticks >= interrupts::TIMER_HZ {
+            if ticks - last_sensor_render >= 5 {
+                lid::poll();
+                thermal::poll();
+                last_sensor_render = ticks;
             }
-            last_tui_render = ticks;
+            if gui::active() {
+                let gate = (interrupts::TIMER_HZ / 60).max(1);
+                if ticks - last_gui_render >= gate {
+                    gui::render();
+                    last_gui_render = ticks;
+                }
+            } else if ticks - last_tui_render >= 5 {
+                tui::render();
+                last_tui_render = ticks;
+            }
         }
         // Hardware heartbeat: toggles the bottom-right probe square (direct
         // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if

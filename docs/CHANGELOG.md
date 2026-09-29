@@ -1,5 +1,45 @@
 # AIOS Development Log
 
+## v2.38.24 — smooth GUI pipeline: RAM backbuffer + dirty-rect blit at 60 FPS (2026-09-29)
+
+The v2.38.23 damage-based renderer already removed the full-screen flicker, but
+the panel was still written straight to VRAM in multiple passes per frame
+(desktop, icons, task bar, windows, cursor), so a mid-frame panel refresh could
+still catch partially-painted rows (tearing) and the render rate was a fixed
+~20 Hz. v2.38.24 turns rendering into a proper two-stage double-buffered
+pipeline and raises the redraw cadence to the 60 FPS target.
+
+### Added
+- **RAM backbuffer** (`src/gui.rs`) — a software frame holds the whole desktop
+  surface (`Framebuffer::from_ram`, same packed pixel format and resolution as
+  VRAM, dense pitch = width×4). Painting primitives are CPU-side, so the panel
+  never sees a half-drawn frame.
+- **Dirty-rect publish** (`src/framebuffer.rs::blit_region`) — after the frame is
+  painted off-screen, only the damage rectangle is pushed to VRAM with one
+  `copy_nonoverlapping` per scanline; VRAM is written exactly once per dirty row
+  (no flicker, no torn rows). Falls back to painting directly into VRAM with the
+  same damage logic if the buffer is missing.
+- **Frame-allocator buffer, not heap** — the heap is 2 MiB and a 1280×800 buffer
+  is 4 MiB, so the backbuffer is mapped once from the frame allocator
+  (`ensure_backbuffer`, `BACKBUF_BASE = 0xFFFF_FF00_0040_0000`, never freed).
+  Allocation failure degrades to the direct-VRAM path (`BACKBUF_FAIL`) — no
+  panic, no OOM risk. Logged as `[serial] gui backbuffer NNNN KiB`.
+- **60 FPS cadence** (`src/main.rs`) — the GUI now repaints every tick of the
+  100 Hz timer (≈100 FPS) while active, instead of sharing a 20 Hz gate with the
+  TUI; the lid/thermal probes keep their own 5-tick gate. The TUI (which draws
+  straight into VRAM) stays at ~20 Hz.
+
+### Notes
+- Verified in QEMU via the monitor (UEFI/OVMF, `sendkey 6` → Shell, `g u i ret`
+  → `gui`): `[serial] gui backbuffer 4000 KiB at 0xffffff0000400000`; two
+  screendumps 1 s apart differ in **832 of 1,024,000 pixels**, all inside the
+  (606,326)–(727,389) live-telemetry box — 99.92% of the screen byte-identical
+  proves the dirty-rect blit and kills flicker/tearing. `sendkey meta_l/meta_l/
+  meta_r` produced zero `KERNEL PANIC`/`FATAL` lines and ticks continued to
+  470 s.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.23 — GUI flicker fixed + Win-key panic hardened (2026-09-29)
 
 Field feedback on the v2.38.22 GUI was: the desktop flickers on the real panel

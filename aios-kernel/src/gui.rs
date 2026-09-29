@@ -8,17 +8,21 @@
 //! background, a left icon column (one tile per app), a bottom task bar and a
 //! z-ordered list of windows with a title bar, close button and draggable body.
 //!
-//! Rendering is damage-based: every change records a dirty rectangle and
-//! `render()` repaints only what intersects it (desktop background, then icons
-//! and the task bar strip, then every window whose rectangle overlaps, then the
-//! 8x8 arrow last), instead of redrawing the whole framebuffer every ~20 Hz —
-//! this is what removes the full-screen flicker on a real LCD panel. The live
-//! System/Uptime windows re-dirty themselves each render so their telemetry
-//! keeps refreshing at ~20 Hz while the static desktop stays untouched. Text
-//! uses the same PSF path as the TUI (`tui::draw_text`). Input comes from both
-//! key sources (PS/2 + USB-HID) via `handle_scancode` (Tab cycles focus, `Esc`
-//! closes / leaves, printable keys type into the focused `Welcome` window) and
-//! from the mouse via `on_mouse` (icon/close/task-bar clicks, title-bar drag).
+//! Rendering is double-buffered and damage-based: every change records a dirty
+//! rectangle and `render()` repaints only what intersects it (desktop
+//! background, then icons and the task bar strip, then every window whose
+//! rectangle overlaps, then the 8x8 arrow last) into a RAM backbuffer, then
+//! publishes the damaged rectangle to VRAM with a single `copy_nonoverlapping`
+//! per scanline. Idle frames therefore refresh only the live System/Uptime
+//! windows, the panel is never drawn incrementally (no flicker, no torn rows),
+//! and the static desktop stays untouched. The backbuffer is mapped once from
+//! the frame allocator on `enter()` and its absence degrades gracefully to
+//! direct-VRAM painting (never a panic). Text uses the same PSF path as the TUI
+//! (`tui::draw_text`). Input comes from both key sources (PS/2 + USB-HID) via
+//! `handle_scancode` (Tab cycles focus, `Esc` closes / leaves, printable keys
+//! type into the focused `Welcome` window) and from the mouse via `on_mouse`
+//! (icon/close/task-bar clicks, title-bar drag); the loop reads these through
+//! lock-free atomics and never blocks on `inb`/spin for input.
 
 use crate::framebuffer::{colors, Color, Framebuffer};
 use crate::interrupts::{TICKS, TIMER_HZ};
@@ -79,6 +83,17 @@ static mut CUR_VIS: bool = false;
 static mut LAST_BTNS: u8 = 0;
 static mut DRAG: Option<usize> = None;
 
+/// Base of the RAM backbuffer: a dense software frame the GUI renders into and
+/// then publishes to VRAM with a damage-aware `blit_region`. Sits in the spare
+/// PML4-slot gap between the kernel heap (ends at `HEAP_START + 2 MiB`) and the
+/// paging self-test page (`0xFFFF_FF00_1000_0000`), so it shares the paging
+/// hierarchy already built for the heap and never collides with it.
+const BACKBUF_BASE: u64 = 0xFFFF_FF00_0040_0000;
+/// Marks a failed/absent backbuffer (disables the double buffer for the boot).
+const BACKBUF_FAIL: u64 = u64::MAX;
+
+static mut BACK_BASE: u64 = 0;
+
 /// Axis-aligned damage rectangle (`x1`/`y1` exclusive) that the next
 /// `render()` has to repaint. Starts full-screen so the first frame paints
 /// everything; every mutation unions its affected region into it.
@@ -129,6 +144,71 @@ fn dirty_window(win: &Window) {
 /// Whether rectangle `(x, y, w, h)` overlaps the damage region.
 fn rect_overlaps(d: &Rect, x: usize, y: usize, w: usize, h: usize) -> bool {
     x.saturating_add(w) > d.x0 && y.saturating_add(h) > d.y0 && x < d.x1 && y < d.y1
+}
+
+/// Maps the RAM backbuffer once (frames are never freed), so painting happens
+/// off-screen and `render()` pushes only the dirty rectangle to VRAM. Uses the
+/// frame allocator directly instead of the kernel heap: the buffer for a
+/// 1920x1080 screen is ~8 MiB and growing the 2 MiB heap for it would starve
+/// every other allocation. On any failure the GUI silently falls back to the
+/// direct-VRAM path (`render()` handles a missing buffer) — no panic, no OOM
+/// risk during the whole uptime.
+fn ensure_backbuffer(fb: &Framebuffer) {
+    unsafe {
+        if *core::ptr::addr_of!(BACK_BASE) != 0 {
+            return;
+        }
+    }
+    let Some(bytes) = fb
+        .width()
+        .checked_mul(fb.height())
+        .and_then(|n| n.checked_mul(4))
+    else {
+        unsafe {
+            *core::ptr::addr_of_mut!(BACK_BASE) = BACKBUF_FAIL;
+        }
+        return;
+    };
+    let pages = bytes.div_ceil(crate::memory::PAGE_SIZE as usize);
+    for i in 0..pages {
+        let Some(frame) = crate::memory::alloc_frame() else {
+            unsafe {
+                *core::ptr::addr_of_mut!(BACK_BASE) = BACKBUF_FAIL;
+            }
+            return;
+        };
+        if crate::memory::map_page(
+            BACKBUF_BASE + i as u64 * crate::memory::PAGE_SIZE,
+            frame,
+            false,
+        )
+        .is_err()
+        {
+            unsafe {
+                *core::ptr::addr_of_mut!(BACK_BASE) = BACKBUF_FAIL;
+            }
+            return;
+        }
+    }
+    unsafe {
+        *core::ptr::addr_of_mut!(BACK_BASE) = BACKBUF_BASE;
+    }
+    crate::kprintln!(
+        "[serial] gui backbuffer {} KiB at {:#x}",
+        bytes / 1024,
+        BACKBUF_BASE
+    );
+}
+
+/// Wraps the mapped RAM backbuffer as a dense painting surface with the same
+/// pixel format as VRAM. `None` when the buffer is absent (allocation failed or
+/// not yet requested) — the caller then paints directly into VRAM.
+fn back_fb(vram: &Framebuffer) -> Option<Framebuffer> {
+    let base = unsafe { *core::ptr::addr_of!(BACK_BASE) };
+    if base == 0 || base == BACKBUF_FAIL {
+        return None;
+    }
+    Some(unsafe { Framebuffer::from_ram(base as *mut u8, vram.width(), vram.height(), vram) })
 }
 
 /// Whether the windowed GUI currently owns the screen.
@@ -279,6 +359,9 @@ fn open_or_focus(kind: WinKind) {
 pub fn enter() {
     if active() {
         return;
+    }
+    if let Some(fb) = console::framebuffer() {
+        ensure_backbuffer(fb);
     }
     open_or_focus(WinKind::Welcome);
     if window_count() == 1 {
@@ -526,81 +609,86 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
     }
 }
 
-/// Repaints only the regions dirtied since the last call: desktop background,
-/// then intersecting icons, the task-bar strip (redrawn whole if touched), then
-/// every window whose rectangle overlaps the damage (drawn bottom-up so the
-/// z-order stays correct), then the arrow last. Idle repaints are therefore
-/// limited to the live telemetry windows instead of the whole screen, which
-/// removes the full-screen flicker the old every-frame redraw caused on a real
-/// LCD panel.
+/// Repaints only the regions dirtied since the last call and then publishes
+/// them to the screen in one atomic push per dirty row.
+///
+/// Every draw primitive runs into the RAM backbuffer when it exists (a dense
+/// software frame with the same pixel format as VRAM); once the frame is
+/// painted, the damaged rectangle is blitted into the physical framebuffer with
+/// `blit_region` (a single `copy_nonoverlapping` per scanline). VRAM is
+/// therefore never drawn incrementally: the panel either sees the previous
+/// complete frame or the new complete one, which — together with the damage
+/// culling — removes both the full-screen flicker and torn rows. If the
+/// backbuffer is unavailable the renderer falls back to painting directly into
+/// VRAM (identical damage logic, v2.38.23 behaviour).
+///
+/// The partial path repaints desktop, then intersecting icons, the task-bar
+/// strip (redrawn whole if touched), then every window whose rectangle overlaps
+/// the damage (drawn bottom-up so the z-order stays correct), then the arrow
+/// last. Idle repaints are therefore limited to the live telemetry windows
+/// instead of the whole screen.
 pub fn render() {
-    let Some(fb) = console::framebuffer() else {
+    let Some(vram) = console::framebuffer() else {
         return;
     };
     let d = unsafe { *core::ptr::addr_of!(DIRTY) };
-    let full = d.x0 == 0 && d.y0 == 0 && d.x1 >= fb.width() && d.y1 >= fb.height();
-    if !full {
-        let w = d.x1.min(fb.width()).saturating_sub(d.x0);
-        let h = d.y1.min(fb.height()).saturating_sub(d.y0);
+    let full = d.x0 == 0 && d.y0 == 0 && d.x1 >= vram.width() && d.y1 >= vram.height();
+    let (rx0, ry0, rw) = if full {
+        (0usize, 0usize, vram.width())
+    } else {
+        let w = d.x1.min(vram.width()).saturating_sub(d.x0);
+        let h = d.y1.min(vram.height()).saturating_sub(d.y0);
         if w == 0 || h == 0 {
             mark_live_dirty();
             return;
         }
-        unsafe {
-            fb.fill_rect(d.x0, d.y0, w, h, DESK_BG);
-        }
-        draw_icons(fb, &d);
-        let task_y = fb.height().saturating_sub(TASKBAR_H);
-        if rect_overlaps(&d, 0, task_y, fb.width(), TASKBAR_H) {
-            draw_taskbar(fb);
-        }
-        for i in 0..MAX_WINS {
-            let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
-            if let Some(win) = win {
-                if rect_overlaps(&d, win.x, win.y, win.w, win.h) {
-                    draw_window(fb, win);
-                }
+        (d.x0, d.y0, w)
+    };
+    let rh = if full {
+        vram.height()
+    } else {
+        d.y1.min(vram.height()).saturating_sub(d.y0)
+    };
+    let back = back_fb(vram);
+    let target: &Framebuffer = back.as_ref().unwrap_or(vram);
+    unsafe {
+        target.fill_rect(rx0, ry0, rw, rh, DESK_BG);
+    }
+    draw_icons(target, &d);
+    let task_y = vram.height().saturating_sub(TASKBAR_H);
+    if full || rect_overlaps(&d, 0, task_y, vram.width(), TASKBAR_H) {
+        draw_taskbar(target);
+    }
+    for i in 0..MAX_WINS {
+        let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
+        if let Some(win) = win {
+            if full || rect_overlaps(&d, win.x, win.y, win.w, win.h) {
+                draw_window(target, win);
             }
         }
-        unsafe {
-            if *core::ptr::addr_of!(CUR_VIS)
-                && rect_overlaps(
+    }
+    unsafe {
+        if *core::ptr::addr_of!(CUR_VIS)
+            && (full
+                || rect_overlaps(
                     &d,
                     *core::ptr::addr_of!(CUR_X),
                     *core::ptr::addr_of!(CUR_Y),
                     8,
                     8,
-                )
-            {
-                tui::paint_cursor(
-                    fb,
-                    *core::ptr::addr_of!(CUR_X),
-                    *core::ptr::addr_of!(CUR_Y),
-                    true,
-                );
-            }
+                ))
+        {
+            tui::paint_cursor(
+                target,
+                *core::ptr::addr_of!(CUR_X),
+                *core::ptr::addr_of!(CUR_Y),
+                true,
+            );
         }
-    } else {
+    }
+    if let Some(back) = back.as_ref() {
         unsafe {
-            fb.fill_rect(0, 0, fb.width(), fb.height(), DESK_BG);
-        }
-        draw_icons(fb, &d);
-        draw_taskbar(fb);
-        for i in 0..MAX_WINS {
-            let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
-            if let Some(win) = win {
-                draw_window(fb, win);
-            }
-        }
-        unsafe {
-            if *core::ptr::addr_of!(CUR_VIS) {
-                tui::paint_cursor(
-                    fb,
-                    *core::ptr::addr_of!(CUR_X),
-                    *core::ptr::addr_of!(CUR_Y),
-                    true,
-                );
-            }
+            vram.blit_region(back, rx0, ry0, rx0 + rw, ry0 + rh);
         }
     }
     unsafe {
@@ -873,7 +961,7 @@ fn draw_about(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
         fb,
         x,
         y,
-        "no GPU/no compositor: software text + rects",
+        "RAM backbuffer + dirty-rect blit to VRAM",
         TEXT_DIM,
         WIN_BG,
         max_px,

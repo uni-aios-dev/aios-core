@@ -696,9 +696,17 @@ focused) returns to the console/TUI.
 - **Repaint (v2.38.23)**: rendering is damage-based — discrete actions
   (open/close/focus/leave) repaint the whole frame once, while continuous paths
   (cursor, drag, the live System/Uptime windows) refresh only their own dirty
-  rectangles at ~20 Hz; an idle frame never rewrites the framebuffer (no LCD
+  rectangles; an idle frame never rewrites the framebuffer (no LCD
   flicker). The IRQ timer bar (top-right, ~100 Hz) is suppressed while the GUI
   owns the screen.
+- **Double buffer + 60 FPS (v2.38.24)**: all drawing paints into a RAM
+  backbuffer (`[serial] gui backbuffer NNNN KiB` on entry); each frame only the
+  dirty rectangle is published to the panel, one row copy at a time — the LCD
+  sees only complete frames, so there is no tearing and no mouse trail. The GUI
+  repaints every tick of the 100 Hz timer (≈100 FPS) instead of the old 20 Hz
+  gate, which makes the live telemetry smooth while the static desktop stays
+  byte-identical. If the backbuffer cannot be mapped the GUI degrades to the
+  v2.38.23 direct-VRAM renderer automatically.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

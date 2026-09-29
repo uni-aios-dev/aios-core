@@ -73,6 +73,34 @@
   confined to the dirty region); `sendkey meta_l` + `meta_r` produced zero
   `KERNEL PANIC`/`FATAL` lines and `[serial] tick` kept advancing (496 s).
 
+## RESOLVED (v2.38.24): residual tearing / partial frames on the panel
+
+- **Status:** RESOLVED in v2.38.24 (true double buffering + dirty-rect publish).
+- **Symptom:** with damage-based repaint (v2.38.23) the panel was still written
+  straight to VRAM in several passes per frame, so a panel refresh that scanned
+  mid-render could still catch half-painted rows (tearing), and the fixed ~20 Hz
+  cadence made live telemetry visibly stepped.
+- **Root cause / fix:** rendering is now two-stage. All painting runs into a RAM
+  backbuffer (`Framebuffer::from_ram`, dense same-format surface) that holds the
+  complete desktop; only after the frame is fully painted is the damage rectangle
+  published to VRAM by `Framebuffer::blit_region` — exactly one
+  `copy_nonoverlapping` per scanline. The panel therefore only ever scans a
+  complete previous frame or a complete new one: no flicker, no torn rows.
+  `idle_loop` drives the GUI on its own every-tick (≈100 FPS) gate instead of the
+  shared 20 Hz gate.
+- **Known tradeoff:** the backbuffer pins screen-size RAM for the whole uptime
+  (4 MiB at 1280×800; ~8 MiB at 1920×1080; allocated from the frame allocator,
+  never freed — consistent with the bump allocator). On tiny-memory systems the
+  map may fail: `ensure_backbuffer` then sets `BACKBUF_FAIL` and the GUI degrades
+  to the v2.38.23 direct-VRAM renderer with the same damage logic (logged
+  `[serial] gui backbuffer …` only on success).
+- **Verification:** QEMU monitor smoke (UEFI/OVMF) logs
+  `[serial] gui backbuffer 4000 KiB at 0xffffff0000400000`; two screendumps 1 s
+  apart differ in only 832 of 1,024,000 pixels, all inside the live-telemetry
+  box (606,326)–(727,389) — 99.92% byte-identical, i.e. no full-frame redraw and
+  no partial rows; `sendkey meta_l/meta_l/meta_r` produced zero panic lines and
+  `[serial] tick` advanced to 470 s.
+
 ## OPEN (v2.38.22): kernel GUI is a demo desktop — no client windows, no resize
 
 The windowed GUI (`gui` command) is functionally complete for a demo but is
