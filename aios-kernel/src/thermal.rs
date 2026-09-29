@@ -9,8 +9,8 @@
 //! TUI still exercise the full path. [`critical`] drives the scheduler: while
 //! the temperature is at or above the threshold, ring-3 user tasks are paused.
 
-use core::sync::atomic::{AtomicBool, AtomicI16, AtomicU8, Ordering};
 use crate::kprintln;
+use core::sync::atomic::{AtomicBool, AtomicI16, AtomicU8, Ordering};
 
 /// Protection gate: temperatures at or above this pause ring-3 tasks.
 pub const THRESHOLD_C: i16 = 90;

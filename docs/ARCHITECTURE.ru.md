@@ -1368,6 +1368,20 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   очищает). Текст панели рендерится через парсер `psf` (`ensure_font()`
   разбирает загрузочный синтезированный PSF2-поток в кэшированный шрифт) с
   таблицей `font8x8` как фолбэком.
+- `gui` — оконный рабочий стол (v2.38.22): полноэкранная альтернатива
+  консоли/TUI, запускается из шелла ядра командой `gui` (возврат — `tui` или
+  `Esc` без сфокусированного окна). Пока `gui::active()`, путь `vprintln!`
+  консоли обходится и heartbeat приостанавливается. Владеет фоном рабочего
+  стола, левой колонкой иконок (System / Uptime / About, по одному экземпляру
+  приложения на вид в статических слотах `MAX_WINS = 8`), нижним таскбаром и
+  списком окон в z-порядке (строка заголовка, кнопка закрытия, перемещаемое
+  тело), рисуется PSF-текстовыми хелперами TUI (`draw_text`/`draw_glyph`/
+  `paint_cursor`, `pub(crate)`). Ввод: `Tab` циклит фокус, `Esc` закрывает/
+  выходит, печатные клавиши печатают в сфокусированное окно; клики мыши
+  открывают/фокусируют/закрывают/перетаскивают. `render()` — полный repaint
+  кадра ~20 Гц из `idle_loop` плюс немедленный repaint после каждого репорта
+  мыши, стрелка рисуется последней. Окно System переиспользует
+  `tui::tick_mode()`/`lid_state()` и `VERSION`.
 - `main` — читает ответы framebuffer/rsdp/hhdm Limine, выполняет self-check чтения framebuffer, фильтрует карту памяти в `[MemRegion; 64]`, затем инициализирует память и кучу, GDT/TSS (с перезагрузкой CS/SS), IDT, PIC и PIT, поднимает LAPIC-таймер (`lapic::init()`) и маскирует PIT IRQ0, когда тот жив, `sti`, печатает на экран показания живости `[probe] irq32_seen/ticks delta`, перечисляет шину PCI и поднимает драйверы хранилища AHCI и NVMe (после `sti`, чтобы исключения обрабатывались), планирует kernel worker и три ring-3 задачи, объявляет атомарные статики статуса драйверов `G_AHCI`/`G_NVME`/`G_XHCI` (проставляются init-кодом драйверов) и входит в `idle_loop`, где работают квадрат heartbeat и `tui::render()`. В serial логирует селекторы передачи от Limine (`boot selectors cs/ss/ds`) и выбранный источник тиков (`timer=LAPIC|PIT`). С v2.38.13 раздел framebuffer дополнительно логирует виртуальный адрес и `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), выполняет `write_volatile`-тест `direct_test` со `sfence` и readback пикселя (0, 0) плюс OK-зелёную пробу, затем `psf_check()` синтезирует PSF2-поток из `font8x8::BASIC`, парсит его обратно, проверяет round-trip глифа 'A' и рисует его в центре нижней полосы экрана.
   - Panic-обработчик печатает в framebuffer-консоль и serial, затем уходит в `halt_loop`.
 - `aios-kernel-run`: собирает ядро (`cargo build --target x86_64-unknown-none --release`), раскладывает дерево Limine ISO (`boot/aios-kernel`, `boot/limine.conf`, CD-стадии Limine BIOS/UEFI, `EFI/BOOT/BOOTX64.EFI`), создаёт гибридный ISO через `xorriso` + `limine bios-install` и байт-в-байт идентичный USB-образ `out\aios-kernel-usb.img` (isohybrid — загружается на legacy BIOS через MBR Limine и на UEFI через ESP). Грузит в QEMU — по умолчанию UEFI/OVMF (настоящий GOP), иначе legacy BIOS; `AIOS_QEMU_USB=1` подключает USB-образ как mass-storage вместо CD-ROM. Переопределения: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.

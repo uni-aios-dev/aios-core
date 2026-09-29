@@ -8,8 +8,8 @@
 //! and the TUI shows a scanning state. Boards without an answering EC stay
 //! inactive and the status is "n/a".
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::kprintln;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Number of EC RAM offsets re-checked per poll cycle.
 const SCAN_WINDOW: usize = 8;
@@ -64,10 +64,7 @@ pub fn init() {
         #[allow(static_mut_refs)]
         let n = crate::ec::probe();
         if n < 16 {
-            kprintln!(
-                "[serial] [lid] ec unresponsive ({} bytes), lid n/a",
-                n
-            );
+            kprintln!("[serial] [lid] ec unresponsive ({} bytes), lid n/a", n);
             ACTIVE.store(false, Ordering::Relaxed);
             return;
         }
@@ -94,7 +91,10 @@ pub fn poll() {
         if KNOWN.load(Ordering::Relaxed) {
             let off = CAND_OFFSET.load(Ordering::Relaxed) as u8;
             if let Some(v) = crate::ec::read_ram(off) {
-                LID_OPEN.store(((v >> CAND_BIT.load(Ordering::Relaxed)) & 1) != 0, Ordering::Relaxed);
+                LID_OPEN.store(
+                    ((v >> CAND_BIT.load(Ordering::Relaxed)) & 1) != 0,
+                    Ordering::Relaxed,
+                );
             }
             return;
         }

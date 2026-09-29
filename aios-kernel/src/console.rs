@@ -235,6 +235,9 @@ pub fn rows() -> usize {
 /// Uses try_lock to avoid deadlock when called from interrupt context.
 pub fn print(args: fmt::Arguments) {
     use core::fmt::Write;
+    if crate::gui::active() {
+        return;
+    }
     if !CONSOLE_LOCK.try_lock() {
         return;
     }
@@ -247,6 +250,9 @@ pub fn print(args: fmt::Arguments) {
 /// the `SYS_WRITE` syscall so a user program cannot corrupt the console).
 /// Uses try_lock to avoid deadlock when called from interrupt context.
 pub fn write_bytes(bytes: &[u8]) {
+    if crate::gui::active() {
+        return;
+    }
     if !CONSOLE_LOCK.try_lock() {
         return;
     }

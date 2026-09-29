@@ -7,9 +7,9 @@
 //! a board without an EC (e.g. QEMU's default machine, whose unused port reads
 //! back 0xFF) reports `active = false` instead of hanging the kernel.
 
+use crate::kprintln;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
-use crate::kprintln;
 
 /// EC data port selected by the last RD_EC address write.
 const EC_DATA: u16 = crate::acpi::EC_DATA_PORT;
@@ -97,13 +97,14 @@ pub fn probe() -> usize {
     let mut buf = [0u8; 256];
     let n = dump_full(&mut buf);
     if n == 0 {
-        kprintln!("[serial] [ec] no response on 0x{:02x}/0x{:02x}", EC_DATA, EC_STATUS);
+        kprintln!(
+            "[serial] [ec] no response on 0x{:02x}/0x{:02x}",
+            EC_DATA,
+            EC_STATUS
+        );
         return 0;
     }
-    kprintln!(
-        "[serial] [ec] active, {} bytes of EC RAM captured",
-        n
-    );
+    kprintln!("[serial] [ec] active, {} bytes of EC RAM captured", n);
     for (row, chunk) in buf.chunks(16).enumerate() {
         let mut line = alloc::format!("[serial] [ec] {:04x}:", row * 16);
         for b in chunk {

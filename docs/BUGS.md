@@ -35,6 +35,28 @@
 - **Workaround (pre-fix):** move the mouse; the cursor reappears. The
   serial/input path was unaffected.
 
+## OPEN (v2.38.22): kernel GUI is a demo desktop — no damage repaint, no client windows, no resize
+
+The windowed GUI (`gui` command) is functionally complete for a demo but is
+explicitly a first step:
+
+- **Full-frame repaint every ~50 ms** — `gui::render()` redraws the whole
+  framebuffer (desktop + icons + task bar + all windows) on every cadence tick
+  and after every mouse report. On a slow panel this may flicker; a
+  backframebuffer + per-window damage regions are planned (TODO, GUI
+  roadmap).
+- **Windows are kernel-internal only** — ring-3 processes cannot create or
+  present windows. A `SYS_GUI` style syscall (or a kernel window server over
+  the IPC bus) plus a compositor is needed for real applications.
+- **No resize/minimize/maximize** — windows are fixed-size and can move/close/
+  focus only. Task bar buttons allow focusing opaque windows (no minimized
+  state).
+- **One instance per window kind** — `MAX_WINS = 8` static slots, z-order
+  shuffles slots; multi-instance apps (two Welcome windows) are not supported.
+- No widgets, no scalable font, no UTF-8 text input beyond ASCII, no clipboard.
+
+Watch: typing is ASCII-only (PSF 8x8 glyph path). Non-ASCII input lands as '?'
+
 ## OPEN (v2.38.20): lid heuristic must be calibrated from the MSI EC RAM dump
 - **Status:** OPEN — board-specific constants pending real-hardware boot
 - **Symptom:** `lid.rs` pins the lid switch by scanning the ACPI EC RAM for the

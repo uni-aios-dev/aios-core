@@ -653,7 +653,7 @@ input.
 | 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
 | 4 | IPC | total send/recv, per-task mailbox occupancy |
 | 5 | Storage | AHCI/NVMe controller + LBA-read state (`none`/`error`/`ready`/`ready+rw`), MMIO window bytes used |
-| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`) |
+| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`) |
 | 7 | About | version banner, controls help |
 
 ### Input
@@ -666,6 +666,34 @@ input.
   the command, `Backspace` (0x0E) edits, `Esc` (0x01) clears the line.
 - Keys consumed by the TUI are kept out of the console echo; unconsumed keys
   still print `[key] …` / `usb key …` to the console and serial as before.
+
+### Windowed GUI (`gui` command, v2.38.22)
+
+The kernel shell command `gui` switches the whole screen from the console+TUI to
+a full-screen windowed desktop (`src/gui.rs`). `tui` (or `Esc` with no window
+focused) returns to the console/TUI.
+
+- **Desktop layout**: background, left icon column (System / Uptime / About),
+  bottom task bar with one button per open window.
+- **Windows**: title bar (focused = bright blue, unfocused = dimmed), a close
+  `X` button and live content:
+  - *Welcome* — types the message line; shows the control help.
+  - *System* — the same telemetry as the TUI System tab (tick, tick mode,
+    switches, IPC totals, temperature, lid, PS/2/USB counters, allocated frames).
+  - *Uptime* — `HH:MM:SS` clock with the tick counter.
+  - *About* — version banner (open via its icon).
+- **Input**:
+  - Mouse: click an icon to open (or focus) that window; click a window body or
+    task-bar button to focus; drag a title bar to move (clamped to the bounds);
+    click `X` to close; click the desktop background clears the drag.
+  - Keyboard: `Tab` cycles window focus; `Esc` closes the focused window and,
+    with no windows left, returns to the TUI; printable keys (incl. after
+    `Enter`) type into the focused window.
+- **Behaviour**: one instance per window kind; full-frame repaint at ~20 Hz with
+  a repaint after every mouse report; the arrow composites last. While the GUI
+  is active the kernel log (`vprintln!`) and heartbeat pause — the desktop owns
+  the screen; serial logging keeps running so `[serial] tick …` still proves
+  liveness.
 
 Text is rendered on the PSF path across the whole panel: the embedded
 synthesized PSF2 stream (round-trip validated at boot) is parsed back and used

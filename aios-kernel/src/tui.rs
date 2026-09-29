@@ -33,13 +33,12 @@ pub fn panel_rows() -> usize {
     let total = console::framebuffer()
         .map(|fb| fb.height() / console::GLYPH_H)
         .unwrap_or(0);
-    total
-        .saturating_sub(1 + console::rows())
-        .max(4)
+    total.saturating_sub(1 + console::rows()).max(4)
 }
 
-/// Version banner shown on the About tab and the status bar.
-const VERSION: &str = "AIOS kernel v2.38.21";
+/// Version banner shown on the About tab, the status bar, the `ver` shell
+/// command and the GUI About window.
+pub(crate) const VERSION: &str = "AIOS kernel v2.38.22";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -98,7 +97,7 @@ fn glyph_bits(byte: u8) -> [u8; 8] {
 
 /// Paints one glyph cell at pixel `(px, py)`, scaling the 8x8 bitmap by the
 /// console `SCALE`.
-fn draw_glyph(fb: &Framebuffer, px: usize, py: usize, byte: u8, fg: Color, bg: Color) {
+pub(crate) fn draw_glyph(fb: &Framebuffer, px: usize, py: usize, byte: u8, fg: Color, bg: Color) {
     unsafe {
         fb.fill_rect(px, py, console::GLYPH_W, console::GLYPH_H, bg);
     }
@@ -123,7 +122,7 @@ fn draw_glyph(fb: &Framebuffer, px: usize, py: usize, byte: u8, fg: Color, bg: C
 /// Draws an ASCII string glyph by glyph, clearing each cell to `bg` first so
 /// stale previous-frame digits cannot leak. `max_px` bounds the right edge so
 /// the string cannot reach the tick bar's column.
-fn draw_text(
+pub(crate) fn draw_text(
     fb: &Framebuffer,
     x: usize,
     y: usize,
@@ -184,6 +183,8 @@ fn run_command(cmd: &str) -> Vec<String> {
             "  ver        version banner".to_string(),
             "  clear      clear log".to_string(),
             "  echo TEXT  echo text".to_string(),
+            "  gui        enter windowed GUI mode".to_string(),
+            "  tui        leave GUI, return to this console".to_string(),
         ],
         "tabs" => vec![
             "1 System  2 Sched  3 USB  4 IPC".to_string(),
@@ -204,6 +205,17 @@ fn run_command(cmd: &str) -> Vec<String> {
         }
         "ver" => vec![VERSION.to_string()],
         "clear" => Vec::new(),
+        "gui" => {
+            crate::gui::enter();
+            vec![
+                "entering windowed GUI (desktop + windows)".to_string(),
+                "Esc with no window focused returns to this console".to_string(),
+            ]
+        }
+        "tui" => {
+            crate::gui::leave();
+            vec!["returned to the console/TUI".to_string()]
+        }
         _ => {
             if cmd == "echo" {
                 vec![String::new()]
@@ -267,7 +279,7 @@ static mut CURSOR_Y0: usize = 0;
 static mut CURSOR_INIT: bool = false;
 static mut PREV_BTNS: u8 = 0;
 
-fn paint_cursor(fb: &Framebuffer, x: usize, y: usize, on: bool) {
+pub(crate) fn paint_cursor(fb: &Framebuffer, x: usize, y: usize, on: bool) {
     let color = if on { colors::FG } else { colors::BG };
     for (row, mask) in MOUSE_PIXELS.iter().enumerate() {
         for col in 0..8usize {
@@ -302,7 +314,12 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
         let nx = (*px as i32 + dx).clamp(0, max_x) as usize;
         let ny = (*py as i32 + dy).clamp(0, max_y) as usize;
         if nx != *px || ny != *py {
-            paint_cursor(fb, *core::ptr::addr_of!(CURSOR_X0), *core::ptr::addr_of!(CURSOR_Y0), false);
+            paint_cursor(
+                fb,
+                *core::ptr::addr_of!(CURSOR_X0),
+                *core::ptr::addr_of!(CURSOR_Y0),
+                false,
+            );
             paint_cursor(fb, nx, ny, true);
             *core::ptr::addr_of_mut!(CURSOR_X0) = nx;
             *core::ptr::addr_of_mut!(CURSOR_Y0) = ny;
@@ -328,7 +345,9 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
     }
 }
 
-fn tick_mode() -> &'static str {
+/// Tick source label for the System tab / GUI window: `HW-LAPIC`, `HW-IRQ` or
+/// `SOFT`.
+pub(crate) fn tick_mode() -> &'static str {
     if crate::lapic::active() {
         "HW-LAPIC"
     } else if IRQ32_SEEN.load(Ordering::Relaxed) {
@@ -340,7 +359,7 @@ fn tick_mode() -> &'static str {
 
 /// Lid state for the status bar: `--` no EC, `?` scanning, `0`/`1` candidate
 /// bit value once a transition was observed (polarity is board-specific).
-fn lid_state() -> &'static str {
+pub(crate) fn lid_state() -> &'static str {
     if !crate::lid::active() {
         "--"
     } else if crate::lid::known() {
@@ -491,14 +510,7 @@ pub fn render() {
 }
 
 /// Draws one text line and advances the row cursor; stops past the panel.
-fn line(
-    fb: &Framebuffer,
-    y: &mut usize,
-    x: usize,
-    text: &str,
-    color: Color,
-    max_px: usize,
-) {
+fn line(fb: &Framebuffer, y: &mut usize, x: usize, text: &str, color: Color, max_px: usize) {
     if *y + console::GLYPH_H <= tab_bar_y() + panel_rows() * console::GLYPH_H {
         draw_text(fb, x, *y, text, color, PANEL_BG, max_px);
     }
@@ -508,12 +520,24 @@ fn line(
 fn render_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     let (sent, recv) = syscalls::stats();
     let ticks = TICKS.load(Ordering::Relaxed);
-    line(fb, y, 0, &format!("AIOS MICROKERNEL - {}", VERSION), ACCENT, max_px);
     line(
         fb,
         y,
         0,
-        &format!("uptime {}s  ticks={}  clock={}", ticks / TIMER_HZ, ticks, tick_mode()),
+        &format!("AIOS MICROKERNEL - {}", VERSION),
+        ACCENT,
+        max_px,
+    );
+    line(
+        fb,
+        y,
+        0,
+        &format!(
+            "uptime {}s  ticks={}  clock={}",
+            ticks / TIMER_HZ,
+            ticks,
+            tick_mode()
+        ),
         colors::FG,
         max_px,
     );
@@ -547,7 +571,14 @@ fn render_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         colors::FG,
         max_px,
     );
-    line(fb, y, 0, "keys: 1-7 switch tabs | left-click tab | 6=Shell", TEXT_DIM, max_px);
+    line(
+        fb,
+        y,
+        0,
+        "keys: 1-7 switch tabs | left-click tab | 6=Shell",
+        TEXT_DIM,
+        max_px,
+    );
 }
 
 fn render_sched(fb: &Framebuffer, y: &mut usize, max_px: usize) {
@@ -556,7 +587,11 @@ fn render_sched(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         fb,
         y,
         0,
-        &format!("switches={}  current=pid{}", sched::switch_count(), sched::current_pid()),
+        &format!(
+            "switches={}  current=pid{}",
+            sched::switch_count(),
+            sched::current_pid()
+        ),
         colors::FG,
         max_px,
     );
@@ -660,7 +695,14 @@ fn render_storage(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         colors::FG,
         max_px,
     );
-    line(fb, y, 0, "block I/O drivers (ahci/nvme) are wired to the console 0x10-mmio probe", TEXT_DIM, max_px);
+    line(
+        fb,
+        y,
+        0,
+        "block I/O drivers (ahci/nvme) are wired to the console 0x10-mmio probe",
+        TEXT_DIM,
+        max_px,
+    );
 }
 
 fn ctl_str(v: i32) -> &'static str {
@@ -680,12 +722,40 @@ fn render_shell(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         line(fb, y, 0, entry, colors::FG, max_px);
     }
     line(fb, y, 0, &format!("> {}", s.input), ACCENT, max_px);
-    line(fb, y, 0, "Enter=run  Backspace=edit  Esc=clear", TEXT_DIM, max_px);
+    line(
+        fb,
+        y,
+        0,
+        "Enter=run  Backspace=edit  Esc=clear",
+        TEXT_DIM,
+        max_px,
+    );
 }
 
 fn render_about(fb: &Framebuffer, y: &mut usize, max_px: usize) {
     line(fb, y, 0, VERSION, ACCENT, max_px);
-    line(fb, y, 0, "microkernel TUI on PSF glyphs (synth PSF2, round-trip parsed)", colors::FG, max_px);
-    line(fb, y, 0, "tabs: 1 System / 2 Sched / 3 USB / 4 IPC / 5 Storage / 6 Shell / 7 About", colors::FG, max_px);
-    line(fb, y, 0, "mouse: move arrow, left-click a tab to switch; keys also drive the panel", TEXT_DIM, max_px);
+    line(
+        fb,
+        y,
+        0,
+        "microkernel TUI on PSF glyphs (synth PSF2, round-trip parsed)",
+        colors::FG,
+        max_px,
+    );
+    line(
+        fb,
+        y,
+        0,
+        "tabs: 1 System / 2 Sched / 3 USB / 4 IPC / 5 Storage / 6 Shell / 7 About",
+        colors::FG,
+        max_px,
+    );
+    line(
+        fb,
+        y,
+        0,
+        "mouse: move arrow, left-click a tab to switch; keys also drive the panel",
+        TEXT_DIM,
+        max_px,
+    );
 }

@@ -10,6 +10,7 @@ mod ec;
 mod font8x8;
 mod framebuffer;
 mod gdt;
+mod gui;
 mod heap;
 mod idt;
 mod interrupts;
@@ -795,33 +796,39 @@ pub fn idle_loop() -> ! {
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
         }
-        // TUI dashboard: repaint the interactive panel at ~20 Hz (every 5
-        // ticks) so tab/status/clock state stays live while keys and the USB
-        // mouse are handled below. The lid and thermal probes refresh at the
-        // same cadence (cheap: a few EC/MSR reads per call).
+        // Monitor: (a) either the TUI panel or the windowed GUI is repainted
+        // at ~20 Hz (every 5 ticks), (b) the lid and thermal probes refresh at
+        // the same cadence (cheap: a few EC/MSR reads per call).
         if ticks >= interrupts::TIMER_HZ && ticks - last_tui_render >= 5 {
             lid::poll();
             thermal::poll();
-            tui::render();
+            if gui::active() {
+                gui::render();
+            } else {
+                tui::render();
+            }
             last_tui_render = ticks;
         }
         // Hardware heartbeat: toggles the bottom-right probe square (direct
         // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if
         // the lock-based console is wedged. Toggles at 2 Hz (every half-second
         // tick boundary); a per-iteration toggle would run at ~100 Hz and
-        // integrate into a steady fill that looks "not blinking".
+        // integrate into a steady fill that looks "not blinking". Paused while
+        // the windowed GUI owns the screen (its desktop covers the strip).
         unsafe {
-            if let Some(fb) = crate::console::framebuffer() {
-                static mut HB_ON: bool = false;
-                static mut HB_PHASE: u64 = u64::MAX;
-                let phase = ticks / (interrupts::TIMER_HZ / 2);
-                if phase != HB_PHASE {
-                    HB_PHASE = phase;
-                    HB_ON = !HB_ON;
-                    let c = if HB_ON { colors::OK } else { colors::BG };
-                    let bx = fb.width().saturating_sub(8);
-                    let by = fb.height().saturating_sub(8);
-                    fb.fill_rect(bx, by, 8, 8, c);
+            if !gui::active() {
+                if let Some(fb) = crate::console::framebuffer() {
+                    static mut HB_ON: bool = false;
+                    static mut HB_PHASE: u64 = u64::MAX;
+                    let phase = ticks / (interrupts::TIMER_HZ / 2);
+                    if phase != HB_PHASE {
+                        HB_PHASE = phase;
+                        HB_ON = !HB_ON;
+                        let c = if HB_ON { colors::OK } else { colors::BG };
+                        let bx = fb.width().saturating_sub(8);
+                        let by = fb.height().saturating_sub(8);
+                        fb.fill_rect(bx, by, 8, 8, c);
+                    }
                 }
             }
         }
@@ -848,7 +855,12 @@ pub fn idle_loop() -> ! {
         if sc != last_scancode {
             last_scancode = sc;
             if sc & 0x80 == 0 {
-                if tui::handle_scancode(sc as u8) {
+                let consumed = if gui::active() {
+                    gui::handle_scancode(sc as u8)
+                } else {
+                    tui::handle_scancode(sc as u8)
+                };
+                if consumed {
                     continue;
                 }
                 if let Some(c) = interrupts::scancode_to_char(sc as u8) {
@@ -864,7 +876,12 @@ pub fn idle_loop() -> ! {
         if usb_seq != last_usb_seq {
             last_usb_seq = usb_seq;
             let usb_sc = xhci::KEY_SCANCODE.load(Ordering::Relaxed);
-            if !tui::handle_scancode(usb_sc as u8) {
+            let consumed = if gui::active() {
+                gui::handle_scancode(usb_sc as u8)
+            } else {
+                tui::handle_scancode(usb_sc as u8)
+            };
+            if !consumed {
                 if let Some(c) = interrupts::scancode_to_char(usb_sc as u8) {
                     vprintln!("[usb-key] '{}' (0x{:02x})", c, usb_sc);
                     kprintln!("[serial] usb key '{}' (0x{:02x})", c, usb_sc);
@@ -879,7 +896,12 @@ pub fn idle_loop() -> ! {
         if ps2_seq != last_ps2_seq {
             last_ps2_seq = ps2_seq;
             let ps2_sc = ps2::key_scancode();
-            if !tui::handle_scancode(ps2_sc as u8) {
+            let consumed = if gui::active() {
+                gui::handle_scancode(ps2_sc as u8)
+            } else {
+                tui::handle_scancode(ps2_sc as u8)
+            };
+            if !consumed {
                 if let Some(c) = interrupts::scancode_to_char(ps2_sc as u8) {
                     vprintln!("[ps2-key] '{}' (0x{:02x})", c, ps2_sc);
                     kprintln!("[serial] ps2 key '{}' (0x{:02x})", c, ps2_sc);
@@ -899,11 +921,17 @@ pub fn idle_loop() -> ! {
                 last_mouse_buttons = buttons;
                 vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
                 kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
-                // Hand the report to the interactive TUI (moves + repaints the
-                // arrow, switches tabs on a click) and then redraw the panel
-                // so the arrow is freshly composited over it.
-                tui::on_mouse(dx, dy, buttons);
-                tui::render();
+                // Hand the report to the screen owner (interactive TUI moves +
+                // repaints the arrow and switches tabs on a click; the windowed
+                // GUI drives icons/windows) and then redraw so the arrow is
+                // freshly composited over it.
+                if gui::active() {
+                    gui::on_mouse(dx, dy, buttons);
+                    gui::render();
+                } else {
+                    tui::on_mouse(dx, dy, buttons);
+                    tui::render();
+                }
             }
         }
         // PS/2 pointer (native laptop touchpad in PS/2 mode): same wiring as
@@ -916,10 +944,27 @@ pub fn idle_loop() -> ! {
             let buttons = ps2::mouse_buttons() as u8;
             if dx != 0 || dy != 0 || buttons != last_ps2m_buttons {
                 last_ps2m_buttons = buttons;
-                vprintln!("[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}", ps2::mouse_id(), buttons, dx, dy);
-                kprintln!("[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}", ps2::mouse_id(), buttons, dx, dy);
-                tui::on_mouse(dx, dy, buttons);
-                tui::render();
+                vprintln!(
+                    "[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}",
+                    ps2::mouse_id(),
+                    buttons,
+                    dx,
+                    dy
+                );
+                kprintln!(
+                    "[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}",
+                    ps2::mouse_id(),
+                    buttons,
+                    dx,
+                    dy
+                );
+                if gui::active() {
+                    gui::on_mouse(dx, dy, buttons);
+                    gui::render();
+                } else {
+                    tui::on_mouse(dx, dy, buttons);
+                    tui::render();
+                }
             }
         }
         // Park the CPU. With the PIT IRQ arriving (legacy PIC alive) a plain

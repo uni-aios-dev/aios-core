@@ -1,5 +1,51 @@
 # AIOS Development Log
 
+## v2.38.22 — Windowed kernel GUI: `gui` shell command opens a desktop (2026-09-29)
+
+A full-screen windowed GUI joins the microkernel on top of the console/TUI. The
+kernel shell gains a `gui` command (`src/gui.rs`, `v2.38.21 → v2.38.22`): the
+whole screen switches to a desktop with an icon column, a bottom task bar and a
+z-ordered window list (title bar + close button + draggable body). Three live
+windows open on entry — Welcome (types the message line), System (the kernel
+telemetry from the TUI System tab) and Uptime (HH:MM:SS clock) — plus an About
+window reachable from its icon. Return to the console/TUI via the `tui` command
+or `Esc` with no window focused.
+
+### Added
+- `gui.rs` — windowed desktop: `enter()`/`leave()`/`active()`, full-frame
+  `render()` (desktop, icons, task bar, windows, arrow last) at the same ~20 Hz
+  cadence as the TUI, `handle_scancode` (`Tab` cycles focus, `Esc` closes /
+  leaves, printable keys type into the focused window), `on_mouse` (icon open /
+  close button / task-bar focus / title-bar drag with clamping). One app instance
+  per kind, z-order via slot shifting, static window slots (`MAX_WINS = 8`),
+  cursor state owned by the GUI. Reuses the TUI's PSF text path (the `draw_text`
+  / `draw_glyph` / `paint_cursor` helpers are now `pub(crate)`).
+- `tui.rs` — shell commands `gui` (enter GUI) and `tui` (leave GUI); `help`
+  lists them; `VERSION`, `tick_mode()`, `lid_state()` made `pub(crate)` for the
+  GUI System window.
+- `main.rs` — `mod gui`; `idle_loop` routes keys and mouse to `gui::*` while the
+  GUI owns the screen (and redraws `gui::render()` instead of `tui::render()`);
+  the heartbeat square pauses while the GUI is active (its desktop covers the
+  strip).
+- `console.rs` — `print` / `write_bytes` return early while the GUI is active so
+  kernel log lines never garble the desktop (serial `kprintln!` is unaffected
+  and keeps logging everything).
+
+### Changed
+- The TUI's `draw_text` / `draw_glyph` / `paint_cursor` and the `VERSION` /
+  `tick_mode` / `lid_state` accessors are shared with the GUI.
+
+### Notes
+- Verified in QEMU through the monitor: `sendkey 6` switches to the Shell tab,
+  `sendkey g u i ret` runs the `gui` command and the screendump shows the
+  desktop — desktop `(8,12,20)`, three icon tiles with accent caps at x=20, a
+  focused window title `(46,90,194)` alongside unfocused `(32,44,72)`, window
+  bodies `(24,36,72)` and the bottom task bar `(16,22,44)`. `[serial] tick`
+  keeps advancing (416 s) with no panic.
+- The GUI is a first step toward a real one (see TODO: damage-based partial
+  repaint / double buffer, ring-3 client windows via a window syscall + IPC,
+  a widget set, resize/minimize).
+
 ## v2.38.21 — TUI becomes the primary screen; console shrinks to a top strip (2026-09-28)
 
 The interactive TUI is no longer a 10-row strip stranded at the bottom of a

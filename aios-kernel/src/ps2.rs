@@ -11,8 +11,8 @@
 //! All device waits are bounded, so hosts without a controller or pointer
 //! (some SMBus touchpads) simply report `ok = false`.
 
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use crate::kprintln;
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 /// Keyboard/aux data port.
 const DATA: u16 = 0x60;

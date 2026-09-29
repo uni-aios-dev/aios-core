@@ -53,6 +53,24 @@
 - [x] Phase 56: Bare-metal Phase 1 — Limine + GOP boot (`limine` 0.6.5). `aios-kernel` is now a Limine-protocol ELF booted from a hybrid BIOS+UEFI ISO; a native framebuffer console (`framebuffer.rs`/`console.rs`, vendored 8x8 font) replaces the deleted VGA text driver; the memory map + HHDM come from Limine; `aios-kernel-run` builds the ISO (`xorriso` + `limine bios-install`) and boots it in QEMU under OVMF/GOP or legacy BIOS (v2.34.0)
 - [x] **Bare-metal kernel boots from a USB flash drive (v2.38.0)**: the isohybrid ISO is byte-copied to `aios-kernel-usb.img`; the same image boots on legacy BIOS (Limine MBR → `limine-bios.sys`) and UEFI (ESP → `BOOTX64.EFI`). `aios-kernel-run` produces the USB image and supports `AIOS_QEMU_USB=1` for a full boot-from-USB smoke test. `scripts/flash-usb.ps1` writes the image to a physical stick with SHA-256 + MBR-signature verification.
 - [ ] **Bare-metal USB verification on real hardware (v2.38.2+)**: after flashing Kingston with the latest kernel, verify the TUI renders and keyboard input works on the MSI laptop. **If F8 is pressed at boot, debug markers appear in the top-left corner** showing all 14 STEP markers. If the system halts without F8, the quiet boot hides the failure — press F8 to see where it stopped. Use `STEP` markers + `HALT_REASON` + debug port `0x80` to identify the failure point. Fix the root cause (likely PIT IDT gate corruption on real hardware).
+- [x] **Windowed kernel GUI (`gui` command, v2.38.22)**: shell command `gui` switches the whole screen to a full-screen windowed desktop (`src/gui.rs`) — icon column (System/Uptime/About), bottom task bar, z-ordered windows with title bar + close button + drag, `Tab` focus cycle, `Esc` close/leave, live System/Uptime/Welcome windows reusing the TUI PSF text path; `tui`/`Esc` returns to the console+TUI. Verified in QEMU via monitor `sendkey` (switch to Shell, run `gui`), pixel scan of the screendump and `[serial] tick` liveness.
+
+## GUI Roadmap (full-fledged desktop, backlog)
+
+The v2.38.22 GUI is a first step; a real windowing system needs:
+
+- [ ] **Damage-based partial repaint / double buffering** — today `gui::render()` redraws the entire frame every ~50 ms; add a backframebuffer plus per-window damage regions so only dirty rectangles redraw (kills LCD flicker, cuts CPU).
+- [ ] **Ring-3 client windows via a window syscall + IPC** — today windows live only inside the kernel module; expose a `SYS_GUI`-style syscall (or a kernel window server over the existing IPC bus) so `aios-process-mgr` tasks can `create_window`/`present`, with the kernel (or a WM task) compositing client buffers.
+- [ ] **Widget set** — buttons, text fields, lists, scrollbars, menus; routed input (keyboard/mouse) delivered to the focused window/application plus UTF-8 text input and clipboard.
+- [ ] **Window manager features** — edge/corner resize, minimize/maximize, modal dialogs + focus-steal prevention, hotkeys, restore of closed z-order.
+- [ ] **Scalable fonts / layout** — today only the 8x8 PSF ASCII glyphs; add a scalable font with a rendered glyph cache, text wrapping, and window layout theming.
+- [ ] **Event loop + timers** — today the GUI renders on the idle-loop timer and after mouse reports; applications need a real event loop (paint/mouse/key/timer events) with coalesced repaints.
+- [ ] **GPU-accelerated blitting** — currently pure software `fill_rect`; a real desktop at high resolution wants a blitter (VGA/linear-framebuffer only today).
+- [ ] **SMBus/I2C touchpad driver (existing OPEN bug)** — the PS/2 touchpad path handles laptops with a legacy i8042 pointer; SMBus-only touchpads stay `--`.
+
+## Completable from the microkernel alone (next milestones)
+
+Double-buffer + damage, window syscall + compositor, widget set, resize/minimize — these turn the demo GUI into a real windowing system usable by ring-3 applications.
 
 ## Backlog
 

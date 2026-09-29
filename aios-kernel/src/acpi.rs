@@ -9,8 +9,8 @@
 //! probing those fixed ports. Table addresses are physical; they are reached
 //! through the bootloader HHDM window via [`crate::memory::physical_to_virtual`].
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::kprintln;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// ACPI Embedded Controller data port (byte reads / writes).
 pub const EC_DATA_PORT: u16 = 0x62;
@@ -115,12 +115,7 @@ pub fn init(rsdp_phys: u64) {
     } else {
         (rd_u32(p + 16) as u64, 4, "RSDT")
     };
-    kprintln!(
-        "[serial] [acpi] rev={} {}@0x{:x}",
-        rev,
-        kind,
-        root
-    );
+    kprintln!("[serial] [acpi] rev={} {}@0x{:x}", rev, kind, root);
     let root_p = crate::memory::physical_to_virtual(root);
     let root_sig_ok = (kind == "XSDT"
         && rd_u8(root_p) == b'X'
