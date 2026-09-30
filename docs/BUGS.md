@@ -132,9 +132,12 @@ explicitly a first step:
   CREATE/PRESENT gate (the kernel composites their buffers, see RESOLVED
   v2.38.25). Still open: an IPC-bus variant so host `aios-process-mgr` tasks
   can do the same without `int 0x80`, and a WM task owning the policy.
-- **No resize/minimize/maximize** — windows are fixed-size and can move/close/
-  focus only. Task bar buttons allow focusing opaque windows (no minimized
-  state).
+- **No resize/minimize/maximize** — *resolved in v2.38.27 (resize) and
+  v2.38.28 (minimize/maximize)*: drag-resize on every window, the full
+  title-bar cluster (minimize/maximize/close), minimized windows hidden from
+  render/input with dim task-bar buttons restored by click, and a stable
+  task-bar layout (`taskbar_slots()`/`kind_rank`) so buttons cannot move
+  under the pointer after a focus shuffle.
 - **One instance per window kind** — `MAX_WINS = 8` static slots, z-order
   shuffles slots; multi-instance apps (two Welcome windows) are not supported.
 - No widgets, no scalable font, no UTF-8 text input beyond ASCII, no clipboard.

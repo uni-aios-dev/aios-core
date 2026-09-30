@@ -6,8 +6,8 @@
 //! console's `vprintln!` calls are skipped so stray log lines cannot garble the
 //! desktop, and the heartbeat square is paused. The screen owns a desktop
 //! background, a left icon column (one tile per app), a bottom task bar and a
-//! z-ordered list of windows with a title bar, close button, draggable body
-//! and resize handles on every edge/corner.
+//! z-ordered list of windows with a title bar, minimize/maximize/close
+//! buttons, draggable body and resize handles on every edge/corner.
 //!
 //! Rendering is double-buffered and damage-based: every change records a dirty
 //! rectangle and `render()` repaints only what intersects it (desktop
@@ -25,6 +25,11 @@
 //! ring-3 client) and from the mouse via `on_mouse` (icon/close/task-bar
 //! clicks, title-bar drag, edge/corner resize); the loop reads these through
 //! lock-free atomics and never blocks on `inb`/spin for input.
+//!
+//! Window geometry also has two explicit states: maximize grows a window to
+//! the whole desktop above the task bar (geometry saved for restore, further
+//! move/resize disabled) and minimize hides it until a task-bar/icon click
+//! restores it (`focus_window` un-minimizes, `render` skips hidden windows).
 
 use crate::framebuffer::{colors, Color, Framebuffer};
 use crate::interrupts::{TICKS, TIMER_HZ};
@@ -40,6 +45,9 @@ const WIN_W: usize = 300;
 const WIN_H: usize = 170;
 const TITLE_H: usize = 18;
 const TITLE_BTN: usize = 16;
+/// Width of the three-button cluster (minimize / maximize-restore / close)
+/// anchored to the right end of the title bar.
+const TITLE_BTNS: usize = 3 * TITLE_BTN;
 const ICON_W: usize = 84;
 const ICON_H: usize = 56;
 const TASKBAR_H: usize = 18;
@@ -70,6 +78,8 @@ const BAR_BG: Color = 0x00_10_16_2c;
 const BAR_ON: Color = 0x00_2a_4a_92;
 const ICON_ACC: Color = 0x00_38_8a_e8;
 const CLOSE_BG: Color = 0x00_b0_40_40;
+const BTN_BG: Color = 0x00_28_30_50;
+const BAR_MIN: Color = 0x00_0a_0e_1c;
 const TEXT: Color = 0x00_d0_d0_e0;
 const TEXT_DIM: Color = 0x00_80_90_b0;
 
@@ -95,8 +105,25 @@ struct Window {
     w: usize,
     h: usize,
     focused: bool,
+    /// Hidden by the minimize button; the task-bar/icon buttons restore it.
+    minimized: bool,
+    /// Expanded to the whole desktop above the task bar.
+    maximized: bool,
+    /// Geometry saved by the maximize action, restored on toggle-back.
+    restore: Option<(usize, usize, usize, usize)>,
     note: [u8; 32],
     note_len: usize,
+}
+
+/// One of the three buttons anchored to the right end of a title bar.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TitleBtn {
+    /// Hide the window (task bar restores it).
+    Minimize,
+    /// Toggle full-desktop maximize / restore saved geometry.
+    Maximize,
+    /// Close the window.
+    Close,
 }
 
 /// Active pointer drag, keyed by the window's [`WinKind`] (stable across
@@ -191,11 +218,7 @@ fn post_client_event(id: u8, event: u64) -> bool {
         let kind = event & 0xFF;
         if kind == EV_KEY {
             let ch = ((event >> 8) & 0xFF) as u8;
-            crate::kprintln!(
-                "[serial] [gui] client {} key '{}'",
-                id,
-                ch as char
-            );
+            crate::kprintln!("[serial] [gui] client {} key '{}'", id, ch as char);
         } else if kind == EV_CLICK {
             let x = (event >> 8) & 0xFFFF;
             let y = (event >> 24) & 0xFFFF;
@@ -356,7 +379,10 @@ fn client_slot(id: u8) -> Option<&'static ClientWin> {
     if id >= MAX_CLIENTS {
         return None;
     }
-    unsafe { #[allow(static_mut_refs)] (*core::ptr::addr_of!(CLIENTS))[id].as_ref() }
+    unsafe {
+        #[allow(static_mut_refs)]
+        (*core::ptr::addr_of!(CLIENTS))[id].as_ref()
+    }
 }
 
 /// The title shown in the client window's title bar / task bar: the live
@@ -433,6 +459,9 @@ fn spawn(kind: WinKind) {
             w,
             h,
             focused: true,
+            minimized: false,
+            maximized: false,
+            restore: None,
             note: [0; 32],
             note_len: 0,
         });
@@ -442,6 +471,7 @@ fn spawn(kind: WinKind) {
 
 fn focus_window(i: usize) {
     dirty_all();
+    let mut restored = None;
     unsafe {
         let wins = &mut *core::ptr::addr_of_mut!(WINS);
         for win in wins.iter_mut().flatten() {
@@ -449,7 +479,15 @@ fn focus_window(i: usize) {
         }
         if let Some(win) = wins[i].as_mut() {
             win.focused = true;
+            // Focusing a hidden window (task bar / icon) restores it.
+            if win.minimized {
+                win.minimized = false;
+                restored = Some((win.kind, win.title, win.w, win.h));
+            }
         }
+    }
+    if let Some((kind, title, w, h)) = restored {
+        crate::kprintln!("[gui] restore {} -> {}x{}", win_label(kind, title), w, h);
     }
     bring_to_front(i);
 }
@@ -475,9 +513,89 @@ fn close_window(i: usize) {
     }
 }
 
+fn find_kind(kind: WinKind) -> Option<usize> {
+    (0..MAX_WINS)
+        .find(|&i| unsafe { (*core::ptr::addr_of!(WINS))[i].map(|w| w.kind == kind) == Some(true) })
+}
+
+/// Toggles the window between its saved geometry and a full-desktop maximize
+/// (the desktop minus the task bar). Log line carries the resulting size.
+fn toggle_maximize(kind: WinKind) {
+    let Some(i) = find_kind(kind) else {
+        return;
+    };
+    let line;
+    unsafe {
+        let wins = &mut *core::ptr::addr_of_mut!(WINS);
+        let Some(win) = wins[i].as_mut() else {
+            return;
+        };
+        let action = if win.maximized { "restore" } else { "maximize" };
+        if win.maximized {
+            if let Some((x, y, w, h)) = win.restore.take() {
+                win.x = x;
+                win.y = y;
+                win.w = w;
+                win.h = h;
+            }
+            win.maximized = false;
+        } else {
+            win.restore = Some((win.x, win.y, win.w, win.h));
+            let fb_w = console::framebuffer().map(|fb| fb.width()).unwrap_or(800);
+            let fb_h = console::framebuffer().map(|fb| fb.height()).unwrap_or(600);
+            win.x = 0;
+            win.y = 0;
+            win.w = fb_w;
+            win.h = fb_h.saturating_sub(TASKBAR_H);
+            win.maximized = true;
+        }
+        line = Some((win_label(win.kind, win.title), action, win.w, win.h));
+    }
+    if let Some((label, action, w, h)) = line {
+        crate::kprintln!("[gui] {} {} -> {}x{}", action, label, w, h);
+    }
+    dirty_all();
+    focus_window(i);
+}
+
+/// Hides the window behind its task-bar button; when it was focused, focus
+/// falls to the topmost visible window (or nothing at all).
+fn minimize_window(kind: WinKind) {
+    let Some(i) = find_kind(kind) else {
+        return;
+    };
+    let line;
+    unsafe {
+        if let Some((k, _)) = *core::ptr::addr_of!(DRAG) {
+            if k == kind {
+                DRAG = None;
+            }
+        }
+        let wins = &mut *core::ptr::addr_of_mut!(WINS);
+        let Some(win) = wins[i].as_mut() else {
+            return;
+        };
+        win.minimized = true;
+        line = Some((win_label(win.kind, win.title), win.focused));
+    }
+    if let Some((label, was_focused)) = line {
+        crate::kprintln!("[gui] minimize {}", label);
+        dirty_all();
+        if was_focused {
+            if let Some(j) = (0..MAX_WINS).rev().find(|&j| unsafe {
+                (*core::ptr::addr_of!(WINS))[j].map(|w| !w.minimized) == Some(true)
+            }) {
+                focus_window(j);
+            } else {
+                unfocus_all();
+            }
+        }
+    }
+}
+
 fn cycle_focus() {
     let wins = (0..MAX_WINS)
-        .filter(|&i| unsafe { (*core::ptr::addr_of!(WINS))[i].is_some() })
+        .filter(|&i| unsafe { (*core::ptr::addr_of!(WINS))[i].map(|w| !w.minimized) == Some(true) })
         .collect::<alloc::vec::Vec<usize>>();
     if wins.is_empty() {
         return;
@@ -500,6 +618,40 @@ fn open_or_focus(kind: WinKind) {
         }
     }
     spawn(kind);
+}
+
+/// Rank of a window kind in the stable task-bar order: built-in apps in
+/// their canonical order, ring-3 clients last by id.
+fn kind_rank(kind: WinKind) -> u8 {
+    match kind {
+        WinKind::Welcome => 0,
+        WinKind::System => 1,
+        WinKind::Clock => 2,
+        WinKind::About => 3,
+        WinKind::Client(id) => 4 + id,
+    }
+}
+
+/// All open window indices in [`kind_rank`] order (`usize::MAX` marks the
+/// unused tail). Both the task-bar hit test and its drawing walk this order,
+/// so buttons keep their place across focus/z-order changes — a minimized
+/// window's button never moves under the pointer.
+fn taskbar_slots() -> [usize; MAX_WINS] {
+    let mut out = [usize::MAX; MAX_WINS];
+    let mut n = 0usize;
+    for rank in 0u8..(4 + MAX_CLIENTS as u8) {
+        for i in 0..MAX_WINS {
+            let hit = unsafe {
+                (*core::ptr::addr_of!(WINS))[i].map(|w| kind_rank(w.kind) == rank) == Some(true)
+            };
+            if hit {
+                out[n] = i;
+                n += 1;
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Enters GUI mode from the kernel shell (`gui` command).
@@ -610,8 +762,7 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
             frame.rax = u64::MAX;
             return;
         }
-        let req =
-            unsafe { core::ptr::read_volatile(req_va as *const CreateReq) };
+        let req = unsafe { core::ptr::read_volatile(req_va as *const CreateReq) };
         let w = req.w as usize;
         let h = req.h as usize;
         let buf_va = req.buf as u64;
@@ -798,6 +949,9 @@ fn spawn_client(id: u8) {
             w,
             h,
             focused: true,
+            minimized: false,
+            maximized: false,
+            restore: None,
             note: [0; 32],
             note_len: 0,
         });
@@ -913,10 +1067,12 @@ pub fn handle_scancode(sc: u8) -> bool {
     if let Some(i) = focused_idx() {
         let client_id = unsafe {
             #[allow(static_mut_refs)]
-            (*core::ptr::addr_of!(WINS))[i].as_ref().and_then(|w| match w.kind {
-                WinKind::Client(id) => Some(id),
-                _ => None,
-            })
+            (*core::ptr::addr_of!(WINS))[i]
+                .as_ref()
+                .and_then(|w| match w.kind {
+                    WinKind::Client(id) => Some(id),
+                    _ => None,
+                })
         };
         if let Some(id) = client_id {
             post_client_event(id, ev_key(c));
@@ -944,8 +1100,9 @@ pub fn handle_scancode(sc: u8) -> bool {
 
 /// Applies a mouse report: moves the arrow (clamped to the framebuffer),
 /// drives the active drag — title-bar move or edge/corner resize — and
-/// dispatches clicks (icons / close button / task bar / window body).
-/// A released button ends the drag, logging the final size after a resize.
+/// dispatches clicks (icons / title-bar buttons / task bar / window body).
+/// A released button ends the drag, logging the final size after a resize;
+/// minimize/maximize clicks log their action and resulting geometry.
 pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
     let Some(fb) = console::framebuffer() else {
         return;
@@ -1071,14 +1228,27 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
 }
 
 fn hit_title(win: &Window, x: usize, y: usize) -> bool {
-    y >= win.y && y < win.y + TITLE_H && x >= win.x && x < win.x + win.w.saturating_sub(TITLE_BTN)
+    y >= win.y && y < win.y + TITLE_H && x >= win.x && x < win.x + win.w.saturating_sub(TITLE_BTNS)
 }
 
-fn hit_close(win: &Window, x: usize, y: usize) -> bool {
-    x >= win.x + win.w.saturating_sub(TITLE_BTN)
-        && x < win.x + win.w
-        && y >= win.y
-        && y < win.y + TITLE_H
+/// Title-bar button under `(x, y)`: the three-button cluster (minimize,
+/// maximize/restore, close) glued to the window's right edge.
+fn title_btn(win: &Window, x: usize, y: usize) -> Option<TitleBtn> {
+    if y < win.y || y >= win.y + TITLE_H {
+        return None;
+    }
+    let right = win.x + win.w;
+    if x >= right || x < right.saturating_sub(TITLE_BTNS) {
+        return None;
+    }
+    let off = x - (right - TITLE_BTNS);
+    Some(if off >= 32 {
+        TitleBtn::Close
+    } else if off >= 16 {
+        TitleBtn::Maximize
+    } else {
+        TitleBtn::Minimize
+    })
 }
 
 fn hit_body(win: &Window, x: usize, y: usize) -> bool {
@@ -1089,6 +1259,10 @@ fn hit_body(win: &Window, x: usize, y: usize) -> bool {
 /// along the window's outer edges (title bar top included; the close button
 /// wins over the top-right corner because it is tested first).
 fn hit_resize(win: &Window, x: usize, y: usize) -> Option<u8> {
+    // A maximized window is pinned to the desktop; a minimized one is hidden.
+    if win.maximized || win.minimized {
+        return None;
+    }
     if x < win.x || x >= win.x + win.w || y < win.y || y >= win.y + win.h {
         return None;
     }
@@ -1131,9 +1305,11 @@ fn hit_taskbar(fb: &Framebuffer, x: usize, y: usize) -> Option<usize> {
         return None;
     }
     let mut bx = 4;
-    let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
-    for (i, win) in wins.iter().enumerate() {
-        if let Some(win) = win {
+    for i in taskbar_slots() {
+        if i == usize::MAX {
+            break;
+        }
+        if let Some(win) = unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() } {
             let w = 8 + win.title.len() * console::GLYPH_W;
             if x >= bx && x < bx + w {
                 return Some(i);
@@ -1144,16 +1320,26 @@ fn hit_taskbar(fb: &Framebuffer, x: usize, y: usize) -> Option<usize> {
     None
 }
 
+/// Serial label of a window: clients are addressed by id, everything else
+/// carries its title.
+fn win_label(kind: WinKind, title: &'static str) -> String {
+    match kind {
+        WinKind::Client(id) => format!("client {}", id),
+        _ => String::from(title),
+    }
+}
+
 /// Serial proof line for a finished resize drag: final geometry of the
 /// resized window, addressed by its stable [`WinKind`].
 fn log_resize(kind: WinKind) {
     let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
     if let Some(win) = wins.iter().flatten().find(|w| w.kind == kind) {
-        let label = match kind {
-            WinKind::Client(id) => format!("client {}", id),
-            _ => String::from(win.title),
-        };
-        crate::kprintln!("[gui] resize {} -> {}x{}", label, win.w, win.h);
+        crate::kprintln!(
+            "[gui] resize {} -> {}x{}",
+            win_label(kind, win.title),
+            win.w,
+            win.h
+        );
     }
 }
 
@@ -1179,8 +1365,15 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
     let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
     for (i, win) in wins.iter().enumerate().rev() {
         if let Some(win) = win {
-            if hit_close(win, x, y) {
-                close_window(i);
+            if win.minimized {
+                continue;
+            }
+            if let Some(btn) = title_btn(win, x, y) {
+                match btn {
+                    TitleBtn::Close => close_window(i),
+                    TitleBtn::Maximize => toggle_maximize(win.kind),
+                    TitleBtn::Minimize => minimize_window(win.kind),
+                }
                 hit_any = true;
                 break;
             }
@@ -1204,8 +1397,11 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                 break;
             }
             if hit_title(win, x, y) {
-                unsafe {
-                    *core::ptr::addr_of_mut!(DRAG) = Some((win.kind, Drag::Move));
+                // A maximized window is pinned: the title click only focuses.
+                if !win.maximized {
+                    unsafe {
+                        *core::ptr::addr_of_mut!(DRAG) = Some((win.kind, Drag::Move));
+                    }
                 }
                 focus_window(i);
                 hit_any = true;
@@ -1281,6 +1477,9 @@ pub fn render() {
     for i in 0..MAX_WINS {
         let win = unsafe { &(*core::ptr::addr_of!(WINS))[i] };
         if let Some(win) = win {
+            if win.minimized {
+                continue;
+            }
             if full || rect_overlaps(&d, win.x, win.y, win.w, win.h) {
                 draw_window(target, win);
             }
@@ -1386,16 +1585,26 @@ fn draw_taskbar(fb: &Framebuffer) {
         fb.fill_rect(0, y, fb.width(), TASKBAR_H, BAR_BG);
     }
     let mut bx = 4;
-    let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
-    for win in wins.iter().flatten() {
-        let title = win_live_title(win);
-        let w = 8 + title.len() * console::GLYPH_W;
-        let bg = if win.focused { BAR_ON } else { BAR_BG };
-        unsafe {
-            fb.fill_rect(bx, y, w, TASKBAR_H, bg);
+    for i in taskbar_slots() {
+        if i == usize::MAX {
+            break;
         }
-        tui::draw_text(fb, bx + 4, y, title, TEXT, bg, bx + w);
-        bx += w + 4;
+        if let Some(win) = unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() } {
+            let title = win_live_title(win);
+            let w = 8 + title.len() * console::GLYPH_W;
+            let bg = if win.focused {
+                BAR_ON
+            } else if win.minimized {
+                BAR_MIN
+            } else {
+                BAR_BG
+            };
+            unsafe {
+                fb.fill_rect(bx, y, w, TASKBAR_H, bg);
+            }
+            tui::draw_text(fb, bx + 4, y, title, TEXT, bg, bx + w);
+            bx += w + 4;
+        }
     }
 }
 
@@ -1406,22 +1615,48 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         fb.fill_rect(win.x, win.y, win.w, TITLE_H, title_bg);
         fb.fill_rect(win.x, win.y + TITLE_H, win.w, win.h - TITLE_H, WIN_BG);
     }
-    // Body/title text clips at the window's own right edge (resize-safe).
+    // Body text clips at the window's own right edge (resize-safe); the
+    // title text additionally stops before the three-button cluster.
     let edge = (win.x + win.w).min(fb.width());
     let max_px = edge.saturating_sub(6);
-    tui::draw_text(
-        fb,
-        win.x + 6,
-        win.y + 1,
-        title,
-        TEXT,
-        title_bg,
-        (win.x + win.w).min(max_px),
-    );
-    let cx = win.x + win.w - TITLE_BTN;
+    let title_max = edge.min(win.x + win.w.saturating_sub(TITLE_BTNS + 2));
+    tui::draw_text(fb, win.x + 6, win.y + 1, title, TEXT, title_bg, title_max);
+    // Right-anchored cluster: minimize [w-48,w-32), maximize [w-32,w-16),
+    // close [w-16,w).
+    let bx = win.x + win.w.saturating_sub(TITLE_BTNS);
     unsafe {
-        fb.fill_rect(cx, win.y, TITLE_BTN, TITLE_H, CLOSE_BG);
+        fb.fill_rect(bx, win.y, TITLE_BTNS, TITLE_H, BTN_BG);
     }
+    let mx = bx + TITLE_BTN;
+    unsafe {
+        fb.fill_rect(mx, win.y, TITLE_BTN, TITLE_H, CLOSE_BG);
+    }
+    // Minimize: a low bar.
+    unsafe {
+        fb.fill_rect(bx + 3, win.y + 11, 10, 2, TEXT);
+    }
+    // Maximize: a plain square outline; restore: two overlapping squares.
+    if win.maximized {
+        unsafe {
+            fb.fill_rect(mx + 3, win.y + 8, 7, 1, TEXT);
+            fb.fill_rect(mx + 3, win.y + 14, 7, 1, TEXT);
+            fb.fill_rect(mx + 3, win.y + 8, 1, 7, TEXT);
+            fb.fill_rect(mx + 9, win.y + 8, 1, 7, TEXT);
+            fb.fill_rect(mx + 6, win.y + 3, 8, 1, TEXT_DIM);
+            fb.fill_rect(mx + 6, win.y + 9, 8, 1, TEXT_DIM);
+            fb.fill_rect(mx + 6, win.y + 3, 1, 7, TEXT_DIM);
+            fb.fill_rect(mx + 13, win.y + 3, 1, 7, TEXT_DIM);
+        }
+    } else {
+        unsafe {
+            fb.fill_rect(mx + 3, win.y + 4, 10, 1, TEXT);
+            fb.fill_rect(mx + 3, win.y + 13, 10, 1, TEXT);
+            fb.fill_rect(mx + 3, win.y + 4, 1, 10, TEXT);
+            fb.fill_rect(mx + 12, win.y + 4, 1, 10, TEXT);
+        }
+    }
+    // Close: the 'X' glyph on its red plate.
+    let cx = win.x + win.w.saturating_sub(TITLE_BTN);
     let mut px = cx;
     for byte in b"X" {
         tui::draw_glyph(fb, px, win.y + 1, *byte, TEXT, CLOSE_BG);

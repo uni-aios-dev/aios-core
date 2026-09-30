@@ -1,5 +1,58 @@
 # AIOS Development Log
 
+## v2.38.28 — minimize/maximize: full title-bar controls + stable task bar (2026-09-30)
+
+Second item of the window-manager roadmap: every window now has the classic
+three-button title cluster (minimize, maximize/restore, close) and the window
+state to back it. Minimized windows leave the desktop (and the input paths)
+until a task-bar/icon click brings them back; maximizing snaps a window to
+the full desktop minus the task bar and restores its saved geometry on the
+second press. The task bar itself became stable: buttons are laid out by
+window-kind rank instead of z-order, so they never jump around when focus
+changes.
+
+### Added
+- **Title-bar buttons** (`src/gui.rs`) — `TitleBtn { Minimize, Maximize,
+  Close }` + `title_btn()` decode the right-anchored cluster
+  (`TITLE_BTNS = 48`: minimize `[w-48,w-32)`, maximize `[w-32,w-16)`,
+  close `[w-16,w)`); `hit_title` stops before the cluster and `dispatch_click`
+  handles a title press first (close wins the top-right resize corner as
+  before). `draw_window` renders minimize/maximize/close glyphs and clips
+  title text at `TITLE_BTNS + 2`.
+- **Window state** — `Window` gained `minimized`/`maximized` flags and
+  `restore: Option<(x,y,w,h)>`. `render` skips minimized windows,
+  `hit_*`/`hit_resize`/`dispatch_click` ignore them (a minimized window can
+  never eat a click), and `cycle_focus` (Tab) cycles only visible windows.
+- **`minimize_window`** — hides the window, cancels a same-kind drag, and
+  (when the window was focused) falls to the topmost visible window; logs
+  `[gui] minimize <label>`.
+- **`toggle_maximize`** — saves the current geometry, snaps to
+  `0,0,fb_w,fb_h-TASKBAR_H`, and restores it on the second press; logs
+  `[gui] maximize|restore <label> -> WxH`.
+- **Restore on focus** — `focus_window` un-minimizes the window and logs
+  `[gui] restore <label> -> WxH`; both task-bar buttons and desktop icons go
+  through it, so restore is one uniform path.
+- **Stable task-bar layout** — `taskbar_slots()` orders buttons by
+  `kind_rank` (Welcome < System < Clock < About < clients by id) instead of
+  the z-order array; `hit_taskbar` and `draw_taskbar` walk the same order.
+  Previously a focus shuffle could move a button under the pointer (first
+  smoke run: the restore click landed on the Welcome button, leaving the
+  client minimized and a stray `resize Welcome` artifact).
+- **Minimized task-bar button** — drawn in dim `BAR_MIN`; the focused one
+  keeps `BAR_ON`.
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45628): maximize
+  (`[gui] maximize client 0 -> 1280x782`) → restore → minimize → task-bar
+  restore (`[gui] restore client 0 -> 96x82`, second one) → body click
+  `[gui] client 0 click (56, 16)` + `ui click` → `client 0 key 'k'` + `ui key`,
+  zero `KERNEL PANIC`, 7 resumed cycles, serial 117 239 bytes. Screendumps:
+  f1 focused client at (592,266) 96×82, f2 maximized uniform body across the
+  desktop, f3 client gone from the desktop with its dimmed task-bar button,
+  f4 restored with the key-recoloured body and `TITLE_ON`.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.27 — window resize: drag any edge/corner to resize windows (2026-09-30)
 
 First item of the window-manager roadmap: every window (built-in and ring-3

@@ -675,8 +675,8 @@ focused) returns to the console/TUI.
 
 - **Desktop layout**: background, left icon column (System / Uptime / About),
   bottom task bar with one button per open window.
-- **Windows**: title bar (focused = bright blue, unfocused = dimmed), a close
-  `X` button and live content:
+- **Windows**: title bar (focused = bright blue, unfocused = dimmed), a
+  minimize / maximize / close button cluster and live content:
   - *Welcome* — types the message line; shows the control help.
   - *System* — the same telemetry as the TUI System tab (tick, tick mode,
     switches, IPC totals, temperature, lid, PS/2/USB counters, allocated frames).
@@ -685,7 +685,8 @@ focused) returns to the console/TUI.
 - **Input**:
   - Mouse: click an icon to open (or focus) that window; click a window body or
     task-bar button to focus; drag a title bar to move (clamped to the bounds);
-    drag an edge or corner to resize (v2.38.27 — see below); click `X` to close;
+    drag an edge or corner to resize (v2.38.27 — see below); click the title
+    cluster to minimize, maximize/restore or close (v2.38.28 — see below);
     click the desktop background clears the drag.
   - Keyboard: `Tab` cycles window focus; `Esc` closes the focused window and,
     with no windows left, returns to the TUI; printable keys (incl. after
@@ -742,6 +743,18 @@ focused) returns to the console/TUI.
   anything, and input events keep working after the resize (click coordinates
   stay body-relative to the new size). Releasing the drag logs the final
   geometry: `[gui] resize client 0 -> 296x82`.
+- **Minimize / maximize (v2.38.28)**: the title-bar cluster is 48 px wide at
+  the right edge — minimize `[w-48,w-32)`, maximize/restore `[w-32,w-16)`,
+  close `[w-16,w)`. Minimizing hides the window from the desktop; it stops
+  taking clicks, resizes and `Tab` focus, its task-bar button turns dim, and
+  clicking that button (or a desktop icon) restores it at the original
+  geometry. Maximize snaps the window to the whole desktop above the task bar;
+  the second press restores the saved geometry. Restoring a minimized window
+  brings it to the front and logs `[gui] restore client 0 -> 96x82`; the other
+  transitions log `[gui] minimize client 0` and
+  `[gui] maximize client 0 -> 1280x782`. Task-bar buttons keep a stable
+  order (Welcome, System, Uptime, About, clients) — they never swap places
+  when the focus or z-order changes.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

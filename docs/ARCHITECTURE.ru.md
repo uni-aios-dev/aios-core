@@ -1375,8 +1375,9 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   `Esc` без сфокусированного окна). Пока `gui::active()`, путь `vprintln!`
   консоли обходится и heartbeat приостанавливается. Владеет фоном рабочего
   стола, левой колонкой иконок (System / Uptime / About, по одному экземпляру
-  приложения на вид в статических слотах `MAX_WINS = 8`), нижним таскбаром и
-  списком окон в z-порядке (строка заголовка, кнопка закрытия, перемещаемое
+  приложения на вид в статических слотах `MAX_WINS = 8`), нижним таскбаром
+  (стабильный порядок кнопок — см. ниже) и списком окон в z-порядке (строка
+  заголовка с кластером minimize/maximize/close, перемещаемое
   тело, ресайз-ручки по краям/углам), рисуется PSF-текстовыми хелперами TUI (`draw_text`/`draw_glyph`/
   `paint_cursor`, `pub(crate)`). Ввод: `Tab` циклит фокус, `Esc` закрывает/
   выходит, печатные клавиши печатают в сфокусированное окно; клики мыши
@@ -1432,10 +1433,25 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
    края ограничены фреймбуфером минус таскбар; отпускание drag логирует
    `[gui] resize … -> WxH`, а `draw_window` обрезает текст заголовка/тела по
    собственному правому краю окна); `win_live_title` показывает заголовок
-  из реестра в тайтл-баре и на панели задач; `enter()` поднимает
+  из реестра в тайтл-баре и на панели задач;   `enter()` поднимает
   зарегистрированные клиентские окна над встроенными через `raise_clients()`
   (они регистрируются, пока экран ещё у консоли, иначе Welcome/System/Clock
   окажутся сверху).
+  С v2.38.28 окна несут флаги `minimized`/`maximized` и сохранённый прямоугольник
+  `restore`: строка заголовка декодирует якоренный справа 48-пиксельный кластер
+  `TitleBtn { Minimize, Maximize, Close }` (`title_btn()`, проверяется до
+  зон перетаскивания/ресайза, поэтому `hit_resize` пропускает свёрнутые и
+  максимизированные окна), `minimize_window` прячет окно (render его
+  пропускает, hit-testing игнорирует, `cycle_focus` отфильтровывает) и
+  передаёт фокус самому верхнему видимому окну, `toggle_maximize` разворачивает
+  на рабочий стол минус таскбар и восстанавливает сохранённый прямоугольник
+  вторым нажатием, а `focus_window` разминимизирует — через него проходят все
+  клики кнопок таскбара/иконок, логируя `[gui] restore … -> WxH`
+  (`[gui] minimize …`, `[gui] maximize|restore … -> WxH` для остальных
+  переходов). Кнопки таскбара раскладываются по `taskbar_slots()`/`kind_rank`
+  (Welcome < System < Clock < About < клиенты по id), а не по z-order, поэтому
+  перефокусировка не может подвинуть кнопку под курсор; у свёрнутых окон
+  приглушённая заливка `BAR_MIN`.
 - `main` — читает ответы framebuffer/rsdp/hhdm Limine, выполняет self-check чтения framebuffer, фильтрует карту памяти в `[MemRegion; 64]`, затем инициализирует память и кучу, GDT/TSS (с перезагрузкой CS/SS), IDT, PIC и PIT, поднимает LAPIC-таймер (`lapic::init()`) и маскирует PIT IRQ0, когда тот жив, `sti`, печатает на экран показания живости `[probe] irq32_seen/ticks delta`, перечисляет шину PCI и поднимает драйверы хранилища AHCI и NVMe (после `sti`, чтобы исключения обрабатывались), планирует kernel worker и четыре ring-3 задачи, объявляет атомарные статики статуса драйверов `G_AHCI`/`G_NVME`/`G_XHCI` (проставляются init-кодом драйверов) и входит в `idle_loop`, где работают квадрат heartbeat и `tui::render()`. В serial логирует селекторы передачи от Limine (`boot selectors cs/ss/ds`) и выбранный источник тиков (`timer=LAPIC|PIT`). С v2.38.13 раздел framebuffer дополнительно логирует виртуальный адрес и `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), выполняет `write_volatile`-тест `direct_test` со `sfence` и readback пикселя (0, 0) плюс OK-зелёную пробу, затем `psf_check()` синтезирует PSF2-поток из `font8x8::BASIC`, парсит его обратно, проверяет round-trip глифа 'A' и рисует его в центре нижней полосы экрана.
   - Panic-обработчик печатает в framebuffer-консоль и serial, затем уходит в `halt_loop`.
 - `aios-kernel-run`: собирает ядро (`cargo build --target x86_64-unknown-none --release`), раскладывает дерево Limine ISO (`boot/aios-kernel`, `boot/limine.conf`, CD-стадии Limine BIOS/UEFI, `EFI/BOOT/BOOTX64.EFI`), создаёт гибридный ISO через `xorriso` + `limine bios-install` и байт-в-байт идентичный USB-образ `out\aios-kernel-usb.img` (isohybrid — загружается на legacy BIOS через MBR Limine и на UEFI через ESP). Грузит в QEMU — по умолчанию UEFI/OVMF (настоящий GOP), иначе legacy BIOS; `AIOS_QEMU_USB=1` подключает USB-образ как mass-storage вместо CD-ROM. Переопределения: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.

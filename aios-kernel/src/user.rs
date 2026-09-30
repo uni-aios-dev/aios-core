@@ -171,7 +171,8 @@ impl Asm {
 
     /// `and ecx, 0xFF` (81 E1 imm32) — isolates the event type byte.
     fn and_ecx_ff(&mut self) {
-        self.buf.extend_from_slice(&[0x81, 0xE1, 0xFF, 0x00, 0x00, 0x00]);
+        self.buf
+            .extend_from_slice(&[0x81, 0xE1, 0xFF, 0x00, 0x00, 0x00]);
     }
 
     /// `cmp ecx, imm8` (83 F9 imm8) — compares the event type.

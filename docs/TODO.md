@@ -68,8 +68,9 @@ The v2.38.22 GUI is a first step; a real windowing system needs:
 - [x] **Ring-3 client windows via a window syscall + IPC** — done on the kernel gate in v2.38.25: `SYS_GUI` CREATE/PRESENT, `CLIENTS` registry, `WinKind::Client` composited via `blit_at`, auto re-open on present, fourth ring-3 demo task (96×64 rotating colour) proving the path end-to-end. Still open: the IPC-bus variant so host `aios-process-mgr` tasks can create/present windows without `int 0x80`.
 - [x] **Routed input for ring-3 clients (v2.38.26)** — keystrokes and clicks of the focused client window are queued into its one-slot event buffer (`SYS_GUI` GET_EVENT) and consumed by the application: the demo reacts with a colour change + `SYS_WRITE` echo. Still open for kernel-owned windows: per-window text routing beyond the single focused typed-text note; UTF-8 input and clipboard.
 - [x] **Edge/corner resize (v2.38.27)** — drag within 5 px of any window edge/corner resizes it live (min 96 × title+64, clamped to the desktop above the task bar); `Drag` is keyed by `WinKind` so the focus shuffle at drag start cannot retarget it; ring-3 client buffers stay native and are scaled nearest-neighbour (`Framebuffer::blit_scaled`); release logs `[gui] resize … -> WxH`.
+- [x] **Minimize/maximize (v2.38.28)** — the title bar gained the full 48 px `TitleBtn` cluster (minimize `[w-48,w-32)`, maximize/restore `[w-32,w-16)`, close `[w-16,w)`); `Window` carries `minimized`/`maximized` flags + a saved `restore` rectangle, render/hit-testing/`cycle_focus` skip minimized windows, `minimize_window` hands focus to the topmost visible window, `toggle_maximize` snaps to the desktop minus the task bar, and `focus_window` un-minimizes (the single restore path for task-bar/icon clicks). Task-bar buttons now follow `taskbar_slots()`/`kind_rank` — a stable order that a focus shuffle cannot change — and minimized ones dim to `BAR_MIN`. Logs: `[gui] minimize …`, `[gui] maximize|restore … -> WxH`, `[gui] restore … -> WxH`.
 - [ ] **Widget set** — buttons, text fields, lists, scrollbars, menus; routed input (keyboard/mouse) delivered to the focused window/application plus UTF-8 text input and clipboard.
-- [ ] **Window manager features** — minimize/maximize, modal dialogs + focus-steal prevention, hotkeys, restore of closed z-order.
+- [ ] **Window manager features** — modal dialogs + focus-steal prevention, hotkeys, restore of closed z-order.
 - [ ] **Scalable fonts / layout** — today only the 8x8 PSF ASCII glyphs; add a scalable font with a rendered glyph cache, text wrapping, and window layout theming.
 - [ ] **Event loop + timers** — today the GUI renders on the idle-loop timer and after mouse reports; applications need a real event loop (paint/mouse/key/timer events) with coalesced repaints.
 - [ ] **GPU-accelerated blitting** — currently pure software `fill_rect`; a real desktop at high resolution wants a blitter (VGA/linear-framebuffer only today).
@@ -77,7 +78,7 @@ The v2.38.22 GUI is a first step; a real windowing system needs:
 
 ## Completable from the microkernel alone (next milestones)
 
-Double-buffer + damage, window syscall + compositor, widget set, minimize — these turn the demo GUI into a real windowing system usable by ring-3 applications.
+Double-buffer + damage, window syscall + compositor, widget set — these turn the demo GUI into a real windowing system usable by ring-3 applications.
 
 ## Backlog
 
