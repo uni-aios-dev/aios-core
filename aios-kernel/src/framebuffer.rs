@@ -268,6 +268,67 @@ impl Framebuffer {
         }
     }
 
+    /// Nearest-neighbour scale blit: samples the `src_size` rectangle starting
+    /// at `src_at` of `src` and draws it as `dst_size` pixels at `dst_at` of
+    /// `self` (raw packed pixels, same format contract as [`Self::blit_at`]),
+    /// honouring both surfaces' pitches and clipping on both sides. Used to
+    /// composite a ring-3 client buffer into a window the user has resized —
+    /// the buffer keeps its native resolution while the window scales.
+    ///
+    /// # Safety
+    /// `src` and `self` must be readable/writable for the touched ranges.
+    pub unsafe fn blit_scaled(
+        &self,
+        src: &Framebuffer,
+        src_at: (usize, usize),
+        dst_at: (usize, usize),
+        src_size: (usize, usize),
+        dst_size: (usize, usize),
+    ) {
+        let (sx0, sy0) = src_at;
+        let (dx0, dy0) = dst_at;
+        let (sw, sh) = src_size;
+        let (dw, dh) = dst_size;
+        if !self.is_usable() || !src.is_usable() || self.bytes_per_pixel != src.bytes_per_pixel {
+            return;
+        }
+        if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+            return;
+        }
+        let bpp = self.bytes_per_pixel;
+        for row in 0..dh {
+            let sy = sy0 + row * sh / dh;
+            if sy >= src.height {
+                break;
+            }
+            let dy = dy0 + row;
+            if dy >= self.height {
+                break;
+            }
+            let dst_row = dy * self.pitch;
+            let src_row = sy * src.pitch;
+            for col in 0..dw {
+                let sx = sx0 + col * sw / dw;
+                if sx >= src.width {
+                    break;
+                }
+                let dx = dx0 + col;
+                if dx >= self.width {
+                    break;
+                }
+                let s = src.base.add(src_row + sx * bpp);
+                let d = self.base.add(dst_row + dx * bpp);
+                match bpp {
+                    4 => {
+                        let px = core::ptr::read_unaligned(s as *const u32);
+                        core::ptr::write_unaligned(d as *mut u32, px);
+                    }
+                    n => core::ptr::copy_nonoverlapping(s, d, n),
+                }
+            }
+        }
+    }
+
     /// Reads back a pixel in hardware format (used by the boot self-check).
     ///
     /// # Safety

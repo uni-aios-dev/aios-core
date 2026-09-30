@@ -1,5 +1,57 @@
 # AIOS Development Log
 
+## v2.38.27 — window resize: drag any edge/corner to resize windows (2026-09-30)
+
+First item of the window-manager roadmap: every window (built-in and ring-3
+client) can now be resized live by dragging its edge or corner. The hit zone is
+a 5 px strip along the outer border, checked after the close button and before
+the title/body, so existing move/close/click semantics are untouched. A ring-3
+client keeps its native buffer resolution — the compositor scales it
+nearest-neighbour into the new body size — and events keep flowing after the
+resize.
+
+### Added
+- **Resize drag** (`src/gui.rs`) — `hit_resize` returns an `EDGE_L/R/T/B` mask
+  for presses inside `RESIZE_BORDER = 5` px of a window's edges (corner presses
+  combine horizontal + vertical bits; the close button wins the top-right
+  corner). `Drag::Resize` snapshots the press geometry (`x0/y0/w0/h0/wx0/wy0`)
+  and `on_mouse` recomputes width/height from the cursor delta every report,
+  clamped to `RESIZE_MIN_W = 96` (the narrowest default — the 96 px client) and
+  `RESIZE_MIN_H = TITLE_H + 64` (8 glyph rows, so kernel-window text never
+  clips vertically), with the left/top edges anchoring the opposite corner and
+  the right/bottom edges bounded by the framebuffer minus the task bar. The old
+  `Move` path is preserved inside the same `Drag` enum.
+- **Drag keyed by `WinKind`** — `DRAG` changed from `Option<usize>` to
+  `Option<(WinKind, Drag)>`: `focus_window` runs when a drag starts and may
+  shift window slots via `bring_to_front`, which would leave an index drag
+  pointing at the wrong window (latent bug in the old `Move` path too).
+  `close_window` now cancels a drag by kind as well.
+- **Scaled client compositing** (`src/framebuffer.rs`) — new
+  `Framebuffer::blit_scaled`, a nearest-neighbour scale blit over raw packed
+  pixels with the same format/pitch/clipping contract as `blit_at` (both
+  surfaces' pitches honoured, clipped on both sides, bpp-guarded). `draw_client`
+  keeps `blit_at` for an exact-size body and switches to `blit_scaled` once the
+  window has been resized, so the client's 96×64 buffer fills any window size
+  without the application doing anything.
+- **Resize-safe text clipping** — `draw_window` now clips title/body text at
+  the window's own right edge (`win.x + win.w`, previously the screen edge
+  minus 16), so text follows the window when it shrinks.
+- **Serial proof line** — releasing a resize drag logs
+  `[gui] resize <window> -> WxH` (`log_resize`, addressed by `WinKind`).
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45618): right-edge drag on the client
+  window logs `[gui] resize client 0 -> 296x82` (width 96 → 296, height kept);
+  the follow-up body click lands in the resized surface —
+  `[gui] client 0 click (195, 36)` + `[sysc] pid 5 write 8: ui click` — and the
+  typed key still reaches the client (`[gui] client 0 key 'k'` + `ui key`
+  write). Screendumps: f1 body is the native 96×64 at (592, 284), f2/f3 show
+  the uniform 296×64 scaled body (nearest-neighbour preserves the solid fill),
+  f3 = `GUI_KEY_COLOR + 4` steps (XRGB, top byte dropped, arithmetic mod 2^24).
+  Five thermal CRITICAL/resumed cycles, zero `KERNEL PANIC`, ticks to 492 s.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.26 — input events to ring-3 clients: key/click delivery via `SYS_GUI` GET_EVENT (2026-09-30)
 
 v2.38.25 gave ring-3 tasks their own windows; v2.38.26 closes the loop and

@@ -685,7 +685,8 @@ focused) returns to the console/TUI.
 - **Input**:
   - Mouse: click an icon to open (or focus) that window; click a window body or
     task-bar button to focus; drag a title bar to move (clamped to the bounds);
-    click `X` to close; click the desktop background clears the drag.
+    drag an edge or corner to resize (v2.38.27 — see below); click `X` to close;
+    click the desktop background clears the drag.
   - Keyboard: `Tab` cycles window focus; `Esc` closes the focused window and,
     with no windows left, returns to the TUI; printable keys (incl. after
     `Enter`) type into the focused window.
@@ -730,6 +731,17 @@ focused) returns to the console/TUI.
   to the serial log through `SYS_WRITE` (`ui key` / `ui click`).
   Serial proof: `[gui] client 0 click (48, 36)` + `[sysc] pid 5 write 8: ui click`,
   `[gui] client 0 key 'r'`.
+- **Window resize (v2.38.27)**: every window — built-in or ring-3 client —
+  resizes live by dragging within 5 px of its outer edge or corner (the close
+  button wins the top-right corner; the title bar still moves the window).
+  Width and height clamp to 96 px × (title bar + 8 text rows) at minimum; the
+  left/top edge anchors the opposite corner, the right/bottom edge stops at the
+  screen edge above the task bar. A ring-3 client keeps its native buffer
+  resolution — the kernel scales the buffer nearest-neighbour into the new body
+  size, so the 96×64 demo surface fills any window without the app doing
+  anything, and input events keep working after the resize (click coordinates
+  stay body-relative to the new size). Releasing the drag logs the final
+  geometry: `[gui] resize client 0 -> 296x82`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

@@ -1381,10 +1381,16 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   `vprintln!` path is bypassed and the heartbeat pauses. Owns a desktop
   background, a left icon column (System / Uptime / About, one app instance per
   kind in `MAX_WINS = 8` static slots), a bottom task bar and a z-ordered window
-  list (title bar, close button, draggable body) rendered with the TUI's PSF
+  list (title bar, close button, draggable body, edge/corner resize handles)
+  rendered with the TUI's PSF
   text helpers (`draw_text`/`draw_glyph`/`paint_cursor`, `pub(crate)`). Input:
   `Tab` cycles focus, `Esc` closes/leaves, printable keys type into the focused
-  window; mouse clicks open/focus/close/drag. Input is read from both key/mouse
+   window; mouse clicks open/focus/close/drag (and, since v2.38.27, resize —
+   `hit_resize` maps a press inside `RESIZE_BORDER = 5` px of a window's outer
+   edges to an `EDGE_L/R/T/B` mask checked after the close button and before
+   the title/body; the drag is keyed by `WinKind`, not a slot index, because
+   `focus_window` → `bring_to_front` may shift slots when a drag starts).
+   Input is read from both key/mouse
   sources via lock-free atomics and never blocks the idle loop; the GUI and the
   renderer are decoupled (input events only mutate window state + a dirty `Rect`,
   painting happens later in `render()`). Since v2.38.23 every mutation records a
@@ -1424,7 +1430,13 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
     `bring_to_front`'s slot shift cannot orphan them), and `raise_clients()`
     focuses the frontmost client so input flows immediately. Rendering composites
     the client's dense pitch-aware buffer through `Framebuffer::blit_at` below
-    the title bar; `win_live_title` shows the registry title in the title bar
+    the title bar, or — since v2.38.27, once the window has been resized —
+    through the nearest-neighbour `Framebuffer::blit_scaled`, so the client
+    keeps its native 96×64 buffer while the window scales (resize clamps:
+    `RESIZE_MIN_W = 96`, `RESIZE_MIN_H = TITLE_H + 64`, right/bottom edges
+    bounded by the framebuffer minus the task bar; releasing the drag logs
+    `[gui] resize … -> WxH`, and `draw_window` clips body/title text at the
+    window's own right edge); `win_live_title` shows the registry title in the title bar
     and task bar; `enter()` raises registered client windows above the built-in
     stack via `raise_clients()` (they register while the console still owns the
     screen, so Welcome/System/Clock would otherwise spawn on top).

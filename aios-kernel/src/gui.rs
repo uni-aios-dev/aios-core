@@ -6,7 +6,8 @@
 //! console's `vprintln!` calls are skipped so stray log lines cannot garble the
 //! desktop, and the heartbeat square is paused. The screen owns a desktop
 //! background, a left icon column (one tile per app), a bottom task bar and a
-//! z-ordered list of windows with a title bar, close button and draggable body.
+//! z-ordered list of windows with a title bar, close button, draggable body
+//! and resize handles on every edge/corner.
 //!
 //! Rendering is double-buffered and damage-based: every change records a dirty
 //! rectangle and `render()` repaints only what intersects it (desktop
@@ -20,8 +21,9 @@
 //! direct-VRAM painting (never a panic). Text uses the same PSF path as the TUI
 //! (`tui::draw_text`). Input comes from both key sources (PS/2 + USB-HID) via
 //! `handle_scancode` (Tab cycles focus, `Esc` closes / leaves, printable keys
-//! type into the focused `Welcome` window) and from the mouse via `on_mouse`
-//! (icon/close/task-bar clicks, title-bar drag); the loop reads these through
+//! type into the focused kernel window or queue an event for a focused
+//! ring-3 client) and from the mouse via `on_mouse` (icon/close/task-bar
+//! clicks, title-bar drag, edge/corner resize); the loop reads these through
 //! lock-free atomics and never blocks on `inb`/spin for input.
 
 use crate::framebuffer::{colors, Color, Framebuffer};
@@ -41,6 +43,24 @@ const TITLE_BTN: usize = 16;
 const ICON_W: usize = 84;
 const ICON_H: usize = 56;
 const TASKBAR_H: usize = 18;
+/// Width of the hit zone along a window's outer edge that starts a resize
+/// drag (edges/corners, checked before title/body).
+const RESIZE_BORDER: usize = 5;
+/// Smallest window width accepted by an edge/corner resize drag (equals the
+/// narrowest default — the 96 px ring-3 client window).
+const RESIZE_MIN_W: usize = 96;
+/// Smallest window height (title bar included): the 64 px client body plus
+/// `TITLE_H`, i.e. 8 glyph rows of kernel text content.
+const RESIZE_MIN_H: usize = TITLE_H + 64;
+
+/// Resize-drag edge mask: left edge.
+const EDGE_L: u8 = 1;
+/// Resize-drag edge mask: right edge.
+const EDGE_R: u8 = 2;
+/// Resize-drag edge mask: top edge.
+const EDGE_T: u8 = 4;
+/// Resize-drag edge mask: bottom edge.
+const EDGE_B: u8 = 8;
 
 const DESK_BG: Color = 0x00_08_0c_14;
 const TITLE_ON: Color = 0x00_2e_5a_c2;
@@ -79,12 +99,31 @@ struct Window {
     note_len: usize,
 }
 
+/// Active pointer drag, keyed by the window's [`WinKind`] (stable across
+/// `bring_to_front` slot shifts — an index would go stale the moment the
+/// drag starts and the window is focused/brought to the front).
+#[derive(Clone, Copy)]
+enum Drag {
+    /// Move the window by its title bar.
+    Move,
+    /// Resize from the pressed edge/corner mask; the geometry at press time.
+    Resize {
+        edges: u8,
+        x0: i32,
+        y0: i32,
+        w0: usize,
+        h0: usize,
+        wx0: i32,
+        wy0: i32,
+    },
+}
+
 static mut WINS: [Option<Window>; MAX_WINS] = [None; MAX_WINS];
 static mut CUR_X: usize = 0;
 static mut CUR_Y: usize = 0;
 static mut CUR_VIS: bool = false;
 static mut LAST_BTNS: u8 = 0;
-static mut DRAG: Option<usize> = None;
+static mut DRAG: Option<(WinKind, Drag)> = None;
 
 /// Ceiling on ring-3 client window slots (one per `SYS_GUI`-registered task).
 const MAX_CLIENTS: usize = 4;
@@ -427,8 +466,8 @@ fn unfocus_all() {
 fn close_window(i: usize) {
     dirty_all();
     unsafe {
-        if let Some(w) = core::ptr::addr_of!(DRAG).read() {
-            if w == i {
+        if let Some((kind, _)) = core::ptr::addr_of!(DRAG).read() {
+            if (*core::ptr::addr_of!(WINS))[i].map(|w| w.kind) == Some(kind) {
                 DRAG = None;
             }
         }
@@ -804,12 +843,24 @@ fn draw_client(fb: &Framebuffer, win: &Window) {
     }
     unsafe {
         let client = Framebuffer::from_ram(c.buf as *mut u8, c.w, c.h, fb);
-        fb.blit_at(
-            &client,
-            (0, 0),
-            (win.x, win.y + TITLE_H),
-            (c.w.min(win.w), c.h.min(body)),
-        );
+        if win.w == c.w && body == c.h {
+            fb.blit_at(
+                &client,
+                (0, 0),
+                (win.x, win.y + TITLE_H),
+                (c.w.min(win.w), c.h.min(body)),
+            );
+        } else {
+            // The user resized the window: scale the client's native buffer
+            // (nearest neighbour) to the body, keeping its own resolution.
+            fb.blit_scaled(
+                &client,
+                (0, 0),
+                (win.x, win.y + TITLE_H),
+                (c.w, c.h),
+                (win.w, body),
+            );
+        }
     }
 }
 
@@ -892,8 +943,9 @@ pub fn handle_scancode(sc: u8) -> bool {
 }
 
 /// Applies a mouse report: moves the arrow (clamped to the framebuffer),
-/// drags the focused window off its title bar and dispatches clicks
-/// (icons / close button / task bar / window body).
+/// drives the active drag — title-bar move or edge/corner resize — and
+/// dispatches clicks (icons / close button / task bar / window body).
+/// A released button ends the drag, logging the final size after a resize.
 pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
     let Some(fb) = console::framebuffer() else {
         return;
@@ -914,21 +966,86 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
         *core::ptr::addr_of_mut!(CUR_X) = nx;
         *core::ptr::addr_of_mut!(CUR_Y) = ny;
         if moved {
-            if let Some(i) = *core::ptr::addr_of!(DRAG) {
-                let wins = &mut *core::ptr::addr_of_mut!(WINS);
-                if let Some(win) = wins[i].as_mut() {
-                    let max_x = fb.width().saturating_sub(win.w.min(fb.width()));
-                    let max_y = fb.height().saturating_sub(win.h + TASKBAR_H);
-                    let old = Rect {
-                        x0: win.x,
-                        y0: win.y,
-                        x1: win.x + win.w,
-                        y1: win.y + win.h,
-                    };
-                    win.x = (win.x as i32 + dx).clamp(0, max_x as i32) as usize;
-                    win.y = (win.y as i32 + dy).clamp(0, max_y as i32) as usize;
-                    dirty_rect(old.x0, old.y0, old.x1 - old.x0, old.y1 - old.y0);
-                    dirty_rect(win.x, win.y, win.w, win.h);
+            if let Some((kind, mode)) = *core::ptr::addr_of!(DRAG) {
+                // Keyed by kind: `focus_window` at drag start may shift slots.
+                let idx = (0..MAX_WINS).find(|&i| {
+                    (*core::ptr::addr_of!(WINS))[i]
+                        .map(|w| w.kind == kind)
+                        .unwrap_or(false)
+                });
+                if let Some(i) = idx {
+                    match mode {
+                        Drag::Move => {
+                            let wins = &mut *core::ptr::addr_of_mut!(WINS);
+                            if let Some(win) = wins[i].as_mut() {
+                                let max_x = fb.width().saturating_sub(win.w.min(fb.width()));
+                                let max_y = fb.height().saturating_sub(win.h + TASKBAR_H);
+                                let old = Rect {
+                                    x0: win.x,
+                                    y0: win.y,
+                                    x1: win.x + win.w,
+                                    y1: win.y + win.h,
+                                };
+                                win.x = (win.x as i32 + dx).clamp(0, max_x as i32) as usize;
+                                win.y = (win.y as i32 + dy).clamp(0, max_y as i32) as usize;
+                                dirty_rect(old.x0, old.y0, old.x1 - old.x0, old.y1 - old.y0);
+                                dirty_rect(win.x, win.y, win.w, win.h);
+                            }
+                        }
+                        Drag::Resize {
+                            edges,
+                            x0,
+                            y0,
+                            w0,
+                            h0,
+                            wx0,
+                            wy0,
+                        } => {
+                            let wins = &mut *core::ptr::addr_of_mut!(WINS);
+                            if let Some(win) = wins[i].as_mut() {
+                                let ddx = nx as i32 - x0;
+                                let ddy = ny as i32 - y0;
+                                let fb_w = fb.width() as i32;
+                                let fb_h = fb.height() as i32;
+                                let lo_w = RESIZE_MIN_W as i32;
+                                let lo_h = RESIZE_MIN_H as i32;
+                                let mut w = w0 as i32;
+                                let mut h = h0 as i32;
+                                let mut x = wx0;
+                                let mut y = wy0;
+                                if edges & EDGE_L != 0 {
+                                    let hi = (wx0 + w0 as i32).max(lo_w);
+                                    w = (w0 as i32 - ddx).clamp(lo_w, hi);
+                                    x = wx0 + w0 as i32 - w;
+                                } else if edges & EDGE_R != 0 {
+                                    let hi = (fb_w - wx0).max(lo_w);
+                                    w = (w0 as i32 + ddx).clamp(lo_w, hi);
+                                }
+                                if edges & EDGE_T != 0 {
+                                    let hi = (wy0 + h0 as i32).max(lo_h);
+                                    h = (h0 as i32 - ddy).clamp(lo_h, hi);
+                                    y = wy0 + h0 as i32 - h;
+                                } else if edges & EDGE_B != 0 {
+                                    let hi = (fb_h - TASKBAR_H as i32 - wy0).max(lo_h);
+                                    h = (h0 as i32 + ddy).clamp(lo_h, hi);
+                                }
+                                let old = Rect {
+                                    x0: win.x,
+                                    y0: win.y,
+                                    x1: win.x + win.w,
+                                    y1: win.y + win.h,
+                                };
+                                win.x = x as usize;
+                                win.y = y as usize;
+                                win.w = w as usize;
+                                win.h = h as usize;
+                                dirty_rect(old.x0, old.y0, old.x1 - old.x0, old.y1 - old.y0);
+                                dirty_rect(win.x, win.y, win.w, win.h);
+                            }
+                        }
+                    }
+                } else {
+                    *core::ptr::addr_of_mut!(DRAG) = None;
                 }
             }
             dirty_rect(ox, oy, 8, 8);
@@ -937,6 +1054,11 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
         let prev = *core::ptr::addr_of!(LAST_BTNS);
         let down = buttons & 0x01 != 0;
         if !down {
+            if let Some((kind, mode)) = *core::ptr::addr_of!(DRAG) {
+                if matches!(mode, Drag::Resize { .. }) {
+                    log_resize(kind);
+                }
+            }
             *core::ptr::addr_of_mut!(DRAG) = None;
         }
         if down != (prev & 0x01 != 0) {
@@ -961,6 +1083,33 @@ fn hit_close(win: &Window, x: usize, y: usize) -> bool {
 
 fn hit_body(win: &Window, x: usize, y: usize) -> bool {
     x >= win.x && x < win.x + win.w && y >= win.y + TITLE_H && y < win.y + win.h
+}
+
+/// Edge/corner hit zone for a resize drag: the [`RESIZE_BORDER`]-wide strip
+/// along the window's outer edges (title bar top included; the close button
+/// wins over the top-right corner because it is tested first).
+fn hit_resize(win: &Window, x: usize, y: usize) -> Option<u8> {
+    if x < win.x || x >= win.x + win.w || y < win.y || y >= win.y + win.h {
+        return None;
+    }
+    let mut edges = 0u8;
+    if x - win.x < RESIZE_BORDER {
+        edges |= EDGE_L;
+    }
+    if win.x + win.w - x <= RESIZE_BORDER {
+        edges |= EDGE_R;
+    }
+    if y - win.y < RESIZE_BORDER {
+        edges |= EDGE_T;
+    }
+    if win.y + win.h - y <= RESIZE_BORDER {
+        edges |= EDGE_B;
+    }
+    if edges == 0 {
+        None
+    } else {
+        Some(edges)
+    }
 }
 
 fn hit_icon(x: usize, y: usize) -> Option<WinKind> {
@@ -995,6 +1144,19 @@ fn hit_taskbar(fb: &Framebuffer, x: usize, y: usize) -> Option<usize> {
     None
 }
 
+/// Serial proof line for a finished resize drag: final geometry of the
+/// resized window, addressed by its stable [`WinKind`].
+fn log_resize(kind: WinKind) {
+    let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
+    if let Some(win) = wins.iter().flatten().find(|w| w.kind == kind) {
+        let label = match kind {
+            WinKind::Client(id) => format!("client {}", id),
+            _ => String::from(win.title),
+        };
+        crate::kprintln!("[gui] resize {} -> {}x{}", label, win.w, win.h);
+    }
+}
+
 fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
     if let Some(i) = hit_taskbar(fb, x, y) {
         focus_window(i);
@@ -1022,9 +1184,28 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                 hit_any = true;
                 break;
             }
+            if let Some(edges) = hit_resize(win, x, y) {
+                unsafe {
+                    *core::ptr::addr_of_mut!(DRAG) = Some((
+                        win.kind,
+                        Drag::Resize {
+                            edges,
+                            x0: x as i32,
+                            y0: y as i32,
+                            w0: win.w,
+                            h0: win.h,
+                            wx0: win.x as i32,
+                            wy0: win.y as i32,
+                        },
+                    ));
+                }
+                focus_window(i);
+                hit_any = true;
+                break;
+            }
             if hit_title(win, x, y) {
                 unsafe {
-                    *core::ptr::addr_of_mut!(DRAG) = Some(i);
+                    *core::ptr::addr_of_mut!(DRAG) = Some((win.kind, Drag::Move));
                 }
                 focus_window(i);
                 hit_any = true;
@@ -1225,7 +1406,9 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         fb.fill_rect(win.x, win.y, win.w, TITLE_H, title_bg);
         fb.fill_rect(win.x, win.y + TITLE_H, win.w, win.h - TITLE_H, WIN_BG);
     }
-    let max_px = fb.width().saturating_sub(16);
+    // Body/title text clips at the window's own right edge (resize-safe).
+    let edge = (win.x + win.w).min(fb.width());
+    let max_px = edge.saturating_sub(6);
     tui::draw_text(
         fb,
         win.x + 6,
