@@ -1,5 +1,55 @@
 # AIOS Development Log
 
+## v2.38.25 — ring-3 client windows: `SYS_GUI` gate + kernel window server (2026-09-30)
+
+v2.38.24 made the desktop render smoothly for windows owned by the kernel.
+v2.38.25 opens the window system to user space: a fourth ring-3 demo task
+registers its own window through a new syscall and streams its pixel buffer
+into the composite, proving the kernel can host application surfaces, not just
+its own chrome.
+
+### Added
+- **`SYS_GUI` syscall** (`src/syscalls.rs`, gate id 6) — `rdi = 0` CREATE with
+  `rsi` pointing at a 16-byte `CreateReq { w, h, buf, title }` (user virtual
+  addresses); returns the client id or `u64::MAX`. Any other `rdi` is PRESENT:
+  returns 1 if the client's window was re-damaged for the next frame, else
+  `u64::MAX`.
+- **Kernel window server** (`src/gui.rs`) — a `CLIENTS` registry
+  (`MAX_CLIENTS = 4`) holds each client's pid, buffer pointer, size and copied
+  title (`CLIENT_TITLE_CAP = 24`). `WinKind::Client(id)` windows composite the
+  client's dense buffer through the new `Framebuffer::blit_at` (pitch-aware,
+  clipped on both surfaces), titled from the registry via `win_live_title`.
+  PRESENT re-spawns the window if it was closed, so a live client always gets
+  its surface back. Every user pointer is walked through `memory::translate`
+  (request struct, buffer range, title byte-by-byte) before use; sizes are
+  capped at 8..=512 px and 512×512×4 bytes.
+- **Fourth ring-3 task** (`src/user.rs`, pid 4, slot 5; `MAX_TASKS`/`MAX_PID`
+  5 → 6) — program D paints a 96×64 buffer with a solid colour rotated by
+  `0x00112a44` every round and calls PRESENT + `SYS_SLEEP(6)` in a loop; CREATE
+  runs once after the boot sleep. Zero heap, zero strings — a raw asm paint
+  loop over `int 0x80`.
+- **`Framebuffer::blit_at`** (`src/framebuffer.rs`) — row-wise
+  `copy_nonoverlapping` from `(sx, sy)` of a source surface into `(dx, dy)`,
+  honouring each surface's own pitch with explicit bounds clamping.
+
+### Fixed
+- **Client window hidden under the built-in stack** — client windows register
+  while the console still owns the screen, so `enter()`'s Welcome/System/Clock
+  spawned on top of them (only the top 16 rows of the body stayed visible).
+  `enter()` now raises every registered client window to the z-front via
+  `raise_clients()` before the first render.
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, `sendkey 6` → Shell, `g u i ret` → `gui`):
+  `[serial] [gui] ring3 pid 5 registered client window 0 (96x64)`; the client
+  body sits at exactly (592,284)–(687,347) = 96×64 = 6144 px of one colour
+  that changes across screendumps (rotating fill); two frames 1 s apart differ
+  only inside the client box + live-telemetry box (bbox (592,284)–(725,389));
+  zero `KERNEL PANIC`, IPC ping-pong and the pid-3 sleeper keep running, ticks
+  to 499 s.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.24 — smooth GUI pipeline: RAM backbuffer + dirty-rect blit at 60 FPS (2026-09-29)
 
 The v2.38.23 damage-based renderer already removed the full-screen flicker, but

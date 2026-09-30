@@ -61,6 +61,9 @@ enum WinKind {
     System,
     Clock,
     About,
+    /// A window owned by a ring-3 task; the id indexes [`CLIENTS`], whose
+    /// buffer the window composites on every repaint.
+    Client(u8),
 }
 
 #[derive(Clone, Copy)]
@@ -82,6 +85,31 @@ static mut CUR_Y: usize = 0;
 static mut CUR_VIS: bool = false;
 static mut LAST_BTNS: u8 = 0;
 static mut DRAG: Option<usize> = None;
+
+/// Ceiling on ring-3 client window slots (one per `SYS_GUI`-registered task).
+const MAX_CLIENTS: usize = 4;
+/// Max title bytes copied from the client's user string.
+const CLIENT_TITLE_CAP: usize = 24;
+/// Bounds-safe window/buffer sizes accepted from a ring-3 client.
+const CLIENT_MAX_W: usize = 512;
+const CLIENT_MAX_H: usize = 512;
+/// Hard cap on the client pixel buffer in bytes (bounds check against the
+/// app-provided `w * h * 4` at registration).
+const CLIENT_BUF_CAP: usize = 512 * 512 * 4;
+
+/// A ring-3 window client: the task's dense pixel buffer (packed same-format
+/// pixels, `pitch = w * 4`) plus its copied title.
+struct ClientWin {
+    /// Scheduler slot of the owning task (validated on every `SYS_GUI` call).
+    pid: u32,
+    w: usize,
+    h: usize,
+    buf: *const u8,
+    title: [u8; CLIENT_TITLE_CAP],
+    title_len: usize,
+}
+
+static mut CLIENTS: [Option<ClientWin>; MAX_CLIENTS] = [None, None, None, None];
 
 /// Base of the RAM backbuffer: a dense software frame the GUI renders into and
 /// then publishes to VRAM with a damage-aware `blit_region`. Sits in the spare
@@ -222,7 +250,30 @@ fn win_title(kind: WinKind) -> &'static str {
         WinKind::System => "System",
         WinKind::Clock => "Uptime",
         WinKind::About => "About",
+        WinKind::Client(_) => "ring3 client",
     }
+}
+
+/// Client window record for `id` (bounds-checked against [`MAX_CLIENTS`]).
+fn client_slot(id: u8) -> Option<&'static ClientWin> {
+    let id = id as usize;
+    if id >= MAX_CLIENTS {
+        return None;
+    }
+    unsafe { #[allow(static_mut_refs)] (*core::ptr::addr_of!(CLIENTS))[id].as_ref() }
+}
+
+/// The title shown in the client window's title bar / task bar: the live
+/// per-window title borrowed from its client record, falling back to the
+/// built-in one when the record is gone (e.g. closed while the window lingers).
+fn win_live_title(win: &Window) -> &str {
+    if let WinKind::Client(id) = win.kind {
+        if let Some(c) = client_slot(id) {
+            let n = c.title_len.min(c.title.len());
+            return core::str::from_utf8(&c.title[..n]).unwrap_or("ring3");
+        }
+    }
+    win.title
 }
 
 fn open_slot() -> Option<usize> {
@@ -370,8 +421,31 @@ pub fn enter() {
     if window_count() == 2 {
         open_or_focus(WinKind::Clock);
     }
+    raise_clients();
     ACTIVE.store(true, Ordering::Relaxed);
     render();
+}
+
+/// Raises every registered ring-3 client window above the built-in stack.
+/// Client windows are registered while the console still owns the screen, so
+/// by the time `enter()` opens Welcome/System/Clock they sit underneath them.
+/// Processed in descending slot order so each `bring_to_front` shift cannot
+/// invalidate an index not yet moved.
+fn raise_clients() {
+    let mut clients = [usize::MAX; MAX_WINS];
+    let mut n = 0;
+    for i in 0..MAX_WINS {
+        let is_client = unsafe { &(*core::ptr::addr_of!(WINS))[i] }
+            .map(|w| matches!(w.kind, WinKind::Client(_)))
+            .unwrap_or(false);
+        if is_client {
+            clients[n] = i;
+            n += 1;
+        }
+    }
+    for k in (0..n).rev() {
+        bring_to_front(clients[k]);
+    }
 }
 
 /// Leaves GUI mode and restores the console + TUI screen (`tui` command, or
@@ -393,6 +467,250 @@ pub fn leave() {
     }
     crate::console::clear();
     tui::render();
+}
+
+/// Layout of the `SYS_GUI` CREATE request (user memory, fixed 16 bytes).
+///
+/// `buf` and `title` are user virtual addresses of the client's dense pixel
+/// buffer and its NUL-terminated title string; both live below 4 GiB in the
+/// ring-3 demo layout, so a single `u32` per pointer is enough.
+#[repr(C)]
+struct CreateReq {
+    w: u32,
+    h: u32,
+    buf: u32,
+    title: u32,
+}
+
+/// Wire entry for the `SYS_GUI` syscall from ring-3.
+///
+/// `rdi == 0` performs CREATE with `rsi` pointing at a [`CreateReq`]
+/// (returns the client id, `u64::MAX` on any validation failure). Any other
+/// `rdi` performs PRESENT: the client's window is made dirty (and re-spawned
+/// if it was closed, e.g. by the GUI `leave()`), so the composite picks up the
+/// new pixels on the next `render()` — this is the ring-3 client's "flip".
+pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
+    if frame.rdi == 0 {
+        let req_va = frame.rsi;
+        // Request struct must be fully mapped and its fields within sensible
+        // window bounds before anything is copied.
+        let valid = crate::memory::translate(req_va).is_some()
+            && crate::memory::translate(req_va + 15).is_some();
+        if !valid {
+            frame.rax = u64::MAX;
+            return;
+        }
+        let req =
+            unsafe { core::ptr::read_volatile(req_va as *const CreateReq) };
+        let w = req.w as usize;
+        let h = req.h as usize;
+        let buf_va = req.buf as u64;
+        let mut title_va = req.title as u64;
+        if w < 8 || h < 8 || w > CLIENT_MAX_W || h > CLIENT_MAX_H {
+            frame.rax = u64::MAX;
+            return;
+        }
+        let Some(area) = w.checked_mul(h).and_then(|n| n.checked_mul(4)) else {
+            frame.rax = u64::MAX;
+            return;
+        };
+        if area > CLIENT_BUF_CAP
+            || crate::memory::translate(buf_va).is_none()
+            || crate::memory::translate(buf_va + area as u64 - 1).is_none()
+        {
+            frame.rax = u64::MAX;
+            return;
+        }
+        // Copy the NUL-terminated title byte-by-byte, validating each address.
+        let mut title = [0u8; CLIENT_TITLE_CAP];
+        let mut title_len = 0usize;
+        loop {
+            if title_len == CLIENT_TITLE_CAP {
+                break;
+            }
+            if crate::memory::translate(title_va).is_none() {
+                break;
+            }
+            let byte = unsafe { core::ptr::read_volatile(title_va as *const u8) };
+            title_va += 1;
+            if byte == 0 {
+                break;
+            }
+            if (0x20..=0x7E).contains(&byte) {
+                title[title_len] = byte;
+                title_len += 1;
+            }
+        }
+        create_client(pid, w, h, buf_va as *const u8, title, title_len, frame);
+    } else {
+        // PRESENT
+        let mut id_found = None;
+        unsafe {
+            #[allow(static_mut_refs)]
+            {
+                for (i, c) in (*core::ptr::addr_of_mut!(CLIENTS)).iter_mut().enumerate() {
+                    if let Some(c) = c {
+                        if c.pid == pid {
+                            id_found = Some(i as u8);
+                        }
+                    }
+                }
+            }
+        }
+        match id_found {
+            Some(id) => {
+                present_client(id);
+                frame.rax = 1;
+            }
+            None => {
+                frame.rax = u64::MAX;
+            }
+        }
+    }
+}
+
+/// Registers a validated client and spawns its window; returns the client id.
+fn create_client(
+    pid: u32,
+    w: usize,
+    h: usize,
+    buf: *const u8,
+    title: [u8; CLIENT_TITLE_CAP],
+    title_len: usize,
+    frame: &mut crate::interrupts::InterruptFrame,
+) {
+    // Reuse (overwrite) a slot already owned by this pid, else take a free one.
+    let id = unsafe {
+        #[allow(static_mut_refs)]
+        {
+            let mut owned: Option<usize> = None;
+            let mut free: Option<usize> = None;
+            for (i, c) in (*core::ptr::addr_of_mut!(CLIENTS)).iter_mut().enumerate() {
+                match c {
+                    Some(existing) if existing.pid == pid => {
+                        owned = Some(i);
+                        break;
+                    }
+                    None if free.is_none() => free = Some(i),
+                    _ => {}
+                }
+            }
+            owned.or(free)
+        }
+    };
+    let Some(id) = id else {
+        frame.rax = u64::MAX;
+        return;
+    };
+    let id = id as u8;
+    unsafe {
+        #[allow(static_mut_refs)]
+        {
+            *core::ptr::addr_of_mut!((*core::ptr::addr_of_mut!(CLIENTS))[id as usize]) =
+                Some(ClientWin {
+                    pid,
+                    w,
+                    h,
+                    buf,
+                    title,
+                    title_len,
+                });
+        }
+    }
+    crate::kprintln!(
+        "[serial] [gui] ring3 pid {} registered client window {} ({}x{})",
+        pid,
+        id,
+        w,
+        h
+    );
+    spawn_client(id);
+    frame.rax = id as u64;
+}
+
+/// Owns a `Client(id)` window: takes a window slot, sizes it to the client
+/// buffer plus the title bar, and raises it to z-front.
+fn spawn_client(id: u8) {
+    let Some(slot) = open_slot() else {
+        return;
+    };
+    let Some(c) = client_slot(id) else {
+        return;
+    };
+    dirty_all();
+    let n = window_count();
+    let fb_w = console::framebuffer().map(|fb| fb.width()).unwrap_or(800);
+    let fb_h = console::framebuffer().map(|fb| fb.height()).unwrap_or(600);
+    let cascade = n % 5;
+    let w = c.w;
+    let h = c.h + TITLE_H;
+    let x = (fb_w / 2 + cascade * 28).saturating_sub(w / 2);
+    let y = (fb_h / 3 + cascade * 34).min(fb_h.saturating_sub(h + TASKBAR_H + 20));
+    unsafe {
+        let wins = &mut *core::ptr::addr_of_mut!(WINS);
+        for win in wins.iter_mut().flatten() {
+            win.focused = false;
+        }
+        wins[slot] = Some(Window {
+            kind: WinKind::Client(id),
+            title: win_title(WinKind::Client(id)),
+            x,
+            y,
+            w,
+            h,
+            focused: true,
+            note: [0; 32],
+            note_len: 0,
+        });
+    }
+    bring_to_front(slot);
+}
+
+/// Marks the client's window damage so the next `render()` recomposites it.
+/// If the window was closed (GUI `leave()` / `Esc`) it is re-spawned first, so
+/// a live ring-3 client always gets its surface back on the next present.
+fn present_client(id: u8) {
+    let exists_and_dirty = (0..MAX_WINS).any(|i| unsafe {
+        #[allow(static_mut_refs)]
+        {
+            let w = &(*core::ptr::addr_of!(WINS))[i];
+            if let Some(win) = w {
+                if win.kind == WinKind::Client(id) {
+                    dirty_window(win);
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    if !exists_and_dirty {
+        spawn_client(id);
+    }
+}
+
+/// Composites the client's dense buffer into the window body (below its title
+/// bar). The copy honours the user buffer's own pitch and is bounds/clip-safe
+/// on both sides.
+fn draw_client(fb: &Framebuffer, win: &Window) {
+    let Some(c) = client_slot(match win.kind {
+        WinKind::Client(id) => id,
+        _ => return,
+    }) else {
+        return;
+    };
+    let body = win.h.saturating_sub(TITLE_H);
+    if body == 0 || c.w == 0 || c.buf.is_null() {
+        return;
+    }
+    unsafe {
+        let client = Framebuffer::from_ram(c.buf as *mut u8, c.w, c.h, fb);
+        fb.blit_at(
+            &client,
+            (0, 0),
+            (win.x, win.y + TITLE_H),
+            (c.w.min(win.w), c.h.min(body)),
+        );
+    }
 }
 
 /// Feeds one make-code to the windowed GUI. Returns `true` when consumed.
@@ -722,6 +1040,7 @@ fn icon_label(kind: WinKind) -> &'static str {
         WinKind::System => "System",
         WinKind::Clock => "Uptime",
         WinKind::About => "About",
+        WinKind::Client(_) => "ring3",
     }
 }
 
@@ -768,18 +1087,20 @@ fn draw_taskbar(fb: &Framebuffer) {
     let mut bx = 4;
     let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
     for win in wins.iter().flatten() {
-        let w = 8 + win.title.len() * console::GLYPH_W;
+        let title = win_live_title(win);
+        let w = 8 + title.len() * console::GLYPH_W;
         let bg = if win.focused { BAR_ON } else { BAR_BG };
         unsafe {
             fb.fill_rect(bx, y, w, TASKBAR_H, bg);
         }
-        tui::draw_text(fb, bx + 4, y, win.title, TEXT, bg, bx + w);
+        tui::draw_text(fb, bx + 4, y, title, TEXT, bg, bx + w);
         bx += w + 4;
     }
 }
 
 fn draw_window(fb: &Framebuffer, win: &Window) {
     let title_bg = if win.focused { TITLE_ON } else { TITLE_OFF };
+    let title = win_live_title(win);
     unsafe {
         fb.fill_rect(win.x, win.y, win.w, TITLE_H, title_bg);
         fb.fill_rect(win.x, win.y + TITLE_H, win.w, win.h - TITLE_H, WIN_BG);
@@ -789,7 +1110,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         fb,
         win.x + 6,
         win.y + 1,
-        win.title,
+        title,
         TEXT,
         title_bg,
         (win.x + win.w).min(max_px),
@@ -809,6 +1130,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::System => draw_system(fb, win.x + 8, &mut y, max_px),
         WinKind::Clock => draw_clock(fb, win.x + 8, &mut y, max_px),
         WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
+        WinKind::Client(_) => draw_client(fb, win),
     }
 }
 

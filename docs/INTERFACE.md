@@ -707,6 +707,18 @@ focused) returns to the console/TUI.
   gate, which makes the live telemetry smooth while the static desktop stays
   byte-identical. If the backbuffer cannot be mapped the GUI degrades to the
   v2.38.23 direct-VRAM renderer automatically.
+- **Ring-3 client windows (v2.38.25)**: the desktop can host windows owned by
+  ring-3 tasks. The client calls `SYS_GUI` CREATE once (16-byte request: width,
+  height and user addresses of its pixel buffer and NUL-terminated title — every
+  pointer validated through the page tables, sizes capped at 512×512), then
+  `SYS_GUI` PRESENT every few ticks; the kernel composits its dense buffer into
+  a window below the title bar (title shown in the title bar and task bar) and
+  re-opens the window if the user closed it, so a live client always gets its
+  surface back. The demo client (fourth ring-3 task) shows a 96×64 surface
+  whose solid colour rotates every 6 ticks; `enter()` raises registered client
+  windows above the built-in stack. The window behaves like any other — focus,
+  drag, close — and a closed one reappears on the next PRESENT.
+  Serial proof: `[serial] [gui] ring3 pid 5 registered client window 0 (96x64)`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

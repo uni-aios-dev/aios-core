@@ -42,7 +42,7 @@ extern "C" {
 const SWITCH_DIVIDER: u64 = TIMER_HZ / 4;
 
 /// One slot is always reserved for the CPU-wide idle task (slot 0).
-pub const MAX_TASKS: usize = 5;
+pub const MAX_TASKS: usize = 6;
 
 #[derive(Clone, Copy)]
 struct Task {
@@ -91,6 +91,7 @@ impl Task {
 }
 
 static mut TASKS: [Task; MAX_TASKS] = [
+    Task::empty(),
     Task::empty(),
     Task::empty(),
     Task::empty(),

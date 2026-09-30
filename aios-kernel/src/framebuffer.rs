@@ -229,6 +229,45 @@ impl Framebuffer {
         }
     }
 
+    /// Copies a `w x h` rectangle from `(sx, sy)` in the dense source surface
+    /// into `self` at `(dx, dy)`, honouring each surface's own pitch with one
+    /// `copy_nonoverlapping` per scanline. Used to composite a ring-3 client
+    /// framebuffer (its own dense RAM surface) into the GUI backbuffer at an
+    /// arbitrary window offset — the reader never has to pre-scroll the client
+    /// buffer to align with the destination.
+    ///
+    /// # Safety
+    /// `src` and `self` must be readable/writable for the touched ranges.
+    pub unsafe fn blit_at(
+        &self,
+        src: &Framebuffer,
+        src_at: (usize, usize),
+        dst_at: (usize, usize),
+        size: (usize, usize),
+    ) {
+        let (sx, sy) = src_at;
+        let (dx, dy) = dst_at;
+        let (w, h) = size;
+        if !self.is_usable() || !src.is_usable() || self.bytes_per_pixel != src.bytes_per_pixel {
+            return;
+        }
+        if sx >= src.width || sy >= src.height || dx >= self.width || dy >= self.height {
+            return;
+        }
+        let w = w.min(src.width - sx).min(self.width - dx);
+        let h = h.min(src.height - sy).min(self.height - dy);
+        if w == 0 || h == 0 {
+            return;
+        }
+        let bpp = self.bytes_per_pixel;
+        let bytes = w * bpp;
+        for row in 0..h {
+            let dst = self.base.add((dy + row) * self.pitch + dx * bpp);
+            let src_row = src.base.add((sy + row) * src.pitch + sx * bpp);
+            core::ptr::copy_nonoverlapping(src_row, dst, bytes);
+        }
+    }
+
     /// Reads back a pixel in hardware format (used by the boot self-check).
     ///
     /// # Safety

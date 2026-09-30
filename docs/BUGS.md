@@ -73,6 +73,27 @@
   confined to the dirty region); `sendkey meta_l` + `meta_r` produced zero
   `KERNEL PANIC`/`FATAL` lines and `[serial] tick` kept advancing (496 s).
 
+## RESOLVED (v2.38.25): ring-3 client window hidden under the built-in stack
+
+- **Status:** RESOLVED in v2.38.25 (`raise_clients()` at `gui::enter()`).
+- **Symptom:** the first QEMU run of the new `SYS_GUI` demo logged
+  `[serial] [gui] ring3 pid 5 registered client window 0 (96x64)`, but the
+  screendump showed only the top 16 rows of the 96×64 body — pixel diff vs the
+  telemetry boxes was 96×16 instead of 96×64.
+- **Root cause:** client windows register while the console still owns the
+  screen (long before `gui` is ever run), so their `WINS` slot sits below every
+  built-in window; `enter()` then spawned Welcome/System/Clock *on top* of them
+  (z-order is slot order, last drawn = front), and `present_client` only marks
+  damage — it never re-raises a window that still exists.
+- **Fix:** `enter()` now raises all registered client windows to the z-front
+  via `raise_clients()` (descending slot order so the `bring_to_front` shifts
+  cannot invalidate an index not yet moved) before the first render.
+- **Verification:** QEMU monitor smoke (UEFI/OVMF): the client body sits at
+  exactly (592,284)–(687,347) = 96×64 = 6144 px of a single colour that
+  changes across screendumps (rotating fill); two frames 1 s apart differ only
+  inside the client + live-telemetry boxes (bbox (592,284)–(725,389)); zero
+  `KERNEL PANIC` lines and `[serial] tick` advanced to 499 s.
+
 ## RESOLVED (v2.38.24): residual tearing / partial frames on the panel
 
 - **Status:** RESOLVED in v2.38.24 (true double buffering + dirty-rect publish).
@@ -106,9 +127,11 @@
 The windowed GUI (`gui` command) is functionally complete for a demo but is
 explicitly a first step:
 
-- **Windows are kernel-internal only** — ring-3 processes cannot create or
-  present windows. A `SYS_GUI` style syscall (or a kernel window server over
-  the IPC bus) plus a compositor is needed for real applications.
+- **Windows are kernel-internal only** — *partially resolved in v2.38.25*:
+  ring-3 tasks can now create/present their own windows through the `SYS_GUI`
+  CREATE/PRESENT gate (the kernel composites their buffers, see RESOLVED
+  v2.38.25). Still open: an IPC-bus variant so host `aios-process-mgr` tasks
+  can do the same without `int 0x80`, and a WM task owning the policy.
 - **No resize/minimize/maximize** — windows are fixed-size and can move/close/
   focus only. Task bar buttons allow focusing opaque windows (no minimized
   state).

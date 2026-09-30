@@ -1,13 +1,17 @@
 //! Ring-3 demo programs and their memory setup (Milestones 3-5).
 //!
-//! Three tiny user programs are copied into freshly mapped user pages and
+//! Four tiny user programs are copied into freshly mapped user pages and
 //! entered through the scheduler's fabricated ring-3 frames:
 //!
 //! - program A (slot 2): sends its counter to slot 3, drains its inbox, then
 //!   prints `u1` to the kernel console through `SYS_WRITE`;
 //! - program B (slot 3): mirrors A with the roles swapped (`u2`);
 //! - program C (slot 4): prints `[usleep] up` and its pid via `SYS_GETPID`,
-//!   then alternates `SYS_SLEEP(20)` with a `*` echo forever.
+//!   then alternates `SYS_SLEEP(20)` with a `*` echo forever;
+//! - program D (slot 5): the ring-3 GUI client — paints a 96x64 pixel buffer
+//!   with a rotating solid colour and presents it to the kernel window server
+//!   via `SYS_GUI` every 6 ticks (visible only while the GUI desktop owns the
+//!   screen).
 //!
 //! `SYS_SEND` target ids are *scheduler slot ids* (slots 2/3/4 — the kernel
 //! worker owns slot 1); `SLOT_*` constants document the mapping. A and B form
@@ -16,19 +20,20 @@
 //!
 //! Every program starts by calling `SYS_SLEEP` (20 ticks) so the whole
 //! userspace is briefly asleep at boot — the scheduler must fall back to the
-//! idle context (`[sched] idle`) and wake the trio as their deadlines pass,
+//! idle context (`[sched] idle`) and wake the four as their deadlines pass,
 //! proving sleep, wake and idle fallback in one QEMU run.
 
 use alloc::vec::Vec;
 
 use crate::memory;
 use crate::sched;
-use crate::syscalls::{SYS_GETPID, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_WRITE};
+use crate::syscalls::{SYS_GETPID, SYS_GUI, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_WRITE};
 use crate::{kprintln, vprintln};
 
 pub const PID_A: u32 = 1;
 pub const PID_B: u32 = 2;
 pub const PID_C: u32 = 3;
+pub const PID_D: u32 = 4;
 
 /// Runtime slot ids seen by `current_pid()`/`SYS_*` calls. The kernel worker
 /// takes slot 1, then the demo tasks are spawned A → B → C, so they land on
@@ -50,6 +55,14 @@ const BOOT_SLEEP_TICKS: u64 = 20;
 const SLEEPER_SLEEP_TICKS: u64 = 20;
 /// Number of sleep/wake rounds the pid 3 sleeper performs.
 const SLEEPER_ROUNDS: u64 = 8;
+/// Ring-3 GUI client (pid 4) window: a 96x64 test surface, repainted with a
+/// solid colour that rotates every 6 ticks.
+const GUI_W: u64 = 96;
+const GUI_H: u64 = 64;
+const GUI_PIXELS: u64 = GUI_W * GUI_H;
+const GUI_SLEEP_TICKS: u64 = 6;
+/// Colour added to the client's fill each present round.
+const GUI_COLOR_STEP: u64 = 0x00_11_2a_44;
 
 /// Tiny x86-64 emitter used to build the raw-machine-code demo programs.
 ///
@@ -105,6 +118,67 @@ impl Asm {
     fn mov_r8d(&mut self, v: u64) {
         self.buf.extend_from_slice(&[0x41, 0xB8]);
         self.imm32(v);
+    }
+
+    /// `mov eax, r8d` (44 89 C0) — a colour kept in a syscall-preserved register.
+    fn mov_eax_r8d(&mut self) {
+        self.buf.extend_from_slice(&[0x44, 0x89, 0xC0]);
+    }
+
+    /// `mov ecx, imm32` (loop counter for the buffer fill).
+    fn mov_ecx_imm(&mut self, v: u64) {
+        self.buf.push(0xB9);
+        self.imm32(v);
+    }
+
+    /// `mov [edx], eax` with the 0x67 address-size override: 32-bit (zero-
+    /// extended) addressing of the user pixel buffer from the current edx.
+    fn store_edx_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x67, 0x89, 0x02]);
+    }
+
+    /// `add edx, imm8` walking the fill pointer by the pixel stride (4 bytes).
+    fn add_edx_imm8(&mut self, v: u8) {
+        self.buf.extend_from_slice(&[0x83, 0xC2, v]);
+    }
+
+    /// `dec ecx`.
+    fn dec_ecx(&mut self) {
+        self.buf.extend_from_slice(&[0xFF, 0xC9]);
+    }
+
+    /// `add r8d, imm32` rotating the fill colour between present rounds.
+    fn add_r8d_imm32(&mut self, v: u64) {
+        self.buf.extend_from_slice(&[0x41, 0x81, 0xC0]);
+        self.imm32(v);
+    }
+
+    /// Appends a raw `u32` (part of a data section, e.g. the `SYS_GUI` request).
+    fn data_u32(&mut self, v: u32) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    /// Patches the imm32 at byte position `pos` (earlier emitted as a
+    /// placeholder) with an absolute virtual address once the layout is known.
+    fn patch_imm32(&mut self, pos: usize, v: u32) {
+        self.buf[pos..pos + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    /// `mov esi, imm32` with a manually-patched placeholder (returns the imm32
+    /// byte position for [`Self::patch_imm32`]).
+    fn mov_esi_abs(&mut self) -> usize {
+        self.buf.push(0xBE);
+        let pos = self.buf.len();
+        self.imm32(0);
+        pos
+    }
+
+    /// `mov edx, imm32` with a manually-patched placeholder (fill-buffer base).
+    fn mov_edx_abs(&mut self) -> usize {
+        self.buf.push(0xBA);
+        let pos = self.buf.len();
+        self.imm32(0);
+        pos
     }
 
     fn dec_r8d(&mut self) {
@@ -245,11 +319,81 @@ fn build_pid3() -> Vec<u8> {
     a.finish(PID_C)
 }
 
+/// Ring-3 GUI client: fills its 96x64 pixel buffer with a solid colour and
+/// presents it to the kernel window server every 6 ticks, rotating the colour
+/// each round. Uses no heap, no strings — a raw paint + present loop over the
+/// `SYS_GUI` gate (create once at boot, `int 0x80` PRESENT in the loop).
+fn build_pid4() -> Vec<u8> {
+    let mut a = Asm::new();
+
+    // boot sleep, matching the other three tasks
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(BOOT_SLEEP_TICKS);
+    a.int80();
+
+    // initial fill colour lives in r8d (survives every syscall)
+    a.mov_r8d(0x00_30_58_20);
+
+    // CREATE: SYS_GUI(rdi = 0, rsi = &CreateReq)
+    a.mov_edi(0);
+    let create_req = a.mov_esi_abs();
+    a.mov_eax(SYS_GUI);
+    a.int80();
+
+    let cycle = a.buf.len();
+
+    // refill the buffer: eax = colour, edx = base, ecx = pixel count
+    a.mov_eax_r8d();
+    let fill_base = a.mov_edx_abs();
+    a.mov_ecx_imm(GUI_PIXELS);
+    let fill_loop = a.buf.len();
+    a.store_edx_eax();
+    a.add_edx_imm8(4);
+    a.dec_ecx();
+    a.jnz_back(fill_loop);
+
+    // PRESENT: SYS_GUI(rdi = 1) — kernel recomposites the dirty window
+    a.mov_edi(1);
+    a.mov_eax(SYS_GUI);
+    a.int80();
+
+    // pace so the colour rotation is visible (6 ticks = ~0.06 s)
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(GUI_SLEEP_TICKS);
+    a.int80();
+
+    a.add_r8d_imm32(GUI_COLOR_STEP);
+    a.jmp_back(cycle);
+
+    // ---- data section (offsets resolved after the layout is final) ----
+    let title_off = a.buf.len();
+    a.string(b"ring3 client");
+    let req_off = a.buf.len();
+    a.data_u32(GUI_W as u32);
+    a.data_u32(GUI_H as u32);
+    let req_buf = a.buf.len();
+    a.data_u32(0);
+    let req_title = a.buf.len();
+    a.data_u32(0);
+    let buf_off = a.buf.len();
+    for _ in 0..GUI_PIXELS {
+        a.data_u32(0x00_10_18_20);
+    }
+
+    let base = CODE_BASE + PID_D as u64 * REGION_STRIDE;
+    a.patch_imm32(create_req, (base + req_off as u64) as u32);
+    a.patch_imm32(fill_base, (base + buf_off as u64) as u32);
+    a.patch_imm32(req_buf, (base + buf_off as u64) as u32);
+    a.patch_imm32(req_title, (base + title_off as u64) as u32);
+    a.finish(PID_D)
+}
+
 fn spawn_one(pid: u32) -> Result<(), &'static str> {
     let code = match pid {
         PID_A => build_pid1(),
         PID_B => build_pid2(),
         PID_C => build_pid3(),
+        PID_D => build_pid4(),
         _ => return Err("user: unknown pid"),
     };
     let code_va = CODE_BASE + pid as u64 * REGION_STRIDE;
@@ -295,16 +439,18 @@ fn spawn_one(pid: u32) -> Result<(), &'static str> {
     }
 }
 
-/// Map + register the three demo tasks.
+/// Map + register the demo tasks.
 ///
 /// Spawn order fixes the scheduler slot assignment (worker owns slot 1):
-/// A = slot 2, B = slot 3, C = slot 4. The `SLOT_*` SEND/RCV targets above
-/// depend on this exact order, so it must not change.
+/// A = slot 2, B = slot 3, C = slot 4, D (the GUI client) = slot 5. The
+/// `SLOT_*` SEND/RCV targets above depend on this exact order, so it must not
+/// change.
 pub fn init() -> Result<(), &'static str> {
     spawn_one(PID_A)?;
     spawn_one(PID_B)?;
     spawn_one(PID_C)?;
-    vprintln!("Milestone 3-5 userspace armed: three ring-3 tasks");
-    kprintln!("[serial] [user] three ring-3 tasks armed");
+    spawn_one(PID_D)?;
+    vprintln!("Milestone 3-5 userspace armed: four ring-3 tasks");
+    kprintln!("[serial] [user] four ring-3 tasks armed (A/B/C + GUI client)");
     Ok(())
 }

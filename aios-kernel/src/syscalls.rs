@@ -21,6 +21,7 @@ pub const SYS_RECV: u64 = 2;
 pub const SYS_WRITE: u64 = 3;
 pub const SYS_GETPID: u64 = 4;
 pub const SYS_SLEEP: u64 = 5;
+pub const SYS_GUI: u64 = 6;
 
 /// Maximum number of user string bytes a single `SYS_WRITE` copies into the
 /// kernel console (a hard cap against runaway pointers).
@@ -31,7 +32,7 @@ const SYS_STR_CAP: usize = 64;
 const WRITE_LOG_EVERY: u64 = 32;
 
 /// Highest task id reachable through the syscall gate.
-pub const MAX_PID: usize = 5;
+pub const MAX_PID: usize = 6;
 const MAILBOX_DEPTH: usize = 16;
 
 /// `SYS_SEND`/`SYS_RECV` console+serial lines are emitted every
@@ -72,6 +73,7 @@ impl Mailbox {
 }
 
 static mut MAILBOXES: [Mailbox; MAX_PID] = [
+    Mailbox::new(),
     Mailbox::new(),
     Mailbox::new(),
     Mailbox::new(),
@@ -215,6 +217,9 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
             kprintln!("[serial] [sched] pid {} sleep {}", pid, ticks);
             frame.rax = 0;
             crate::sched::sleep_current(frame, ticks);
+        }
+        SYS_GUI => {
+            crate::gui::client_syscall(pid, frame);
         }
         other => {
             vprintln!("[sysc] unknown syscall {} from pid {}", other, pid);
