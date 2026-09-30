@@ -1318,7 +1318,7 @@ Shared system-control plane consumed by the TUI, GUI, bridge and integration tes
 - `power_mgr` - battery/thermal sampling (`Mock` or host sysfs) + `ThermalGovernor` hysteresis 80/70 C that offloads the LLM to cloud (`Groq`) when hot and returns it to local when cool.
 - `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
 
-Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT, see the `gui` bullet).
+Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet).
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 
 A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Limine-protocol** ELF from a hybrid BIOS+UEFI ISO (the same Limine the Live image uses) and renders through a native **GOP/VBE framebuffer** console; the earlier `bootloader::BiosBoot` + VGA-text path was removed. It is the seed of a self-hosted kernel and provides console I/O, interrupts (GDT/TSS, IDT, PIC remap, PIT + Local APIC timers, PS/2 keyboard), paging (own page-table walker + frame allocator + kernel heap), preemption and kernel IPC.
@@ -1406,20 +1406,28 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
    dropped before the GUI/TUI tables ever see them (see `ps2`/`main`).
    System window reuses `tui::tick_mode()`/`lid_state()`
    and `VERSION`.
-   Since v2.38.25 the window system is open to ring-3: `syscalls.rs` routes
-   `SYS_GUI` (id 6) to `gui::client_syscall`, which dispatches on `rdi` —
-   CREATE (`rdi = 0`, `rsi` → 16-byte `CreateReq { w, h, buf, title }` of user
-   VAs) validates every pointer through `memory::translate`, caps sizes
-   (8..=512 px, ≤ 512×512×4 bytes), copies the NUL-terminated title (≤ 24
-   bytes) and registers a `ClientWin` in the `CLIENTS` registry
-   (`MAX_CLIENTS = 4`); any other `rdi` is PRESENT, which re-damages the
-   client's `WinKind::Client(id)` window (re-spawning it via `spawn_client` if
-   it was closed, so `leave()` never kills a live client). Rendering composites
-   the client's dense pitch-aware buffer through `Framebuffer::blit_at` below
-   the title bar; `win_live_title` shows the registry title in the title bar
-   and task bar; `enter()` raises registered client windows above the built-in
-   stack via `raise_clients()` (they register while the console still owns the
-   screen, so Welcome/System/Clock would otherwise spawn on top).
+    Since v2.38.25 the window system is open to ring-3: `syscalls.rs` routes
+    `SYS_GUI` (id 6) to `gui::client_syscall`, which dispatches on `rdi` —
+    CREATE (`rdi = 0`, `rsi` → 16-byte `CreateReq { w, h, buf, title }` of user
+    VAs) validates every pointer through `memory::translate`, caps sizes
+    (8..=512 px, ≤ 512×512×4 bytes), copies the NUL-terminated title (≤ 24
+    bytes) and registers a `ClientWin` in the `CLIENTS` registry
+    (`MAX_CLIENTS = 4`); PRESENT (`rdi = 1`) re-damages the
+    client's `WinKind::Client(id)` window (re-spawning it via `spawn_client` if
+    it was closed, so `leave()` never kills a live client); GET_EVENT
+    (`rdi = 2`, since v2.38.26) drains the client's single pending input event
+    (`EV_NONE`/`EV_KEY | ascii<<8`/`EV_CLICK | x<<8 | y<<24`, keep-first,
+    unknown pid → `u64::MAX`); any other `rdi` → `u64::MAX`. Input injection
+    (v2.38.26): `handle_scancode` hands printable keys to the focused client
+    instead of the typed-text note, `dispatch_click` posts body-relative
+    clicks before the z-order shuffle (addressed by client id, so
+    `bring_to_front`'s slot shift cannot orphan them), and `raise_clients()`
+    focuses the frontmost client so input flows immediately. Rendering composites
+    the client's dense pitch-aware buffer through `Framebuffer::blit_at` below
+    the title bar; `win_live_title` shows the registry title in the title bar
+    and task bar; `enter()` raises registered client windows above the built-in
+    stack via `raise_clients()` (they register while the console still owns the
+    screen, so Welcome/System/Clock would otherwise spawn on top).
 - `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and four ring-3 tasks, declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `tui::render()` (or, since v2.38.22, `gui::render()` while the `gui` command left the windowed desktop active) are driven. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
   - Panic handler prints via the framebuffer console and serial, then `halt_loop`s.
 - `aios-kernel-run`: builds the kernel (`cargo build --target x86_64-unknown-none --release`), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.

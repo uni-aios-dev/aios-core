@@ -1,5 +1,49 @@
 # AIOS Development Log
 
+## v2.38.26 — input events to ring-3 clients: key/click delivery via `SYS_GUI` GET_EVENT (2026-09-30)
+
+v2.38.25 gave ring-3 tasks their own windows; v2.38.26 closes the loop and
+makes those windows interactive. The kernel now routes printable keystrokes
+and body clicks of the focused client window into a per-client event slot,
+and the demo task D polls it, recolours its surface in reaction (key → red,
+body click → green) and echoes the event back through `SYS_WRITE` — input now
+flows from the mouse/keyboard driver all the way into user-space logic.
+
+### Added
+- **`SYS_GUI` GET_EVENT** (`src/gui.rs`, `client_syscall` — restructured to an
+  explicit `rdi` dispatch: `0` CREATE, `1` PRESENT, `2` GET_EVENT, anything
+  else `u64::MAX`) — drains the single pending event of the calling task's
+  client window and returns it as a packed word: `EV_NONE = 0` (idle),
+  `EV_KEY = 1 | ascii << 8`, `EV_CLICK = 2 | rel_x << 8 | rel_y << 24`
+  (body-relative). Keep-first semantics: a second event arriving before the
+  first is polled is dropped; unknown pid → `u64::MAX`.
+- **Input injection** (`src/gui.rs`) — `handle_scancode` now hands printable
+  characters to the focused client (`post_client_event(id, ev_key(c))`)
+  instead of the kernel-side typed-text note, and `dispatch_click` posts
+  `ev_click(x - win.x, y - win.y - TITLE_H)` for `WinKind::Client` bodies
+  before the z-order shuffle (events are addressed by client id, so the
+  `bring_to_front` slot shift cannot orphan them).
+- **Focus handover** — `raise_clients()` (GUI `enter()`) now focuses the
+  frontmost client window, so input reaches the application immediately after
+  the desktop takes over the screen.
+- **Demo reaction** (`src/user.rs`) — new raw asm ops (`test rax,rax`,
+  `mov ecx,eax`, `and ecx,0xFF`, `cmp ecx,imm8`, forward `jz`/`je`/`jmp` with
+  `patch_rel8` fixups). Program D polls GET_EVENT once per cycle: a key event
+  sets `GUI_KEY_COLOR` (red-ish) and writes `ui key`, a click event sets
+  `GUI_CLICK_COLOR` (green-ish) and writes `ui click`, each echoed to the
+  serial log through `SYS_WRITE`; without events the fill keeps rotating.
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45617): serial shows
+  `[gui] client 0 click (48, 36)` followed by
+  `[sysc] pid 5 write 8: ui click`, and `[gui] client 0 key 'r'` followed by
+  the `ui key` write; screendump colour math confirms the chain end-to-end —
+  body pixels are XRGB (top byte dropped), f1 = `0x305820 + 226` base steps
+  (pre-input), f2 = `GUI_CLICK_COLOR + 5` steps, f3 = `GUI_KEY_COLOR + 5`
+  steps; zero `KERNEL PANIC`, ticks to 473 s.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.25 — ring-3 client windows: `SYS_GUI` gate + kernel window server (2026-09-30)
 
 v2.38.24 made the desktop render smoothly for windows owned by the kernel.

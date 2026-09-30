@@ -10,8 +10,10 @@
 //!   then alternates `SYS_SLEEP(20)` with a `*` echo forever;
 //! - program D (slot 5): the ring-3 GUI client — paints a 96x64 pixel buffer
 //!   with a rotating solid colour and presents it to the kernel window server
-//!   via `SYS_GUI` every 6 ticks (visible only while the GUI desktop owns the
-//!   screen).
+//!   via `SYS_GUI` every 6 ticks; each cycle it also drains one input event
+//!   (`SYS_GUI` GET_EVENT) — a key turns the fill red, a body click turns it
+//!   green, echoed back through `SYS_WRITE` (visible only while the GUI
+//!   desktop owns the screen).
 //!
 //! `SYS_SEND` target ids are *scheduler slot ids* (slots 2/3/4 — the kernel
 //! worker owns slot 1); `SLOT_*` constants document the mapping. A and B form
@@ -63,6 +65,10 @@ const GUI_PIXELS: u64 = GUI_W * GUI_H;
 const GUI_SLEEP_TICKS: u64 = 6;
 /// Colour added to the client's fill each present round.
 const GUI_COLOR_STEP: u64 = 0x00_11_2a_44;
+/// Fill colour the demo switches to on a key event (red-ish).
+const GUI_KEY_COLOR: u64 = 0x00_C0_40_40;
+/// Fill colour the demo switches to on a click event (green-ish).
+const GUI_CLICK_COLOR: u64 = 0x00_40_C0_40;
 
 /// Tiny x86-64 emitter used to build the raw-machine-code demo programs.
 ///
@@ -151,6 +157,52 @@ impl Asm {
     fn add_r8d_imm32(&mut self, v: u64) {
         self.buf.extend_from_slice(&[0x41, 0x81, 0xC0]);
         self.imm32(v);
+    }
+
+    /// `test rax, rax` (48 85 C0) — a zero/non-zero test of a syscall result.
+    fn test_rax_rax(&mut self) {
+        self.buf.extend_from_slice(&[0x48, 0x85, 0xC0]);
+    }
+
+    /// `mov ecx, eax` (89 C1) — moves the event word into a scratch register.
+    fn mov_ecx_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x89, 0xC1]);
+    }
+
+    /// `and ecx, 0xFF` (81 E1 imm32) — isolates the event type byte.
+    fn and_ecx_ff(&mut self) {
+        self.buf.extend_from_slice(&[0x81, 0xE1, 0xFF, 0x00, 0x00, 0x00]);
+    }
+
+    /// `cmp ecx, imm8` (83 F9 imm8) — compares the event type.
+    fn cmp_ecx_imm8(&mut self, v: u8) {
+        self.buf.extend_from_slice(&[0x83, 0xF9, v]);
+    }
+
+    /// `jz rel8` forward placeholder; patch with [`Self::patch_rel8`].
+    fn jz_fwd(&mut self) -> usize {
+        let at = self.buf.len();
+        self.buf.extend_from_slice(&[0x74, 0x00]);
+        at
+    }
+
+    /// `je rel8` forward placeholder; patch with [`Self::patch_rel8`].
+    fn je_fwd(&mut self) -> usize {
+        self.jz_fwd()
+    }
+
+    /// `jmp rel8` forward placeholder; patch with [`Self::patch_rel8`].
+    fn jmp_fwd(&mut self) -> usize {
+        let at = self.buf.len();
+        self.buf.extend_from_slice(&[0xEB, 0x00]);
+        at
+    }
+
+    /// Patches the rel8 displacement of the forward jump emitted at `at` to
+    /// target the current end of the buffer.
+    fn patch_rel8(&mut self, at: usize) {
+        let rel = self.buf.len() as i64 - (at + 2) as i64;
+        self.buf[at + 1] = rel as u8;
     }
 
     /// Appends a raw `u32` (part of a data section, e.g. the `SYS_GUI` request).
@@ -321,8 +373,10 @@ fn build_pid3() -> Vec<u8> {
 
 /// Ring-3 GUI client: fills its 96x64 pixel buffer with a solid colour and
 /// presents it to the kernel window server every 6 ticks, rotating the colour
-/// each round. Uses no heap, no strings — a raw paint + present loop over the
-/// `SYS_GUI` gate (create once at boot, `int 0x80` PRESENT in the loop).
+/// each round and draining one input event per cycle (`SYS_GUI` GET_EVENT: a
+/// key recolours the fill red, a body click green, each echoed through
+/// `SYS_WRITE`). CREATE runs once after the boot sleep; everything else is a
+/// raw paint/present/poll loop over `int 0x80`.
 fn build_pid4() -> Vec<u8> {
     let mut a = Asm::new();
 
@@ -363,11 +417,46 @@ fn build_pid4() -> Vec<u8> {
     a.int80();
 
     a.add_r8d_imm32(GUI_COLOR_STEP);
+
+    // GET_EVENT: SYS_GUI(rdi = 2) — drain one queued input event, if any
+    a.mov_edi(2);
+    a.mov_eax(SYS_GUI);
+    a.int80();
+    a.test_rax_rax();
+    let jz_no_event = a.jz_fwd();
+    a.mov_ecx_eax();
+    a.and_ecx_ff();
+    a.cmp_ecx_imm8(1); // EV_KEY
+    let je_key = a.je_fwd();
+    a.cmp_ecx_imm8(2); // EV_CLICK
+    let je_click = a.je_fwd();
+    let jmp_no_1 = a.jmp_fwd();
+
+    // click: switch the fill to green and echo the event to the kernel log
+    a.patch_rel8(je_click);
+    a.mov_r8d(GUI_CLICK_COLOR);
+    a.mov_esi_placeholder(2);
+    a.mov_eax(SYS_WRITE);
+    a.int80();
+    let jmp_no_2 = a.jmp_fwd();
+
+    // key: switch the fill to red and echo the event to the kernel log
+    a.patch_rel8(je_key);
+    a.mov_r8d(GUI_KEY_COLOR);
+    a.mov_esi_placeholder(1);
+    a.mov_eax(SYS_WRITE);
+    a.int80();
+
+    a.patch_rel8(jz_no_event);
+    a.patch_rel8(jmp_no_1);
+    a.patch_rel8(jmp_no_2);
     a.jmp_back(cycle);
 
     // ---- data section (offsets resolved after the layout is final) ----
     let title_off = a.buf.len();
     a.string(b"ring3 client");
+    a.string(b"ui key");
+    a.string(b"ui click");
     let req_off = a.buf.len();
     a.data_u32(GUI_W as u32);
     a.data_u32(GUI_H as u32);

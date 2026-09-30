@@ -98,7 +98,8 @@ const CLIENT_MAX_H: usize = 512;
 const CLIENT_BUF_CAP: usize = 512 * 512 * 4;
 
 /// A ring-3 window client: the task's dense pixel buffer (packed same-format
-/// pixels, `pitch = w * 4`) plus its copied title.
+/// pixels, `pitch = w * 4`), its copied title and the single pending input
+/// event slot (filled by the GUI input path, drained by `SYS_GUI` GET_EVENT).
 struct ClientWin {
     /// Scheduler slot of the owning task (validated on every `SYS_GUI` call).
     pid: u32,
@@ -107,6 +108,62 @@ struct ClientWin {
     buf: *const u8,
     title: [u8; CLIENT_TITLE_CAP],
     title_len: usize,
+    /// One pending event (`0` = none): [`EV_KEY`] or [`EV_CLICK`] encoding.
+    /// Keep-first semantics — a second event arriving before the app polls is
+    /// dropped rather than overwriting the queued one.
+    event: u64,
+}
+
+/// No pending client event (also returned by GET_EVENT when idle).
+const EV_NONE: u64 = 0;
+/// Event type in the low byte: a key was typed into the focused client.
+const EV_KEY: u64 = 1;
+/// Event type in the low byte: the client window body was clicked; x in bits
+/// 8..24, y in bits 24..40 (body-relative pixels).
+const EV_CLICK: u64 = 2;
+
+/// Packs a key event: `EV_KEY | (ascii << 8)`.
+fn ev_key(c: char) -> u64 {
+    EV_KEY | ((c as u64) << 8)
+}
+
+/// Packs a click event: `EV_CLICK | (x << 8) | (y << 24)`, body-relative.
+fn ev_click(x: usize, y: usize) -> u64 {
+    EV_CLICK | ((x as u64) << 8) | ((y as u64) << 24)
+}
+
+/// Queues one input event for client `id` (single pending slot, keep-first
+/// until the app drains it via `SYS_GUI` GET_EVENT). Returns whether it was
+/// stored; logs a serial proof line for the delivered event.
+fn post_client_event(id: u8, event: u64) -> bool {
+    let stored = unsafe {
+        #[allow(static_mut_refs)]
+        {
+            match (*core::ptr::addr_of_mut!(CLIENTS))[id as usize].as_mut() {
+                Some(c) if c.event == EV_NONE => {
+                    c.event = event;
+                    true
+                }
+                _ => false,
+            }
+        }
+    };
+    if stored {
+        let kind = event & 0xFF;
+        if kind == EV_KEY {
+            let ch = ((event >> 8) & 0xFF) as u8;
+            crate::kprintln!(
+                "[serial] [gui] client {} key '{}'",
+                id,
+                ch as char
+            );
+        } else if kind == EV_CLICK {
+            let x = (event >> 8) & 0xFFFF;
+            let y = (event >> 24) & 0xFFFF;
+            crate::kprintln!("[serial] [gui] client {} click ({}, {})", id, x, y);
+        }
+    }
+    stored
 }
 
 static mut CLIENTS: [Option<ClientWin>; MAX_CLIENTS] = [None, None, None, None];
@@ -446,6 +503,16 @@ fn raise_clients() {
     for k in (0..n).rev() {
         bring_to_front(clients[k]);
     }
+    // Focus the frontmost client so its application receives input right away.
+    let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
+    for i in (0..MAX_WINS).rev() {
+        if let Some(win) = wins[i].as_ref() {
+            if matches!(win.kind, WinKind::Client(_)) {
+                focus_window(i);
+                break;
+            }
+        }
+    }
 }
 
 /// Leaves GUI mode and restores the console + TUI screen (`tui` command, or
@@ -482,13 +549,17 @@ struct CreateReq {
     title: u32,
 }
 
-/// Wire entry for the `SYS_GUI` syscall from ring-3.
+/// Wire entry for the `SYS_GUI` syscall from ring-3, dispatched on `rdi`:
 ///
-/// `rdi == 0` performs CREATE with `rsi` pointing at a [`CreateReq`]
-/// (returns the client id, `u64::MAX` on any validation failure). Any other
-/// `rdi` performs PRESENT: the client's window is made dirty (and re-spawned
-/// if it was closed, e.g. by the GUI `leave()`), so the composite picks up the
-/// new pixels on the next `render()` — this is the ring-3 client's "flip".
+/// - `0` — CREATE with `rsi` pointing at a [`CreateReq`] (returns the client
+///   id, `u64::MAX` on any validation failure);
+/// - `1` — PRESENT: the client's window is made dirty (and re-spawned if it
+///   was closed, e.g. by the GUI `leave()`), so the composite picks up the new
+///   pixels on the next `render()` — this is the ring-3 client's "flip";
+/// - `2` — GET_EVENT: drains the single pending input event (returns the
+///   [`EV_KEY`]/[`EV_CLICK`] packed word, [`EV_NONE`] when idle, `u64::MAX`
+///   if the task owns no client window);
+/// - anything else — `u64::MAX`.
 pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
     if frame.rdi == 0 {
         let req_va = frame.rsi;
@@ -542,22 +613,9 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
             }
         }
         create_client(pid, w, h, buf_va as *const u8, title, title_len, frame);
-    } else {
+    } else if frame.rdi == 1 {
         // PRESENT
-        let mut id_found = None;
-        unsafe {
-            #[allow(static_mut_refs)]
-            {
-                for (i, c) in (*core::ptr::addr_of_mut!(CLIENTS)).iter_mut().enumerate() {
-                    if let Some(c) = c {
-                        if c.pid == pid {
-                            id_found = Some(i as u8);
-                        }
-                    }
-                }
-            }
-        }
-        match id_found {
+        match client_idx_of(pid) {
             Some(id) => {
                 present_client(id);
                 frame.rax = 1;
@@ -566,6 +624,47 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
                 frame.rax = u64::MAX;
             }
         }
+    } else if frame.rdi == 2 {
+        // GET_EVENT — drain the single pending input event.
+        frame.rax = take_client_event(pid).unwrap_or(u64::MAX);
+    } else {
+        frame.rax = u64::MAX;
+    }
+}
+
+/// Index in `CLIENTS` of the client owned by `pid`, if any.
+fn client_idx_of(pid: u32) -> Option<u8> {
+    unsafe {
+        #[allow(static_mut_refs)]
+        {
+            for (i, c) in (*core::ptr::addr_of!(CLIENTS)).iter().enumerate() {
+                if let Some(c) = c {
+                    if c.pid == pid {
+                        return Some(i as u8);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Removes and returns the pending event of the client owned by `pid`
+/// (`Some(0)` when there is simply nothing queued, `None` when the task owns
+/// no client window at all).
+fn take_client_event(pid: u32) -> Option<u64> {
+    unsafe {
+        #[allow(static_mut_refs)]
+        {
+            for c in (*core::ptr::addr_of_mut!(CLIENTS)).iter_mut().flatten() {
+                if c.pid == pid {
+                    let event = c.event;
+                    c.event = EV_NONE;
+                    return Some(event);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -614,6 +713,7 @@ fn create_client(
                     buf,
                     title,
                     title_len,
+                    event: EV_NONE,
                 });
         }
     }
@@ -756,6 +856,21 @@ pub fn handle_scancode(sc: u8) -> bool {
     };
     if c.is_control() {
         return true;
+    }
+    // A focused ring-3 client window consumes the key as an input event for
+    // its application instead of the kernel-side typed-text note.
+    if let Some(i) = focused_idx() {
+        let client_id = unsafe {
+            #[allow(static_mut_refs)]
+            (*core::ptr::addr_of!(WINS))[i].as_ref().and_then(|w| match w.kind {
+                WinKind::Client(id) => Some(id),
+                _ => None,
+            })
+        };
+        if let Some(id) = client_id {
+            post_client_event(id, ev_key(c));
+            return true;
+        }
     }
     if let Some(i) = focused_idx() {
         unsafe {
@@ -916,6 +1031,11 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                 break;
             }
             if hit_body(win, x, y) {
+                if let WinKind::Client(id) = win.kind {
+                    let rel_x = x - win.x;
+                    let rel_y = y - (win.y + TITLE_H);
+                    post_client_event(id, ev_click(rel_x, rel_y));
+                }
                 focus_window(i);
                 hit_any = true;
                 break;

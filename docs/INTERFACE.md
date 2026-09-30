@@ -719,6 +719,17 @@ focused) returns to the console/TUI.
   windows above the built-in stack. The window behaves like any other — focus,
   drag, close — and a closed one reappears on the next PRESENT.
   Serial proof: `[serial] [gui] ring3 pid 5 registered client window 0 (96x64)`.
+- **Input events for client windows (v2.38.26)**: focused client windows are
+  interactive. The kernel queues input into the client's one-slot event buffer:
+  printable keystrokes become `EV_KEY | ascii << 8`, clicks inside the body
+  become `EV_CLICK | rel_x << 8 | rel_y << 24` (coordinates relative to the
+  body, below the title bar). The application polls `SYS_GUI` GET_EVENT once
+  per cycle and gets `EV_NONE` when idle (keep-first: a second event arriving
+  before the first is polled is dropped). The demo client reacts live: a key
+  turns its surface red, a body click turns it green, and each event is echoed
+  to the serial log through `SYS_WRITE` (`ui key` / `ui click`).
+  Serial proof: `[gui] client 0 click (48, 36)` + `[sysc] pid 5 write 8: ui click`,
+  `[gui] client 0 key 'r'`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the
