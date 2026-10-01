@@ -61,6 +61,18 @@ const RESIZE_MIN_W: usize = 96;
 /// `TITLE_H`, i.e. 8 glyph rows of kernel text content.
 const RESIZE_MIN_H: usize = TITLE_H + 64;
 
+/// Modal confirm dialog (v2.38.30): fixed size, centered on the desktop.
+const DLG_W: usize = 464;
+const DLG_H: usize = 140;
+/// Top of the button row inside the dialog, measured from its top edge.
+const DLG_BTN_Y: usize = 96;
+const DLG_BTN_H: usize = 24;
+/// Button plates centered as a pair (32 px gap): `OK` then `Cancel`.
+const DLG_OK_X: usize = 104;
+const DLG_OK_W: usize = 96;
+const DLG_CANCEL_X: usize = 232;
+const DLG_CANCEL_W: usize = 128;
+
 /// Resize-drag edge mask: left edge.
 const EDGE_L: u8 = 1;
 /// Resize-drag edge mask: right edge.
@@ -151,6 +163,11 @@ static mut CUR_Y: usize = 0;
 static mut CUR_VIS: bool = false;
 static mut LAST_BTNS: u8 = 0;
 static mut DRAG: Option<(WinKind, Drag)> = None;
+/// Active modal confirm dialog: the window it closes on confirm, paired with
+/// its serial label. While `Some` every focus/spawn/keyboard/mouse dispatch
+/// path is gated (v2.38.30 focus-steal prevention) until the dialog is
+/// resolved through [`modal_confirm`] / [`modal_cancel`].
+static mut MODAL: Option<(WinKind, &'static str)> = None;
 
 /// Ceiling on ring-3 client window slots (one per `SYS_GUI`-registered task).
 const MAX_CLIENTS: usize = 4;
@@ -440,6 +457,10 @@ fn focused_kind() -> Option<WinKind> {
 }
 
 fn spawn(kind: WinKind) {
+    // Modal dialog up: no window may open underneath it.
+    if modal_active() {
+        return;
+    }
     let Some(slot) = open_slot() else {
         return;
     };
@@ -476,6 +497,10 @@ fn spawn(kind: WinKind) {
 }
 
 fn focus_window(i: usize) {
+    // Modal dialog up: focus changes are refused (focus-steal prevention).
+    if modal_active() {
+        return;
+    }
     dirty_all();
     let mut restored = None;
     unsafe {
@@ -507,7 +532,25 @@ fn unfocus_all() {
     }
 }
 
+/// Closes window `i` — unless it holds a typed-text note, in which case the
+/// modal confirm dialog opens instead. All three close paths (Esc, the `X`
+/// button, `F4`) funnel here, so none of them can silently drop the note.
 fn close_window(i: usize) {
+    let gate = unsafe {
+        (*core::ptr::addr_of!(WINS))[i]
+            .as_ref()
+            .map(|w| (w.note_len > 0, w.kind, w.title))
+    };
+    if let Some((true, kind, title)) = gate {
+        modal_open(kind, title);
+        return;
+    }
+    close_window_raw(i);
+}
+
+/// Teardown half of [`close_window`]: clears the slot (and any drag that
+/// pointed at it) and logs the `[gui] close` proof line.
+fn close_window_raw(i: usize) {
     dirty_all();
     unsafe {
         if let Some((kind, _)) = core::ptr::addr_of!(DRAG).read() {
@@ -519,6 +562,96 @@ fn close_window(i: usize) {
             crate::kprintln!("[gui] close {}", win_label(win.kind, win.title));
         }
         (*core::ptr::addr_of_mut!(WINS))[i] = None;
+    }
+}
+
+/// Whether the modal confirm dialog is up (the focus-steal input gate).
+fn modal_active() -> bool {
+    unsafe { core::ptr::addr_of!(MODAL).read().is_some() }
+}
+
+/// Center of the fixed-size dialog on the given framebuffer.
+fn modal_pos(fb: &Framebuffer) -> (usize, usize) {
+    ((fb.width() - DLG_W) / 2, (fb.height() - DLG_H) / 2)
+}
+
+/// Raises the confirm dialog over `kind`'s window and parks input: an active
+/// title-bar drag is dropped so no window can move while the dialog is modal.
+fn modal_open(kind: WinKind, title: &'static str) {
+    unsafe {
+        *core::ptr::addr_of_mut!(MODAL) = Some((kind, title));
+        *core::ptr::addr_of_mut!(DRAG) = None;
+    }
+    dirty_all();
+    crate::kprintln!("[gui] modal open {}", win_label(kind, title));
+}
+
+/// Dismisses the dialog, logging how it was resolved (`confirmed` /
+/// `canceled`).
+fn modal_close(confirmed: bool) {
+    let m = unsafe {
+        let m = core::ptr::addr_of!(MODAL).read();
+        *core::ptr::addr_of_mut!(MODAL) = None;
+        m
+    };
+    let Some((kind, title)) = m else {
+        return;
+    };
+    dirty_all();
+    crate::kprintln!(
+        "[gui] modal close {} {}",
+        win_label(kind, title),
+        if confirmed { "confirmed" } else { "canceled" }
+    );
+}
+
+/// Enter on the dialog: closes the target window for real and dismisses.
+/// Teardown runs through [`close_window_raw`] so the note gate cannot re-open
+/// the dialog it is resolving.
+fn modal_confirm() {
+    let target = unsafe { core::ptr::addr_of!(MODAL).read().map(|(kind, _)| kind) };
+    if let Some(kind) = target {
+        if let Some(i) = find_kind(kind) {
+            close_window_raw(i);
+        }
+    }
+    modal_close(true);
+}
+
+/// Esc on the dialog: keep the window and its typed note untouched.
+fn modal_cancel() {
+    modal_close(false);
+}
+
+/// Keyboard routing while the dialog is up: Enter confirms, Esc cancels,
+/// every other make-code is consumed and logged so the block is provable
+/// in the serial stream.
+fn modal_key(sc: u8) -> bool {
+    match sc {
+        0x1C => modal_confirm(),
+        0x01 => modal_cancel(),
+        other => crate::kprintln!("[gui] modal blocks scancode {:#04x}", other),
+    }
+    true
+}
+
+/// Mouse routing while the dialog is up: only the two button plates act;
+/// any other press (window body/title, icon, task bar) is blocked, so the
+/// focus — and ring-3 client input — cannot be stolen.
+fn modal_click(fb: &Framebuffer, x: usize, y: usize) {
+    if !modal_active() {
+        return;
+    }
+    let (dx, dy) = modal_pos(fb);
+    let ry = dy + DLG_BTN_Y;
+    let in_rect =
+        |rx: usize, rw: usize| x >= dx + rx && x < dx + rx + rw && y >= ry && y < ry + DLG_BTN_H;
+    if in_rect(DLG_OK_X, DLG_OK_W) {
+        modal_confirm();
+    } else if in_rect(DLG_CANCEL_X, DLG_CANCEL_W) {
+        modal_cancel();
+    } else {
+        crate::kprintln!("[gui] modal blocks click ({},{})", x, y);
     }
 }
 
@@ -603,6 +736,10 @@ fn minimize_window(kind: WinKind) {
 }
 
 fn cycle_focus() {
+    // Belt-and-suspenders: the key gate already routes F9/Tab to `modal_key`.
+    if modal_active() {
+        return;
+    }
     let wins = (0..MAX_WINS)
         .filter(|&i| unsafe { (*core::ptr::addr_of!(WINS))[i].map(|w| !w.minimized) == Some(true) })
         .collect::<alloc::vec::Vec<usize>>();
@@ -617,7 +754,9 @@ fn cycle_focus() {
     // Capture the label first: `focus_window` → `bring_to_front` moves the
     // window out of slot `next` by the time we would read it.
     let label = unsafe {
-        (*core::ptr::addr_of!(WINS))[next].as_ref().map(|w| win_label(w.kind, w.title))
+        (*core::ptr::addr_of!(WINS))[next]
+            .as_ref()
+            .map(|w| win_label(w.kind, w.title))
     };
     focus_window(next);
     if let Some(label) = label {
@@ -737,6 +876,7 @@ pub fn leave() {
             (*core::ptr::addr_of_mut!(WINS))[i] = None;
         }
         DRAG = None;
+        *core::ptr::addr_of_mut!(MODAL) = None;
         CUR_VIS = false;
         LAST_BTNS = 0;
     }
@@ -1040,6 +1180,10 @@ pub fn handle_scancode(sc: u8) -> bool {
     if !active() {
         return false;
     }
+    // Modal dialog owns the keyboard until it is resolved.
+    if modal_active() {
+        return modal_key(sc);
+    }
     match sc {
         0x01 => {
             if let Some(i) = focused_idx() {
@@ -1268,7 +1412,11 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
         if down != (prev & 0x01 != 0) {
             *core::ptr::addr_of_mut!(LAST_BTNS) = buttons;
             if down {
-                dispatch_click(fb, nx, ny);
+                if modal_active() {
+                    modal_click(fb, nx, ny);
+                } else {
+                    dispatch_click(fb, nx, ny);
+                }
             }
         }
     }
@@ -1532,6 +1680,15 @@ pub fn render() {
             }
         }
     }
+    // The modal dialog paints above windows and the task bar; it is
+    // repainted on any partial damage that overlaps its rectangle (the
+    // desktop fill would otherwise erase it under the live-window refresh).
+    if let Some((kind, title)) = unsafe { core::ptr::addr_of!(MODAL).read() } {
+        let (mx, my) = modal_pos(target);
+        if full || rect_overlaps(&d, mx, my, DLG_W, DLG_H) {
+            draw_modal(target, kind, title);
+        }
+    }
     unsafe {
         if *core::ptr::addr_of!(CUR_VIS)
             && (full
@@ -1717,6 +1874,70 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
         WinKind::Client(_) => draw_client(fb, win),
     }
+}
+
+/// Paints the modal confirm dialog: title bar, the close question, the hint
+/// lines and the centered `OK` / `Cancel` pair — [`modal_click`] hits exactly
+/// these two rectangles.
+fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
+    let (x, y) = modal_pos(fb);
+    let max = x + DLG_W - 6;
+    unsafe {
+        fb.fill_rect(x, y, DLG_W, DLG_H, WIN_BG);
+        fb.fill_rect(x, y, DLG_W, TITLE_H, TITLE_ON);
+    }
+    tui::draw_text(fb, x + 6, y + 1, "Confirm", TEXT, TITLE_ON, max);
+    let question = format!("Close {}?", win_label(kind, title));
+    let mut ly = y + TITLE_H + 8;
+    tui::draw_text(fb, x + 12, ly, &question, TEXT, WIN_BG, max);
+    ly += console::GLYPH_H + 6;
+    tui::draw_text(
+        fb,
+        x + 12,
+        ly,
+        "Typed text will be lost.",
+        TEXT_DIM,
+        WIN_BG,
+        max,
+    );
+    ly += console::GLYPH_H + 6;
+    tui::draw_text(
+        fb,
+        x + 12,
+        ly,
+        "Enter = close, Esc = cancel",
+        TEXT_DIM,
+        WIN_BG,
+        max,
+    );
+    let ry = y + DLG_BTN_Y;
+    unsafe {
+        fb.fill_rect(x + DLG_OK_X, ry, DLG_OK_W, DLG_BTN_H, BAR_ON);
+        fb.fill_rect(x + DLG_CANCEL_X, ry, DLG_CANCEL_W, DLG_BTN_H, BTN_BG);
+    }
+    modal_btn_label(fb, "OK", x + DLG_OK_X, ry, DLG_OK_W, BAR_ON);
+    modal_btn_label(fb, "Cancel", x + DLG_CANCEL_X, ry, DLG_CANCEL_W, BTN_BG);
+}
+
+/// Centers a button label inside its plate (v2.38.30 dialog buttons).
+fn modal_btn_label(
+    fb: &Framebuffer,
+    label: &'static str,
+    rx: usize,
+    ry: usize,
+    rw: usize,
+    bg: Color,
+) {
+    let tx = rx + (rw - label.len() * console::GLYPH_W) / 2;
+    tui::draw_text(
+        fb,
+        tx,
+        ry + (DLG_BTN_H - console::GLYPH_H) / 2,
+        label,
+        TEXT,
+        bg,
+        rx + rw,
+    );
 }
 
 fn text_line(

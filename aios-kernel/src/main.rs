@@ -939,8 +939,7 @@ pub fn idle_loop() -> ! {
         let mouse_seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
         if mouse_seq != last_mouse_seq {
             last_mouse_seq = mouse_seq;
-            let dx = (xhci::MOUSE_DX.load(Ordering::Relaxed) as i64) as i32;
-            let dy = (xhci::MOUSE_DY.load(Ordering::Relaxed) as i64) as i32;
+            let (dx, dy) = xhci::take_mouse_delta();
             let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
             if dx != 0 || dy != 0 || buttons != last_mouse_buttons {
                 last_mouse_buttons = buttons;

@@ -1,5 +1,28 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.38.30): mouse deltas lost when several reports arrive between two input polls
+- **Status:** RESOLVED in v2.38.30 — both input bands accumulate instead of
+  overwrite: `ps2::decode_packet` and the xHCI `harvest_mouse` handler
+  `fetch_add` into accumulators, and the idle-loop poll drains them with
+  `swap(0)` (`ps2::mouse_dx/mouse_dy`, `xhci::take_mouse_delta`). The xHCI
+  latest-report atomics stay as-is for the HID diagnostics tab.
+- **Symptom:** large/fast mouse moves landed short or on the wrong axis. The
+  first v2.38.30 smoke run issued `mouse_move -136 -84` and the GUI click
+  logged at (631,400) instead of the expected (504,316) — exactly one
+  127-pixel chunk missing on X (−136 → −9) and the whole delta missing on Y
+  (−84 → 0); the next move (200,122) showed the same pattern (200 → 73,
+  122 → 0). Small deltas (≤127 per axis, one packet) were always correct.
+- **Root cause:** both bands published *the newest* report into plain
+  atomics (`MOUSE_DX.store`) and the idle loop read them once per sequence
+  change. The PS/2 controller splits a movement larger than one packet into
+  consecutive packets; when more than one landed between two polls, the
+  earlier packet's contribution was overwritten before anyone read it — a
+  silent, timing-dependent loss.
+- **Verification:** on v2.38.30 the same `mouse_move -136 -84` followed by
+  `(96,-36)` lands the click at exactly (600,280) in the serial log (the
+  cumulative sum of both deltas); the rest of the QEMU smoke is unchanged
+  (PANIC 0, 6 resumed cycles).
+
 ## RESOLVED in v2.38.18: real-hardware (MSI) boot page fault in the xHCI step
 - **Status:** RESOLVED in v2.38.18 (map the whole BAR aperture + bounds checks)
 - **Symptom:** MSI boots crash at the xHCI step on fresh images too:

@@ -769,6 +769,19 @@ focused) returns to the console/TUI.
   The actions reuse the mouse paths, so the same serial proof lines appear:
   `[gui] maximize|restore … -> WxH`, `[gui] minimize …`, `[gui] close …`,
   `[gui] focus …`. A hotkey with no focused window does nothing.
+- **Close confirmation dialog (v2.38.30)**: closing a window that still
+  contains typed text (Esc, the `X` button or `F4`) opens a modal `Confirm`
+  dialog centered on the desktop — `Close <label>?`, a
+  `Typed text will be lost.` hint and a centered `OK` / `Cancel` button pair.
+  Resolve it with `Enter` (close for real), `Esc` (keep the text), or by
+  clicking either plate. While the dialog is up the window manager is
+  frozen: all other keys and clicks are consumed and logged
+  (`[gui] modal blocks scancode 0xNN` / `[gui] modal blocks click (x,y)`),
+  so focus cannot move to another window or a ring-3 client.
+  `OK` logs `[gui] close <label>` followed by
+  `[gui] modal close <label> confirmed`; `Esc` / `Cancel` logs
+  `[gui] modal close <label> canceled` and the typed text stays. Closing a
+  window with an empty note never shows the dialog.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

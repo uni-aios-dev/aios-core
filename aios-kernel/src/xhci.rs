@@ -20,7 +20,7 @@
 use crate::memory;
 use crate::pci::{self, PciDevice};
 use core::ptr;
-use core::sync::atomic::{fence, AtomicU64, Ordering};
+use core::sync::atomic::{fence, AtomicI32, AtomicU64, Ordering};
 
 /// Prints `kprintln!` only when the F8 debug mode is active, so a normal boot
 /// shows just the bring-up proof lines and stays quiet on the per-poll/per-event
@@ -140,6 +140,16 @@ pub static MOUSE_DX: AtomicU64 = AtomicU64::new(0);
 
 /// Last relative Y delta from a boot-mouse report, stored sign-extended.
 pub static MOUSE_DY: AtomicU64 = AtomicU64::new(0);
+
+/// Horizontal delta accumulated since the last input drain: reports that
+/// arrive faster than the main-loop poll sum up here instead of overwriting
+/// each other (v2.38.30 burst-loss fix; [`MOUSE_DX`] keeps the latest report
+/// for the diagnostics tab).
+static MOUSE_ACC_DX: AtomicI32 = AtomicI32::new(0);
+
+/// Vertical delta accumulated since the last input drain (drained together
+/// with [`MOUSE_ACC_DX`]).
+static MOUSE_ACC_DY: AtomicI32 = AtomicI32::new(0);
 
 /// Last button byte (bit 0 = left, bit 1 = right, bit 2 = middle).
 pub static MOUSE_BUTTONS: AtomicU64 = AtomicU64::new(0);
@@ -702,6 +712,8 @@ fn arm_ep1() {
 
 /// Reads the 3-byte boot-mouse report (buttons, dX, dY) from the mouse's
 /// interrupt-IN buffer and publishes the deltas as sign-extended values.
+/// The input path additionally accumulates them (accumulate-and-drain), so
+/// back-to-back reports between two main-loop polls cannot drop deltas.
 fn harvest_mouse() {
     let buf = unsafe { XM_EP1_BUF };
     let src = memory::physical_to_virtual(buf) as *const u8;
@@ -710,9 +722,22 @@ fn harvest_mouse() {
         *byte = unsafe { ptr::read_volatile(src.add(index)) };
     }
     MOUSE_BUTTONS.store(u64::from(bytes[0]), Ordering::Relaxed);
-    MOUSE_DX.store(((bytes[1] as i8) as i64) as u64, Ordering::Relaxed);
-    MOUSE_DY.store(((bytes[2] as i8) as i64) as u64, Ordering::Relaxed);
+    let dx = i32::from(bytes[1] as i8);
+    let dy = i32::from(bytes[2] as i8);
+    MOUSE_DX.store((dx as i64) as u64, Ordering::Relaxed);
+    MOUSE_DY.store((dy as i64) as u64, Ordering::Relaxed);
+    MOUSE_ACC_DX.fetch_add(dx, Ordering::Relaxed);
+    MOUSE_ACC_DY.fetch_add(dy, Ordering::Relaxed);
     MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Drains both accumulated mouse deltas (called by the input poll once per
+/// sequence change).
+pub fn take_mouse_delta() -> (i32, i32) {
+    (
+        MOUSE_ACC_DX.swap(0, Ordering::Relaxed),
+        MOUSE_ACC_DY.swap(0, Ordering::Relaxed),
+    )
 }
 
 /// Places one 4-byte TRB (the transfer length is the buffer's page, but only

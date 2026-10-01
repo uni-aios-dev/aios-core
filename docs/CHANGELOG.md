@@ -1,5 +1,69 @@
 # AIOS Development Log
 
+## v2.38.30 — modal confirm dialog + focus-steal prevention (2026-09-30)
+
+Fourth item of the window-manager roadmap: modal dialogs with focus-steal
+prevention. Closing a window that still holds a typed-text note now raises a
+centered confirm dialog instead of silently destroying the text, and while
+that dialog is up the whole window manager is gated — no keystroke, click,
+focus change or window spawn can go anywhere until the user resolves it.
+
+### Added
+- **Modal confirm dialog** (`src/gui.rs`): `close_window` gained a gate — a
+  window with `note_len > 0` reached through any of the three close paths
+  (Esc, the `X` button, `F4`) logs `[gui] modal open <label>` instead of
+  tearing the slot down. The dialog is a fixed 464×140 overlay centered on
+  the desktop, painted above windows and the task bar (and repainted on any
+  partial damage that overlaps its rectangle, so the live-window refresh
+  cannot erase it). It shows `Close <label>?`, the `Typed text will be lost.`
+  hint, `Enter = close, Esc = cancel`, and a centered `OK` / `Cancel` button
+  pair whose plates exactly match the hit rectangles in `modal_click`.
+  Resolutions log `[gui] modal close <label> confirmed|canceled`; the
+  confirm path tears the window down through `close_window_raw` so the note
+  gate cannot re-open the dialog it is resolving. `leave()` clears the state.
+- **Focus-steal prevention**: while `MODAL` is `Some`, `handle_scancode`
+  routes every make-code through `modal_key` (Enter confirms, Esc cancels,
+  anything else is consumed and logged as
+  `[gui] modal blocks scancode 0xNN`), mouse presses route through
+  `modal_click` (only the two plates act; anything else logs
+  `[gui] modal blocks click (x,y)`), and `focus_window` / `spawn` /
+  `cycle_focus` refuse outright — belt-and-suspenders behind the input
+  gates, so neither a ring-3 client nor any built-in window can steal focus
+  while the dialog is modal. The cursor itself keeps moving (it must be able
+  to reach the plates) and an active title-bar drag is dropped when the
+  dialog opens.
+- **Mouse-delta burst-loss fix** (`src/ps2.rs`, `src/xhci.rs`,
+  `src/main.rs`): both input bands published *the latest* report into plain
+  atomics and the idle loop read them once per sequence change — when
+  several packets arrived between two polls (the PS/2 controller splits a
+  movement larger than one packet), the earlier chunks were overwritten
+  before anyone read them. Found by the first v2.38.30 smoke: the intended
+  `mouse_move -136 -84` landed the click at (631,400) instead of (504,316) —
+  exactly one 127-pixel chunk short on X and the whole delta gone on Y.
+  Producers now `fetch_add` into accumulators and the poll drains them with
+  `swap(0)` (`ps2::mouse_dx/mouse_dy`, `xhci::take_mouse_delta`); the xHCI
+  latest-report atomics stay untouched for the HID diagnostics tab.
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45630) with the full dialog lifecycle:
+  `f9` focuses Welcome, `h`/`i` arm the note, `Esc` opens the dialog
+  (`[gui] modal open Welcome to AIOS GUI`), `f9` is blocked
+  (`[gui] modal blocks scancode 0x43`) and a click on the *client's* title
+  bar at (600,280) — a different window from the focused Welcome, so without
+  the dialog it would have stolen focus — is blocked too
+  (`[gui] modal blocks click (600,280)`). The mouse then clicks the `Cancel`
+  plate (`[gui] modal close … canceled`), the dialog reopens with `Esc` and
+  `Enter` confirms (`[gui] close Welcome to AIOS GUI`,
+  `[gui] modal close … confirmed`). The exact (600,280) landing doubles as
+  the burst-fix proof: it is the cumulative result of the (−136,−84) and
+  (96,−36) deltas, each of which previously lost a chunk. Screendumps: f1
+  initial desktop, f2/f3 dialog up (its TITLE_ON bar over the desktop, the
+  focused Welcome title still TITLE_ON after the blocked attempts), f4
+  dialog gone after the mouse cancel with focus still on Welcome, f5 Welcome
+  closed. Zero `KERNEL PANIC`, 6 resumed cycles, serial 110 109 bytes.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green (94 suites).
+
 ## v2.38.29 — GUI hotkeys: F2/F4/F5/F9 window controls (2026-09-30)
 
 Third item of the window-manager roadmap: the window controls are now

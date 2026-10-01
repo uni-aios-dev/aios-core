@@ -43,10 +43,12 @@ static KEY_SEQ: AtomicU32 = AtomicU32::new(0);
 static KEY_SCANCODE: AtomicU32 = AtomicU32::new(0);
 /// Mouse: monotonically increasing packet sequence.
 static MOUSE_SEQ: AtomicU32 = AtomicU32::new(0);
-/// Mouse: horizontal delta of the newest packet (9-bit signed).
+/// Mouse: horizontal delta accumulated since the last read (the reader swaps
+/// it to zero, so packets that arrive faster than the main-loop poll cannot
+/// overwrite each other — v2.38.30 burst-loss fix).
 static MOUSE_DX: AtomicI32 = AtomicI32::new(0);
-/// Mouse: vertical delta of the newest packet (9-bit signed, screen Y grows
-/// downward so the value is already sign-inverted).
+/// Mouse: vertical delta accumulated since the last read (screen Y grows
+/// downwards), drained together with [`MOUSE_DX`].
 static MOUSE_DY: AtomicI32 = AtomicI32::new(0);
 /// Mouse: button bits of the newest packet (bit0 left, bit1 right, bit2 mid).
 static MOUSE_BUTTONS: AtomicU32 = AtomicU32::new(0);
@@ -72,13 +74,15 @@ pub fn mouse_seq() -> u32 {
 }
 
 /// Latest mouse horizontal delta.
+/// Horizontal delta accumulated since the last call (drains the accumulator).
 pub fn mouse_dx() -> i32 {
-    MOUSE_DX.load(Ordering::Relaxed)
+    MOUSE_DX.swap(0, Ordering::Relaxed)
 }
 
 /// Latest mouse vertical delta (screen-space, already Y-inverted).
+/// Vertical delta accumulated since the last call (drains the accumulator).
 pub fn mouse_dy() -> i32 {
-    MOUSE_DY.load(Ordering::Relaxed)
+    MOUSE_DY.swap(0, Ordering::Relaxed)
 }
 
 /// Latest mouse button state.
@@ -265,8 +269,11 @@ fn decode_packet(pkt: &[u8; 3]) {
     let b0 = pkt[0];
     let dx = sign9(b0 & 0x10 != 0, pkt[1]);
     let dy = -sign9(b0 & 0x20 != 0, pkt[2]);
-    MOUSE_DX.store(dx, Ordering::Relaxed);
-    MOUSE_DY.store(dy, Ordering::Relaxed);
+    // Accumulate instead of store: a burst of packets between two main-loop
+    // polls must sum up, not overwrite (the controller splits deltas larger
+    // than one packet, so an overwrite silently drops the earlier chunk).
+    MOUSE_DX.fetch_add(dx, Ordering::Relaxed);
+    MOUSE_DY.fetch_add(dy, Ordering::Relaxed);
     MOUSE_BUTTONS.store(u32::from(b0 & 0x07), Ordering::Relaxed);
     MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
 }
