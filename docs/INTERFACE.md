@@ -690,7 +690,8 @@ focused) returns to the console/TUI.
     click the desktop background clears the drag.
   - Keyboard: `Tab` cycles window focus; `Esc` closes the focused window and,
     with no windows left, returns to the TUI; printable keys (incl. after
-    `Enter`) type into the focused window.
+    `Enter`) type into the focused window; function keys are hotkeys
+    (v2.38.29 — see below).
 - **Behaviour**: one instance per window kind; the arrow composites last. While
   the GUI is active the kernel log (`vprintln!`) and heartbeat pause — the
   desktop owns the screen; serial logging keeps running so `[serial] tick …`
@@ -755,6 +756,19 @@ focused) returns to the console/TUI.
   `[gui] maximize client 0 -> 1280x782`. Task-bar buttons keep a stable
   order (Welcome, System, Uptime, About, clients) — they never swap places
   when the focus or z-order changes.
+- **Keyboard hotkeys (v2.38.29)**: window management also works from the
+  keyboard on plain function keys (no modifiers needed — they cannot collide
+  with typing):
+  | Key | Action |
+  |-----|--------|
+  | `F2` | maximize / restore the focused window |
+  | `F4` | close the focused window (same as `Esc` / the `X` button) |
+  | `F5` | minimize the focused window |
+  | `F9` | cycle window focus (twin of `Tab`) |
+
+  The actions reuse the mouse paths, so the same serial proof lines appear:
+  `[gui] maximize|restore … -> WxH`, `[gui] minimize …`, `[gui] close …`,
+  `[gui] focus …`. A hotkey with no focused window does nothing.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

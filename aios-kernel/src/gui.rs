@@ -433,6 +433,12 @@ fn focused_idx() -> Option<usize> {
         .max()
 }
 
+/// Kind of the focused window, if any — the target of the keyboard hotkeys.
+fn focused_kind() -> Option<WinKind> {
+    let i = focused_idx()?;
+    unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref().map(|w| w.kind) }
+}
+
 fn spawn(kind: WinKind) {
     let Some(slot) = open_slot() else {
         return;
@@ -508,6 +514,9 @@ fn close_window(i: usize) {
             if (*core::ptr::addr_of!(WINS))[i].map(|w| w.kind) == Some(kind) {
                 DRAG = None;
             }
+        }
+        if let Some(win) = (*core::ptr::addr_of!(WINS))[i].as_ref() {
+            crate::kprintln!("[gui] close {}", win_label(win.kind, win.title));
         }
         (*core::ptr::addr_of_mut!(WINS))[i] = None;
     }
@@ -605,7 +614,15 @@ fn cycle_focus() {
         Some(p) => wins[(p + 1) % wins.len()],
         None => wins[0],
     };
+    // Capture the label first: `focus_window` → `bring_to_front` moves the
+    // window out of slot `next` by the time we would read it.
+    let label = unsafe {
+        (*core::ptr::addr_of!(WINS))[next].as_ref().map(|w| win_label(w.kind, w.title))
+    };
     focus_window(next);
+    if let Some(label) = label {
+        crate::kprintln!("[gui] focus {}", label);
+    }
 }
 
 fn open_or_focus(kind: WinKind) {
@@ -1052,6 +1069,36 @@ pub fn handle_scancode(sc: u8) -> bool {
                     }
                 }
             }
+            return true;
+        }
+        // Window hotkeys on plain F-key make codes: `idle_loop` forwards only
+        // non-extended make bytes (break codes are filtered out by the
+        // `sc & 0x80` gate), so F-keys need no modifier/release tracking and
+        // can never collide with typing (they are not printable).
+        0x3C => {
+            // F2 — maximize/restore the focused window.
+            if let Some(kind) = focused_kind() {
+                toggle_maximize(kind);
+            }
+            return true;
+        }
+        0x3E => {
+            // F4 — close the focused window (same path as Esc and the X button).
+            if let Some(i) = focused_idx() {
+                close_window(i);
+            }
+            return true;
+        }
+        0x3F => {
+            // F5 — minimize the focused window.
+            if let Some(kind) = focused_kind() {
+                minimize_window(kind);
+            }
+            return true;
+        }
+        0x43 => {
+            // F9 — cycle focus (Tab twin).
+            cycle_focus();
             return true;
         }
         _ => {}

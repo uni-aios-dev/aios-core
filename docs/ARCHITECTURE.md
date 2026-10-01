@@ -1455,7 +1455,15 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
     buttons are laid out by `taskbar_slots()`/`kind_rank` (Welcome < System <
     Clock < About < clients by id) instead of z-order, so a focus shuffle can
     never move a button under the pointer; minimized windows get the dim
-    `BAR_MIN` fill.
+    `BAR_MIN` fill. Since v2.38.29 `handle_scancode` also owns four window
+    hotkeys on plain F-key make codes (`idle_loop` filters break codes via
+    `sc & 0x80` and E0/E1 prefixes, so no modifier tracking is needed):
+    F2 → `toggle_maximize`, F4 → `close_window`, F5 → `minimize_window`,
+    F9 → `cycle_focus`, each returning `true` so nothing leaks into the
+    typed-text note; the targets come from the new `focused_kind()`, and the
+    transitions log `[gui] close …` / `[gui] focus …` (the focus label is
+    captured before `focus_window` because `bring_to_front` re-slots the
+    window).
 - `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and four ring-3 tasks, declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `tui::render()` (or, since v2.38.22, `gui::render()` while the `gui` command left the windowed desktop active) are driven. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
   - Panic handler prints via the framebuffer console and serial, then `halt_loop`s.
 - `aios-kernel-run`: builds the kernel (`cargo build --target x86_64-unknown-none --release`), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.

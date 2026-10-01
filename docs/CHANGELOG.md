@@ -1,5 +1,51 @@
 # AIOS Development Log
 
+## v2.38.29 — GUI hotkeys: F2/F4/F5/F9 window controls (2026-09-30)
+
+Third item of the window-manager roadmap: the window controls are now
+reachable from the keyboard. Four plain function-key hotkeys drive the same
+actions as the title-bar cluster and the task bar — maximize/restore, close,
+minimize and focus cycling — so every window management operation has both a
+mouse and a keyboard path. F-keys are single make-code scancodes
+(`idle_loop` already drops break codes behind the `sc & 0x80` gate and
+non-extended bytes behind the E0/E1 filter), which makes them the one key
+family that needs no modifier state and can never collide with typing.
+
+### Added
+- **Hotkeys** (`src/gui.rs`, `handle_scancode`) — four new match arms next to
+  Esc/Tab/Backspace: **F2** (`0x3C`) maximize/restore the focused window
+  (`toggle_maximize`), **F4** (`0x3E`) close it (`close_window` — the same
+  path as Esc and the `X` button), **F5** (`0x3F`) minimize it
+  (`minimize_window`), **F9** (`0x43`) cycle focus (`cycle_focus`, the Tab
+  twin). All of them return `true` (consumed), so nothing leaks into the
+  typed-text note or the serial `[key]` fallback; a hotkey with no focused
+  window is a no-op.
+- **`focused_kind()`** — kind of the focused window, the keyboard-side
+  counterpart of the mouse's title-button dispatch.
+- **`[gui] close <label>`** — `close_window` now logs which window it closed
+  (previously the only silent window transition; both Esc and the `X` button
+  go through it).
+- **`[gui] focus <label>`** — `cycle_focus` logs the window it focused. The
+  label is captured *before* `focus_window`, because `bring_to_front` moves
+  the window out of the source slot (first run of the smoke logged the
+  neighbour that slid into the vacated slot — caught and fixed before
+  release).
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45629): three `sendkey f9` presses log
+  `[gui] focus Welcome to AIOS GUI` → `[gui] focus Uptime` →
+  `[gui] focus client 0` (ends on the client, ready for the next hotkey);
+  `f2` → `[gui] maximize client 0 -> 1280x782`, `f2` → `[gui] restore
+  client 0 -> 96x82`, `f5` → `[gui] minimize client 0`; the stable task-bar
+  click restores (`[gui] restore client 0 -> 96x82`) and `f4` →
+  `[gui] close client 0`, after which the demo task's next PRESENT re-spawns
+  the window (frame f4: uniform 96×64 body at the cascade slot (648,334),
+  title focused). Screendumps: f1 focused client, f2 maximized uniform
+  desktop fill, f3 client gone from the desktop. Zero `KERNEL PANIC`,
+  6 resumed cycles, serial 104 025 bytes.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace), `cargo test --workspace` all green.
+
 ## v2.38.28 — minimize/maximize: full title-bar controls + stable task bar (2026-09-30)
 
 Second item of the window-manager roadmap: every window now has the classic
