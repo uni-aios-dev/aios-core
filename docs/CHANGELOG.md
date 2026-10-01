@@ -1,5 +1,52 @@
 # AIOS Development Log
 
+## v2.38.32 — widget layer: buttons (2026-10-01)
+
+First increment of the *Widget set* roadmap item: the demo GUI gained a real
+widget layer — a declarative per-window button table with hover highlight and
+routed clicks — and the Welcome window became its first host with four
+working buttons.
+
+### Added
+- **Widget types** (`src/gui.rs`): `Widget::Button { x, y, w, h, label,
+  action }` with window-local coordinates (plates follow their host through
+  move/resize/maximize) and `WidgetAction::{Open(WinKind), CloseHost}`;
+  `widgets_for(kind)` hands out the per-kind table — `WELCOME_WIDGETS`
+  (System and Uptime on row one, About and Close on row two) — and an empty
+  slice for everyone else, ring-3 clients included.
+- **Drawing**: `draw_window` finishes with `draw_widgets` — `BTN_BG` plates
+  with the label centered and clipped to the plate's right edge, lifted to
+  `BAR_ON` while the cursor hovers them. Hover lives in
+  `WIDGET_HOVER: Option<(WinKind, usize)>`, recomputed on every cursor move
+  by `update_widget_hover` (topmost-window-first; a window covering the
+  point either yields its body widget or nothing, never falling through —
+  the same rule as `dispatch_click`), frozen while a modal dialog is up and
+  cleared by `leave()`; a hover change dirties only the host windows.
+- **Click routing**: `dispatch_click` tests widget plates inside the body
+  before any ring-3 client event and logs the serial proof line
+  `[gui] widget <host>/<label> click`. `Open` runs through `open_or_focus`
+  *without* focusing the host first — that would lift the host above the
+  freshly reopened window and mirror its restored v2.38.31 z-rank (see
+  `place_window`); `CloseHost` funnels through `close_window`, so a typed
+  note still raises the v2.38.30 modal dialog (the fourth close path,
+  together with Esc/X/F4).
+- The Welcome hint line now mentions the buttons ("mouse: buttons open
+  windows, drag title to move").
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45632, 6 screendumps): hover probe
+  (530,406) on the System plate reads `BAR_ON (42,74,146)` while the idle
+  Uptime neighbour at (700,414) still reads `BTN_BG (40,48,80)`; the four
+  clicks log in order — `widget .../System click`, `.../Uptime click` (with
+  the z-restore cross-proof `reopen Uptime at z 1` and the reopened title
+  painting over Welcome in f4), `.../About click`, `.../Close click` — and
+  the Close plate opens the modal (`modal open Welcome to AIOS GUI`, f5)
+  because of the typed note; Enter confirms it (`close Welcome to AIOS GUI
+  (z 1)` + `modal close ... confirmed`, f6 shows only the client window).
+  The harness additionally probes the desktop colour to confirm GUI entry
+  and retries the `gui` command if needed — one run lost the `i` scancode
+  and silently stayed in the TUI. PANIC=0.
+
 ## v2.38.31 — restore of closed z-order (2026-10-01)
 
 Fifth item of the window-manager roadmap: a closed window now remembers

@@ -789,6 +789,15 @@ focused) returns to the console/TUI.
   close/open round-trip. Closing logs `[gui] close <label> (z <rank>)`
   (0 = bottom), a successful restore logs `[gui] reopen <label> at z <rank>`;
   a window opened for the first time has no memory and goes on top as before.
+- **Welcome buttons / widget layer (v2.38.32)**: the Welcome window hosts
+  four clickable buttons under its text — `System` and `Uptime` on the first
+  row, `About` and `Close` on the second. Hovering a plate lights it from
+  `BTN_BG` to `BAR_ON`; clicking logs `[gui] widget Welcome to AIOS GUI/<label>
+  click`. `System` / `Uptime` / `About` open (or focus) that built-in window —
+  a reopened window keeps its remembered z-rank — while `Close` closes the
+  Welcome window itself through the same paths as `Esc`/`X`/`F4`, so a typed
+  note still raises the `Confirm` dialog. Plates are window-local: they move
+  and resize together with their host window.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

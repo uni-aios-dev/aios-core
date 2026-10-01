@@ -157,6 +157,40 @@ enum Drag {
     },
 }
 
+/// A widget hosted in a window body — the first increment of the widget-set
+/// roadmap (v2.38.32, buttons). Coordinates are window-local, so the widget
+/// follows its host through move, resize and maximize, and it is painted on
+/// top of the body content by [`draw_widgets`] and hit-tested before any
+/// client event in [`dispatch_click`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Widget {
+    /// A labeled plate that runs its [`WidgetAction`] on click.
+    Button {
+        /// x offset from the host window's left edge.
+        x: usize,
+        /// y offset from the host window's top edge.
+        y: usize,
+        /// Plate width.
+        w: usize,
+        /// Plate height.
+        h: usize,
+        /// Glyph text, centered on the plate.
+        label: &'static str,
+        /// Click behaviour (after the serial proof line).
+        action: WidgetAction,
+    },
+}
+
+/// What a widget click does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WidgetAction {
+    /// Open the built-in window of that kind, or focus it if already open.
+    Open(WinKind),
+    /// Close the hosting window through [`close_window`], so a typed note
+    /// still raises the modal confirm dialog (the v2.38.30 gate).
+    CloseHost,
+}
+
 static mut WINS: [Option<Window>; MAX_WINS] = [None; MAX_WINS];
 static mut CUR_X: usize = 0;
 static mut CUR_Y: usize = 0;
@@ -174,6 +208,11 @@ static mut MODAL: Option<(WinKind, &'static str)> = None;
 /// restore); an empty table just means "open on top" as before. Cleared with
 /// the rest of the session state in [`leave`].
 static mut CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS] = [None; MAX_WINS];
+/// Currently hovered widget as `(host kind, index into the host's widget
+/// table)`; drives the plate highlight in [`draw_widgets`]. Recomputed on
+/// every cursor move by [`update_widget_hover`] (frozen while a modal dialog
+/// is up) and cleared with the session state in [`leave`].
+static mut WIDGET_HOVER: Option<(WinKind, usize)> = None;
 
 /// Ceiling on ring-3 client window slots (one per `SYS_GUI`-registered task).
 const MAX_CLIENTS: usize = 4;
@@ -969,6 +1008,7 @@ pub fn leave() {
         DRAG = None;
         *core::ptr::addr_of_mut!(MODAL) = None;
         *core::ptr::addr_of_mut!(CLOSED_Z) = [None; MAX_WINS];
+        WIDGET_HOVER = None;
         CUR_VIS = false;
         LAST_BTNS = 0;
     }
@@ -1494,6 +1534,7 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
             }
             dirty_rect(ox, oy, 8, 8);
             dirty_rect(nx, ny, 8, 8);
+            update_widget_hover();
         }
         let prev = *core::ptr::addr_of!(LAST_BTNS);
         let down = buttons & 0x01 != 0;
@@ -1620,6 +1661,163 @@ fn win_label(kind: WinKind, title: &'static str) -> String {
     }
 }
 
+/// Buttons of the Welcome window (v2.38.32 widget demo): a quick-launch row
+/// for the three built-in apps plus a note-safe close button. The body text
+/// block ends at `TITLE_H + 8 + 4 * GLYPH_H = 90` px below the window top,
+/// so row one starts at 102 and row two at 132 — the 170 px window still
+/// keeps a 14 px bottom margin.
+static WELCOME_WIDGETS: [Widget; 4] = [
+    Widget::Button {
+        x: 8,
+        y: 102,
+        w: 112,
+        h: 24,
+        label: "System",
+        action: WidgetAction::Open(WinKind::System),
+    },
+    Widget::Button {
+        x: 126,
+        y: 102,
+        w: 112,
+        h: 24,
+        label: "Uptime",
+        action: WidgetAction::Open(WinKind::Clock),
+    },
+    Widget::Button {
+        x: 8,
+        y: 132,
+        w: 96,
+        h: 24,
+        label: "About",
+        action: WidgetAction::Open(WinKind::About),
+    },
+    Widget::Button {
+        x: 110,
+        y: 132,
+        w: 96,
+        h: 24,
+        label: "Close",
+        action: WidgetAction::CloseHost,
+    },
+];
+
+/// Widget table of a window kind; clients and built-ins without a demo table
+/// get an empty slice.
+fn widgets_for(kind: WinKind) -> &'static [Widget] {
+    if kind == WinKind::Welcome {
+        &WELCOME_WIDGETS
+    } else {
+        &[]
+    }
+}
+
+/// Index of the widget of `win` under the absolute point `(x, y)`, if any.
+fn widget_index_at(win: &Window, x: usize, y: usize) -> Option<usize> {
+    widgets_for(win.kind).iter().position(|wg| {
+        let Widget::Button {
+            x: bx,
+            y: by,
+            w: bw,
+            h: bh,
+            ..
+        } = *wg;
+        x >= win.x + bx && x < win.x + bx + bw && y >= win.y + by && y < win.y + by + bh
+    })
+}
+
+/// The widget that would take a click at `(x, y)`, honouring the same
+/// topmost-wins rule as [`dispatch_click`]: the first window containing the
+/// point either yields its body widget or — when the point falls on its
+/// title/edges — nothing, never falling through to a window underneath.
+fn hover_widget(x: usize, y: usize) -> Option<(WinKind, usize)> {
+    for i in (0..MAX_WINS).rev() {
+        let Some(win) = (unsafe { &(*core::ptr::addr_of!(WINS))[i] }) else {
+            continue;
+        };
+        if win.minimized {
+            continue;
+        }
+        if x < win.x || x >= win.x + win.w || y < win.y || y >= win.y + win.h {
+            continue;
+        }
+        if !hit_body(win, x, y) {
+            return None;
+        }
+        return widget_index_at(win, x, y).map(|wi| (win.kind, wi));
+    }
+    None
+}
+
+/// Recomputes [`WIDGET_HOVER`] after a cursor move and dirties the host
+/// windows whose highlight state changed, so hovering a plate repaints it.
+/// While a modal dialog is up no body widget may light up.
+fn update_widget_hover() {
+    let new = if modal_active() {
+        None
+    } else {
+        let (x, y) = unsafe { (*core::ptr::addr_of!(CUR_X), *core::ptr::addr_of!(CUR_Y)) };
+        hover_widget(x, y)
+    };
+    let old = unsafe { *core::ptr::addr_of!(WIDGET_HOVER) };
+    if old == new {
+        return;
+    }
+    for (kind, _) in [old, new].into_iter().flatten() {
+        let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
+        for win in wins.iter().flatten() {
+            if win.kind == kind {
+                dirty_window(win);
+                break;
+            }
+        }
+    }
+    unsafe {
+        *core::ptr::addr_of_mut!(WIDGET_HOVER) = new;
+    }
+}
+
+/// Executes a clicked widget: logs the `[gui] widget <host>/<label> click`
+/// serial proof line, then runs the action — open/focus a built-in window, or
+/// close the hosting window through [`close_window`] (modal gate included).
+/// The host index may have gone stale after [`focus_window`], so the action
+/// resolves the target window by its [`WinKind`] instead.
+fn widget_click(host: WinKind, host_label: &str, wg: Widget) {
+    let Widget::Button { label, action, .. } = wg;
+    crate::kprintln!("[gui] widget {}/{} click", host_label, label);
+    match action {
+        WidgetAction::Open(kind) => open_or_focus(kind),
+        WidgetAction::CloseHost => {
+            if let Some(i) = find_kind(host) {
+                close_window(i);
+            }
+        }
+    }
+}
+
+/// Paints the host window's widget table over its body content: each plate
+/// uses [`BTN_BG`], lifted to [`BAR_ON`] while [`WIDGET_HOVER`] points at it,
+/// with the label centered and clipped to the plate's right edge.
+fn draw_widgets(fb: &Framebuffer, win: &Window) {
+    let hover = unsafe { *core::ptr::addr_of!(WIDGET_HOVER) };
+    for (wi, wg) in widgets_for(win.kind).iter().enumerate() {
+        let Widget::Button {
+            x, y, w, h, label, ..
+        } = *wg;
+        let (ax, ay) = (win.x + x, win.y + y);
+        let plate = if hover == Some((win.kind, wi)) {
+            BAR_ON
+        } else {
+            BTN_BG
+        };
+        unsafe {
+            fb.fill_rect(ax, ay, w, h, plate);
+        }
+        let tx = ax + w.saturating_sub(label.len() * console::GLYPH_W) / 2;
+        let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
+        tui::draw_text(fb, tx, ty, label, TEXT, plate, (ax + w).min(fb.width()));
+    }
+}
+
 /// Serial proof line for a finished resize drag: final geometry of the
 /// resized window, addressed by its stable [`WinKind`].
 fn log_resize(kind: WinKind) {
@@ -1699,6 +1897,31 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                 break;
             }
             if hit_body(win, x, y) {
+                // Widget plates swallow the click first (v2.38.32), no client
+                // event. Captured before `focus_window` moves slots around —
+                // see `cycle_focus`.
+                if let Some(wi) = widget_index_at(win, x, y) {
+                    let kind = win.kind;
+                    let wg = widgets_for(kind)[wi];
+                    let label = win_label(kind, win.title);
+                    // An Open action focuses its target through
+                    // `open_or_focus`; focusing the host first would lift it
+                    // above the reopened window and mirror the restored
+                    // z-rank (see `place_window`). Everything else behaves
+                    // like an ordinary body click and focuses the host.
+                    if !matches!(
+                        wg,
+                        Widget::Button {
+                            action: WidgetAction::Open(_),
+                            ..
+                        }
+                    ) {
+                        focus_window(i);
+                    }
+                    widget_click(kind, &label, wg);
+                    hit_any = true;
+                    break;
+                }
                 if let WinKind::Client(id) = win.kind {
                     let rel_x = x - win.x;
                     let rel_y = y - (win.y + TITLE_H);
@@ -1970,6 +2193,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
         WinKind::Client(_) => draw_client(fb, win),
     }
+    draw_widgets(fb, win);
 }
 
 /// Paints the modal confirm dialog: title bar, the close question, the hint
@@ -2066,7 +2290,7 @@ fn draw_welcome(fb: &Framebuffer, win: &Window, y: &mut usize, max_px: usize) {
         fb,
         x,
         y,
-        "mouse: click icon to open, drag title to move",
+        "mouse: buttons open windows, drag title to move",
         TEXT_DIM,
         WIN_BG,
         max_px,

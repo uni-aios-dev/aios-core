@@ -1484,6 +1484,21 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
     and compacts the slot array so `WINS` stays a dense bottom→top sequence.
     `spawn_client` gained the modal gate too, so a client present during a
     dialog can no longer spawn focused underneath it.
+    Since v2.38.32 window bodies can host widgets: `Widget::Button` plates are
+    declared in window-local coordinates in per-kind tables (`widgets_for`,
+    `WELCOME_WIDGETS` on Welcome) carrying a `WidgetAction::{Open(WinKind),
+    CloseHost}`, painted by `draw_widgets` after the kind-specific body
+    content (`BTN_BG` plate, centered label, `BAR_ON` while hovered), and
+    hit-tested by `dispatch_click` before any ring-3 client event (proof line
+    `[gui] widget <host>/<label> click`, no client event when a plate
+    swallows the click). Hover state lives in
+    `WIDGET_HOVER: Option<(WinKind, usize)>`, recomputed on cursor moves by
+    `update_widget_hover` with the same topmost-window-first rule as the
+    click path, frozen while `MODAL` is set and cleared by `leave()`; a
+    hover change dirties only the host windows. An `Open` action skips the
+    host `focus_window` — focusing the host first would lift it above the
+    freshly placed window and mirror its restored v2.38.31 z-rank — while
+    `CloseHost` reuses `close_window`, keeping the modal note gate.
 - `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and four ring-3 tasks, declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `tui::render()` (or, since v2.38.22, `gui::render()` while the `gui` command left the windowed desktop active) are driven. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. Mouse deltas are drained once per sequence change (`ps2::mouse_dx`/`mouse_dy` swap, `xhci::take_mouse_delta`), so packets that arrived while the loop was elsewhere accumulate instead of overwriting each other (v2.38.30). It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
   - Panic handler prints via the framebuffer console and serial, then `halt_loop`s.
 - `aios-kernel-run`: builds the kernel (`cargo build --target x86_64-unknown-none --release`), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.
