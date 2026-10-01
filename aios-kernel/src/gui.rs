@@ -36,7 +36,7 @@ use crate::interrupts::{TICKS, TIMER_HZ};
 use crate::{console, tui};
 use alloc::format;
 use alloc::string::String;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Ceiling on open windows (one slot per app instance).
 pub const MAX_WINS: usize = 8;
@@ -294,7 +294,8 @@ static mut CLIENTS: [Option<ClientWin>; MAX_CLIENTS] = [None, None, None, None];
 
 /// Base of the RAM backbuffer: a dense software frame the GUI renders into and
 /// then publishes to VRAM with a damage-aware `blit_region`. Sits in the spare
-/// PML4-slot gap between the kernel heap (ends at `HEAP_START + 2 MiB`) and the
+/// PML4-slot gap directly above the kernel heap (v2.38.33: the 4 MiB heap ends
+/// exactly at `BACKBUF_BASE` — abutting, page-disjoint) and below the
 /// paging self-test page (`0xFFFF_FF00_1000_0000`), so it shares the paging
 /// hierarchy already built for the heap and never collides with it.
 const BACKBUF_BASE: u64 = 0xFFFF_FF00_0040_0000;
@@ -1012,6 +1013,8 @@ pub fn leave() {
         CUR_VIS = false;
         LAST_BTNS = 0;
     }
+    PIN_STREAK.store(0, Ordering::Relaxed);
+    PIN_LOCK.store(false, Ordering::Relaxed);
     crate::console::clear();
     tui::render();
 }
@@ -1421,6 +1424,73 @@ pub fn handle_scancode(sc: u8) -> bool {
                 win.note_len += 1;
             }
         }
+    }
+    true
+}
+
+/// Packets that keep pushing an already-clamped cursor further into the same
+/// screen edge before the pointer is suppressed (roughly a second of a
+/// runaway stream).
+const RUNAWAY_STREAK: u32 = 60;
+/// Runaway gate: consecutive edge-pushing packets (see [`input_allowed`]).
+static PIN_STREAK: AtomicU32 = AtomicU32::new(0);
+/// Runaway gate: while true, pointer input is suppressed until a packet moves
+/// the cursor away from the pinned edge.
+static PIN_LOCK: AtomicBool = AtomicBool::new(false);
+
+/// Runaway-pointer gate (v2.38.33): decides whether one pointer report may be
+/// processed (logged, applied, rendered) by the active screen owner. Real
+/// hardware that streams garbage deltas — a desynced PS/2 touchpad next to a
+/// USB mouse, or a misbehaving xHCI device — used to pin the arrow in the
+/// bottom-left corner forever while every packet cost a serial line, a
+/// formatted log and a full repaint (the lag/storm seen on the laptop).
+///
+/// [`RUNAWAY_STREAK`] consecutive packets that push an already-clamped cursor
+/// further into an edge switch the gate off; it re-arms only when a moving
+/// packet pushes the cursor away from that edge (button-only reports stay
+/// swallowed so the phantom stream cannot click the task bar). Each state
+/// transition logs one line, so a serial capture shows exactly when and why
+/// input was suppressed.
+pub fn input_allowed(dx: i32, dy: i32) -> bool {
+    let Some(fb) = console::framebuffer() else {
+        return true;
+    };
+    // Before the first packet the arrow has no position yet (it centres on
+    // the next report) — nothing can be pinned, so let input through.
+    if !unsafe { *core::ptr::addr_of!(CUR_VIS) } {
+        return true;
+    }
+    let (x, y) = unsafe { (*core::ptr::addr_of!(CUR_X), *core::ptr::addr_of!(CUR_Y)) };
+    let max_x = (fb.width() as i32).saturating_sub(8);
+    let max_y = (fb.height() as i32).saturating_sub(8);
+    let pin = (x == 0 && dx < 0)
+        || (x as i32 >= max_x && dx > 0)
+        || (y == 0 && dy < 0)
+        || (y as i32 >= max_y && dy > 0);
+    let moving = dx != 0 || dy != 0;
+    if PIN_LOCK.load(Ordering::Relaxed) {
+        if moving && !pin {
+            PIN_LOCK.store(false, Ordering::Relaxed);
+            PIN_STREAK.store(0, Ordering::Relaxed);
+            crate::kprintln!("[gui] pointer runaway released");
+            return true;
+        }
+        return false;
+    }
+    if !pin {
+        if moving {
+            PIN_STREAK.store(0, Ordering::Relaxed);
+        }
+        return true;
+    }
+    let streak = PIN_STREAK.fetch_add(1, Ordering::Relaxed) + 1;
+    if streak >= RUNAWAY_STREAK {
+        PIN_LOCK.store(true, Ordering::Relaxed);
+        crate::kprintln!(
+            "[gui] pointer runaway: input suppressed ({} packets pushing into the edge)",
+            streak
+        );
+        return false;
     }
     true
 }

@@ -1,5 +1,59 @@
 # AIOS Development Log
 
+## v2.38.33 — pointer runaway gate, aggregated mouse logs, heap coalescing (2026-10-01)
+
+Closed the report from a real laptop (USB-stick boot, GUI mode, PS/2
+touchpad + USB mouse attached simultaneously): the cursor drifting into the
+bottom-left corner while the `ring3 client` task-bar button blinks over it,
+a serial/log/render storm on every mouse packet, and a long-run
+`KERNEL PANIC: memory allocation of N bytes failed` (see BUGS v2.38.33).
+
+### Added
+- **Runaway gate** (`src/gui.rs`, `src/tui.rs`): `input_allowed(dx, dy)`,
+  called by the idle loop *before* any logging or rendering. 60 consecutive
+  packets that push an already-clamped cursor further into the same edge
+  suppress pointer input — `[gui] pointer runaway: input suppressed (60
+  packets pushing into the edge)` — and only a moving packet away from the
+  edge re-arms it — `[gui] pointer runaway released`. Button-only reports
+  stay swallowed while suppressed, so the phantom stream cannot click the
+  task bar; `leave()` resets `PIN_STREAK`/`PIN_LOCK`.
+- **Aggregated movement logs** (`src/main.rs`): `MoveLog` with the
+  `USB_MOVE`/`PS2_MOVE` statics folds movement into at most one serial line
+  per band per second — `[serial] usb mouse +N pkts dx=… dy=…`,
+  `[serial] ps2 mouse id=0x00 +N pkts dx=… dy=…`. Button changes keep the
+  original per-report format; zero-delta packets are filtered out.
+- **Heap fragmentation self-test** (`src/heap.rs`):
+  `heap::fragmentation_selftest()` runs right after `test_heap` — carves
+  24 × 96 KiB blocks, frees them in allocation order (the pattern that used
+  to strand adjacent-but-unmerged fragments), then re-acquires 1.5 MiB
+  contiguously via `try_reserve_exact` (no panic on regression) and logs
+  `[serial] heap: fragmentation self-test ok` (smoke-grepped) or `FAILED`.
+
+### Fixed
+- **Freelist one-sided coalescing → long-run OOM** (`src/heap.rs`): the free
+  list is kept address-sorted — `dealloc` inserts in order and coalesces with
+  *both* neighbours when adjacent (previously only with the list head),
+  `alloc` leaves split remainders at their original address so the order
+  survives splits. `HEAP_SIZE` 2 → 4 MiB; the GUI backbuffer at
+  `HEAP_START + 4 MiB` abuts it page-disjointly. Fixes the time-dependent
+  `memory allocation of N bytes failed` panic on real hardware.
+- **Per-packet input cost**: a stuck/phantom pointer stream no longer pays a
+  serial line (a UART busy-wait with no reader on hardware), a TUI log row
+  and a full GUI repaint *per packet* — the runaway gate suppresses after 60
+  edge-pushing packets, and ordinary movement is one serial line per second
+  per band.
+
+### Verification
+- Dedicated QEMU gate run (monitor port 45634): cursor parked at the left
+  edge + 70 one-pixel leftward packets → exactly `pointer runaway: input
+  suppressed (60 packets pushing into the edge)`, then one rightward packet
+  → `pointer runaway released`; PANIC 0, `fragmentation self-test ok`.
+- Full GUI smoke: 12/12 `[gui]` lines in order, 9/9 pixel probes, 6/6
+  frames, clean aggregates (no zero-delta lines), PANIC 0; serial 142 067
+  bytes.
+- Gates: kernel `fmt`/`build`/`clippy` zero warnings; workspace
+  `clippy`/`fmt` zero, `cargo test --workspace` — 94 suites, exit 0.
+
 ## v2.38.32 — widget layer: buttons (2026-10-01)
 
 First increment of the *Widget set* roadmap item: the demo GUI gained a real

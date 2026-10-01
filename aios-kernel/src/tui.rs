@@ -23,7 +23,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// Number of glyph rows the interactive panel owns. The TUI is the primary
 /// screen: a compact `CONSOLE_TOP_ROWS` boot-log strip sits on top and every
@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.38.32";
+pub(crate) const VERSION: &str = "AIOS kernel v2.38.33";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -290,6 +290,67 @@ pub(crate) fn paint_cursor(fb: &Framebuffer, x: usize, y: usize, on: bool) {
             }
         }
     }
+}
+
+/// Packets that keep pushing an already-clamped cursor further into the same
+/// screen edge before the pointer is suppressed (see [`input_allowed`]).
+const RUNAWAY_STREAK: u32 = 60;
+/// Runaway gate: consecutive edge-pushing packets before suppression.
+static PIN_STREAK: AtomicU32 = AtomicU32::new(0);
+/// Runaway gate: while true, pointer input is suppressed until a packet moves
+/// the cursor away from the pinned edge.
+static PIN_LOCK: AtomicBool = AtomicBool::new(false);
+
+/// Runaway-pointer gate (v2.38.33), TUI twin of [`crate::gui::input_allowed`]:
+/// suppresses a runaway pointer stream (desynced touchpad / misbehaving HID
+/// device) that would otherwise pin the arrow at a screen edge and repaint the
+/// console for every garbage packet. Logs one line per state transition.
+pub fn input_allowed(dx: i32, dy: i32) -> bool {
+    let Some(fb) = console::framebuffer() else {
+        return true;
+    };
+    // Before the first packet the arrow has no position yet — let input in.
+    if !unsafe { *core::ptr::addr_of!(CURSOR_INIT) } {
+        return true;
+    }
+    let (x, y) = unsafe {
+        (
+            *core::ptr::addr_of!(CURSOR_X),
+            *core::ptr::addr_of!(CURSOR_Y),
+        )
+    };
+    let max_x = (fb.width() as i32).saturating_sub(8);
+    let max_y = (fb.height() as i32).saturating_sub(8);
+    let pin = (x == 0 && dx < 0)
+        || (x as i32 >= max_x && dx > 0)
+        || (y == 0 && dy < 0)
+        || (y as i32 >= max_y && dy > 0);
+    let moving = dx != 0 || dy != 0;
+    if PIN_LOCK.load(Ordering::Relaxed) {
+        if moving && !pin {
+            PIN_LOCK.store(false, Ordering::Relaxed);
+            PIN_STREAK.store(0, Ordering::Relaxed);
+            crate::kprintln!("[tui] pointer runaway released");
+            return true;
+        }
+        return false;
+    }
+    if !pin {
+        if moving {
+            PIN_STREAK.store(0, Ordering::Relaxed);
+        }
+        return true;
+    }
+    let streak = PIN_STREAK.fetch_add(1, Ordering::Relaxed) + 1;
+    if streak >= RUNAWAY_STREAK {
+        PIN_LOCK.store(true, Ordering::Relaxed);
+        crate::kprintln!(
+            "[tui] pointer runaway: input suppressed ({} packets pushing into the edge)",
+            streak
+        );
+        return false;
+    }
+    true
 }
 
 /// Applies a boot-mouse report: moves the arrow (clamped to the framebuffer),

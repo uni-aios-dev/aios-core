@@ -32,7 +32,7 @@ mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use limine::request::{
     EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, RsdpRequest,
     StackSizeRequest,
@@ -373,6 +373,7 @@ pub unsafe extern "C" fn _start() -> ! {
     print_step(5, "heap init");
     heap::init_heap();
     heap::test_heap();
+    heap::fragmentation_selftest();
     vprintln!(
         "Heap: {} MiB mapped at 0x{:x}",
         heap::HEAP_SIZE / 1024 / 1024,
@@ -775,6 +776,60 @@ fn kernel_worker() -> ! {
     }
 }
 
+/// One pointer band's movement accumulator (v2.38.33). Per-packet
+/// `[serial] … mouse dx=… dy=…` lines were a log storm on real hardware: a
+/// machine with no serial reader busy-waits the UART dry on every line and a
+/// runaway device produced dozens of lines per second. Movement is now
+/// aggregated and printed at most once per second as
+/// `[serial] <band> mouse … +N pkts dx=… dy=…`; button changes keep the
+/// original per-report format so existing greps still match.
+struct MoveLog {
+    at: AtomicU64,
+    n: AtomicU32,
+    dx: AtomicI32,
+    dy: AtomicI32,
+}
+
+impl MoveLog {
+    const fn new() -> Self {
+        Self {
+            at: AtomicU64::new(0),
+            n: AtomicU32::new(0),
+            dx: AtomicI32::new(0),
+            dy: AtomicI32::new(0),
+        }
+    }
+
+    /// Accumulates one report; returns the aggregate
+    /// `(packets, dx sum, dy sum)` when the one-second window has elapsed.
+    fn note(&self, dx: i32, dy: i32) -> Option<(u32, i32, i32)> {
+        self.n.fetch_add(1, Ordering::Relaxed);
+        self.dx.fetch_add(dx, Ordering::Relaxed);
+        self.dy.fetch_add(dy, Ordering::Relaxed);
+        let now = interrupts::TICKS.load(Ordering::Relaxed);
+        let at = self.at.load(Ordering::Relaxed);
+        if at == 0 {
+            self.at.store(now.max(1), Ordering::Relaxed);
+            return None;
+        }
+        if now.saturating_sub(at) >= interrupts::TIMER_HZ {
+            let n = self.n.swap(0, Ordering::Relaxed);
+            let sx = self.dx.swap(0, Ordering::Relaxed);
+            let sy = self.dy.swap(0, Ordering::Relaxed);
+            if n > 0 {
+                self.at.store(now, Ordering::Relaxed);
+                return Some((n, sx, sy));
+            }
+        }
+        None
+    }
+}
+
+/// Movement log of the USB (xHCI boot-mouse) pointer band.
+static USB_MOVE: MoveLog = MoveLog::new();
+/// Movement log of the PS/2 (i8042 AUX) pointer band.
+static PS2_MOVE: MoveLog = MoveLog::new();
+
 pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
@@ -942,19 +997,36 @@ pub fn idle_loop() -> ! {
             let (dx, dy) = xhci::take_mouse_delta();
             let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
             if dx != 0 || dy != 0 || buttons != last_mouse_buttons {
-                last_mouse_buttons = buttons;
-                vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
-                kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
-                // Hand the report to the screen owner (interactive TUI moves +
-                // repaints the arrow and switches tabs on a click; the windowed
-                // GUI drives icons/windows) and then redraw so the arrow is
-                // freshly composited over it.
-                if gui::active() {
-                    gui::on_mouse(dx, dy, buttons);
-                    gui::render();
+                // Runaway gate first: a suppressed stream must cost nothing at
+                // all — no log line, no cursor work, no repaint (v2.38.33).
+                let allowed = if gui::active() {
+                    gui::input_allowed(dx, dy)
                 } else {
-                    tui::on_mouse(dx, dy, buttons);
-                    tui::render();
+                    tui::input_allowed(dx, dy)
+                };
+                if allowed {
+                    if buttons != last_mouse_buttons {
+                        last_mouse_buttons = buttons;
+                        vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
+                        kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
+                    }
+                    if dx != 0 || dy != 0 {
+                        if let Some((n, sx, sy)) = USB_MOVE.note(dx, dy) {
+                            vprintln!("[usb-mouse] +{} pkts dx={} dy={}", n, sx, sy);
+                            kprintln!("[serial] usb mouse +{} pkts dx={} dy={}", n, sx, sy);
+                        }
+                    }
+                    // Hand the report to the screen owner (interactive TUI moves +
+                    // repaints the arrow and switches tabs on a click; the windowed
+                    // GUI drives icons/windows) and then redraw so the arrow is
+                    // freshly composited over it.
+                    if gui::active() {
+                        gui::on_mouse(dx, dy, buttons);
+                        gui::render();
+                    } else {
+                        tui::on_mouse(dx, dy, buttons);
+                        tui::render();
+                    }
                 }
             }
         }
@@ -967,27 +1039,54 @@ pub fn idle_loop() -> ! {
             let dy = ps2::mouse_dy();
             let buttons = ps2::mouse_buttons() as u8;
             if dx != 0 || dy != 0 || buttons != last_ps2m_buttons {
-                last_ps2m_buttons = buttons;
-                vprintln!(
-                    "[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}",
-                    ps2::mouse_id(),
-                    buttons,
-                    dx,
-                    dy
-                );
-                kprintln!(
-                    "[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}",
-                    ps2::mouse_id(),
-                    buttons,
-                    dx,
-                    dy
-                );
-                if gui::active() {
-                    gui::on_mouse(dx, dy, buttons);
-                    gui::render();
+                let allowed = if gui::active() {
+                    gui::input_allowed(dx, dy)
                 } else {
-                    tui::on_mouse(dx, dy, buttons);
-                    tui::render();
+                    tui::input_allowed(dx, dy)
+                };
+                if allowed {
+                    if buttons != last_ps2m_buttons {
+                        last_ps2m_buttons = buttons;
+                        vprintln!(
+                            "[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}",
+                            ps2::mouse_id(),
+                            buttons,
+                            dx,
+                            dy
+                        );
+                        kprintln!(
+                            "[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}",
+                            ps2::mouse_id(),
+                            buttons,
+                            dx,
+                            dy
+                        );
+                    }
+                    if dx != 0 || dy != 0 {
+                        if let Some((n, sx, sy)) = PS2_MOVE.note(dx, dy) {
+                            vprintln!(
+                                "[ps2-mouse] id=0x{:02x} +{} pkts dx={} dy={}",
+                                ps2::mouse_id(),
+                                n,
+                                sx,
+                                sy
+                            );
+                            kprintln!(
+                                "[serial] ps2 mouse id=0x{:02x} +{} pkts dx={} dy={}",
+                                ps2::mouse_id(),
+                                n,
+                                sx,
+                                sy
+                            );
+                        }
+                    }
+                    if gui::active() {
+                        gui::on_mouse(dx, dy, buttons);
+                        gui::render();
+                    } else {
+                        tui::on_mouse(dx, dy, buttons);
+                        tui::render();
+                    }
                 }
             }
         }

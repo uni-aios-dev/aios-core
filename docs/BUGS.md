@@ -1,5 +1,66 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.38.33): real-hardware pointer runaway — cursor pinned bottom-left, task-bar flicker, input log storm
+- **Status:** RESOLVED in v2.38.33 — runaway gate (`gui::input_allowed` /
+  `tui::input_allowed`) + aggregated movement logging.
+- **Symptom (laptop booted from the USB stick, GUI mode, PS/2 touchpad and a
+  USB mouse attached):** the mouse arrow constantly drifts into the
+  bottom-left corner and stays there; the `ring3 client` task-bar button in
+  that corner blinks (phantom clicks/hover from the stuck stream); over time
+  the machine drags and eventually raises `KERNEL PANIC`.
+- **Root cause:** a pointer stream that keeps pushing the already-clamped
+  cursor further into the same edge (desynced PS/2 touchpad packets and/or a
+  misbehaving device behind real xHCI silicon) is indistinguishable from real
+  motion, and every packet cost three things: a `[serial] … mouse dx=… dy=…`
+  line (on hardware with no serial reader each line busy-waits the UART dry —
+  dozens of lines per second add up to seconds of pure spin per second), a
+  formatted TUI log line in the TUI band, and a full GUI repaint. Garbage
+  button bits produced real clicks on the task bar under the pinned cursor —
+  that is the blinking `ring3` button.
+- **Fix:** the idle loop asks the active screen owner `input_allowed(dx, dy)`
+  *before* any logging or rendering: 60 consecutive packets that push an
+  already-clamped cursor further into an edge switch the pointer input off —
+  `[gui] pointer runaway: input suppressed (60 packets pushing into the edge)`
+  — and it re-arms only when a moving packet pushes away from the edge —
+  `[gui] pointer runaway released` (button-only reports stay swallowed while
+  suppressed, so the phantom stream cannot click the task bar). Movement
+  logging is aggregated to at most one line per band per second
+  (`[serial] ps2 mouse id=0x00 +N pkts dx=… dy=…`,
+  `[serial] usb mouse +N pkts dx=… dy=…`); button changes keep the original
+  per-report format. `leave()` clears the gate state.
+- **Verification:** dedicated QEMU gate run (monitor port 45634): cursor
+  parked at the left edge + 70 one-pixel leftward packets → exactly
+  `pointer runaway: input suppressed (60 packets pushing into the edge)`,
+  then one rightward packet → `pointer runaway released`, PANIC 0. Full
+  v2.38.33 smoke unchanged: 12/12 `[gui]` lines, 9/9 pixel probes, clean
+  aggregates (no zero-delta entries).
+
+## RESOLVED (v2.38.33): long-run heap OOM — freelist coalesced only with the list head
+- **Status:** RESOLVED in v2.38.33 — address-sorted freelist with full
+  two-sided coalescing, heap grown 2 → 4 MiB, boot-time fragmentation
+  self-test.
+- **Symptom:** long real-hardware sessions eventually raise
+  `KERNEL PANIC: memory allocation of N bytes failed` with no code change to
+  explain it — the reported "over time the logs seem to overflow and it
+  panics".
+- **Root cause:** `FreeListAllocator::dealloc` merged a freed block only with
+  the *head* of the free list. Interleaved lifetimes (a held buffer freed
+  while another block sits at the head — e.g. transient `format!` labels
+  churning across GUI renders) accumulated adjacent-but-unmerged fragments
+  until a medium allocation returned null even though most of the 2 MiB heap
+  was free; Rust's alloc-error path then panics.
+- **Fix:** the free list is kept sorted by address — `dealloc` inserts in
+  order and coalesces with *both* neighbours when they are adjacent, `alloc`
+  leaves split remainders at their original address so the order survives.
+  `HEAP_SIZE` 2 → 4 MiB (the GUI backbuffer at `HEAP_START + 4 MiB` is
+  abutting but page-disjoint). New `heap::fragmentation_selftest()` at boot:
+  carves 24 × 96 KiB blocks, frees them in allocation order — the exact
+  pattern that used to fragment the old allocator — then re-acquires 1.5 MiB
+  contiguously through `try_reserve_exact` (no panic on regression) and logs
+  `[serial] heap: fragmentation self-test ok` (smoke-grepped) or `FAILED`.
+- **Verification:** v2.38.33 QEMU smoke — `fragmentation self-test ok` in
+  serial, no `FAILED`, PANIC 0; kernel+workspace clippy/fmt/tests green.
+
 ## RESOLVED (v2.38.30): mouse deltas lost when several reports arrive between two input polls
 - **Status:** RESOLVED in v2.38.30 — both input bands accumulate instead of
   overwrite: `ps2::decode_packet` and the xHCI `harvest_mouse` handler

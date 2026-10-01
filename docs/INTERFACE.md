@@ -662,6 +662,12 @@ input.
 - A **left-click** on the tab bar switches tabs; the mouse 8x8 arrow is clamped
   to the framebuffer and is redrawn on top of every panel repaint, so switching
   tabs or refreshing the status bar can never erase it.
+- **Runaway gate (v2.38.33)**: if 60 packets in a row push the already-clamped
+  cursor further into the same edge, pointer input is suspended —
+  `[tui] pointer runaway: input suppressed (60 packets pushing into the edge)`
+  — and re-arms only when a packet moves away from the edge
+  (`[tui] pointer runaway released`). Serial movement logs are aggregated to
+  one `[serial] ps2 mouse … +N pkts dx=… dy=…` line per second per device.
 - In the Shell tab: printable keys append to the prompt, `Enter` (0x1C) runs
   the command, `Backspace` (0x0E) edits, `Esc` (0x01) clears the line.
 - Keys consumed by the TUI are kept out of the console echo; unconsumed keys
@@ -696,6 +702,14 @@ focused) returns to the console/TUI.
   the GUI is active the kernel log (`vprintln!`) and heartbeat pause — the
   desktop owns the screen; serial logging keeps running so `[serial] tick …`
   still proves liveness.
+- **Pointer runaway gate (v2.38.33)**: a stream that keeps pushing the
+  clamped cursor further into the same edge (60 packets in a row) switches
+  pointer input off — `[gui] pointer runaway: input suppressed (60 packets
+  pushing into the edge)` — until a packet moves away from the edge
+  (`[gui] pointer runaway released`); button events stay suppressed in the
+  meantime, so a stuck touchpad cannot click the task bar. Mouse movement
+  logs are aggregated to one line per second per device
+  (`[serial] usb mouse +N pkts dx=… dy=…` / `ps2 mouse …`).
 - **Repaint (v2.38.23)**: rendering is damage-based — discrete actions
   (open/close/focus/leave) repaint the whole frame once, while continuous paths
   (cursor, drag, the live System/Uptime windows) refresh only their own dirty
