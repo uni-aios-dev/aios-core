@@ -1,5 +1,53 @@
 # AIOS Development Log
 
+## v2.38.31 — restore of closed z-order (2026-10-01)
+
+Fifth item of the window-manager roadmap: a closed window now remembers
+where it sat in the stack, and reopening it (desktop icon, task bar,
+`SYS_GUI` present) puts it back at that z-rank instead of on top — the
+stacking the user assembled survives a close/open round-trip, so a middle
+window returns *between* its neighbours rather than above them.
+
+### Added
+- **z-rank memory** (`src/gui.rs`): `close_window_raw` computes the closing
+  window's logical rank (0 = bottom, counted over the open windows below its
+  slot, so holes left by earlier closes do not skew it), stores it in the new
+  `CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS]` table (one entry per kind,
+  re-closing overwrites) and extends the proof line to
+  `[gui] close <label> (z <rank>)` — a backwards-compatible suffix, existing
+  greps keep matching. `leave()` clears the table with the rest of the
+  session state.
+- **Rank restoration on open**: both open paths — `spawn` (built-ins) and
+  `spawn_client` (ring-3 windows, including the `present_client` re-spawn) —
+  now place the window through the new `place_window`: it takes the
+  remembered rank (a first open has no memory and appends on top, exactly the
+  old behaviour), inserts the window there and compacts the slot array on the
+  way, so holes from closes disappear and slot order stays a dense bottom→top
+  sequence. A restored reopen logs `[gui] reopen <label> at z <rank>`.
+  `spawn_client` additionally gained the v2.38.30 modal gate, closing the
+  last focus-steal hole (a ring-3 client presenting during a dialog used to
+  spawn focused underneath it).
+
+### Notes
+- Verified in QEMU (UEFI/OVMF, port 45631): `f1` captures the initial stack
+  `[Welcome, Uptime, client]` (client focused by `raise_clients`); a mouse
+  click on *Uptime's* `X` at (838,343) closes it **without focusing it
+  first** (`[gui] close Uptime (z 1)` — the `X` button bypasses the focus
+  raise, which is exactly the path that used to lose the rank); clicking the
+  Uptime desktop icon at (62,136) reopens it (`[gui] reopen Uptime at z 1`).
+  The restored rank is then proven twice: pixel-wise, the client window still
+  paints *over* Uptime's title band at (640,340) in f3 (an on-top reopen
+  would show Uptime's focused TITLE_ON there), and serial-wise, three `f9`
+  presses walk the z-order as `focus client 0` → `focus Welcome to AIOS GUI`
+  → `focus Uptime` — the old top-reopen order would have been `Welcome` →
+  `client` → `Uptime`. Screendumps: f1 initial, f2 Uptime gone (desktop at
+  (840,400)), f3 restored at (546,334) with the task-bar button back, f4
+  after the focus walk (Uptime focused on top, `Uptime` title text at
+  (640,340)). Zero `KERNEL PANIC`.
+- Kernel gates: `cargo fmt --all -- --check` clean, `cargo clippy` clean
+  (kernel + workspace, zero warnings), `cargo test --workspace` all green
+  (94 suites, 1465 tests).
+
 ## v2.38.30 — modal confirm dialog + focus-steal prevention (2026-09-30)
 
 Fourth item of the window-manager roadmap: modal dialogs with focus-steal

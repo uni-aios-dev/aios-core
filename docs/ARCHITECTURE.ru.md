@@ -1471,9 +1471,18 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   (Enter/Esc разрешают, всё остальное логируется как
   `[gui] modal blocks scancode 0xNN`), нажатия мыши → `modal_click`
   (работают пластины, остальное логируется как
-  `[gui] modal blocks click (x,y)`), а `focus_window`/`spawn`/`cycle_focus`
-  отказывают наотрез — защита от фокус-стила живёт и во входных гейтах, и на
-  этих узких местах.
+   `[gui] modal blocks click (x,y)`), а `focus_window`/`spawn`/`cycle_focus`
+   отказывают наотрез — защита от фокус-стила живёт и во входных гейтах, и на
+   этих узких местах. С v2.38.31 закрывающееся окно записывает свой
+   логический z-ранг в `CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS]`
+   (в `close_window_raw`, линия доказательства `[gui] close <label> (z <rank>)`,
+   очищается в `leave()`), а оба пути открытия проходят через
+   `place_window`: она вставляет окно на запомненный ранг (лог
+   `[gui] reopen <label> at z <rank>`), уводит наверх при отсутствии памяти
+   (первое открытие — поведение до v2.38.31) и уплотняет массив слотов,
+   чтобы `WINS` оставался плотной последовательностью снизу вверх.
+   `spawn_client` тоже получил модальный гейт — present клиента во время
+   диалога больше не может создаться сфокусированным под ним.
 - `main` — читает ответы framebuffer/rsdp/hhdm Limine, выполняет self-check чтения framebuffer, фильтрует карту памяти в `[MemRegion; 64]`, затем инициализирует память и кучу, GDT/TSS (с перезагрузкой CS/SS), IDT, PIC и PIT, поднимает LAPIC-таймер (`lapic::init()`) и маскирует PIT IRQ0, когда тот жив, `sti`, печатает на экран показания живости `[probe] irq32_seen/ticks delta`, перечисляет шину PCI и поднимает драйверы хранилища AHCI и NVMe (после `sti`, чтобы исключения обрабатывались), планирует kernel worker и четыре ring-3 задачи, объявляет атомарные статики статуса драйверов `G_AHCI`/`G_NVME`/`G_XHCI` (проставляются init-кодом драйверов) и входит в `idle_loop`, где работают квадрат heartbeat и `tui::render()`. Клавиши и отчёты мыши маршрутизируются владельцу экрана: `gui::handle_scancode`/`gui::on_mouse`, когда `gui::active()`, иначе `tui::*`. Дельты мыши считываются один раз на изменение счётчика (`swap` в `ps2::mouse_dx`/`mouse_dy`, `xhci::take_mouse_delta`), поэтому пакеты, пришедшие за время, пока цикл был занят, накапливаются, а не перезаписывают друг друга (v2.38.30). В serial логирует селекторы передачи от Limine (`boot selectors cs/ss/ds`) и выбранный источник тиков (`timer=LAPIC|PIT`). С v2.38.13 раздел framebuffer дополнительно логирует виртуальный адрес и `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), выполняет `write_volatile`-тест `direct_test` со `sfence` и readback пикселя (0, 0) плюс OK-зелёную пробу, затем `psf_check()` синтезирует PSF2-поток из `font8x8::BASIC`, парсит его обратно, проверяет round-trip глифа 'A' и рисует его в центре нижней полосы экрана.
   - Panic-обработчик печатает в framebuffer-консоль и serial, затем уходит в `halt_loop`.
 - `aios-kernel-run`: собирает ядро (`cargo build --target x86_64-unknown-none --release`), раскладывает дерево Limine ISO (`boot/aios-kernel`, `boot/limine.conf`, CD-стадии Limine BIOS/UEFI, `EFI/BOOT/BOOTX64.EFI`), создаёт гибридный ISO через `xorriso` + `limine bios-install` и байт-в-байт идентичный USB-образ `out\aios-kernel-usb.img` (isohybrid — загружается на legacy BIOS через MBR Limine и на UEFI через ESP). Грузит в QEMU — по умолчанию UEFI/OVMF (настоящий GOP), иначе legacy BIOS; `AIOS_QEMU_USB=1` подключает USB-образ как mass-storage вместо CD-ROM. Переопределения: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.

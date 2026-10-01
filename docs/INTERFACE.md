@@ -782,6 +782,13 @@ focused) returns to the console/TUI.
   `[gui] modal close <label> confirmed`; `Esc` / `Cancel` logs
   `[gui] modal close <label> canceled` and the typed text stays. Closing a
   window with an empty note never shows the dialog.
+- **Restore of closed z-order (v2.38.31)**: a window remembers its place in
+  the stack when it closes. Reopening it — desktop icon, task-bar button, or
+  a ring-3 client presenting again — puts it back at that spot *between* its
+  old neighbours instead of on top, so the stacking you arranged survives a
+  close/open round-trip. Closing logs `[gui] close <label> (z <rank>)`
+  (0 = bottom), a successful restore logs `[gui] reopen <label> at z <rank>`;
+  a window opened for the first time has no memory and goes on top as before.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

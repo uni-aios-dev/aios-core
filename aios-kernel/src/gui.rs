@@ -168,6 +168,12 @@ static mut DRAG: Option<(WinKind, Drag)> = None;
 /// path is gated (v2.38.30 focus-steal prevention) until the dialog is
 /// resolved through [`modal_confirm`] / [`modal_cancel`].
 static mut MODAL: Option<(WinKind, &'static str)> = None;
+/// Remembered z-ranks of closed windows: `(kind, position bottom→top among
+/// the open windows at close time)`. A later reopen of the same kind puts the
+/// window back at that place in the stack instead of on top (v2.38.31 z-order
+/// restore); an empty table just means "open on top" as before. Cleared with
+/// the rest of the session state in [`leave`].
+static mut CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS] = [None; MAX_WINS];
 
 /// Ceiling on ring-3 client window slots (one per `SYS_GUI`-registered task).
 const MAX_CLIENTS: usize = 4;
@@ -456,14 +462,91 @@ fn focused_kind() -> Option<WinKind> {
     unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref().map(|w| w.kind) }
 }
 
+/// Records `kind`'s z-rank (0 = bottom of the stack) for a future reopen.
+/// Re-closing the same kind overwrites the older rank; a full table just
+/// drops the new one (the table is at most [`MAX_WINS`] deep anyway).
+fn remember_closed_z(kind: WinKind, rank: u8) {
+    unsafe {
+        let mem = &mut *core::ptr::addr_of_mut!(CLOSED_Z);
+        let mut free: Option<usize> = None;
+        let mut hit: Option<usize> = None;
+        for (i, slot) in mem.iter().enumerate() {
+            match *slot {
+                Some((k, _)) if k == kind => {
+                    hit = Some(i);
+                    break;
+                }
+                None if free.is_none() => free = Some(i),
+                _ => {}
+            }
+        }
+        if let Some(i) = hit.or(free) {
+            mem[i] = Some((kind, rank));
+        }
+    }
+}
+
+/// Takes (and forgets) the rank remembered for `kind` by
+/// [`remember_closed_z`] — the caller then places the reopened window there.
+fn take_closed_z(kind: WinKind) -> Option<u8> {
+    let found = unsafe {
+        let mem = &mut *core::ptr::addr_of_mut!(CLOSED_Z);
+        let mut found = None;
+        for (i, slot) in mem.iter().enumerate() {
+            if let Some((k, r)) = *slot {
+                if k == kind {
+                    found = Some((i, r));
+                    break;
+                }
+            }
+        }
+        if let Some((i, _)) = found {
+            mem[i] = None;
+        }
+        found
+    };
+    found.map(|(_, r)| r)
+}
+
+/// Inserts `win` into the z-order: at the rank remembered by
+/// [`remember_closed_z`] when its kind was closed before, otherwise on top
+/// (append). The slot array is compacted on the way, so holes left by earlier
+/// closes disappear and slot order stays a dense bottom→top sequence.
+fn place_window(win: Window) {
+    let label = win_label(win.kind, win.title);
+    let restored = take_closed_z(win.kind);
+    let open = window_count();
+    let rank = restored.map(|r| r as usize).unwrap_or(open).min(open);
+    unsafe {
+        let wins = &mut *core::ptr::addr_of_mut!(WINS);
+        let mut seq: [Option<Window>; MAX_WINS] = [None; MAX_WINS];
+        let mut n = 0usize;
+        for w in wins.iter().flatten() {
+            seq[n] = Some(*w);
+            n += 1;
+        }
+        for j in (rank..n).rev() {
+            seq[j + 1] = seq[j];
+        }
+        seq[rank] = Some(win);
+        *wins = seq;
+    }
+    if restored.is_some() {
+        crate::kprintln!("[gui] reopen {} at z {}", label, rank);
+    }
+}
+
+/// Opens a built-in window of `kind` focused, at its remembered z-rank or on
+/// top (see [`place_window`]); refused while a modal dialog is up or the
+/// window table is full.
 fn spawn(kind: WinKind) {
     // Modal dialog up: no window may open underneath it.
     if modal_active() {
         return;
     }
-    let Some(slot) = open_slot() else {
+    if open_slot().is_none() {
         return;
-    };
+    }
     dirty_all();
     let n = window_count();
     let fb_w = console::framebuffer().map(|fb| fb.width()).unwrap_or(800);
@@ -478,22 +561,21 @@ fn spawn(kind: WinKind) {
         for win in wins.iter_mut().flatten() {
             win.focused = false;
         }
-        wins[slot] = Some(Window {
-            kind,
-            title: win_title(kind),
-            x,
-            y,
-            w,
-            h,
-            focused: true,
-            minimized: false,
-            maximized: false,
-            restore: None,
-            note: [0; 32],
-            note_len: 0,
-        });
     }
-    bring_to_front(slot);
+    place_window(Window {
+        kind,
+        title: win_title(kind),
+        x,
+        y,
+        w,
+        h,
+        focused: true,
+        minimized: false,
+        maximized: false,
+        restore: None,
+        note: [0; 32],
+        note_len: 0,
+    });
 }
 
 fn focus_window(i: usize) {
@@ -548,8 +630,9 @@ fn close_window(i: usize) {
     close_window_raw(i);
 }
 
-/// Teardown half of [`close_window`]: clears the slot (and any drag that
-/// pointed at it) and logs the `[gui] close` proof line.
+/// Teardown half of [`close_window`]: records the window's z-rank for a
+/// future reopen (v2.38.31), clears the slot (and any drag that pointed at
+/// it) and logs the `[gui] close` proof line.
 fn close_window_raw(i: usize) {
     dirty_all();
     unsafe {
@@ -559,7 +642,15 @@ fn close_window_raw(i: usize) {
             }
         }
         if let Some(win) = (*core::ptr::addr_of!(WINS))[i].as_ref() {
-            crate::kprintln!("[gui] close {}", win_label(win.kind, win.title));
+            let rank = (0..i)
+                .filter(|&j| (*core::ptr::addr_of!(WINS))[j].is_some())
+                .count();
+            remember_closed_z(win.kind, rank as u8);
+            crate::kprintln!(
+                "[gui] close {} (z {})",
+                win_label(win.kind, win.title),
+                rank
+            );
         }
         (*core::ptr::addr_of_mut!(WINS))[i] = None;
     }
@@ -877,6 +968,7 @@ pub fn leave() {
         }
         DRAG = None;
         *core::ptr::addr_of_mut!(MODAL) = None;
+        *core::ptr::addr_of_mut!(CLOSED_Z) = [None; MAX_WINS];
         CUR_VIS = false;
         LAST_BTNS = 0;
     }
@@ -1075,15 +1167,20 @@ fn create_client(
     frame.rax = id as u64;
 }
 
-/// Owns a `Client(id)` window: takes a window slot, sizes it to the client
-/// buffer plus the title bar, and raises it to z-front.
+/// Owns a `Client(id)` window: sizes it to the client buffer plus the title
+/// bar and places it in the z-order via [`place_window`] (remembered rank
+/// after a close, otherwise on top).
 fn spawn_client(id: u8) {
-    let Some(slot) = open_slot() else {
+    // Modal dialog up: no window may open underneath it.
+    if modal_active() {
         return;
-    };
+    }
     let Some(c) = client_slot(id) else {
         return;
     };
+    if open_slot().is_none() {
+        return;
+    }
     dirty_all();
     let n = window_count();
     let fb_w = console::framebuffer().map(|fb| fb.width()).unwrap_or(800);
@@ -1098,22 +1195,21 @@ fn spawn_client(id: u8) {
         for win in wins.iter_mut().flatten() {
             win.focused = false;
         }
-        wins[slot] = Some(Window {
-            kind: WinKind::Client(id),
-            title: win_title(WinKind::Client(id)),
-            x,
-            y,
-            w,
-            h,
-            focused: true,
-            minimized: false,
-            maximized: false,
-            restore: None,
-            note: [0; 32],
-            note_len: 0,
-        });
     }
-    bring_to_front(slot);
+    place_window(Window {
+        kind: WinKind::Client(id),
+        title: win_title(WinKind::Client(id)),
+        x,
+        y,
+        w,
+        h,
+        focused: true,
+        minimized: false,
+        maximized: false,
+        restore: None,
+        note: [0; 32],
+        note_len: 0,
+    });
 }
 
 /// Marks the client's window damage so the next `render()` recomposites it.
