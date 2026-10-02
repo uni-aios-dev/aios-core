@@ -731,13 +731,24 @@ fn harvest_mouse() {
     MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Drains both accumulated mouse deltas (called by the input poll once per
-/// sequence change).
+/// Largest pointer step one drain may hand back (v2.38.35 pointer-jump fix):
+/// covers a whole boot-mouse report (i8 range) untouched, while a bigger
+/// accumulated backlog is split across polls so a stale burst can never
+/// teleport the cursor across the screen (the "jumps to the task bar" bug).
+const MOUSE_MAX_STEP: i32 = 256;
+
+/// Drains both accumulated mouse deltas (called by the input poll every
+/// iteration). Each axis is clamped to [`MOUSE_MAX_STEP`] and the unapplied
+/// remainder is parked back into its accumulator, so the caller never sees a
+/// larger jump than one poll's worth of motion.
 pub fn take_mouse_delta() -> (i32, i32) {
-    (
-        MOUSE_ACC_DX.swap(0, Ordering::Relaxed),
-        MOUSE_ACC_DY.swap(0, Ordering::Relaxed),
-    )
+    let drain = |acc: &AtomicI32| {
+        let taken = acc.swap(0, Ordering::Relaxed);
+        let clamped = taken.clamp(-MOUSE_MAX_STEP, MOUSE_MAX_STEP);
+        acc.fetch_add(taken - clamped, Ordering::Relaxed);
+        clamped
+    };
+    (drain(&MOUSE_ACC_DX), drain(&MOUSE_ACC_DY))
 }
 
 /// Places one 4-byte TRB (the transfer length is the buffer's page, but only

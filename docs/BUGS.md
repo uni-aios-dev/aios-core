@@ -1,5 +1,59 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.38.35): pointer jump — cursor teleports across the desktop onto the task bar (overflow packets + unbounded backlog)
+- **Status:** RESOLVED in v2.38.35 — whole-packet drop of 8042 overflow
+  packets in `ps2::decode_packet`, a `MOUSE_MAX_STEP = 256` px per-axis
+  clamp with accumulator carry-over in both mouse drivers, and
+  every-iteration draining in both idle-loop input bands.
+- **Symptom:** after a heavy GUI operation (the window-select click on
+  the task bar, a tab switch) the pointer jumped hundreds of pixels in a
+  single report — typically landing on the task bar, where the next
+  press hit a window button instead of the intended widget; on a PS/2
+  touchpad it also showed up as a sudden corner pin (the v2.38.33
+  runaway gate suppressed the *stream* but never the single jump).
+- **Root causes:**
+  1. `ps2::decode_packet` did not check the 8042 packet status bits:
+     `b0 & 0xC0 != 0` means the controller already dropped that
+     movement — the wrapped sign-extended dx/dy decoded as a real
+     multi-hundred-pixel step, and the packet still bumped `MOUSE_SEQ`
+     and published its button nibble.
+  2. The accumulate-and-drain readers (`ps2::mouse_dx`/`mouse_dy`,
+     `xhci::take_mouse_delta`) swapped the whole accumulator out only
+     on a fresh sequence change and nothing limited the magnitude: a
+     backlog built during a full-repaint stall was delivered as one
+     delta on the next report.
+- **Fix:** drop overflow packets whole (no seq/button side effects);
+  clamp one application to 256 px per axis with the remainder parked in
+  the accumulator (`ps2::drain_axis`, the clamp closure in
+  `xhci::take_mouse_delta`); drain both bands every idle-loop iteration
+  so the carry-over applies without waiting for new input; the sequence
+  counter is now only the button-change edge
+  (`btn_changed = seq_changed && buttons != last`).
+- **Verification:** scenario D on the release ISO — globe-click proof
+  line plus the window-body pixel probe, PS/2 lines bounded
+  (`[serial] ps2 mouse id=0x00 … dx=116 dy=0`, clean press/release
+  pairs); A ×2, B, C and the new E all green on the same ISO, PANIC 0.
+
+## OPEN (flaky): QEMU smokes occasionally lose keyboard input during GUI entry / field typing
+- **Symptom:** two flakes on the 2026-10-02 v2.38.35 smoke day. Run 1
+  entered the GUI but the Network field typing landed wrong — `Apply`
+  never produced the `[serial] [net] config applied dhcp=0 ip=10.0.2.15`
+  line (the on-screen feedback stayed an error class like `bad ip`), so
+  A failed its config/CMOS checks; run 2 never left the TUI at all —
+  three `gui` entry attempts had no effect (probe pixel stayed on the
+  TUI screen) and the scenario aborted with `failed to enter GUI mode
+  after 3 attempts`. Immediate reruns were green: A passed twice
+  consecutively afterwards, B/C/D/E passed first try.
+- **Suspected area:** QEMU HMP `sendkey` → polled i8042 delivery
+  timing. The keyboard path (`ps2::feed_key`, MOBF demux) is unchanged
+  in v2.38.35 and the keys are consumed silently by design (consumed
+  keys log nothing), so neither failure left a serial trace of the
+  missing/early byte; same class as the OPEN v2.38.34 button-loss
+  symptom (input arrival, not the kernel input code).
+- **Workaround:** rerun the scenario — each run re-copies the OVMF vars
+  and restarts QEMU, so the harness is idempotent; treat a single red A
+  or E as a flake unless it repeats on an immediate rerun.
+
 ## RESOLVED (v2.38.34): Wi-Fi stack bring-up — scan found nothing, association timed out, M1 panicked, DHCP never bound
 - **Status:** RESOLVED in v2.38.34 — five independent faults in `src/wifi.rs`
   (plus one crypto and one driver bug), each isolated with a temporary

@@ -73,6 +73,19 @@ const DLG_OK_W: usize = 96;
 const DLG_CANCEL_X: usize = 232;
 const DLG_CANCEL_W: usize = 128;
 
+/// Task Manager body layout (window-local, v2.38.35): the column-header strip
+/// sits right under the title bar, rows follow on the 16 px grid, and the
+/// count/selection lines fill the gap above the End Task / Switch To plates
+/// (at y 216 in [`TASK_WIDGETS`]).
+const TASK_HDR_Y: usize = TITLE_H;
+/// First task row (window-local).
+const TASK_ROWS_Y: usize = 36;
+const TASK_ROW_H: usize = 16;
+/// x of the Status column (window-local); the task label clips here.
+const TASK_STATUS_X: usize = 240;
+/// y of the `N tasks` line (window-local); the selection line sits 16 px below.
+const TASK_FOOT_Y: usize = 172;
+
 /// Resize-drag edge mask: left edge.
 const EDGE_L: u8 = 1;
 /// Resize-drag edge mask: right edge.
@@ -106,6 +119,9 @@ enum WinKind {
     /// Network status and settings: wired NIC/DHCP state plus the software
     /// Wi-Fi stack (scan/connect against the simulated radio).
     Network,
+    /// Task Manager (v2.38.35): the Windows-style list of open windows with
+    /// an End Task / Switch To button pair acting on the selected row.
+    Tasks,
     /// A window owned by a ring-3 task; the id indexes [`CLIENTS`], whose
     /// buffer the window composites on every repaint.
     Client(u8),
@@ -197,6 +213,8 @@ enum WidgetAction {
     /// Network window text field: move the keyboard focus to field `0..=6`
     /// (`ip`, `mask`, `gw`, `dns1`, `dns2`, `ssid`, `pass`).
     NetField(u8),
+    /// Run one of the Task Manager's command buttons (v2.38.35).
+    Task(TaskBtn),
 }
 
 /// Command buttons of the Network window.
@@ -216,6 +234,16 @@ enum NetBtn {
     Connect,
     /// Drop the current Wi-Fi association.
     Disc,
+}
+
+/// Command buttons of the Task Manager window (v2.38.35).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskBtn {
+    /// Close the selected window through [`close_window`] (the typed-note
+    /// confirm dialog gate included - the Windows "end this program?" flow).
+    End,
+    /// Focus and raise the selected window (Windows "Switch To").
+    Switch,
 }
 
 static mut WINS: [Option<Window>; MAX_WINS] = [None; MAX_WINS];
@@ -240,6 +268,10 @@ static mut CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS] = [None; MAX_WINS];
 /// every cursor move by [`update_widget_hover`] (frozen while a modal dialog
 /// is up) and cleared with the session state in [`leave`].
 static mut WIDGET_HOVER: Option<(WinKind, usize)> = None;
+/// Task Manager row selected by click (v2.38.35): keyed by [`WinKind`], so it
+/// stays valid across z-order/slot shifts and only goes stale when the window
+/// closes (End/Switch To then report the missing target). Cleared in [`leave`].
+static mut TASK_SEL: Option<WinKind> = None;
 
 /// Ceiling on ring-3 client window slots (one per `SYS_GUI`-registered task).
 const MAX_CLIENTS: usize = 4;
@@ -460,6 +492,7 @@ fn win_title(kind: WinKind) -> &'static str {
         WinKind::Clock => "Uptime",
         WinKind::About => "About",
         WinKind::Network => "Network",
+        WinKind::Tasks => "Task Manager",
         WinKind::Client(_) => "ring3 client",
     }
 }
@@ -631,6 +664,12 @@ fn spawn(kind: WinKind) {
         y = 356.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
         net_draft_load();
     }
+    if kind == WinKind::Tasks {
+        w = 440;
+        h = 248;
+        x = 460.min(fb_w.saturating_sub(w + 8));
+        y = 140.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
+    }
     unsafe {
         let wins = &mut *core::ptr::addr_of_mut!(WINS);
         for win in wins.iter_mut().flatten() {
@@ -651,6 +690,7 @@ fn spawn(kind: WinKind) {
         note: [0; 32],
         note_len: 0,
     });
+    crate::kprintln!("[gui] open {}", win_label(kind, win_title(kind)));
 }
 
 fn focus_window(i: usize) {
@@ -951,7 +991,8 @@ fn kind_rank(kind: WinKind) -> u8 {
         WinKind::Clock => 2,
         WinKind::About => 3,
         WinKind::Network => 4,
-        WinKind::Client(id) => 5 + id,
+        WinKind::Tasks => 5,
+        WinKind::Client(id) => 6 + id,
     }
 }
 
@@ -962,7 +1003,7 @@ fn kind_rank(kind: WinKind) -> u8 {
 fn taskbar_slots() -> [usize; MAX_WINS] {
     let mut out = [usize::MAX; MAX_WINS];
     let mut n = 0usize;
-    for rank in 0u8..(5 + MAX_CLIENTS as u8) {
+    for rank in 0u8..(6 + MAX_CLIENTS as u8) {
         for i in 0..MAX_WINS {
             let hit = unsafe {
                 (*core::ptr::addr_of!(WINS))[i].map(|w| kind_rank(w.kind) == rank) == Some(true)
@@ -1046,6 +1087,7 @@ pub fn leave() {
         *core::ptr::addr_of_mut!(MODAL) = None;
         *core::ptr::addr_of_mut!(CLOSED_Z) = [None; MAX_WINS];
         WIDGET_HOVER = None;
+        TASK_SEL = None;
         CUR_VIS = false;
         LAST_BTNS = 0;
     }
@@ -1358,6 +1400,11 @@ pub fn handle_scancode(sc: u8) -> bool {
     // Modal dialog owns the keyboard until it is resolved.
     if modal_active() {
         return modal_key(sc);
+    }
+    // The focused Task Manager window takes Enter first: Switch To on the
+    // current selection (v2.38.35).
+    if task_key(sc) {
+        return true;
     }
     // The focused Network window edits its draft form first (v2.38.34):
     // Tab/Backspace move the field focus, Enter applies, printable keys type.
@@ -1735,6 +1782,7 @@ fn hit_icon(x: usize, y: usize) -> Option<WinKind> {
         (WinKind::Clock, 20, 108),
         (WinKind::About, 20, 176),
         (WinKind::Network, 20, 244),
+        (WinKind::Tasks, 20, 312),
     ];
     for (kind, ix, iy) in icons {
         if x >= ix && x < ix + ICON_W && y >= iy && y < iy + ICON_H {
@@ -1939,6 +1987,29 @@ static NETWORK_WIDGETS: [Widget; 14] = [
     },
 ];
 
+/// Widget table of the Task Manager window (v2.38.35): the classic Windows
+/// pair anchored bottom-left of the 440x248 window, below the task list and
+/// the count/selection lines (`End Task` closes the selected row through
+/// [`close_window`], `Switch To` raises it).
+static TASK_WIDGETS: [Widget; 2] = [
+    Widget::Button {
+        x: 8,
+        y: 216,
+        w: 96,
+        h: 24,
+        label: "End Task",
+        action: WidgetAction::Task(TaskBtn::End),
+    },
+    Widget::Button {
+        x: 112,
+        y: 216,
+        w: 112,
+        h: 24,
+        label: "Switch To",
+        action: WidgetAction::Task(TaskBtn::Switch),
+    },
+];
+
 /// Widget table of a window kind; clients and built-ins without a demo table
 /// get an empty slice.
 fn widgets_for(kind: WinKind) -> &'static [Widget] {
@@ -1946,6 +2017,8 @@ fn widgets_for(kind: WinKind) -> &'static [Widget] {
         &WELCOME_WIDGETS
     } else if kind == WinKind::Network {
         &NETWORK_WIDGETS
+    } else if kind == WinKind::Tasks {
+        &TASK_WIDGETS
     } else {
         &[]
     }
@@ -2041,6 +2114,8 @@ fn widget_click(host: WinKind, host_label: &str, wg: Widget) {
             }
             dirty_kind(host);
         }
+        WidgetAction::Task(TaskBtn::End) => task_end(),
+        WidgetAction::Task(TaskBtn::Switch) => task_switch(),
     }
 }
 
@@ -2210,6 +2285,11 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                     hit_any = true;
                     break;
                 }
+                // Task Manager rows select on click (v2.38.35); the button
+                // plates above already swallowed their own clicks.
+                if win.kind == WinKind::Tasks {
+                    task_row_click(win, x, y);
+                }
                 if let WinKind::Client(id) = win.kind {
                     let rel_x = x - win.x;
                     let rel_y = y - (win.y + TITLE_H);
@@ -2360,6 +2440,7 @@ fn icon_label(kind: WinKind) -> &'static str {
         WinKind::Clock => "Uptime",
         WinKind::About => "About",
         WinKind::Network => "Net",
+        WinKind::Tasks => "Tasks",
         WinKind::Client(_) => "ring3",
     }
 }
@@ -2370,6 +2451,7 @@ fn draw_icons(fb: &Framebuffer, clip: &Rect) {
         (WinKind::Clock, 20, 108),
         (WinKind::About, 20, 176),
         (WinKind::Network, 20, 244),
+        (WinKind::Tasks, 20, 312),
     ];
     for (kind, ix, iy) in icons {
         if !rect_overlaps(clip, ix, iy, ICON_W, ICON_H) {
@@ -2517,6 +2599,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::Clock => draw_clock(fb, win.x + 8, &mut y, max_px),
         WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
         WinKind::Network => draw_network(fb, win, max_px),
+        WinKind::Tasks => draw_tasks(fb, win, max_px),
         WinKind::Client(_) => draw_client(fb, win),
     }
     draw_widgets(fb, win);
@@ -3239,4 +3322,179 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
             );
         }
     }
+}
+
+/// Selects the task row under the click (v2.38.35): rows follow the task-bar
+/// rank order and the selection is keyed by [`WinKind`], so it survives the
+/// slot shifts of any later focus/z change and only goes stale when the
+/// window closes. Clicks in the gaps (header, foot, past the last row) do
+/// nothing.
+fn task_row_click(win: &Window, x: usize, y: usize) {
+    if x < win.x + 8 || x >= win.x + win.w.saturating_sub(8) {
+        return;
+    }
+    if y < win.y + TASK_ROWS_Y {
+        return;
+    }
+    let ry = y - (win.y + TASK_ROWS_Y);
+    if ry >= TASK_ROW_H * MAX_WINS {
+        return;
+    }
+    let row = ry / TASK_ROW_H;
+    let slots = taskbar_slots();
+    let Some(&i) = slots.get(row).filter(|&&i| i != usize::MAX) else {
+        return;
+    };
+    let Some(w) = (unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() }) else {
+        return;
+    };
+    unsafe {
+        *core::ptr::addr_of_mut!(TASK_SEL) = Some(w.kind);
+    }
+    crate::kprintln!("[gui] tasks select {}", win_label(w.kind, w.title));
+    dirty_kind(WinKind::Tasks);
+}
+
+/// End Task button: closes the selected window through [`close_window`], so a
+/// typed note still raises the modal confirm dialog first (the Windows "end
+/// this program?" flow). Logs `no selection` / `<label> gone` when the action
+/// cannot run, so a stale selection is provable instead of silent.
+fn task_end() {
+    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
+    let Some(kind) = sel else {
+        crate::kprintln!("[gui] tasks end: no selection");
+        return;
+    };
+    let Some(i) = find_kind(kind) else {
+        crate::kprintln!("[gui] tasks end: {} gone", win_label(kind, win_title(kind)));
+        return;
+    };
+    crate::kprintln!("[gui] tasks end {}", win_label(kind, win_title(kind)));
+    close_window(i);
+}
+
+/// Switch To button (and the Enter shortcut): focuses and raises the selected
+/// window, logging `[gui] tasks switch <label>` as the serial proof.
+fn task_switch() {
+    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
+    let Some(kind) = sel else {
+        crate::kprintln!("[gui] tasks switch: no selection");
+        return;
+    };
+    let Some(i) = find_kind(kind) else {
+        crate::kprintln!(
+            "[gui] tasks switch: {} gone",
+            win_label(kind, win_title(kind))
+        );
+        return;
+    };
+    crate::kprintln!("[gui] tasks switch {}", win_label(kind, win_title(kind)));
+    focus_window(i);
+}
+
+/// Enter (make-code 0x1C) on the focused Task Manager window runs
+/// [`task_switch`]; every other scancode and every other focused window falls
+/// through to the normal key routing untouched.
+fn task_key(sc: u8) -> bool {
+    if sc != 0x1C {
+        return false;
+    }
+    let Some(i) = focused_idx() else {
+        return false;
+    };
+    let is_tasks = unsafe {
+        (*core::ptr::addr_of!(WINS))[i]
+            .as_ref()
+            .map(|w| w.kind == WinKind::Tasks)
+            .unwrap_or(false)
+    };
+    if !is_tasks {
+        return false;
+    }
+    task_switch();
+    true
+}
+
+/// Paints the Task Manager body (v2.38.35): the Task/Status column header on
+/// its own strip, one 16 px row per open window in task-bar rank order (the
+/// selected row highlighted with [`BAR_ON`], status Running/Background/
+/// Minimized), then the `N tasks` count and the current selection line. Row
+/// clicks are resolved by [`task_row_click`]; the button plates come from
+/// [`draw_widgets`].
+fn draw_tasks(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let slots = taskbar_slots();
+    let count = slots.iter().filter(|&&i| i != usize::MAX).count();
+    let hx = win.x + 8;
+    let hw = win.w.saturating_sub(16);
+    unsafe {
+        fb.fill_rect(hx, win.y + TASK_HDR_Y, hw, TASK_ROW_H, BAR_BG);
+    }
+    let col2 = (win.x + TASK_STATUS_X).min(max_px);
+    tui::draw_text(
+        fb,
+        hx + 4,
+        win.y + TASK_HDR_Y,
+        "Task",
+        TEXT_DIM,
+        BAR_BG,
+        col2,
+    );
+    tui::draw_text(
+        fb,
+        win.x + TASK_STATUS_X + 4,
+        win.y + TASK_HDR_Y,
+        "Status",
+        TEXT_DIM,
+        BAR_BG,
+        max_px,
+    );
+    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
+    for (row, &i) in slots.iter().enumerate() {
+        if i == usize::MAX {
+            break;
+        }
+        let Some(w) = (unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() }) else {
+            continue;
+        };
+        let y = win.y + TASK_ROWS_Y + row * TASK_ROW_H;
+        let selected = sel == Some(w.kind);
+        if selected {
+            unsafe {
+                fb.fill_rect(hx, y, hw, TASK_ROW_H, BAR_ON);
+            }
+        }
+        let bg = if selected { BAR_ON } else { WIN_BG };
+        tui::draw_text(fb, hx + 4, y, win_live_title(w), TEXT, bg, col2);
+        let status = if w.focused {
+            "Running"
+        } else if w.minimized {
+            "Minimized"
+        } else {
+            "Background"
+        };
+        tui::draw_text(
+            fb,
+            win.x + TASK_STATUS_X + 4,
+            y,
+            status,
+            TEXT_DIM,
+            bg,
+            max_px,
+        );
+    }
+    let foot = format!("{} tasks", count);
+    tui::draw_text(fb, hx, win.y + TASK_FOOT_Y, &foot, TEXT_DIM, WIN_BG, max_px);
+    let sel_line = match sel {
+        Some(kind) => format!("sel {}", win_label(kind, win_title(kind))),
+        None => String::from("sel -"),
+    };
+    tui::draw_text(
+        fb,
+        hx,
+        win.y + TASK_FOOT_Y + TASK_ROW_H,
+        &sel_line,
+        TEXT_DIM,
+        WIN_BG,
+        max_px,
+    );
 }

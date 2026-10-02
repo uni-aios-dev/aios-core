@@ -73,16 +73,33 @@ pub fn mouse_seq() -> u32 {
     MOUSE_SEQ.load(Ordering::Relaxed)
 }
 
-/// Latest mouse horizontal delta.
-/// Horizontal delta accumulated since the last call (drains the accumulator).
-pub fn mouse_dx() -> i32 {
-    MOUSE_DX.swap(0, Ordering::Relaxed)
+/// Largest pointer step one drain may hand back (v2.38.35 pointer-jump fix):
+/// one full PS/2 packet (9-bit signed range) passes through untouched, while
+/// a bigger accumulated backlog is split across polls so a stale burst can
+/// never teleport the cursor across the screen (the "jumps to the task bar"
+/// bug). The remainder stays in the accumulator and rides out next drain.
+const MOUSE_MAX_STEP: i32 = 256;
+
+/// Drains one axis: swaps the accumulator, clamps the step to
+/// [`MOUSE_MAX_STEP`] and parks the unapplied remainder back, so the caller
+/// never sees a larger jump than one poll's worth of motion.
+fn drain_axis(acc: &AtomicI32) -> i32 {
+    let taken = acc.swap(0, Ordering::Relaxed);
+    let clamped = taken.clamp(-MOUSE_MAX_STEP, MOUSE_MAX_STEP);
+    acc.fetch_add(taken - clamped, Ordering::Relaxed);
+    clamped
 }
 
-/// Latest mouse vertical delta (screen-space, already Y-inverted).
-/// Vertical delta accumulated since the last call (drains the accumulator).
+/// Horizontal delta accumulated since the last call (drains the accumulator;
+/// the step is clamped per [`MOUSE_MAX_STEP`], the remainder stays behind).
+pub fn mouse_dx() -> i32 {
+    drain_axis(&MOUSE_DX)
+}
+
+/// Vertical delta accumulated since the last call (screen-space, already
+/// Y-inverted; clamped like [`mouse_dx`]).
 pub fn mouse_dy() -> i32 {
-    MOUSE_DY.swap(0, Ordering::Relaxed)
+    drain_axis(&MOUSE_DY)
 }
 
 /// Latest mouse button state.
@@ -282,6 +299,13 @@ fn sign9(negative: bool, data: u8) -> i32 {
 
 fn decode_packet(pkt: &[u8; 3]) {
     let b0 = pkt[0];
+    // Byte 0 bits 6/7 are the X/Y overflow flags: the controller lost motion
+    // data and the wrapped value decodes into a garbage delta that teleports
+    // the cursor (pointer-jump bug, v2.38.35). Drop the whole packet - the
+    // sequence counter stays put, so the input band never even sees it.
+    if b0 & 0xC0 != 0 {
+        return;
+    }
     let dx = sign9(b0 & 0x10 != 0, pkt[1]);
     let dy = -sign9(b0 & 0x20 != 0, pkt[2]);
     // Accumulate instead of store: a burst of packets between two main-loop

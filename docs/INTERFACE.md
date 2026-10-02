@@ -680,8 +680,8 @@ a full-screen windowed desktop (`src/gui.rs`). `tui` (or `Esc` with no window
 focused) returns to the console/TUI.
 
 - **Desktop layout**: background, left icon column (System / Uptime / About /
-  Net), bottom task bar with one button per open window plus the link-state
-  globe at the far right.
+  Net / Tasks), bottom task bar with one button per open window plus the
+  link-state globe at the far right.
 - **Windows**: title bar (focused = bright blue, unfocused = dimmed), a
   minimize / maximize / close button cluster and live content:
   - *Welcome* — types the message line; shows the control help.
@@ -692,6 +692,8 @@ focused) returns to the console/TUI.
   - *Network* — DHCP/Static addressing, the five address fields and the
     Wi-Fi panel (open via the *Net* icon or the tray globe; see the
     v2.38.34 section below).
+  - *Task Manager* — the open-window list with End Task / Switch To
+    (open via the *Tasks* icon; see the v2.38.35 section below).
 - **Input**:
   - Mouse: click an icon to open (or focus) that window; click a window body or
     task-bar button to focus; drag a title bar to move (clamped to the bounds);
@@ -714,6 +716,13 @@ focused) returns to the console/TUI.
   meantime, so a stuck touchpad cannot click the task bar. Mouse movement
   logs are aggregated to one line per second per device
   (`[serial] usb mouse +N pkts dx=… dy=…` / `ps2 mouse …`).
+- **Pointer step clamp (v2.38.35)**: one input application never moves
+  the cursor more than 256 px per axis — the remainder stays queued in
+  the driver accumulator and is applied on the next iterations, so a
+  backlog built during a full repaint glides instead of teleporting onto
+  the task bar. PS/2 packets whose 8042 overflow bits are set (the
+  controller already dropped that movement) are discarded whole instead
+  of decoding the wrapped sign bits as motion.
 - **Repaint (v2.38.23)**: rendering is damage-based — discrete actions
   (open/close/focus/leave) repaint the whole frame once, while continuous paths
   (cursor, drag, the live System/Uptime windows) refresh only their own dirty
@@ -849,6 +858,30 @@ focused) returns to the console/TUI.
   - Serial proof: `[gui] tray globe click`, `[gui] widget Network/<label>
     click` (`Apply`/`Test`/`Scan`/`Connect`/`Disc`; the address/SSID
     fields log with an empty label).
+- **Task Manager window (v2.38.35)**: the desktop's Windows-style task
+  manager — open it from the `Tasks` icon (fifth in the left column).
+  Contents:
+  - *Header*: a `Task` / `Status` strip on the task-bar background.
+  - *Task rows*: one 16 px row per open window in the same stable order
+    as the task bar (Welcome, System, Uptime, About, Network, Task
+    Manager, then ring-3 clients by id), each with its status —
+    `Running` (focused), `Background` (open, unfocused) or `Minimized`.
+    Clicking a row selects it: the row highlights with the task-bar
+    plate colour and serial logs `[gui] tasks select <label>`.
+  - `End Task` closes the selected window through the normal close
+    path — a typed note still raises the v2.38.30 `Confirm` dialog, and
+    success logs `[gui] tasks end <label>` followed by the usual
+    `[gui] close <label>`. With nothing selected (or a window that is
+    already gone) it logs `[gui] tasks end: no selection` /
+    `[gui] tasks end: <label> gone` instead of acting.
+  - `Switch To` (or `Enter` while the Task Manager is focused) brings
+    the selected window to the front and focuses it —
+    `[gui] tasks switch <label>` — with the same `no selection` /
+    `<label> gone` proofs for a stale selection.
+  - The foot shows `N tasks` and the current `sel <label>`.
+  - Serial proof: `[gui] open Task Manager` (every window open now logs
+    `[gui] open <label>`), `[gui] widget Task Manager/End Task click`,
+    `[gui] widget Task Manager/Switch To click`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

@@ -1024,12 +1024,20 @@ pub fn idle_loop() -> ! {
                 }
             }
         }
-        let mouse_seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
-        if mouse_seq != last_mouse_seq {
-            last_mouse_seq = mouse_seq;
+        // xHCI boot mouse band. Drained every iteration (not gated on a fresh
+        // report): the driver clamps one application to its per-poll step
+        // limit and parks the remainder in the accumulator (v2.38.35
+        // pointer-jump fix), so a carry-over residue must be picked up even
+        // when no new report arrived. The sequence counter only marks the
+        // button-change edge for the log lines.
+        {
+            let seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
+            let seq_changed = seq != last_mouse_seq;
+            last_mouse_seq = seq;
             let (dx, dy) = xhci::take_mouse_delta();
             let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
-            if dx != 0 || dy != 0 || buttons != last_mouse_buttons {
+            let btn_changed = seq_changed && buttons != last_mouse_buttons;
+            if dx != 0 || dy != 0 || btn_changed {
                 // Runaway gate first: a suppressed stream must cost nothing at
                 // all — no log line, no cursor work, no repaint (v2.38.33).
                 let allowed = if gui::active() {
@@ -1038,7 +1046,7 @@ pub fn idle_loop() -> ! {
                     tui::input_allowed(dx, dy)
                 };
                 if allowed {
-                    if buttons != last_mouse_buttons {
+                    if btn_changed {
                         last_mouse_buttons = buttons;
                         vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
                         kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
@@ -1064,21 +1072,24 @@ pub fn idle_loop() -> ! {
             }
         }
         // PS/2 pointer (native laptop touchpad in PS/2 mode): same wiring as
-        // the USB mouse band above.
-        let ps2m_seq = ps2::mouse_seq();
-        if ps2m_seq != last_ps2m_seq {
-            last_ps2m_seq = ps2m_seq;
+        // the xHCI band above - also drained every iteration so the step
+        // clamp's carry-over remainder is applied on the next pass (v2.38.35).
+        {
+            let seq = ps2::mouse_seq();
+            let seq_changed = seq != last_ps2m_seq;
+            last_ps2m_seq = seq;
             let dx = ps2::mouse_dx();
             let dy = ps2::mouse_dy();
             let buttons = ps2::mouse_buttons() as u8;
-            if dx != 0 || dy != 0 || buttons != last_ps2m_buttons {
+            let btn_changed = seq_changed && buttons != last_ps2m_buttons;
+            if dx != 0 || dy != 0 || btn_changed {
                 let allowed = if gui::active() {
                     gui::input_allowed(dx, dy)
                 } else {
                     tui::input_allowed(dx, dy)
                 };
                 if allowed {
-                    if buttons != last_ps2m_buttons {
+                    if btn_changed {
                         last_ps2m_buttons = buttons;
                         vprintln!(
                             "[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}",

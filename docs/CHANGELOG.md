@@ -1,5 +1,72 @@
 # AIOS Development Log
 
+## v2.38.35 — pointer-jump fix (PS/2 overflow + backlog clamp), Task Manager window (2026-10-02)
+
+Pointer hardening left over from the v2.38.34 bring-up: the cursor could
+teleport hundreds of pixels in one report — typically landing on the task
+bar right before a click — and PS/2 packets carrying the 8042 overflow
+flags injected sign-garbage deltas. The windowed desktop also gained a
+Windows-style Task Manager.
+
+### Added
+- **GUI Task Manager window** (`src/gui.rs`): `WinKind::Tasks`, opened
+  from the `Tasks` desktop icon (fifth in the left column). Body: a
+  `Task`/`Status` column-header strip, one 16 px row per open window in
+  task-bar rank order (Welcome, System, Uptime, About, Network, Task
+  Manager, then ring-3 clients by id) showing `Running`/`Background`/
+  `Minimized`, and `End Task`/`Switch To` plates over an `N tasks` foot
+  that echoes the current `sel <label>`. Clicking a row selects it
+  (`[gui] tasks select <label>`, highlighted with the task-bar `BAR_ON`
+  plate); `End Task` closes the selection through `close_window` — a
+  typed note still raises the modal `Confirm` dialog (`[gui] tasks end
+  <label>`, then the usual `[gui] close …`); `Switch To` (or `Enter`
+  while the Task Manager is focused) focuses and raises it (`[gui] tasks
+  switch <label>`). Impossible actions log `tasks end: no selection` /
+  `tasks end: <label> gone` (same for switch) so a stale selection is
+  provable on serial instead of silent. `kind_rank`/`taskbar_slots`
+  gained the Tasks rank (5, clients 6+id) so the list, the task-bar
+  order and the row hits stay consistent, and `spawn()` now logs
+  `[gui] open <label>` for every window it creates (the E smoke greps
+  `[gui] open Task Manager` as its first proof line).
+
+### Fixed
+- **Pointer jump onto the task bar / teleporting cursor**
+  (`src/ps2.rs`, `src/xhci.rs`, `src/main.rs`): two independent causes.
+  1. `ps2::decode_packet` accepted packets with the 8042 X/Y overflow
+     bits set (`b0 & 0xC0 != 0`) — the controller had already dropped
+     that movement, so the wrapped sign bits decoded as a real
+     multi-hundred-pixel step together with the packet's seq/button
+     side effects. Such packets are now dropped whole, without bumping
+     `MOUSE_SEQ` or publishing their button nibble.
+  2. The accumulate-and-drain readers handed the whole accumulator out
+     with an unbounded `swap(0)` only on a *fresh* sequence change: a
+     full-repaint stall (window-select click on the task bar dirties
+     every window) queued a large backlog delta, and the next report
+     released it as one jump. Both drivers now clamp a single
+     application to `MOUSE_MAX_STEP = 256` px per axis and park the
+     remainder in the accumulator (`ps2::drain_axis`, the clamp closure
+     in `xhci::take_mouse_delta`), and both idle-loop bands drain
+     **every** iteration — the carry-over residue no longer waits for a
+     new report — with the sequence counter kept only as the
+     button-change edge (`btn_changed = seq_changed && buttons !=
+     last`, which also stops a delta-only report from re-arming the
+     v2.38.34 button-loss symptom).
+
+### Verification
+- QEMU smokes on the release ISO (monitor port 45635): **A 7/7 ×2** —
+  two consecutive green runs (static config applied, globe green,
+  `internet ok`, CMOS proof after HMP `system_reset`); **B 10/10**;
+  **C 12/12**; **D pass** — globe click proof + window-body probe, PS/2
+  lines bounded (`ps2 mouse … dx=116 dy=0`, clean press/release pairs);
+  **E 12/12** — the new Task-Manager scenario: icon → `[gui] open Task
+  Manager`, title/header/row-highlight pixel probes, select row 0 →
+  `End Task` (Welcome closes) → re-select row 0 (`Uptime`) → `Switch
+  To` (raised title probe), `KERNEL PANIC` count 0.
+- Gates: kernel `fmt`/`clippy -D warnings`/`build` zero; workspace
+  `clippy`/`fmt` zero, `cargo test --workspace` green except the
+  documented `cow_live_update::test_recover_from_crash` flake (passes
+  in isolation).
+
 ## v2.38.34 — Network window, Wi-Fi test radio (WPA2), NIC drivers e1000/rtl8139 (2026-10-02)
 
 First networking increment for the bare-metal kernel: the windowed GUI gained
