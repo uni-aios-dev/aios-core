@@ -1,5 +1,128 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.38.34): Wi-Fi stack bring-up — scan found nothing, association timed out, M1 panicked, DHCP never bound
+- **Status:** RESOLVED in v2.38.34 — five independent faults in `src/wifi.rs`
+  (plus one crypto and one driver bug), each isolated with a temporary
+  serial diagnostic and verified by the C smoke (12/12).
+- **Symptoms, in the order they surfaced:** `scan done (0 networks)` (the
+  three APs were invisible); `connect <ssid>` → `connect timeout` with no
+  `ap assoc …` line (the AP never answered association);
+  `KERNEL PANIC: range end index 80 out of range for slice of length 64`
+  as soon as EAPOL M1 was processed; after fixing that, handshake
+  completed but `dhcp discover` retried to `dhcp timeout (link-local
+  only)` forever with no `ap dhcp` reply.
+- **Root causes:**
+  1. `sta_rx_scan` started IE parsing at frame offset 38 while
+     `fill_ap_body` writes IEs at 36 — every beacon/probe response failed
+     the parse and was dropped.
+  2. `ap_rx_probe` rejected an empty-SSID (wildcard) probe request against
+     the AP's SSID length, so nothing answered a scan until a named probe
+     arrived.
+  3. `ap_rx_assoc` parsed the SSID IE at offset 32 (mid-IE — assoc fixed
+     params are 4 bytes after the 24-byte header, so IEs start at 28);
+     `parse_ssid_ie` returned `None` and the function returned silently.
+  4. `prf512` wrote 4 × 20-byte HMAC-SHA1 blocks into the 64-byte PTK
+     buffer (the last write is `out[60..80]`); the fix truncates the last
+     block to the remaining bytes — standard PRF-512 behaviour.
+  5. `ap_lan_dhcp` gated the received message type on OFFER(2)/ACK(5) —
+     the types the AP *sends* — while stations send DISCOVER(1)/
+     REQUEST(3), so every request was dropped before any log; it now maps
+     DISCOVER→OFFER, REQUEST→ACK.
+  6. (crypto, found on the way) `aes128_dec` had InvShiftRows reversed /
+     wrong round order and `aes_key_wrap` deviated from RFC 3394 — both
+    rewritten and pinned by the boot self-test vectors.
+  7. (driver, found on the way) the e1000 RA MAC copy wrote 4 bytes into a
+     2-byte slice — panic on the first received frame.
+- **Verification:** scenario C on the release ISO — `scan done (3
+  networks)`, `connect SecureNet (wpa2)` → `ap auth ok` → `auth ok,
+  associating` → `assoc ok, waiting handshake` → `eapol M1/M2/M3` →
+  `handshake complete, assoc SecureNet` → `bound ip=10.0.9.15` →
+  `internet ok` → `state internet`; then disconnect and an open-network
+  connect, 12/12 PASS, PANIC 0.
+
+## RESOLVED (v2.38.34): every capital letter typed lowercase (shift state lost in the polled PS/2 path)
+- **Status:** RESOLVED in v2.38.34 — shift snapshot (`interrupts::SHIFTED`)
+  stored with the queued scancode.
+- **Symptom:** GUI typing produced `secu…` instead of `SecureNet` (ssid
+  length correct — 9 — but `wifi: no such network`, i.e. the bytes never
+  matched); digits were unaffected, so it looked like a Wi-Fi bug.
+- **Root cause:** on the polled path `ps2::feed_key` sets and clears
+  `SHIFT_DOWN` at *drain* time, but `scancode_to_char` reads it at
+  *dispatch* time — QEMU's `sendkey shift-s` delivers make, letter, break
+  within one drain, so by the time the letter was dispatched `SHIFT_DOWN`
+  was already false. The legacy `LAST_SCANCODE` path avoided this only
+  because it handles shift and letter as separate loop events.
+- **Fix:** `feed_key` stores the current `SHIFT_DOWN` into
+  `interrupts::SHIFTED` whenever it queues a make code, and
+  `scancode_to_char` reads the snapshot; the legacy IRQ path mirrors its
+  shift events into the same snapshot for symmetry.
+- **Verification:** scenario C — `connect SecureNet (wpa2)` is accepted
+  (ssid bytes `53 65 63 75…`), `connect AIOS-Test (open)` likewise, both
+  on the release ISO.
+
+## RESOLVED (v2.38.34): wired probes framed wrongly / ICMP+DNS never answered
+- **Status:** RESOLVED in v2.38.34 — `send_echo`/`send_dns` in `src/net.rs`
+  pass the *payload* length to `start_frame` (they passed the total frame
+  length, doubling the +20-byte L3 header accounting).
+- **Symptom:** with a wired NIC attached, ICMP/DNS probes were malformed
+  and the internet probe could not pass (`internet ok` was unreachable on
+  the wired path; the globe stayed wrong until the fix).
+- **Verification:** scenario B on the release ISO — `nic rtl8139`,
+  `dhcp bound`, `state internet`, `manual check requested`, 10/10 PASS.
+
+## OPEN (v2.38.34): intermittent loss of PS/2 button events (worked around in the smoke harness)
+- **Symptom:** during QEMU smokes an occasional click (press/release pair)
+  does not register — the expected `[gui] … click` line never appears even
+  though the pointer moved over the right widget (seen across scenarios
+  before the dwell/verify hardening; reproducible only occasionally).
+- **Suspected area:** `ps2::feed_key`/`main.rs` press→release edge
+  handling under back-to-back 3-byte packets, or QEMU `sendkey`/HMP timing
+  — not yet isolated (it never reproduced in a way that left a serial
+  trace of the missing byte).
+- **Workaround:** the smoke harness clicks with a longer dwell
+  (450/350 ms) and *verifies* each critical click by re-polling the serial
+  log for the proof line, retrying (with a small wiggle) up to 4 times
+  (`Click-Vfy`); all three scenarios are green with this. The kernel-side
+  root cause remains open.
+
+## OPEN (v2.38.34): QEMU CMOS is process-volatile — persistence proof must stay inside one QEMU run
+- **Symptom:** net settings saved to CMOS are lost when QEMU exits; a
+  second QEMU process starts with `config defaults (no valid cmos)` again.
+  On real hardware the RTC/CMOS retains them.
+- **Workaround/proof:** the A2 smoke saves a static config, then issues a
+  warm HMP `system_reset` *within the same QEMU process* and greps for
+  `config loaded from cmos` plus the second `static ip` line (count = 2).
+
+## OPEN (v2.38.34): `FC_PROTECTED = 0x0040` deviates from IEEE 802.11 (bit 14 = 0x4000)
+- The sim radio uses `0x0040` for the protected-frame bit in both the
+  station and the AP paths, so CCMP AAD/decrypt stay symmetric and every
+  smoke passes — but the constant is not the IEEE value. If a real
+  802.11 controller ever backs `wifi.rs`, flip it to `0x4000` and re-run
+  the C smoke (both ends derive AAD from the same constant, so the change
+  is one line plus re-verification).
+
+## OPEN (flaky): `aios-integration-tests::real_file_io::test_recovery_log_entries` fails intermittently under parallel `cargo test --workspace`
+- **Symptom:** occasionally `assertion left == right failed (left: 0,
+  right: 1)` at `tests/real_file_io.rs:105` when the whole workspace runs;
+  the suite passes in isolation and on an immediate rerun (v2.38.34 gate
+  run: first pass 1 failure, rerun 94/94 ok). Looks like a temp-file /
+  recovery-log race between parallel test binaries, not a product bug.
+- **Workaround:** rerun the suite (`cargo test -p aios-integration-tests
+  --test real_file_io`) or the whole workspace before trusting a red run.
+
+## OPEN (flaky): `aios-live-update::cow_live_update::tests::test_recover_from_crash` fails intermittently under parallel `cargo test --workspace`
+- **Symptom:** occasionally `assertion left == right failed (left: [],
+  right: [42])` at `aios-live-update/src/cow_live_update.rs:231` when the
+  whole workspace runs; the test and its whole crate pass in isolation and
+  on an immediate rerun (v2.38.34 release-gate run: first pass 1 failure,
+  `cargo test -p aios-live-update` green 3/3 afterwards). The test relies
+  on a `tempfile::tempdir()` journal surviving a simulated crash inside the
+  same process — under parallel workspace load the recovered log comes back
+  empty. Test-only flake, not a product bug (the engine recovers `[42]`
+  deterministically when run alone).
+- **Workaround:** rerun the suite (`cargo test -p aios-live-update
+  --lib cow_live_update`) or the whole workspace before trusting a red run.
+
 ## RESOLVED (v2.38.33): real-hardware pointer runaway — cursor pinned bottom-left, task-bar flicker, input log storm
 - **Status:** RESOLVED in v2.38.33 — runaway gate (`gui::input_allowed` /
   `tui::input_allowed`) + aggregated movement logging.

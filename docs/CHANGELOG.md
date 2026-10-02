@@ -1,5 +1,103 @@
 # AIOS Development Log
 
+## v2.38.34 — Network window, Wi-Fi test radio (WPA2), NIC drivers e1000/rtl8139 (2026-10-02)
+
+First networking increment for the bare-metal kernel: the windowed GUI gained
+a Network panel, the kernel got real wired NIC drivers (e1000 + rtl8139), a
+complete Wi-Fi station+AP soft stack with genuine WPA2-PSK crypto over a
+clearly-marked test radio, and the net configuration persists to CMOS.
+
+### Added
+- **GUI Network window** (`src/gui.rs`): `WinKind::Network`, opened from the
+  tray globe (bottom-right of the task bar) or the `Net` icon (fourth in the
+  left column). Body: `DHCP`/`Static` mode buttons, five address fields
+  (`ip`/`mask`/`gw`/`dns1`/`dns2`, `WidgetAction::NetField(0..4)`),
+  `Apply`/`Test`, and the Wi-Fi group — `ssid`/`pass` fields
+  (`NetField(5/6)`) with `Scan`/`Connect`/`Disc`. Fields focus on click and
+  type through the net-key path (`net_type`/`net_append`, `Tab` cycles
+  focus via `net_focus_next`); `Apply` parses all five dotted quads and
+  commits through `net::apply` (which persists to CMOS), reporting
+  `applied` or the failing field (`bad ip`/`bad mask`/`bad gw`/`bad
+  dns1`/`bad dns2`/`need ip`) in the window status line; `Test` triggers
+  `net::recheck()` (`check!`, `[serial] [net] manual check requested`).
+  Proof lines: `[gui] tray globe click`, `[gui] widget Network/<label>
+  click`.
+- **NIC drivers** (`src/nic.rs`, `src/net.rs`): e1000 and rtl8139 PCI
+  ethernet — link up/down, tx/rx ring, MAC filtering, and the shared DHCP
+  client + ARP/ICMP/DNS/internet-probe state machine on top. `net::init`
+  picks the first present NIC and logs `[serial] [net] nic {e1000|rtl8139}
+  mac=…`; with neither present it logs `nic: none (wifi uplink only)` and a
+  Wi-Fi association becomes the uplink (`uplink_mac`/`uplink_send` switch
+  to the station MAC/`wifi::send_frame`).
+- **Wi-Fi soft stack** (`src/wifi.rs`): a full station + simulated AP over a
+  **test radio** — explicitly marked sim (`[serial] [wifi] real radio: no
+  controller (using test radio)`, `[wifi] radio: test-radio (sim), 3 APs`).
+  Three built-in APs: `AIOS-Test` (open), `SecureNet` (WPA2-PSK, passphrase
+  `AIOS-Test`), `Neighbor` (open). The station does wildcard probe scans
+  (beacons + probe responses into up to 8 results) and open/WPA2
+  association with the **real 4-way handshake**: PBKDF2-SHA1 (4096
+  iterations) PMK, PRF-512 PTK, RFC 3394 AES key wrap for the GTK, EAPOL
+  M1–M4 with HMAC-SHA1 MIC, and AES-CCM (CCMP) data encryption — verified
+  by decrypting on both ends of the sim air. The AP side terminates a LAN
+  on `10.0.9.0/24` and answers DHCP (`ap dhcp offer/ack -> 10.0.9.15`),
+  ARP, ICMP echo and DNS, so `state internet` is produced by real probes.
+  Logs: `scan start` / `scan done (N networks)`, `connect <ssid>
+  (wpa2|open)`, `auth ok, associating`, `assoc ok, waiting handshake`,
+  `handshake complete, assoc <ssid> rssi …dB (sim)`, `disconnect`.
+- **CMOS persistence for net config** (`src/net.rs`): `net::apply` calls
+  `cmos_save()` and the boot path restores through `cmos_load()` —
+  `config defaults (no valid cmos)` vs `config loaded from cmos`; the A2
+  smoke proves a static config surviving a warm HMP `system_reset`.
+- **Shift-state snapshot** (`src/ps2.rs`, `src/interrupts.rs`,
+  `src/main.rs`): the polled PS/2 path stores `interrupts::SHIFTED` (the
+  `SHIFT_DOWN` value) together with every queued make code, and
+  `scancode_to_char` reads that snapshot — before, the whole
+  shift+letter combo was drained before dispatch observed `SHIFT_DOWN`,
+  so every capital typed lowercase (caught by the C smoke: ssid `secu…`
+  instead of `Secu…`, `wifi: no such network (ssid len 9)`).
+
+### Fixed
+- **e1000 receive-address panic** (`src/nic.rs`): the RA MAC copy wrote 4
+  bytes into a 2-byte slice (`(rah & 0xFFFF).to_le_bytes()`), panicking on
+  the first received frame.
+- **AES-128 decrypt + RFC 3394 key wrap** (`src/wifi.rs`): `aes128_dec`
+  InvShiftRows direction and round-operation order; `aes_key_wrap`/`unwrap`
+  rewritten to RFC 3394 (the RFC vector is asserted in the boot
+  self-test).
+- **ICMP/DNS doubled headers** (`src/net.rs`): `send_echo`/`send_dns`
+  passed the total frame length to `start_frame` instead of the payload
+  length, putting a doubled +20-byte header on every probe.
+- **Beacon IE parse off-by-2** (`src/wifi.rs`): `sta_rx_scan` started IE
+  parsing at offset 38 while `fill_ap_body` writes IEs at 36 — every
+  beacon/probe response was discarded (`scan done (0 networks)`).
+- **Wildcard probe filtering** (`src/wifi.rs`): an empty-SSID probe request
+  was rejected against the AP's SSID length, so no AP answered a scan.
+- **Association-request IE offset** (`src/wifi.rs`): `ap_rx_assoc` parsed
+  the SSID IE at frame offset 32 (mid-IE — the assoc fixed params end at
+  28), `parse_ssid_ie` returned `None`, and the AP silently never answered
+  association (`connect timeout` on both open and WPA2 networks).
+- **PRF-512 buffer overflow** (`src/wifi.rs`): `prf512` wrote 4×20 bytes
+  into the 64-byte PTK buffer — `KERNEL PANIC: range end index 80 out of
+  range for slice of length 64` the moment M1 was processed; the last
+  block is now truncated to the remaining 4 bytes (standard PRF-512
+  truncation).
+- **DHCP server accepted only the message types it sends**
+  (`src/wifi.rs`): `ap_lan_dhcp` gated on OFFER(2)/ACK(5) while stations
+  send DISCOVER(1)/REQUEST(3), so every request was silently dropped and
+  Wi-Fi never got a lease; it now maps DISCOVER→OFFER and REQUEST→ACK.
+
+### Verification
+- QEMU smokes on the release ISO (monitor port 45635): **A 7/7** — static
+  config applied, globe green, `internet ok`, and after HMP
+  `system_reset`: `config loaded from cmos` + `static ip` proof line;
+  **B 10/10** — `nic rtl8139`, `dhcp bound`, `state internet`, manual
+  recheck, `scan done (3 networks)`, Test/Scan widget clicks; **C 12/12**
+  — `nic: none (wifi uplink only)`, WPA2 connect → 4-way handshake →
+  `bound ip=10.0.9.15` → `internet ok` → `state internet`, disconnect,
+  open-network connect → `state internet`, scan start/done.
+- Gates: kernel `fmt`/`clippy -D warnings`/`build` zero; workspace
+  `clippy`/`fmt` zero, `cargo test --workspace` — 94 suites, exit 0.
+
 ## v2.38.33 — pointer runaway gate, aggregated mouse logs, heap coalescing (2026-10-01)
 
 Closed the report from a real laptop (USB-stick boot, GUI mode, PS/2

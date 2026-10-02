@@ -1,5 +1,105 @@
 # Журнал разработки AIOS
 
+## v2.38.34 — окно Network, тест-радио Wi-Fi (WPA2), драйверы NIC e1000/rtl8139 (2026-10-02)
+
+Первый сетевой прирост для bare-metal ядра: в оконный GUI появилась панель
+Network, ядро получило настоящие драйверы проводной сети (e1000 + rtl8139),
+полный софт-стек Wi-Fi (станция + AP) с настоящей криптой WPA2-PSK поверх
+явно помеченного тест-радио, а сетевая конфигурация персистится в CMOS.
+
+### Добавлено
+- **Окно Network в GUI** (`src/gui.rs`): `WinKind::Network`, открывается по
+  иконке-глобусу (правый нижний угол таскбара) или иконке `Net` (четвёртая
+  в левой колонке). Внутри: кнопки режимов `DHCP`/`Static`, пять полей
+  адреса (`ip`/`mask`/`gw`/`dns1`/`dns2`, `WidgetAction::NetField(0..4)`),
+  `Apply`/`Test` и Wi-Fi-группа — поля `ssid`/`pass` (`NetField(5/6)`) с
+  кнопками `Scan`/`Connect`/`Disc`. Поле фокусируется кликом и печатается
+  через net-key путь (`net_type`/`net_append`, `Tab` переключает фокус через
+  `net_focus_next`); `Apply` разбирает все пять dotted-quad значений и
+  передаёт их в `net::apply` (который сохраняет их в CMOS), отвечая `applied`
+  или именем виновного поля (`bad ip`/`bad mask`/`bad gw`/`bad dns1`/`bad
+  dns2`/`need ip`) в строке статуса окна; `Test` запускает `net::recheck()`
+  (`check!`, `[serial] [net] manual check requested`). Доказательные строки:
+  `[gui] tray globe click`, `[gui] widget Network/<label> click`.
+- **Драйверы NIC** (`src/nic.rs`, `src/net.rs`): PCI-Ethernet e1000 и
+  rtl8139 — link up/down, tx/rx-кольца, MAC-фильтрация и общий сверху
+  DHCP-клиент + ARP/ICMP/DNS/`state machine` проверки интернета. `net::init`
+  выбирает первый найденный NIC и пишет `[serial] [net] nic
+  {e1000|rtl8139} mac=…`; если их нет — `nic: none (wifi uplink only)`,
+  а ассоциация Wi-Fi становится аплинком (`uplink_mac`/`uplink_send`
+  переключаются на MAC станции/`wifi::send_frame`).
+- **Софт-стек Wi-Fi** (`src/wifi.rs`): полная станция + эмулируемый AP на
+  **тест-радио** — явно помеченном как sim (`[serial] [wifi] real radio: no
+  controller (using test radio)`, `[wifi] radio: test-radio (sim), 3 APs`).
+  Три встроенных AP: `AIOS-Test` (открытый), `SecureNet` (WPA2-PSK, пароль
+  `AIOS-Test`), `Neighbor` (открытый). Станция делает wildcard-сканирование
+  (beacons + probe-ответы, до 8 результатов) и открытую/WPA2-ассоциацию с
+  **настоящим 4-way handshake**: PBKDF2-SHA1 (4096 итераций) PMK, PRF-512
+  PTK, обёртка GTK по RFC 3394 (AES key wrap), EAPOL M1–M4 с HMAC-SHA1 MIC
+  и шифрование данных AES-CCM (CCMP) — проверяемое расшифровкой на обоих
+  концах сим-эфира. AP-сторона заканчивает LAN на `10.0.9.0/24` и
+  отвечает на DHCP (`ap dhcp offer/ack -> 10.0.9.15`), ARP, ICMP echo и
+  DNS, поэтому `state internet` получается настоящими пробами. Логи:
+  `scan start` / `scan done (N networks)`, `connect <ssid> (wpa2|open)`,
+  `auth ok, associating`, `assoc ok, waiting handshake`, `handshake
+  complete, assoc <ssid> rssi …dB (sim)`, `disconnect`.
+- **Персистентность сетевых настроек в CMOS** (`src/net.rs`): `net::apply`
+  вызывает `cmos_save()`, при загрузке настройки восстанавливаются через
+  `cmos_load()` — `config defaults (no valid cmos)` против `config loaded
+  from cmos`; смоук A2 доказывает переживание статической конфигурацией
+  тёплого HMP `system_reset`.
+- **Снапшот состояния Shift** (`src/ps2.rs`, `src/interrupts.rs`,
+  `src/main.rs`): опрошенный путь PS/2 сохраняет `interrupts::SHIFTED`
+  (значение `SHIFT_DOWN`) вместе с каждым поставленным в очередь make-кодом,
+  а `scancode_to_char` читает этот снапшот — раньше вся комбинация
+  shift+буква успевала быть прочитанной до того, как диспетчер увидел
+  `SHIFT_DOWN`, и каждая заглавная печаталась строчной (поймано смоуком C:
+  ssid `secu…` вместо `Secu…`, `wifi: no such network (ssid len 9)`).
+
+### Исправлено
+- **Panic приёмного адреса e1000** (`src/nic.rs`): копирование MAC в RA
+  писало 4 байта в 2-байтовый срез (`(rah & 0xFFFF).to_le_bytes()`) —
+  panic на первом же принятом кадре.
+- **AES-128 decrypt + RFC 3394 key wrap** (`src/wifi.rs`): направление
+  InvShiftRows и порядок раундовых операций в `aes128_dec`;
+  `aes_key_wrap`/`unwrap` переписаны по RFC 3394 (вектор RFC проверяется
+  в self-test при загрузке).
+- **Двойные заголовки ICMP/DNS** (`src/net.rs`): `send_echo`/`send_dns`
+  передавали в `start_frame` общую длину кадра вместо длины полезной
+  нагрузки — каждый пробный пакет получал удвоенный заголовок +20 байт.
+- **Сдвиг разбора IE на beacon** (`src/wifi.rs`): `sta_rx_scan` начинал
+  разбор IE со смещения 38, а `fill_ap_body` пишет IE с 36 — все
+  beacon/probe-ответы отбрасывались (`scan done (0 networks)`).
+- **Фильтрация wildcard-проб** (`src/wifi.rs`): probe request с пустым
+  SSID отклонялся по длине SSID AP, поэтому на сканирование никто не
+  отвечал.
+- **Смещение IE в association request** (`src/wifi.rs`): `ap_rx_assoc`
+  разбирал SSID IE со смещения 32 (посередине IE — фиксированные параметры
+  assoc заканчиваются на 28), `parse_ssid_ie` возвращал `None`, и AP молча
+  никогда не отвечал на ассоциацию (`connect timeout` и для открытой, и для
+  WPA2-сети).
+- **Переполнение буфера PRF-512** (`src/wifi.rs`): `prf512` писал 4×20
+  байт в 64-байтовый буфер PTK — `KERNEL PANIC: range end index 80 out of
+  range for slice of length 64` в момент обработки M1; теперь последний
+  блок обрезается до оставшихся 4 байт (стандартная обрезка PRF-512).
+- **DHCP-сервер принимал только те типы сообщений, которые сам шлёт**
+  (`src/wifi.rs`): `ap_lan_dhcp` проверял OFFER(2)/ACK(5), тогда как
+  станции шлют DISCOVER(1)/REQUEST(3) — каждый запрос молча отбрасывался и
+  Wi-Fi не получал аренды; теперь DISCOVER→OFFER, REQUEST→ACK.
+
+### Верификация
+- QEMU-смоуки на релизном ISO (порт монитора 45635): **A 7/7** — применение
+  статической конфигурации, зелёный глобус, `internet ok`, и после HMP
+  `system_reset`: `config loaded from cmos` + доказательная строка `static
+  ip`; **B 10/10** — `nic rtl8139`, `dhcp bound`, `state internet`,
+  ручная перепроверка, `scan done (3 networks)`, клики Test/Scan;
+  **C 12/12** — `nic: none (wifi uplink only)`, WPA2-подключение → 4-way
+  handshake → `bound ip=10.0.9.15` → `internet ok` → `state internet`,
+  отключение, подключение к открытой сети → `state internet`,
+  scan start/done.
+- Гейты: ядро `fmt`/`clippy -D warnings`/`build` — ноль; workspace
+  `clippy`/`fmt` — ноль, `cargo test --workspace` — 94 сьютов, exit 0.
+
 ## v2.38.33 — гейт runaway-курсора, агрегированные логи мыши, слияние фрагментов кучи (2026-10-01)
 
 Закрыт отчёт с реального ноутбука (загрузка с флешки, режим GUI, тачпад

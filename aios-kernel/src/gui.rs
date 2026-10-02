@@ -55,7 +55,7 @@ const TASKBAR_H: usize = 18;
 /// drag (edges/corners, checked before title/body).
 const RESIZE_BORDER: usize = 5;
 /// Smallest window width accepted by an edge/corner resize drag (equals the
-/// narrowest default — the 96 px ring-3 client window).
+/// narrowest default вЂ” the 96 px ring-3 client window).
 const RESIZE_MIN_W: usize = 96;
 /// Smallest window height (title bar included): the 64 px client body plus
 /// `TITLE_H`, i.e. 8 glyph rows of kernel text content.
@@ -103,6 +103,9 @@ enum WinKind {
     System,
     Clock,
     About,
+    /// Network status and settings: wired NIC/DHCP state plus the software
+    /// Wi-Fi stack (scan/connect against the simulated radio).
+    Network,
     /// A window owned by a ring-3 task; the id indexes [`CLIENTS`], whose
     /// buffer the window composites on every repaint.
     Client(u8),
@@ -139,7 +142,7 @@ enum TitleBtn {
 }
 
 /// Active pointer drag, keyed by the window's [`WinKind`] (stable across
-/// `bring_to_front` slot shifts — an index would go stale the moment the
+/// `bring_to_front` slot shifts вЂ” an index would go stale the moment the
 /// drag starts and the window is focused/brought to the front).
 #[derive(Clone, Copy)]
 enum Drag {
@@ -157,7 +160,7 @@ enum Drag {
     },
 }
 
-/// A widget hosted in a window body — the first increment of the widget-set
+/// A widget hosted in a window body вЂ” the first increment of the widget-set
 /// roadmap (v2.38.32, buttons). Coordinates are window-local, so the widget
 /// follows its host through move, resize and maximize, and it is painted on
 /// top of the body content by [`draw_widgets`] and hit-tested before any
@@ -189,6 +192,30 @@ enum WidgetAction {
     /// Close the hosting window through [`close_window`], so a typed note
     /// still raises the modal confirm dialog (the v2.38.30 gate).
     CloseHost,
+    /// Run one of the Network window's command buttons (v2.38.34).
+    Net(NetBtn),
+    /// Network window text field: move the keyboard focus to field `0..=6`
+    /// (`ip`, `mask`, `gw`, `dns1`, `dns2`, `ssid`, `pass`).
+    NetField(u8),
+}
+
+/// Command buttons of the Network window.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetBtn {
+    /// Switch the draft to DHCP addressing.
+    Dhcp,
+    /// Switch the draft to the static fields.
+    Static,
+    /// Parse the five address fields and push them through `net::apply`.
+    Apply,
+    /// Kick an immediate reachability re-probe (`net::recheck`).
+    Test,
+    /// Ask the software Wi-Fi stack to scan for beacons.
+    Scan,
+    /// Connect to the drafted SSID/passphrase.
+    Connect,
+    /// Drop the current Wi-Fi association.
+    Disc,
 }
 
 static mut WINS: [Option<Window>; MAX_WINS] = [None; MAX_WINS];
@@ -202,7 +229,7 @@ static mut DRAG: Option<(WinKind, Drag)> = None;
 /// path is gated (v2.38.30 focus-steal prevention) until the dialog is
 /// resolved through [`modal_confirm`] / [`modal_cancel`].
 static mut MODAL: Option<(WinKind, &'static str)> = None;
-/// Remembered z-ranks of closed windows: `(kind, position bottom→top among
+/// Remembered z-ranks of closed windows: `(kind, position bottomв†’top among
 /// the open windows at close time)`. A later reopen of the same kind puts the
 /// window back at that place in the stack instead of on top (v2.38.31 z-order
 /// restore); an empty table just means "open on top" as before. Cleared with
@@ -237,7 +264,7 @@ struct ClientWin {
     title: [u8; CLIENT_TITLE_CAP],
     title_len: usize,
     /// One pending event (`0` = none): [`EV_KEY`] or [`EV_CLICK`] encoding.
-    /// Keep-first semantics — a second event arriving before the app polls is
+    /// Keep-first semantics вЂ” a second event arriving before the app polls is
     /// dropped rather than overwriting the queued one.
     event: u64,
 }
@@ -295,7 +322,7 @@ static mut CLIENTS: [Option<ClientWin>; MAX_CLIENTS] = [None, None, None, None];
 /// Base of the RAM backbuffer: a dense software frame the GUI renders into and
 /// then publishes to VRAM with a damage-aware `blit_region`. Sits in the spare
 /// PML4-slot gap directly above the kernel heap (v2.38.33: the 4 MiB heap ends
-/// exactly at `BACKBUF_BASE` — abutting, page-disjoint) and below the
+/// exactly at `BACKBUF_BASE` вЂ” abutting, page-disjoint) and below the
 /// paging self-test page (`0xFFFF_FF00_1000_0000`), so it shares the paging
 /// hierarchy already built for the heap and never collides with it.
 const BACKBUF_BASE: u64 = 0xFFFF_FF00_0040_0000;
@@ -361,7 +388,7 @@ fn rect_overlaps(d: &Rect, x: usize, y: usize, w: usize, h: usize) -> bool {
 /// frame allocator directly instead of the kernel heap: the buffer for a
 /// 1920x1080 screen is ~8 MiB and growing the 2 MiB heap for it would starve
 /// every other allocation. On any failure the GUI silently falls back to the
-/// direct-VRAM path (`render()` handles a missing buffer) — no panic, no OOM
+/// direct-VRAM path (`render()` handles a missing buffer) вЂ” no panic, no OOM
 /// risk during the whole uptime.
 fn ensure_backbuffer(fb: &Framebuffer) {
     unsafe {
@@ -412,7 +439,7 @@ fn ensure_backbuffer(fb: &Framebuffer) {
 
 /// Wraps the mapped RAM backbuffer as a dense painting surface with the same
 /// pixel format as VRAM. `None` when the buffer is absent (allocation failed or
-/// not yet requested) — the caller then paints directly into VRAM.
+/// not yet requested) вЂ” the caller then paints directly into VRAM.
 fn back_fb(vram: &Framebuffer) -> Option<Framebuffer> {
     let base = unsafe { *core::ptr::addr_of!(BACK_BASE) };
     if base == 0 || base == BACKBUF_FAIL {
@@ -432,6 +459,7 @@ fn win_title(kind: WinKind) -> &'static str {
         WinKind::System => "System",
         WinKind::Clock => "Uptime",
         WinKind::About => "About",
+        WinKind::Network => "Network",
         WinKind::Client(_) => "ring3 client",
     }
 }
@@ -496,7 +524,7 @@ fn focused_idx() -> Option<usize> {
         .max()
 }
 
-/// Kind of the focused window, if any — the target of the keyboard hotkeys.
+/// Kind of the focused window, if any вЂ” the target of the keyboard hotkeys.
 fn focused_kind() -> Option<WinKind> {
     let i = focused_idx()?;
     unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref().map(|w| w.kind) }
@@ -527,7 +555,7 @@ fn remember_closed_z(kind: WinKind, rank: u8) {
 }
 
 /// Takes (and forgets) the rank remembered for `kind` by
-/// [`remember_closed_z`] — the caller then places the reopened window there.
+/// [`remember_closed_z`] вЂ” the caller then places the reopened window there.
 fn take_closed_z(kind: WinKind) -> Option<u8> {
     let found = unsafe {
         let mem = &mut *core::ptr::addr_of_mut!(CLOSED_Z);
@@ -551,7 +579,7 @@ fn take_closed_z(kind: WinKind) -> Option<u8> {
 /// Inserts `win` into the z-order: at the rank remembered by
 /// [`remember_closed_z`] when its kind was closed before, otherwise on top
 /// (append). The slot array is compacted on the way, so holes left by earlier
-/// closes disappear and slot order stays a dense bottom→top sequence.
+/// closes disappear and slot order stays a dense bottomв†’top sequence.
 fn place_window(win: Window) {
     let label = win_label(win.kind, win.title);
     let restored = take_closed_z(win.kind);
@@ -592,10 +620,17 @@ fn spawn(kind: WinKind) {
     let fb_w = console::framebuffer().map(|fb| fb.width()).unwrap_or(800);
     let fb_h = console::framebuffer().map(|fb| fb.height()).unwrap_or(600);
     let cascade = n % 5;
-    let x = (fb_w / 2 + cascade * 28).saturating_sub(WIN_W / 2);
-    let y = (fb_h / 3 + cascade * 34).min(fb_h.saturating_sub(WIN_H + TASKBAR_H + 20));
-    let w = WIN_W;
-    let h = if kind == WinKind::Clock { 140 } else { WIN_H };
+    let mut x = (fb_w / 2 + cascade * 28).saturating_sub(WIN_W / 2);
+    let mut y = (fb_h / 3 + cascade * 34).min(fb_h.saturating_sub(WIN_H + TASKBAR_H + 20));
+    let mut w = WIN_W;
+    let mut h = if kind == WinKind::Clock { 140 } else { WIN_H };
+    if kind == WinKind::Network {
+        w = 420;
+        h = 356;
+        x = 420.min(fb_w.saturating_sub(w + 8));
+        y = 356.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
+        net_draft_load();
+    }
     unsafe {
         let wins = &mut *core::ptr::addr_of_mut!(WINS);
         for win in wins.iter_mut().flatten() {
@@ -654,7 +689,7 @@ fn unfocus_all() {
     }
 }
 
-/// Closes window `i` — unless it holds a typed-text note, in which case the
+/// Closes window `i` вЂ” unless it holds a typed-text note, in which case the
 /// modal confirm dialog opens instead. All three close paths (Esc, the `X`
 /// button, `F4`) funnel here, so none of them can silently drop the note.
 fn close_window(i: usize) {
@@ -768,7 +803,7 @@ fn modal_key(sc: u8) -> bool {
 
 /// Mouse routing while the dialog is up: only the two button plates act;
 /// any other press (window body/title, icon, task bar) is blocked, so the
-/// focus — and ring-3 client input — cannot be stolen.
+/// focus вЂ” and ring-3 client input вЂ” cannot be stolen.
 fn modal_click(fb: &Framebuffer, x: usize, y: usize) {
     if !modal_active() {
         return;
@@ -882,7 +917,7 @@ fn cycle_focus() {
         Some(p) => wins[(p + 1) % wins.len()],
         None => wins[0],
     };
-    // Capture the label first: `focus_window` → `bring_to_front` moves the
+    // Capture the label first: `focus_window` в†’ `bring_to_front` moves the
     // window out of slot `next` by the time we would read it.
     let label = unsafe {
         (*core::ptr::addr_of!(WINS))[next]
@@ -915,18 +950,19 @@ fn kind_rank(kind: WinKind) -> u8 {
         WinKind::System => 1,
         WinKind::Clock => 2,
         WinKind::About => 3,
-        WinKind::Client(id) => 4 + id,
+        WinKind::Network => 4,
+        WinKind::Client(id) => 5 + id,
     }
 }
 
 /// All open window indices in [`kind_rank`] order (`usize::MAX` marks the
 /// unused tail). Both the task-bar hit test and its drawing walk this order,
-/// so buttons keep their place across focus/z-order changes — a minimized
+/// so buttons keep their place across focus/z-order changes вЂ” a minimized
 /// window's button never moves under the pointer.
 fn taskbar_slots() -> [usize; MAX_WINS] {
     let mut out = [usize::MAX; MAX_WINS];
     let mut n = 0usize;
-    for rank in 0u8..(4 + MAX_CLIENTS as u8) {
+    for rank in 0u8..(5 + MAX_CLIENTS as u8) {
         for i in 0..MAX_WINS {
             let hit = unsafe {
                 (*core::ptr::addr_of!(WINS))[i].map(|w| kind_rank(w.kind) == rank) == Some(true)
@@ -1034,15 +1070,15 @@ struct CreateReq {
 
 /// Wire entry for the `SYS_GUI` syscall from ring-3, dispatched on `rdi`:
 ///
-/// - `0` — CREATE with `rsi` pointing at a [`CreateReq`] (returns the client
+/// - `0` вЂ” CREATE with `rsi` pointing at a [`CreateReq`] (returns the client
 ///   id, `u64::MAX` on any validation failure);
-/// - `1` — PRESENT: the client's window is made dirty (and re-spawned if it
+/// - `1` вЂ” PRESENT: the client's window is made dirty (and re-spawned if it
 ///   was closed, e.g. by the GUI `leave()`), so the composite picks up the new
-///   pixels on the next `render()` — this is the ring-3 client's "flip";
-/// - `2` — GET_EVENT: drains the single pending input event (returns the
+///   pixels on the next `render()` вЂ” this is the ring-3 client's "flip";
+/// - `2` вЂ” GET_EVENT: drains the single pending input event (returns the
 ///   [`EV_KEY`]/[`EV_CLICK`] packed word, [`EV_NONE`] when idle, `u64::MAX`
 ///   if the task owns no client window);
-/// - anything else — `u64::MAX`.
+/// - anything else вЂ” `u64::MAX`.
 pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
     if frame.rdi == 0 {
         let req_va = frame.rsi;
@@ -1107,7 +1143,7 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
             }
         }
     } else if frame.rdi == 2 {
-        // GET_EVENT — drain the single pending input event.
+        // GET_EVENT вЂ” drain the single pending input event.
         frame.rax = take_client_event(pid).unwrap_or(u64::MAX);
     } else {
         frame.rax = u64::MAX;
@@ -1323,6 +1359,11 @@ pub fn handle_scancode(sc: u8) -> bool {
     if modal_active() {
         return modal_key(sc);
     }
+    // The focused Network window edits its draft form first (v2.38.34):
+    // Tab/Backspace move the field focus, Enter applies, printable keys type.
+    if net_key(sc) {
+        return true;
+    }
     match sc {
         0x01 => {
             if let Some(i) = focused_idx() {
@@ -1359,28 +1400,28 @@ pub fn handle_scancode(sc: u8) -> bool {
         // `sc & 0x80` gate), so F-keys need no modifier/release tracking and
         // can never collide with typing (they are not printable).
         0x3C => {
-            // F2 — maximize/restore the focused window.
+            // F2 вЂ” maximize/restore the focused window.
             if let Some(kind) = focused_kind() {
                 toggle_maximize(kind);
             }
             return true;
         }
         0x3E => {
-            // F4 — close the focused window (same path as Esc and the X button).
+            // F4 вЂ” close the focused window (same path as Esc and the X button).
             if let Some(i) = focused_idx() {
                 close_window(i);
             }
             return true;
         }
         0x3F => {
-            // F5 — minimize the focused window.
+            // F5 вЂ” minimize the focused window.
             if let Some(kind) = focused_kind() {
                 minimize_window(kind);
             }
             return true;
         }
         0x43 => {
-            // F9 — cycle focus (Tab twin).
+            // F9 вЂ” cycle focus (Tab twin).
             cycle_focus();
             return true;
         }
@@ -1440,8 +1481,8 @@ static PIN_LOCK: AtomicBool = AtomicBool::new(false);
 
 /// Runaway-pointer gate (v2.38.33): decides whether one pointer report may be
 /// processed (logged, applied, rendered) by the active screen owner. Real
-/// hardware that streams garbage deltas — a desynced PS/2 touchpad next to a
-/// USB mouse, or a misbehaving xHCI device — used to pin the arrow in the
+/// hardware that streams garbage deltas вЂ” a desynced PS/2 touchpad next to a
+/// USB mouse, or a misbehaving xHCI device вЂ” used to pin the arrow in the
 /// bottom-left corner forever while every packet cost a serial line, a
 /// formatted log and a full repaint (the lag/storm seen on the laptop).
 ///
@@ -1456,7 +1497,7 @@ pub fn input_allowed(dx: i32, dy: i32) -> bool {
         return true;
     };
     // Before the first packet the arrow has no position yet (it centres on
-    // the next report) — nothing can be pinned, so let input through.
+    // the next report) вЂ” nothing can be pinned, so let input through.
     if !unsafe { *core::ptr::addr_of!(CUR_VIS) } {
         return true;
     }
@@ -1496,7 +1537,7 @@ pub fn input_allowed(dx: i32, dy: i32) -> bool {
 }
 
 /// Applies a mouse report: moves the arrow (clamped to the framebuffer),
-/// drives the active drag — title-bar move or edge/corner resize — and
+/// drives the active drag вЂ” title-bar move or edge/corner resize вЂ” and
 /// dispatches clicks (icons / title-bar buttons / task bar / window body).
 /// A released button ends the drag, logging the final size after a resize;
 /// minimize/maximize clicks log their action and resulting geometry.
@@ -1693,6 +1734,7 @@ fn hit_icon(x: usize, y: usize) -> Option<WinKind> {
         (WinKind::System, 20, 40),
         (WinKind::Clock, 20, 108),
         (WinKind::About, 20, 176),
+        (WinKind::Network, 20, 244),
     ];
     for (kind, ix, iy) in icons {
         if x >= ix && x < ix + ICON_W && y >= iy && y < iy + ICON_H {
@@ -1722,6 +1764,13 @@ fn hit_taskbar(fb: &Framebuffer, x: usize, y: usize) -> Option<usize> {
     None
 }
 
+/// Whether `(x, y)` falls on the tray link globe at the task bar's right end
+/// (a 10 px dot inside the last 18 px of the strip); it opens the Network
+/// window on click.
+fn hit_globe(fb: &Framebuffer, x: usize, y: usize) -> bool {
+    y >= fb.height().saturating_sub(TASKBAR_H) && x + 18 >= fb.width()
+}
+
 /// Serial label of a window: clients are addressed by id, everything else
 /// carries its title.
 fn win_label(kind: WinKind, title: &'static str) -> String {
@@ -1734,7 +1783,7 @@ fn win_label(kind: WinKind, title: &'static str) -> String {
 /// Buttons of the Welcome window (v2.38.32 widget demo): a quick-launch row
 /// for the three built-in apps plus a note-safe close button. The body text
 /// block ends at `TITLE_H + 8 + 4 * GLYPH_H = 90` px below the window top,
-/// so row one starts at 102 and row two at 132 — the 170 px window still
+/// so row one starts at 102 and row two at 132 вЂ” the 170 px window still
 /// keeps a 14 px bottom margin.
 static WELCOME_WIDGETS: [Widget; 4] = [
     Widget::Button {
@@ -1771,11 +1820,132 @@ static WELCOME_WIDGETS: [Widget; 4] = [
     },
 ];
 
+/// Widget table of the Network window (v2.38.34): seven input fields and
+/// seven command buttons, laid out on the 16 px body grid of the 420x356
+/// window вЂ” mode row at 104, address fields at 128..192, apply/test at 208,
+/// Wi-Fi fields at 296/312 and the scan/connect row at 328.
+static NETWORK_WIDGETS: [Widget; 14] = [
+    Widget::Button {
+        x: 80,
+        y: 104,
+        w: 72,
+        h: 16,
+        label: "DHCP",
+        action: WidgetAction::Net(NetBtn::Dhcp),
+    },
+    Widget::Button {
+        x: 160,
+        y: 104,
+        w: 104,
+        h: 16,
+        label: "Static",
+        action: WidgetAction::Net(NetBtn::Static),
+    },
+    Widget::Button {
+        x: 80,
+        y: 128,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(0),
+    },
+    Widget::Button {
+        x: 80,
+        y: 144,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(1),
+    },
+    Widget::Button {
+        x: 80,
+        y: 160,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(2),
+    },
+    Widget::Button {
+        x: 80,
+        y: 176,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(3),
+    },
+    Widget::Button {
+        x: 80,
+        y: 192,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(4),
+    },
+    Widget::Button {
+        x: 80,
+        y: 208,
+        w: 88,
+        h: 16,
+        label: "Apply",
+        action: WidgetAction::Net(NetBtn::Apply),
+    },
+    Widget::Button {
+        x: 176,
+        y: 208,
+        w: 72,
+        h: 16,
+        label: "Test",
+        action: WidgetAction::Net(NetBtn::Test),
+    },
+    Widget::Button {
+        x: 80,
+        y: 296,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(5),
+    },
+    Widget::Button {
+        x: 80,
+        y: 312,
+        w: 252,
+        h: 16,
+        label: "",
+        action: WidgetAction::NetField(6),
+    },
+    Widget::Button {
+        x: 80,
+        y: 328,
+        w: 72,
+        h: 16,
+        label: "Scan",
+        action: WidgetAction::Net(NetBtn::Scan),
+    },
+    Widget::Button {
+        x: 160,
+        y: 328,
+        w: 120,
+        h: 16,
+        label: "Connect",
+        action: WidgetAction::Net(NetBtn::Connect),
+    },
+    Widget::Button {
+        x: 288,
+        y: 328,
+        w: 72,
+        h: 16,
+        label: "Disc",
+        action: WidgetAction::Net(NetBtn::Disc),
+    },
+];
+
 /// Widget table of a window kind; clients and built-ins without a demo table
 /// get an empty slice.
 fn widgets_for(kind: WinKind) -> &'static [Widget] {
     if kind == WinKind::Welcome {
         &WELCOME_WIDGETS
+    } else if kind == WinKind::Network {
+        &NETWORK_WIDGETS
     } else {
         &[]
     }
@@ -1797,8 +1967,8 @@ fn widget_index_at(win: &Window, x: usize, y: usize) -> Option<usize> {
 
 /// The widget that would take a click at `(x, y)`, honouring the same
 /// topmost-wins rule as [`dispatch_click`]: the first window containing the
-/// point either yields its body widget or — when the point falls on its
-/// title/edges — nothing, never falling through to a window underneath.
+/// point either yields its body widget or вЂ” when the point falls on its
+/// title/edges вЂ” nothing, never falling through to a window underneath.
 fn hover_widget(x: usize, y: usize) -> Option<(WinKind, usize)> {
     for i in (0..MAX_WINS).rev() {
         let Some(win) = (unsafe { &(*core::ptr::addr_of!(WINS))[i] }) else {
@@ -1847,7 +2017,7 @@ fn update_widget_hover() {
 }
 
 /// Executes a clicked widget: logs the `[gui] widget <host>/<label> click`
-/// serial proof line, then runs the action — open/focus a built-in window, or
+/// serial proof line, then runs the action вЂ” open/focus a built-in window, or
 /// close the hosting window through [`close_window`] (modal gate included).
 /// The host index may have gone stale after [`focus_window`], so the action
 /// resolves the target window by its [`WinKind`] instead.
@@ -1861,6 +2031,26 @@ fn widget_click(host: WinKind, host_label: &str, wg: Widget) {
                 close_window(i);
             }
         }
+        WidgetAction::Net(btn) => {
+            net_button(btn);
+            dirty_kind(host);
+        }
+        WidgetAction::NetField(f) => {
+            unsafe {
+                (*core::ptr::addr_of_mut!(NET_DRAFT)).focus = f;
+            }
+            dirty_kind(host);
+        }
+    }
+}
+
+/// Marks every open window of `kind` for repaint.
+fn dirty_kind(kind: WinKind) {
+    let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
+    for win in wins.iter().flatten() {
+        if win.kind == kind {
+            dirty_window(win);
+        }
     }
 }
 
@@ -1871,9 +2061,32 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
     let hover = unsafe { *core::ptr::addr_of!(WIDGET_HOVER) };
     for (wi, wg) in widgets_for(win.kind).iter().enumerate() {
         let Widget::Button {
-            x, y, w, h, label, ..
+            x,
+            y,
+            w,
+            h,
+            label,
+            action,
         } = *wg;
         let (ax, ay) = (win.x + x, win.y + y);
+        if let WidgetAction::NetField(field) = action {
+            let focused = win.kind == WinKind::Network
+                && unsafe { (*core::ptr::addr_of!(NET_DRAFT)).focus } == field;
+            let border = if focused {
+                BAR_ON
+            } else if hover == Some((win.kind, wi)) {
+                TEXT
+            } else {
+                TEXT_DIM
+            };
+            unsafe {
+                fb.fill_rect(ax, ay, w, 1, border);
+                fb.fill_rect(ax, ay + h - 1, w, 1, border);
+                fb.fill_rect(ax, ay, 1, h, border);
+                fb.fill_rect(ax + w - 1, ay, 1, h, border);
+            }
+            continue;
+        }
         let plate = if hover == Some((win.kind, wi)) {
             BAR_ON
         } else {
@@ -1903,6 +2116,11 @@ fn log_resize(kind: WinKind) {
 }
 
 fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
+    if hit_globe(fb, x, y) {
+        crate::kprintln!("[gui] tray globe click");
+        open_or_focus(WinKind::Network);
+        return;
+    }
     if let Some(i) = hit_taskbar(fb, x, y) {
         focus_window(i);
         return;
@@ -1968,7 +2186,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
             }
             if hit_body(win, x, y) {
                 // Widget plates swallow the click first (v2.38.32), no client
-                // event. Captured before `focus_window` moves slots around —
+                // event. Captured before `focus_window` moves slots around вЂ”
                 // see `cycle_focus`.
                 if let Some(wi) = widget_index_at(win, x, y) {
                     let kind = win.kind;
@@ -2016,8 +2234,8 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
 /// painted, the damaged rectangle is blitted into the physical framebuffer with
 /// `blit_region` (a single `copy_nonoverlapping` per scanline). VRAM is
 /// therefore never drawn incrementally: the panel either sees the previous
-/// complete frame or the new complete one, which — together with the damage
-/// culling — removes both the full-screen flicker and torn rows. If the
+/// complete frame or the new complete one, which вЂ” together with the damage
+/// culling вЂ” removes both the full-screen flicker and torn rows. If the
 /// backbuffer is unavailable the renderer falls back to painting directly into
 /// VRAM (identical damage logic, v2.38.23 behaviour).
 ///
@@ -2120,10 +2338,18 @@ fn mark_live_dirty() {
     for i in 0..MAX_WINS {
         if let Some(win) = unsafe { &(*core::ptr::addr_of!(WINS))[i] } {
             match win.kind {
-                WinKind::System | WinKind::Clock => dirty_window(win),
+                WinKind::System | WinKind::Clock | WinKind::Network => dirty_window(win),
                 _ => {}
             }
         }
+    }
+    if let Some(fb) = console::framebuffer() {
+        dirty_rect(
+            0,
+            fb.height().saturating_sub(TASKBAR_H),
+            fb.width(),
+            TASKBAR_H,
+        );
     }
 }
 
@@ -2133,6 +2359,7 @@ fn icon_label(kind: WinKind) -> &'static str {
         WinKind::System => "System",
         WinKind::Clock => "Uptime",
         WinKind::About => "About",
+        WinKind::Network => "Net",
         WinKind::Client(_) => "ring3",
     }
 }
@@ -2142,6 +2369,7 @@ fn draw_icons(fb: &Framebuffer, clip: &Rect) {
         (WinKind::System, 20, 40),
         (WinKind::Clock, 20, 108),
         (WinKind::About, 20, 176),
+        (WinKind::Network, 20, 244),
     ];
     for (kind, ix, iy) in icons {
         if !rect_overlaps(clip, ix, iy, ICON_W, ICON_H) {
@@ -2198,6 +2426,33 @@ fn draw_taskbar(fb: &Framebuffer) {
             tui::draw_text(fb, bx + 4, y, title, TEXT, bg, bx + w);
             bx += w + 4;
         }
+    }
+    let gx = fb.width().saturating_sub(14);
+    let color = globe_color();
+    unsafe {
+        fb.fill_rect(gx, y + (TASKBAR_H - 10) / 2, 10, 10, color);
+    }
+}
+
+/// Colour of the tray link globe for the current [`crate::net::State`]:
+/// grey (no NIC), red (no link), orange (link only), yellow (local),
+/// blinking cyan (probing) or green (internet reachable).
+fn globe_color() -> Color {
+    use crate::net::State;
+    match crate::net::state() {
+        State::NoNic => 0x00_60_68_70,
+        State::NoLink => 0x00_d0_30_30,
+        State::LinkOnly => 0x00_e0_80_00,
+        State::Local => 0x00_e0_d0_20,
+        State::Checking => {
+            let t = TICKS.load(Ordering::Relaxed) / 5;
+            if t.is_multiple_of(2) {
+                0x00_40_c0_e0
+            } else {
+                0x00_18_40_50
+            }
+        }
+        State::Internet => 0x00_30_c0_60,
     }
 }
 
@@ -2261,13 +2516,14 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::System => draw_system(fb, win.x + 8, &mut y, max_px),
         WinKind::Clock => draw_clock(fb, win.x + 8, &mut y, max_px),
         WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
+        WinKind::Network => draw_network(fb, win, max_px),
         WinKind::Client(_) => draw_client(fb, win),
     }
     draw_widgets(fb, win);
 }
 
 /// Paints the modal confirm dialog: title bar, the close question, the hint
-/// lines and the centered `OK` / `Cancel` pair — [`modal_click`] hits exactly
+/// lines and the centered `OK` / `Cancel` pair вЂ” [`modal_click`] hits exactly
 /// these two rectangles.
 fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
     let (x, y) = modal_pos(fb);
@@ -2484,4 +2740,503 @@ fn draw_about(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
         WIN_BG,
         max_px,
     );
+}
+
+/// Background of the Network window's input boxes (darker than [`WIN_BG`]).
+const NET_BOX_BG: Color = 0x00_10_18_28;
+
+/// Editable draft behind the Network window: addressing mode, the five
+/// dotted-quad strings, the Wi-Fi credentials, the active field focus and
+/// the last short button feedback word. Reloaded from the persisted settings
+/// every time the window opens; the passphrase lives only here.
+#[derive(Clone, Copy)]
+struct NetDraft {
+    /// `true` while the DHCP mode button is selected.
+    dhcp: bool,
+    ip: [u8; 16],
+    ip_len: u8,
+    mask: [u8; 16],
+    mask_len: u8,
+    gw: [u8; 16],
+    gw_len: u8,
+    dns1: [u8; 16],
+    dns1_len: u8,
+    dns2: [u8; 16],
+    dns2_len: u8,
+    ssid: [u8; 32],
+    ssid_len: u8,
+    pass: [u8; 64],
+    pass_len: u8,
+    /// Active field `0..=6` (`ip`, `mask`, `gw`, `dns1`, `dns2`, `ssid`,
+    /// `pass`); [`NET_F_NONE`] means no field takes keys.
+    focus: u8,
+    /// Last button-feedback word shown right of the mode buttons.
+    msg: [u8; 8],
+    msg_len: u8,
+}
+
+/// Focus value for "no field selected".
+const NET_F_NONE: u8 = 7;
+/// Number of editable fields in [`NetDraft`].
+const NET_FIELDS: u8 = 7;
+
+static mut NET_DRAFT: NetDraft = NetDraft {
+    dhcp: true,
+    ip: [0; 16],
+    ip_len: 0,
+    mask: [0; 16],
+    mask_len: 0,
+    gw: [0; 16],
+    gw_len: 0,
+    dns1: [0; 16],
+    dns1_len: 0,
+    dns2: [0; 16],
+    dns2_len: 0,
+    ssid: [0; 32],
+    ssid_len: 0,
+    pass: [0; 64],
+    pass_len: 0,
+    focus: NET_F_NONE,
+    msg: [0; 8],
+    msg_len: 0,
+};
+
+/// Rebuilds the draft from the persisted settings (fresh SSID/pass and an
+/// empty feedback word); called whenever the Network window opens.
+fn net_draft_load() {
+    let s = crate::net::settings();
+    let mut d = NetDraft {
+        dhcp: s.dhcp,
+        ip: [0; 16],
+        ip_len: 0,
+        mask: [0; 16],
+        mask_len: 0,
+        gw: [0; 16],
+        gw_len: 0,
+        dns1: [0; 16],
+        dns1_len: 0,
+        dns2: [0; 16],
+        dns2_len: 0,
+        ssid: [0; 32],
+        ssid_len: 0,
+        pass: [0; 64],
+        pass_len: 0,
+        focus: NET_F_NONE,
+        msg: [0; 8],
+        msg_len: 0,
+    };
+    d.ip_len = crate::net::fmt_ip(s.ip, &mut d.ip) as u8;
+    d.mask_len = crate::net::fmt_ip(s.mask, &mut d.mask) as u8;
+    d.gw_len = crate::net::fmt_ip(s.gw, &mut d.gw) as u8;
+    d.dns1_len = crate::net::fmt_ip(s.dns1, &mut d.dns1) as u8;
+    d.dns2_len = crate::net::fmt_ip(s.dns2, &mut d.dns2) as u8;
+    unsafe {
+        *core::ptr::addr_of_mut!(NET_DRAFT) = d;
+    }
+}
+
+/// Parses a dotted quad (`"192.168.1.10"`) into four octets.
+fn parse_quad(buf: &[u8], len: u8) -> Option<[u8; 4]> {
+    let s = &buf[..len as usize];
+    let mut out = [0u8; 4];
+    let mut idx = 0usize;
+    let mut val = 0u32;
+    let mut digits = false;
+    for &b in s {
+        if b == b'.' {
+            if !digits || idx >= 3 {
+                return None;
+            }
+            out[idx] = val as u8;
+            idx += 1;
+            val = 0;
+            digits = false;
+        } else if b.is_ascii_digit() {
+            val = val * 10 + u32::from(b - b'0');
+            if val > 255 {
+                return None;
+            }
+            digits = true;
+        } else {
+            return None;
+        }
+    }
+    if !digits || idx != 3 {
+        return None;
+    }
+    out[3] = val as u8;
+    Some(out)
+}
+
+/// Stores the short feedback word shown right of the mode buttons.
+fn net_set_msg(s: &str) {
+    let d = unsafe { &mut *core::ptr::addr_of_mut!(NET_DRAFT) };
+    let n = s.len().min(d.msg.len());
+    d.msg[..n].copy_from_slice(&s.as_bytes()[..n]);
+    d.msg_len = n as u8;
+}
+
+/// Appends one typed byte to a draft field (`quad` caps dotted quads at the
+/// 15 characters of `"255.255.255.255"`).
+fn net_append(buf: &mut [u8], len: &mut u8, b: u8, quad: bool) {
+    let cap = if quad { 15 } else { buf.len() };
+    let n = *len as usize;
+    if n < cap {
+        buf[n] = b;
+        *len += 1;
+    }
+}
+
+/// Types `c` into the focused draft field; dotted-quad fields accept digits
+/// and dots only, credentials take any printable byte.
+fn net_type(c: char) {
+    let u = c as u32;
+    if !(0x20..0x7F).contains(&u) {
+        return;
+    }
+    let b = u as u8;
+    let d = unsafe { &mut *core::ptr::addr_of_mut!(NET_DRAFT) };
+    let focus = d.focus;
+    let quad = focus < 5;
+    if quad && !b.is_ascii_digit() && b != b'.' {
+        return;
+    }
+    match focus {
+        0 => net_append(&mut d.ip, &mut d.ip_len, b, quad),
+        1 => net_append(&mut d.mask, &mut d.mask_len, b, quad),
+        2 => net_append(&mut d.gw, &mut d.gw_len, b, quad),
+        3 => net_append(&mut d.dns1, &mut d.dns1_len, b, quad),
+        4 => net_append(&mut d.dns2, &mut d.dns2_len, b, quad),
+        5 => net_append(&mut d.ssid, &mut d.ssid_len, b, false),
+        6 => net_append(&mut d.pass, &mut d.pass_len, b, false),
+        _ => {}
+    }
+}
+
+/// Deletes the last byte of the focused draft field (Backspace).
+fn net_backspace() {
+    let d = unsafe { &mut *core::ptr::addr_of_mut!(NET_DRAFT) };
+    let len = match d.focus {
+        0 => &mut d.ip_len,
+        1 => &mut d.mask_len,
+        2 => &mut d.gw_len,
+        3 => &mut d.dns1_len,
+        4 => &mut d.dns2_len,
+        5 => &mut d.ssid_len,
+        6 => &mut d.pass_len,
+        _ => return,
+    };
+    if *len > 0 {
+        *len -= 1;
+    }
+}
+
+/// Moves the field focus forward (Tab): `0 -> 1 -> .. -> 6 -> 0`, and wraps
+/// in from [`NET_F_NONE`].
+fn net_focus_next() {
+    let d = unsafe { &mut *core::ptr::addr_of_mut!(NET_DRAFT) };
+    d.focus = if d.focus >= NET_FIELDS {
+        0
+    } else {
+        (d.focus + 1) % NET_FIELDS
+    };
+}
+
+/// Runs a Network window command button against the draft.
+fn net_button(btn: NetBtn) {
+    match btn {
+        NetBtn::Dhcp => {
+            unsafe {
+                (*core::ptr::addr_of_mut!(NET_DRAFT)).dhcp = true;
+            }
+            net_set_msg("dhcp");
+        }
+        NetBtn::Static => {
+            unsafe {
+                (*core::ptr::addr_of_mut!(NET_DRAFT)).dhcp = false;
+            }
+            net_set_msg("static");
+        }
+        NetBtn::Apply => net_apply(),
+        NetBtn::Test => {
+            crate::net::recheck();
+            net_set_msg("check!");
+        }
+        NetBtn::Scan => {
+            crate::wifi::start_scan();
+            net_set_msg("scan ok");
+        }
+        NetBtn::Connect => net_connect(),
+        NetBtn::Disc => {
+            crate::wifi::disconnect();
+            net_set_msg("disc ok");
+        }
+    }
+}
+
+/// Parses the five address fields and pushes them through `net::apply`
+/// (which also persists them to CMOS). Feedback: `applied` or the failing
+/// field name; a static mode demands a non-zero `ip`.
+fn net_apply() {
+    let d = unsafe { *core::ptr::addr_of!(NET_DRAFT) };
+    let Some(ip) = parse_quad(&d.ip, d.ip_len) else {
+        net_set_msg("bad ip");
+        return;
+    };
+    let Some(mask) = parse_quad(&d.mask, d.mask_len) else {
+        net_set_msg("bad mask");
+        return;
+    };
+    let Some(gw) = parse_quad(&d.gw, d.gw_len) else {
+        net_set_msg("bad gw");
+        return;
+    };
+    let Some(dns1) = parse_quad(&d.dns1, d.dns1_len) else {
+        net_set_msg("bad dns1");
+        return;
+    };
+    let Some(dns2) = parse_quad(&d.dns2, d.dns2_len) else {
+        net_set_msg("bad dns2");
+        return;
+    };
+    if !d.dhcp && ip == [0; 4] {
+        net_set_msg("need ip");
+        return;
+    }
+    crate::net::apply(&crate::net::Settings {
+        dhcp: d.dhcp,
+        ip,
+        mask,
+        gw,
+        dns1,
+        dns2,
+    });
+    net_set_msg("applied");
+}
+
+/// Starts a Wi-Fi connection to the drafted SSID/passphrase (`wait` on
+/// accept, the radio's error text on refusal).
+fn net_connect() {
+    let d = unsafe { *core::ptr::addr_of!(NET_DRAFT) };
+    if d.ssid_len == 0 {
+        crate::kprintln!("[serial] [gui] net connect: no ssid");
+        net_set_msg("no ssid");
+        return;
+    }
+    match crate::wifi::connect(
+        &d.ssid[..d.ssid_len as usize],
+        &d.pass[..d.pass_len as usize],
+    ) {
+        Ok(()) => net_set_msg("wait"),
+        Err(e) => {
+            crate::kprintln!(
+                "[serial] [gui] net connect err: {} (ssid len {})",
+                e,
+                d.ssid_len
+            );
+            let m = String::from(e);
+            net_set_msg(&m);
+        }
+    }
+}
+
+/// Routes a make-code to the focused Network window's draft (v2.38.34):
+/// Tab advances the field focus, Backspace deletes, Enter applies and
+/// printable characters type into the active field. Returns `false` for
+/// every key the normal window handling owns (Esc, F-keys, plain notes).
+fn net_key(sc: u8) -> bool {
+    let Some(i) = focused_idx() else {
+        return false;
+    };
+    let is_net = unsafe {
+        (*core::ptr::addr_of!(WINS))[i]
+            .as_ref()
+            .map(|w| w.kind == WinKind::Network)
+            .unwrap_or(false)
+    };
+    if !is_net {
+        return false;
+    }
+    match sc {
+        0x0F => {
+            net_focus_next();
+            dirty_kind(WinKind::Network);
+            true
+        }
+        0x0E => {
+            net_backspace();
+            dirty_kind(WinKind::Network);
+            true
+        }
+        0x1C => {
+            net_button(NetBtn::Apply);
+            dirty_kind(WinKind::Network);
+            true
+        }
+        _ => {
+            let Some(c) = crate::interrupts::scancode_to_char(sc) else {
+                return false;
+            };
+            if c.is_control() {
+                return false;
+            }
+            net_type(c);
+            dirty_kind(WinKind::Network);
+            true
+        }
+    }
+}
+
+/// Paints the Network window body (v2.38.34): five status lines on the
+/// 16 px grid from `y+24`, the mode row with its feedback word, the seven
+/// field captions and values (the widget layer draws their borders), the
+/// Wi-Fi status line and up to three scan rows. Everything clips at
+/// `max_px`, i.e. the window's own right edge.
+fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let x = win.x + 8;
+    let d = unsafe { *core::ptr::addr_of!(NET_DRAFT) };
+    let st = crate::net::state();
+    let lease = crate::net::lease();
+    let dhcp = crate::net::settings().dhcp;
+    let mut buf = [0u8; 48];
+    let at = |y: usize, s: &str, fg: Color| {
+        tui::draw_text(fb, x, win.y + y, s, fg, WIN_BG, max_px);
+    };
+
+    at(
+        24,
+        &format!("nic {} {}", crate::net::nic_kind(), st.name()),
+        TEXT,
+    );
+    let mac_s: &str = match crate::net::nic_mac() {
+        Some(m) => {
+            let n = crate::net::fmt_mac(m, &mut buf);
+            core::str::from_utf8(&buf[..n]).unwrap_or("?")
+        }
+        None => "-",
+    };
+    at(40, &format!("mac {}", mac_s), TEXT_DIM);
+
+    let mode = if dhcp { "dhcp" } else { "static" };
+    let ip_line = match lease {
+        Some(l) => {
+            let n = crate::net::fmt_ip(l.ip, &mut buf);
+            let dotted = core::str::from_utf8(&buf[..n]).unwrap_or("?");
+            let mut bits = 0u8;
+            for b in l.mask {
+                bits += b.count_ones() as u8;
+            }
+            format!("ip {}/{} {}", dotted, bits, mode)
+        }
+        None => format!("ip - {}", mode),
+    };
+    at(56, &ip_line, TEXT);
+
+    let gw_line = match lease {
+        Some(l) => {
+            let gn = crate::net::fmt_ip(l.gw, &mut buf);
+            let gw = String::from_utf8_lossy(&buf[..gn]).into_owned();
+            let dn = crate::net::fmt_ip(l.dns1, &mut buf);
+            let dns = String::from_utf8_lossy(&buf[..dn]).into_owned();
+            format!("gw {} dns {}", gw, dns)
+        }
+        None => String::from("gw - dns -"),
+    };
+    at(72, &gw_line, TEXT_DIM);
+
+    use crate::net::State;
+    let probe = match st {
+        State::NoNic => "no controller",
+        State::NoLink => "link down",
+        State::LinkOnly => "no address",
+        State::Local => "local only",
+        State::Checking => "probing...",
+        State::Internet => "internet ok",
+    };
+    at(88, &format!("check: {}", probe), TEXT_DIM);
+
+    at(104, "mode", TEXT_DIM);
+    if d.msg_len > 0 {
+        let m = core::str::from_utf8(&d.msg[..d.msg_len as usize]).unwrap_or("");
+        tui::draw_text(fb, win.x + 272, win.y + 104, m, TEXT, WIN_BG, max_px);
+    }
+
+    const CAPTIONS: [&str; 7] = ["ip", "mask", "gw", "dns1", "dns2", "ssid", "pass"];
+    const ROWS: [usize; 7] = [128, 144, 160, 176, 192, 296, 312];
+    let bx = win.x + 80;
+    for i in 0..NET_FIELDS as usize {
+        let focused = d.focus == i as u8;
+        let cap_fg = if focused { TEXT } else { TEXT_DIM };
+        tui::draw_text(fb, x, win.y + ROWS[i], CAPTIONS[i], cap_fg, WIN_BG, bx);
+        unsafe {
+            fb.fill_rect(bx, win.y + ROWS[i], 252, 16, NET_BOX_BG);
+        }
+        let (field, len): (&[u8], usize) = match i {
+            0 => (&d.ip[..], d.ip_len as usize),
+            1 => (&d.mask[..], d.mask_len as usize),
+            2 => (&d.gw[..], d.gw_len as usize),
+            3 => (&d.dns1[..], d.dns1_len as usize),
+            4 => (&d.dns2[..], d.dns2_len as usize),
+            5 => (&d.ssid[..], d.ssid_len as usize),
+            _ => (&d.pass[..], d.pass_len as usize),
+        };
+        let val: String = if i == 6 {
+            "*".repeat(len)
+        } else {
+            String::from_utf8_lossy(&field[..len]).into_owned()
+        };
+        let max_chars = 244 / console::GLYPH_W;
+        let shown = if val.len() > max_chars {
+            &val[val.len() - max_chars..]
+        } else {
+            &val
+        };
+        tui::draw_text(
+            fb,
+            bx + 4,
+            win.y + ROWS[i],
+            shown,
+            if focused { TEXT } else { TEXT_DIM },
+            NET_BOX_BG,
+            bx + 252,
+        );
+    }
+
+    let wn = crate::wifi::status_line(&mut buf);
+    let ws = core::str::from_utf8(&buf[..wn]).unwrap_or("?");
+    at(232, &format!("wifi {}", ws), TEXT);
+
+    let (results, count) = crate::wifi::scan_results();
+    if count == 0 {
+        let hint = if crate::wifi::scanning() {
+            "scanning..."
+        } else {
+            "no scan yet"
+        };
+        at(248, hint, TEXT_DIM);
+    } else {
+        let mut cbuf = [0u8; 32];
+        let cn = crate::wifi::connected_ssid(&mut cbuf);
+        for (k, r) in results.iter().enumerate().take(count.min(3)) {
+            let ssid = core::str::from_utf8(&r.ssid[..r.ssid_len as usize]).unwrap_or("?");
+            let assoc = crate::wifi::associated() && r.ssid[..r.ssid_len as usize] == cbuf[..cn];
+            let ssid = &ssid[..ssid.len().min(10)];
+            let sec = match r.security {
+                crate::wifi::Security::Open => "open",
+                crate::wifi::Security::Wpa2 => "wpa2",
+            };
+            at(
+                248 + k * 16,
+                &format!(
+                    "{}{} {} {} {}",
+                    if assoc { "*" } else { " " },
+                    k + 1,
+                    ssid,
+                    sec,
+                    r.rssi
+                ),
+                TEXT,
+            );
+        }
+    }
 }

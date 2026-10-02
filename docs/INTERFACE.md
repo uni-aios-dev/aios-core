@@ -679,8 +679,9 @@ The kernel shell command `gui` switches the whole screen from the console+TUI to
 a full-screen windowed desktop (`src/gui.rs`). `tui` (or `Esc` with no window
 focused) returns to the console/TUI.
 
-- **Desktop layout**: background, left icon column (System / Uptime / About),
-  bottom task bar with one button per open window.
+- **Desktop layout**: background, left icon column (System / Uptime / About /
+  Net), bottom task bar with one button per open window plus the link-state
+  globe at the far right.
 - **Windows**: title bar (focused = bright blue, unfocused = dimmed), a
   minimize / maximize / close button cluster and live content:
   - *Welcome* — types the message line; shows the control help.
@@ -688,6 +689,9 @@ focused) returns to the console/TUI.
     switches, IPC totals, temperature, lid, PS/2/USB counters, allocated frames).
   - *Uptime* — `HH:MM:SS` clock with the tick counter.
   - *About* — version banner (open via its icon).
+  - *Network* — DHCP/Static addressing, the five address fields and the
+    Wi-Fi panel (open via the *Net* icon or the tray globe; see the
+    v2.38.34 section below).
 - **Input**:
   - Mouse: click an icon to open (or focus) that window; click a window body or
     task-bar button to focus; drag a title bar to move (clamped to the bounds);
@@ -812,6 +816,39 @@ focused) returns to the console/TUI.
   Welcome window itself through the same paths as `Esc`/`X`/`F4`, so a typed
   note still raises the `Confirm` dialog. Plates are window-local: they move
   and resize together with their host window.
+- **Network window (v2.38.34)**: the desktop's networking panel — open it
+  from the tray globe (bottom-right corner of the task bar, green = internet
+  reachable) or the `Net` icon (fourth in the left column). Contents:
+  - *Mode*: `DHCP` / `Static` buttons pick how the address fields are used
+    (status line shows `dhcp` / `static`).
+  - *Address fields*: `ip`, `mask`, `gw`, `dns1`, `dns2` — click one to
+    focus it, then type digits/dots/letters with the keyboard (`Tab` cycles
+    through all fields; `Shift` types capitals, Backspace deletes). A field
+    shows the value it will apply (defaults `0.0.0.0`).
+  - `Apply` parses all five fields and commits them (persisting to CMOS for
+    the next boot); status line: `applied`, or the failing field
+    (`bad ip` / `bad mask` / `bad gw` / `bad dns1` / `bad dns2`), or
+    `need ip` when Static mode has no address. Serial proof:
+    `[serial] [net] config applied dhcp=… ip=…`.
+  - `Test` triggers a manual connectivity recheck — status `check!`,
+    serial `[serial] [net] manual check requested`; the globe and
+    `state checking|internet|link-only|no-nic` follow the probes.
+  - *Wi-Fi (test radio, sim)*: `ssid` and `pass` fields plus `Scan`,
+    `Connect`, `Disc`. `Scan` (status `scan ok`) collects the three test
+    networks — `AIOS-Test` (open), `SecureNet` (WPA2, passphrase
+    `AIOS-Test`), `Neighbor` (open) — in ~0.5 s (`scan done (3 networks)`).
+    `Connect` (status `wait`, or `no ssid` if the SSID field is empty)
+    runs the full association: `connect <ssid> (wpa2|open)` → auth →
+    assoc → for WPA2 the 4-way handshake → DHCP over the AP LAN →
+    `[serial] [net] bound ip=10.0.9.15` → `internet ok`. `Disc`
+    (status `disc ok`) tears the link down (`disconnect`). This radio is a
+    **simulated test radio** — no real 802.11 controller behind it; all
+    AP-side traffic (beacons, auth/assoc, EAPOL, DHCP/ARP/ICMP/DNS on
+    `10.0.9.0/24`) is answered in-kernel, and it is labelled *sim* in the
+    boot log.
+  - Serial proof: `[gui] tray globe click`, `[gui] widget Network/<label>
+    click` (`Apply`/`Test`/`Scan`/`Connect`/`Disc`; the address/SSID
+    fields log with an empty label).
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

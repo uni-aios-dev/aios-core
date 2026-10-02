@@ -8,6 +8,16 @@ pub unsafe fn inb(port: u16) -> u8 {
     val
 }
 
+pub unsafe fn outw(port: u16, val: u16) {
+    core::arch::asm!("out dx, ax", in("dx") port, in("ax") val, options(nomem, nostack, preserves_flags));
+}
+
+pub unsafe fn inw(port: u16) -> u16 {
+    let val: u16;
+    core::arch::asm!("in ax, dx", out("ax") val, in("dx") port, options(nomem, nostack, preserves_flags));
+    val
+}
+
 pub unsafe fn outl(port: u16, val: u32) {
     core::arch::asm!("out dx, eax", in("dx") port, in("eax") val, options(nomem, nostack, preserves_flags));
 }

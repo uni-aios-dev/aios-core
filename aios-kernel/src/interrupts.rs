@@ -23,6 +23,11 @@ pub const APIC_TIMER_VECTOR: u64 = 0x90;
 
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
+/// Shift-key state (v2.38.34): set/cleared from the raw PS/2 byte stream
+/// (make `0x2A`/`0x36`, break `0xAA`/`0xB6`) so typed text вЂ” including the
+/// Network window SSID/password fields вЂ” sees uppercase and shifted symbols.
+pub static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
+pub static SHIFTED: AtomicBool = AtomicBool::new(false);
 
 /// Set by the IRQ32 handler on the first PIT interrupt it actually receives.
 ///
@@ -273,7 +278,7 @@ pub fn idt_gate_installed(vector: u64) -> bool {
 }
 
 /// Returns the raw 16-byte IDT descriptor for `vector` as (lower, upper) u64
-/// halves — byte-truth readback used by the boot-time descriptor discriminator
+/// halves вЂ” byte-truth readback used by the boot-time descriptor discriminator
 /// (vector-32 gate corrupt vs healthy neighbor gate).
 pub fn idt_raw_gate(vector: u64) -> (u64, u64) {
     crate::idt::raw_gate(vector)
@@ -338,7 +343,7 @@ pub fn set_pit_masked(masked: bool) {
 /// Latches and reads the current PIT channel-0 countdown value.
 ///
 /// The PIT always counts (it is clocked directly), so this works even when its
-/// IRQ0 line never reaches the CPU — which makes it a usable time source for
+/// IRQ0 line never reaches the CPU вЂ” which makes it a usable time source for
 /// the software-tick fallback and for `delay_ms`.
 pub fn pit_count() -> u16 {
     unsafe {
@@ -425,9 +430,12 @@ fn pic_eoi(vector: u64) {
 }
 
 pub fn scancode_to_char(sc: u8) -> Option<char> {
-    match sc {
+    let shifted = SHIFTED.load(Ordering::Relaxed);
+    let plain = match sc {
         0x02..=0x0A => Some((b'1' + (sc - 0x02)) as char),
         0x0B => Some('0'),
+        0x0C => Some('-'),
+        0x0D => Some('='),
         0x10 => Some('q'),
         0x11 => Some('w'),
         0x12 => Some('e'),
@@ -464,5 +472,27 @@ pub fn scancode_to_char(sc: u8) -> Option<char> {
         0x35 => Some('/'),
         0x39 => Some(' '),
         _ => None,
+    };
+    if !shifted {
+        return plain;
     }
+    let upper = match sc {
+        0x02..=0x0A => Some("!@#$%^&*(".as_bytes()[(sc - 0x02) as usize] as char),
+        0x0B => Some(')'),
+        0x0C => Some('_'),
+        0x0D => Some('+'),
+        0x1A => Some('{'),
+        0x1B => Some('}'),
+        0x27 => Some(':'),
+        0x28 => Some('"'),
+        0x2B => Some('~'),
+        0x33 => Some('<'),
+        0x34 => Some('>'),
+        0x35 => Some('?'),
+        _ => None,
+    };
+    if let Some(c) = upper {
+        return Some(c);
+    }
+    plain.map(|c| c.to_ascii_uppercase())
 }

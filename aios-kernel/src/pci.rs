@@ -15,6 +15,8 @@ const CONFIG_DATA: u16 = 0xCFC;
 pub const NO_DEVICE: u16 = 0xFFFF;
 /// Class code: mass storage controller.
 pub const CLASS_STORAGE: u8 = 0x01;
+/// Class code: network controller (ethernet, Wi-Fi, ...).
+pub const CLASS_NETWORK: u8 = 0x02;
 /// Class code: serial bus controller (USB, SMBus, ...).
 pub const CLASS_SERIAL_BUS: u8 = 0x0C;
 

@@ -17,6 +17,8 @@ mod interrupts;
 mod lapic;
 mod lid;
 mod memory;
+mod net;
+mod nic;
 mod nvme;
 mod pci;
 mod port;
@@ -28,6 +30,7 @@ mod syscalls;
 mod thermal;
 mod tui;
 mod user;
+mod wifi;
 mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
@@ -44,6 +47,7 @@ use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 pub static G_AHCI: AtomicI32 = AtomicI32::new(-1);
 pub static G_NVME: AtomicI32 = AtomicI32::new(-1);
 pub static G_XHCI: AtomicI32 = AtomicI32::new(-1);
+pub static G_NET: AtomicI32 = AtomicI32::new(-1);
 
 // --- Limine boot protocol requests ----------------------------------------
 //
@@ -656,6 +660,23 @@ pub unsafe extern "C" fn _start() -> ! {
         vprintln!("USB: no xHCI controller");
     }
 
+    // --- Network stack: Wi-Fi test radio + wired NIC (e1000 / rtl8139) ----
+    if let Err(e) = wifi::init() {
+        kprintln!("[serial] wifi init failed: {}", e);
+    }
+    let has_nic = pci_devices[..pci_count]
+        .iter()
+        .any(|d| d.class == pci::CLASS_NETWORK);
+    match net::init(&pci_devices[..pci_count]) {
+        Ok(()) => {
+            G_NET.store(if has_nic { 1 } else { -1 }, Ordering::Relaxed);
+        }
+        Err(e) => {
+            G_NET.store(0, Ordering::Relaxed);
+            kprintln!("[serial] net init failed: {}", e);
+        }
+    }
+
     // --- Scheduler + ring-3 demo tasks + IPC ------------------------------
     print_step(11, "scheduler init");
     sched::init();
@@ -848,6 +869,8 @@ pub fn idle_loop() -> ! {
         crate::sched::yield_kernel();
         xhci::poll();
         ps2::drain();
+        net::poll();
+        wifi::poll();
         let ticks = interrupts::TICKS.load(Ordering::Relaxed);
         if ticks >= interrupts::TIMER_HZ && ticks - last_tick_print >= interrupts::TIMER_HZ {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
@@ -932,6 +955,16 @@ pub fn idle_loop() -> ! {
             }
             if last_sc_ext {
                 last_sc_ext = false;
+                continue;
+            }
+            if sc == 0x2A || sc == 0x36 {
+                interrupts::SHIFT_DOWN.store(true, Ordering::Relaxed);
+                interrupts::SHIFTED.store(true, Ordering::Relaxed);
+                continue;
+            }
+            if sc == 0xAA || sc == 0xB6 {
+                interrupts::SHIFT_DOWN.store(false, Ordering::Relaxed);
+                interrupts::SHIFTED.store(false, Ordering::Relaxed);
                 continue;
             }
             if sc & 0x80 == 0 {

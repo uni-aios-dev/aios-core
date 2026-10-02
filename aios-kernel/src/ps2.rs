@@ -228,7 +228,22 @@ fn feed_key(byte: u8) {
         }
         return;
     }
+    match byte {
+        0x2A | 0x36 => {
+            crate::interrupts::SHIFT_DOWN.store(true, Ordering::Relaxed);
+            return;
+        }
+        0xAA | 0xB6 => {
+            crate::interrupts::SHIFT_DOWN.store(false, Ordering::Relaxed);
+            return;
+        }
+        _ => {}
+    }
     if byte & 0x80 == 0 {
+        crate::interrupts::SHIFTED.store(
+            crate::interrupts::SHIFT_DOWN.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         KEY_SCANCODE.store(u32::from(byte), Ordering::Relaxed);
         KEY_SEQ.fetch_add(1, Ordering::Relaxed);
     }

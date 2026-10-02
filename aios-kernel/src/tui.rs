@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.38.33";
+pub(crate) const VERSION: &str = "AIOS kernel v2.38.34";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -628,6 +628,18 @@ fn render_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
             crate::memory::frame_region_count(),
             sent,
             recv
+        ),
+        colors::FG,
+        max_px,
+    );
+    line(
+        fb,
+        y,
+        0,
+        &format!(
+            "net={}  state={}",
+            ctl_str(crate::G_NET.load(Ordering::Relaxed)),
+            crate::net::state().name()
         ),
         colors::FG,
         max_px,
