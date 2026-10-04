@@ -656,7 +656,7 @@ v2.38.11-18 (статичный дашборд только для просмо�
 | 3 | USB | состояние контроллера xHCI, счётчик репортов клавиатуры + последний scancode, счётчик репортов мыши + кнопки/dx/dy |
 | 4 | IPC | итог send/recv, заполненность почтовых ящиков задач |
 | 5 | Storage | состояние контроллеров AHCI/NVMe + чтения LBA (`none`/`error`/`ready`/`ready+rw`), занятые байты MMIO-окна |
-| 6 | Shell | командный шелл внутри ядра (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`) |
+| 6 | Shell | командный шелл внутри ядра (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `wifi`, `wifi sim`, `wifi real`) |
 | 7 | About | баннер версии, справка по управлению |
 
 ### Ввод
@@ -675,7 +675,12 @@ v2.38.11-18 (статичный дашборд только для просмо�
   устройство.
 - Во вкладке Shell: печатные клавиши добавляются в строку ввода, `Enter`
   (0x1C) выполняет команду, `Backspace` (0x0E) правит, `Esc` (0x01) очищает
-  строку.
+  строку. Каждая введённая команда эхоится в serial как `[serial] [shell] >
+  <line>`, так что досимвольно доказуемо, какие нажатия дошли до шелла.
+- `wifi` (статус), `wifi sim` (включить симулированное тест-радио) и
+  `wifi real` (вернуться в честный real-режим) управляют тем, какое радио
+  используют `Scan`/`Connect` окна Network — по умолчанию **real**
+  (v2.38.36).
 - Клавиши, потреблённые TUI, не попадают в эхо консоли; непотреблённые как и
   раньше печатаются как `[key] …` / `usb key …` на консоль и в serial.
 
@@ -855,19 +860,28 @@ v2.38.11-18 (статичный дашборд только для просмо�
   - `Test` запускает ручную перепроверку связи — статус `check!`,
     serial `[serial] [net] manual check requested`; глобус и
     `state checking|internet|link-only|no-nic` следуют за пробами.
-  - *Wi-Fi (тест-радио, sim)*: поля `ssid` и `pass` плюс `Scan`,
-    `Connect`, `Disc`. `Scan` (статус `scan ok`) собирает три тестовые
-    сети — `AIOS-Test` (открытая), `SecureNet` (WPA2, пароль
-    `AIOS-Test`), `Neighbor` (открытая) — за ~0.5 с (`scan done (3
-    networks)`). `Connect` (статус `wait`, либо `no ssid`, если поле SSID
-    пустое) выполняет полную ассоциацию: `connect <ssid> (wpa2|open)` →
-    auth → assoc → для WPA2 4-way handshake → DHCP через AP LAN →
-    `[serial] [net] bound ip=10.0.9.15` → `internet ok`. `Disc`
-    (статус `disc ok`) разрывает связь (`disconnect`). Это радио —
-    **эмулируемое тест-радио**: за ним нет настоящего контроллера 802.11,
-    весь AP-трафик (beacons, auth/assoc, EAPOL, DHCP/ARP/ICMP/DNS на
-    `10.0.9.0/24`) обслуживается внутри ядра, и в логе загрузки оно
-    помечено *sim*.
+  - *Wi-Fi*: поля `ssid` и `pass` плюс `Scan`, `Connect`, `Disc`, со
+    строкой статуса, сообщающей найденный контроллер — `wifi card: <bdf>`
+    или `card: none` (детект по PCI классу `02`/подклассу `80`, v2.38.36).
+    **По умолчанию real-режим** (`radio: real (test radio off, shell: wifi
+    sim)`): `Scan` без карты честно отказывается (статус `no card`,
+    serial `[wifi] scan: no wifi card`), а пустой результат показывает
+    подсказку `no networks found`. Симулированное радио включается из
+    шелла (`wifi sim`, `wifi real`, `wifi`) — и только после этого `Scan`
+    (статус `scan ok`) собирает три тестовые сети — `AIOS-Test`
+    (открытая), `SecureNet` (WPA2, пароль `AIOS-Test`), `Neighbor`
+    (открытая) — за ~0.5 с (`scan done (3 networks)`). `Connect`
+    (статус `wait`, либо `no ssid`, если поле SSID пустое) выполняет
+    полную ассоциацию: `connect <ssid> (wpa2|open)` → auth → assoc → для
+    WPA2 4-way handshake → DHCP через AP LAN → `[serial] [net] bound
+    ip=10.0.9.15` → `internet ok`. `Disc` (статус `disc ok`) разрывает
+    связь (`disconnect`). Сим-радио — **эмулируемое тест-радио**: за ним
+    нет настоящего контроллера 802.11, весь AP-трафик (beacons,
+    auth/assoc, EAPOL, DHCP/ARP/ICMP/DNS на `10.0.9.0/24`) обслуживается
+    внутри ядра, и в логе загрузки оно помечено *sim*. Набор в поля
+    логируется в serial посимвольно (`[gui] type '<c>' focus=… ssid_len=…
+    pass_len=…`, `[gui] backspace focus=… len=…`), так что обрезанный
+    ввод доказуем.
   - Serial-proof: `[gui] tray globe click`, `[gui] widget Network/<label>
     click` (`Apply`/`Test`/`Scan`/`Connect`/`Disc`; поля адреса/SSID
     логируются с пустой меткой).

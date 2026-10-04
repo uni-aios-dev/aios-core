@@ -1,5 +1,78 @@
 # AIOS Development Log
 
+## v2.38.36 — honest Wi-Fi (card detection, real-mode default) + keyboard FIFO (2026-10-04)
+
+The Wi-Fi stack stopped pretending: a machine with no 802.11 controller now
+says so honestly instead of running the simulated test radio by default, and
+the two long-standing QEMU smoke flakes (lost typed keys, clicks landing
+mid-journey) got real kernel fixes instead of reruns.
+
+### Added
+- **Wi-Fi card detection + honest real mode** (`src/wifi.rs`, `src/pci.rs`,
+  `src/main.rs`): `wifi::init(&pci_devices)` scans the PCI enumeration for a
+  network controller with class `02`/subclass `80` (`pci::is_wifi`) and
+  records `has_card`; the boot/serial line reports `[wifi] card: <bdf>` or
+  `card: none`, the GUI Network window prints `wifi card: <bdf>` / `card:
+  none` in its Wi-Fi status line, and `net::has_nic` now skips the Wi-Fi
+  slot so a lone controller shows `nic: none (wifi uplink only)` instead of
+  double-counting as a wired NIC. The default radio is now **real**:
+  `[wifi] radio: real (test radio off, shell: wifi sim)`. A real-mode scan
+  without a card is refused honestly (`[wifi] scan: no wifi card`, GUI
+  status `no card`), and an empty result renders the new `no networks
+  found` hint line instead of silence.
+- **Test radio behind shell commands** (`src/tui.rs`, `src/gui.rs`): the
+  simulated radio (3 APs, `10.0.9.0/24` LAN) only arms via the new TUI
+  shell commands — `wifi sim` (`[wifi] test radio enabled (sim, 3 APs)`),
+  `wifi real` (`[wifi] test radio disabled`), `wifi` (status). `gui` entry
+  with `-SimRadio` in the smoke harness runs `wifi sim` first; B/C smokes
+  prove both the sim line and that it stays off in real mode (F).
+- **Keyboard FIFO** (`src/interrupts.rs`, `src/ps2.rs`, `src/main.rs`):
+  vector 33 now pushes every raw byte into a 256-slot lock-free ring
+  (`key_push`, HEAD/TAIL atomics; `ps2::feed_key` shares the same FIFO) and
+  the idle loop drains it with `while let Some(sc) = key_pop()` before the
+  mouse bands. Previously the single `LAST_SCANCODE` slot was overwritten
+  by a break code whenever the guest main loop stalled 1–2 s (QEMU TCG
+  pauses), losing half of a burst — this was the root cause of the OPEN
+  v2.38.35 keyboard flake (`gui` entry dropping keys, field typing landing
+  short strings).
+- **Click settles the motion backlog** (`src/main.rs`): on a PS/2 button
+  edge the drain loop now flushes all pending `mouse_dx`/`mouse_dy`
+  (64 × `drain_axis` steps) *before* `on_mouse` runs, so a click cannot be
+  dispatched at a coordinate the pointer has not reached yet — the same
+  backlog-clamp class as the v2.38.35 pointer jump, seen as missed Test/
+  field clicks in smokes.
+- **Input ground truth on serial** (`src/tui.rs`, `src/gui.rs`): the shell
+  echoes every entered command as `[serial] [shell] > <line>`, Network
+  field typing logs `[serial] [gui] type '<c>' focus=<n> ssid_len=<n>
+  pass_len=<n>` and deletions log `[serial] [gui] backspace focus=<n>
+  len=<n>`, making keystroke loss diagnosable per character instead of a
+  wrong `ssid len` after the fact.
+
+### Fixed
+- **Test radio was on by default** — every boot silently ran the simulated
+  Wi-Fi (`radio: test-radio (sim)`), so `Scan`/`Connect` always "worked"
+  even on hardware with no radio (and on hosts whose only PCI 02:80 device
+  never existed). Real mode is now the default; sim must be requested via
+  `wifi sim`.
+- **Lost typed keys / dropped `gui` entry (OPEN flaky from v2.38.35)**
+  — fixed by the keyboard FIFO above; `wifi sim`/`gui` and all Network
+  field typing now arrive byte-exact on the first try (harness
+  `Type-Keys -Gui`/`Send-Bs -Gui` wait for the per-character `[gui] type`/
+  `[gui] backspace` proof before the next click, so a field click can no
+  longer preempt keys still in flight).
+
+### Verification
+- QEMU smokes on the release ISO (monitor port 45636): **A 7/7** (static
+  config applied, CMOS proof after HMP `system_reset`), **B 14/14**,
+  **C 14/14** (full WPA2 + open association over the sim radio armed by
+  `wifi sim`), **D pass** (globe click + window body, bounded PS/2 lines),
+  **E 13/13** (Task Manager walk), **F 11/11** (honest real mode: `card:
+  none`, scan refused, `no networks found` hint, sim stays off), PANIC 0.
+- Gates: kernel `fmt`/`clippy -D warnings`/`build` zero; workspace
+  `clippy`/`fmt` zero, `cargo test --workspace` green except the
+  documented `cow_live_update::test_recover_from_crash` flake (passes
+  in isolation).
+
 ## v2.38.35 — pointer-jump fix (PS/2 overflow + backlog clamp), Task Manager window (2026-10-02)
 
 Pointer hardening left over from the v2.38.34 bring-up: the cursor could

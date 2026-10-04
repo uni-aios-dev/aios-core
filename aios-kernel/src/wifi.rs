@@ -1,15 +1,21 @@
-//! Full software Wi-Fi stack over a simulated test radio (v2.38.34):
+//! Full software Wi-Fi stack with an honest real-mode default (v2.38.36):
 //! 802.11 management and data frames, WPA2-PSK four-way handshake with real
 //! cryptography (PBKDF2/SHA-1 PMK, PRF-512 PTK, HMAC-SHA1-128 EAPOL MICs,
 //! RFC 3394 AES key wrap for the GTK, AES-CCMP data protection) and a local
 //! AP-side LAN with DHCP/ARP/ICMP/DNS responders on `10.0.9.0/24`.
 //!
-//! QEMU provides no Wi-Fi device, so [`TestRadio`] synthesises three access
-//! points ("AIOS-Test" open, "SecureNet" and "Neighbor" WPA2-PSK) and plays
-//! both the station and the access-point side of every exchange. Everything
-//! below the radio is production protocol code — only the medium is
-//! simulated (`sim` in status lines); a future real chip plugs in behind
-//! [`RealRadio`].
+//! The radio has two modes. The default **real mode** probes the boot-time
+//! PCI scan for a Wi-Fi card (class `0x02` subclass `0x80`, see
+//! [`has_card`]/[`card_desc`]), reports it — or its absence — on serial and
+//! in the Network window, and until a real driver exists refuses scans and
+//! connects with `no wifi card` / `no driver`; a finished attempt counts as
+//! a scan with zero results so the window can show `no networks found`. The
+//! **test radio** ([`sim`]) synthesises three access points ("AIOS-Test"
+//! open, "SecureNet" and "Neighbor" WPA2-PSK), plays both the station and
+//! the access-point side of every exchange and is opt-in via the TUI shell
+//! command `wifi sim` (`wifi real` returns to real mode) — the QEMU smokes
+//! use it to exercise the full protocol path. Everything below the radio is
+//! production protocol code either way.
 //!
 //! The station exposes an Ethernet-shaped interface to [crate::net] via
 //! [`send_frame`] / [`poll_frame`]; the AP side terminates the LAN and
@@ -18,6 +24,7 @@
 
 use crate::interrupts::TICKS;
 use core::ptr::{addr_of, addr_of_mut};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_ARP: u16 = 0x0806;
@@ -114,6 +121,19 @@ impl ScanResult {
         channel: 0,
     };
 }
+
+/// The Wi-Fi card discovered on the PCI bus (class `0x02` subclass `0x80`).
+#[derive(Clone, Copy)]
+pub struct WifiCard {
+    /// PCI vendor id (e.g. `0x8086` Intel).
+    pub vendor: u16,
+    /// PCI device id (chip model).
+    pub device: u16,
+}
+
+static mut CARD: Option<WifiCard> = None;
+static SIM: AtomicBool = AtomicBool::new(false);
+static SCAN_DONE: AtomicBool = AtomicBool::new(false);
 
 struct ApInfo {
     ssid: &'static [u8],
@@ -844,34 +864,140 @@ fn ticks() -> u64 {
     TICKS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// Placeholder for future real Wi-Fi hardware: QEMU exposes no controller
-/// and no driver exists yet, so the probe always fails and the stack runs on
-/// the simulated [`TestRadio`].
-struct RealRadio;
-
-impl RealRadio {
-    fn probe() -> Result<(), &'static str> {
-        Err("no controller")
-    }
-}
-
-/// Runs the crypto self-test, probes for real hardware (none today) and
-/// arms the test radio. Must run before [crate::net] starts polling.
-pub fn init() -> Result<(), &'static str> {
+/// Runs the crypto self-test, records the Wi-Fi card from the boot-time PCI
+/// scan (class `0x02` subclass `0x80`) and arms the honest real-radio mode.
+/// Must run before [crate::net] starts polling.
+pub fn init(devices: &[crate::pci::PciDevice]) -> Result<(), &'static str> {
     selftest()?;
-    match RealRadio::probe() {
-        Ok(()) => crate::kprintln!("[serial] [wifi] real radio found"),
-        Err(e) => crate::kprintln!("[serial] [wifi] real radio: {} (using test radio)", e),
+    let card = devices.iter().find(|d| d.is_wifi()).map(|d| WifiCard {
+        vendor: d.vendor_id,
+        device: d.device_id,
+    });
+    unsafe { *addr_of_mut!(CARD) = card };
+    match card {
+        Some(c) => crate::kprintln!(
+            "[serial] [wifi] card: {} {:04x}:{:04x}",
+            vendor_name(c.vendor),
+            c.vendor,
+            c.device
+        ),
+        None => crate::kprintln!("[serial] [wifi] card: none"),
     }
     crate::kprintln!("[serial] [wifi] crypto self-test ok");
-    crate::kprintln!("[serial] [wifi] radio: test-radio (sim), 3 APs");
-    crate::vprintln!("WiFi: test radio (sim) ready");
+    crate::kprintln!("[serial] [wifi] radio: real (test radio off, shell: wifi sim)");
+    let mut cb = [0u8; 32];
+    let n = card_desc(&mut cb);
+    crate::vprintln!(
+        "WiFi: real mode (card: {})",
+        core::str::from_utf8(&cb[..n]).unwrap_or("?")
+    );
     Ok(())
 }
 
+/// `true` while the simulated test radio is enabled (shell command
+/// `wifi sim`); the default is the honest real mode.
+pub fn sim() -> bool {
+    SIM.load(Ordering::Relaxed)
+}
+
+/// Enables or disables the simulated test radio. Disabling tears down any
+/// association, clears the scan results and drops every queued frame, so the
+/// next state comes from real hardware only.
+pub fn set_sim(on: bool) {
+    if on {
+        SIM.store(true, Ordering::Relaxed);
+        SCAN_DONE.store(false, Ordering::Relaxed);
+        unsafe { RESULTS_N = 0 };
+        crate::kprintln!("[serial] [wifi] test radio enabled (sim, 3 APs)");
+    } else {
+        SIM.store(false, Ordering::Relaxed);
+        SCAN_DONE.store(false, Ordering::Relaxed);
+        unsafe {
+            WSTATE = WifiState::Idle;
+            STAGE = Stage::None;
+            AP_CUR = AP_NONE;
+            AP_ASSOCED = false;
+            AP_HS_OK = false;
+            RESULTS_N = 0;
+            clear_queues();
+        }
+        crate::kprintln!("[serial] [wifi] test radio disabled (real mode)");
+    }
+}
+
+/// Drops every frame still queued on the air/decrypted queues.
+fn clear_queues() {
+    let mut frame = [0u8; MAX_FRAME];
+    while unsafe { (*addr_of_mut!(TXQ)).pop(&mut frame) }.is_some() {}
+    while unsafe { (*addr_of_mut!(RXQ)).pop(&mut frame) }.is_some() {}
+    while unsafe { (*addr_of_mut!(ETHQ)).pop(&mut frame) }.is_some() {}
+}
+
+/// `true` when the PCI scan found a Wi-Fi card (class `0x02` subclass
+/// `0x80`).
+pub fn has_card() -> bool {
+    unsafe { *addr_of!(CARD) }.is_some()
+}
+
+/// Writes the card description (`"none"` or e.g. `"Intel 8086:2723"`) into
+/// `dst`; returns the length written.
+pub fn card_desc(dst: &mut [u8]) -> usize {
+    let mut o = 0;
+    match unsafe { *addr_of!(CARD) } {
+        None => put(dst, &mut o, b"none"),
+        Some(c) => {
+            put(dst, &mut o, vendor_name(c.vendor).as_bytes());
+            put(dst, &mut o, b" ");
+            let mut hex = [0u8; 4];
+            let n = fmt_u16_hex(c.vendor, &mut hex);
+            put(dst, &mut o, &hex[..n]);
+            put(dst, &mut o, b":");
+            let n = fmt_u16_hex(c.device, &mut hex);
+            put(dst, &mut o, &hex[..n]);
+        }
+    }
+    o
+}
+
+/// `true` after a scan attempt has finished (even with zero results); the
+/// Network window uses it to distinguish `no networks found` from
+/// `no scan yet`.
+pub fn scan_done() -> bool {
+    SCAN_DONE.load(Ordering::Relaxed)
+}
+
+/// Short human name for a PCI vendor id (unknown vendors render as
+/// `"unknown"`, the ids still show in [`card_desc`]).
+fn vendor_name(v: u16) -> &'static str {
+    match v {
+        0x8086 => "Intel",
+        0x10EC => "Realtek",
+        0x168C | 0x1969 => "Qualcomm Atheros",
+        0x14E4 => "Broadcom",
+        0x14C3 => "MediaTek",
+        0x1814 => "Ralink",
+        0x14F1 => "Conexant",
+        _ => "unknown",
+    }
+}
+
+/// Formats `v` as four lowercase hex digits into `dst`; returns 4.
+fn fmt_u16_hex(v: u16, dst: &mut [u8; 4]) -> usize {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    dst[0] = HEX[((v >> 12) & 0xF) as usize];
+    dst[1] = HEX[((v >> 8) & 0xF) as usize];
+    dst[2] = HEX[((v >> 4) & 0xF) as usize];
+    dst[3] = HEX[(v & 0xF) as usize];
+    4
+}
+
 /// Advances the radio one tick: pumps the three queues, emits scan beacons
-/// and times out scans/association attempts.
+/// and times out scans/association attempts. A no-op in the real mode (the
+/// test radio is the only frame source).
 pub fn poll() {
+    if !sim() {
+        return;
+    }
     let now = ticks();
     unsafe {
         for _ in 0..8 {
@@ -895,6 +1021,7 @@ pub fn poll() {
         if *addr_of!(WSTATE) == WifiState::Scanning && now >= *addr_of!(SCAN_END) {
             let n = *addr_of!(RESULTS_N);
             WSTATE = WifiState::Idle;
+            SCAN_DONE.store(true, Ordering::Relaxed);
             crate::kprintln!("[serial] [wifi] scan done ({} networks)", n);
         }
         if *addr_of!(WSTATE) == WifiState::Connecting
@@ -968,13 +1095,28 @@ pub fn poll_frame(out: &mut [u8]) -> Option<usize> {
     unsafe { (*addr_of_mut!(ETHQ)).pop(out) }
 }
 
-/// Starts a wildcard probe scan; results appear after ~500 ms.
-pub fn start_scan() {
+/// Starts a wildcard probe scan; results appear after ~500 ms. In the real
+/// mode (test radio off) the attempt is refused honestly — `no wifi card`
+/// when the bus has no Wi-Fi controller, `no driver` when a card exists but
+/// no driver can talk to it yet — and still counts as finished with zero
+/// results so the Network window shows `no networks found`.
+pub fn start_scan() -> Result<(), &'static str> {
+    if !sim() {
+        unsafe { RESULTS_N = 0 };
+        SCAN_DONE.store(true, Ordering::Relaxed);
+        if !has_card() {
+            crate::kprintln!("[serial] [wifi] scan: no wifi card");
+            return Err("no wifi card");
+        }
+        crate::kprintln!("[serial] [wifi] scan: no driver yet");
+        return Err("no driver");
+    }
     unsafe {
         if *addr_of!(WSTATE) == WifiState::Scanning {
-            return;
+            return Ok(());
         }
         RESULTS_N = 0;
+        SCAN_DONE.store(false, Ordering::Relaxed);
         WSTATE = WifiState::Scanning;
         let now = ticks();
         SCAN_END = now + SCAN_TICKS;
@@ -984,6 +1126,7 @@ pub fn start_scan() {
         let _ = (*addr_of_mut!(TXQ)).push(&probe[..n]);
         crate::kprintln!("[serial] [wifi] scan start");
     }
+    Ok(())
 }
 
 /// Copies the latest scan results into the caller's slot; returns the count.
@@ -992,8 +1135,17 @@ pub fn scan_results() -> ([ScanResult; 8], usize) {
 }
 
 /// Starts association to `ssid` with `pass` (WPA2 passphrase; ignored for
-/// open networks). PMK derivation blocks for a few milliseconds.
+/// open networks). PMK derivation blocks for a few milliseconds. In the real
+/// mode the attempt is refused honestly (`no wifi card` / `no driver`),
+/// because only the test radio can answer an association today.
 pub fn connect(ssid: &[u8], pass: &[u8]) -> Result<(), &'static str> {
+    if !sim() {
+        return if has_card() {
+            Err("no driver")
+        } else {
+            Err("no wifi card")
+        };
+    }
     if ssid.is_empty() || ssid.len() > 32 {
         return Err("wifi: bad ssid");
     }
@@ -1044,12 +1196,17 @@ pub fn disconnect() {
     crate::kprintln!("[serial] [wifi] disconnect");
 }
 
-/// Writes a short status string (`"assoc SecureNet -42dB sim"`); returns
-/// the length written.
+/// Writes a short status string (`"assoc SecureNet -42dB"` in real mode,
+/// `"idle (sim)"` on the test radio); returns the length written.
 pub fn status_line(dst: &mut [u8]) -> usize {
     let mut o = 0;
     match state() {
-        WifiState::Idle => put(dst, &mut o, b"idle (sim)"),
+        WifiState::Idle => {
+            put(dst, &mut o, b"idle");
+            if sim() {
+                put(dst, &mut o, b" (sim)");
+            }
+        }
         WifiState::Scanning => put(dst, &mut o, b"scanning..."),
         WifiState::Connecting => {
             put(dst, &mut o, b"connecting ");
@@ -1065,7 +1222,10 @@ pub fn status_line(dst: &mut [u8]) -> usize {
             let mut rssi_s = [0u8; 6];
             let n = fmt_rssi(rssi(), &mut rssi_s);
             put(dst, &mut o, &rssi_s[..n]);
-            put(dst, &mut o, b"dB sim");
+            put(dst, &mut o, b"dB");
+            if sim() {
+                put(dst, &mut o, b" sim");
+            }
         }
     }
     o

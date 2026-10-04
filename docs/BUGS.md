@@ -34,25 +34,65 @@
   (`[serial] ps2 mouse id=0x00 … dx=116 dy=0`, clean press/release
   pairs); A ×2, B, C and the new E all green on the same ISO, PANIC 0.
 
-## OPEN (flaky): QEMU smokes occasionally lose keyboard input during GUI entry / field typing
-- **Symptom:** two flakes on the 2026-10-02 v2.38.35 smoke day. Run 1
-  entered the GUI but the Network field typing landed wrong — `Apply`
-  never produced the `[serial] [net] config applied dhcp=0 ip=10.0.2.15`
-  line (the on-screen feedback stayed an error class like `bad ip`), so
-  A failed its config/CMOS checks; run 2 never left the TUI at all —
-  three `gui` entry attempts had no effect (probe pixel stayed on the
-  TUI screen) and the scenario aborted with `failed to enter GUI mode
-  after 3 attempts`. Immediate reruns were green: A passed twice
-  consecutively afterwards, B/C/D/E passed first try.
-- **Suspected area:** QEMU HMP `sendkey` → polled i8042 delivery
-  timing. The keyboard path (`ps2::feed_key`, MOBF demux) is unchanged
-  in v2.38.35 and the keys are consumed silently by design (consumed
-  keys log nothing), so neither failure left a serial trace of the
-  missing/early byte; same class as the OPEN v2.38.34 button-loss
-  symptom (input arrival, not the kernel input code).
-- **Workaround:** rerun the scenario — each run re-copies the OVMF vars
-  and restarts QEMU, so the harness is idempotent; treat a single red A
-  or E as a flake unless it repeats on an immediate rerun.
+## RESOLVED (v2.38.36): flaky keyboard loss during GUI entry / field typing (single-slot scancode buffer)
+- **Status:** RESOLVED in v2.38.36 — keyboard FIFO (256-slot ring,
+  `key_push`/`key_pop`) drained by the idle loop before the mouse bands,
+  plus a click-side backlog flush and per-character serial ground truth.
+- **Symptom:** the 2026-10-02 v2.38.35 smoke day flakes — run 1 entered
+  the GUI but the Network field typing landed wrong (`Apply` never
+  produced `[serial] [net] config applied dhcp=0 ip=10.0.2.15`), run 2
+  never left the TUI (`gui` entry attempts had no effect). On the
+  v2.38.36 day the same class showed up as `ssid len 5` after typing
+  `SecureNet` (C) and a truncated static config (A): QEMU TCG stalls the
+  guest main loop for 1–2 s, and while it was stalled each new IRQ made
+  the vector-33 handler overwrite the *single* `LAST_SCANCODE` slot, so
+  every break code / following make code silently replaced a not-yet-
+  consumed byte — burst input lost in proportion to the stall length.
+- **Root cause:** the keyboard path had no queue: one make/break byte was
+  stored per IRQ and the idle loop read it at its own pace (the same
+  single-slot design the mouse side had already replaced in v2.38.30).
+  Worse, a later field/Connect click could be processed while earlier
+  keystrokes were still in flight, preempting them into the wrong field —
+  the guest logs proved it (`type 'r' focus=5` then the pass-field click
+  then `type 'e' focus=6`).
+- **Fix:**
+  1. `interrupts::key_push`/`key_pop` — a lock-free 256-slot ring fed by
+     vector 33 and `ps2::feed_key`; `main.rs` drains it with `while let
+     Some(sc) = key_pop()` before both mouse bands, filtering
+     extended/shift codes exactly like before.
+  2. On a PS/2 button edge the idle loop flushes all pending
+     `mouse_dx`/`mouse_dy` before `gui::on_mouse`, so a press cannot be
+     dispatched at a pointer position the backlog had not reached yet
+     (the missed Test-button clicks in smoke B).
+  3. Serial ground truth: `[serial] [shell] > <line>` echo, `[gui] type
+     '<c>' focus=… ssid_len=… pass_len=…`, `[gui] backspace focus=… len=…`
+     — keystroke loss is now provable per character.
+  4. Harness: `Type-Keys -Gui` / `Send-Bs -Gui` wait for the per-character
+     proof before the next click (A/C field sequences).
+- **Verification:** QEMU smokes A 7/7, B 14/14, C 14/14 (typing land
+  byte-exact on the first try), D pass, E 13/13, F 11/11, PANIC 0 —
+  consecutive green runs, no reruns needed.
+
+## RESOLVED (v2.38.36): test radio was on by default — Wi-Fi pretended to work on machines with no radio
+- **Status:** RESOLVED in v2.38.36 — real mode is the default; the
+  simulated radio arms only via the `wifi sim` shell command.
+- **Symptom:** every boot logged `radio: test-radio (sim)` and the
+  Network window's `Scan`/`Connect` always succeeded against the three
+  built-in APs — even on hardware with no 802.11 controller (the QEMU
+  host here has none: `[wifi] card: none`), so the UI silently lied about
+  capability.
+- **Fix:** `wifi::init` detects a PCI network controller with class
+  `02`/subclass `80` (`pci::is_wifi`, reported as `[wifi] card: <bdf>` /
+  `card: none` and `wifi card:` / `card: none` in the GUI status line);
+  default radio is `real` (`[wifi] radio: real (test radio off, shell:
+  wifi sim)`); a real scan without a card is refused (`[wifi] scan: no
+  wifi card`, GUI status `no card`) and an empty result renders the new
+  `no networks found` hint. `wifi sim` / `wifi real` / `wifi` shell
+  commands toggle/inspect the radio (`[wifi] test radio enabled (sim, 3
+  APs)` / `test radio disabled`); B/C smokes arm it explicitly with
+  `-SimRadio`, F proves it stays off by default.
+- **Verification:** F 11/11 (honest refusal + hint + sim-off), B 14/14
+  and C 14/14 over the explicitly-armed sim radio, PANIC 0.
 
 ## RESOLVED (v2.38.34): Wi-Fi stack bring-up — scan found nothing, association timed out, M1 panicked, DHCP never bound
 - **Status:** RESOLVED in v2.38.34 — five independent faults in `src/wifi.rs`
@@ -123,6 +163,21 @@
   the wired path; the globe stayed wrong until the fix).
 - **Verification:** scenario B on the release ISO — `nic rtl8139`,
   `dhcp bound`, `state internet`, `manual check requested`, 10/10 PASS.
+
+## OPEN (v2.38.36): no real Wi-Fi driver yet — `wifi real` is honest, not functional
+- **Symptom:** `wifi::init` now detects a controller (`pci::is_wifi`, class
+  `02`/sub `80`) and the default radio is real, but there is no 802.11
+  controller driver behind `wifi.rs`. In real mode `start_scan`/`connect`
+  refuse honestly: `[wifi] scan: no wifi card` / `connect` → `no wifi card`
+  when the bus has no card, `[wifi] scan: no driver yet` / `connect` →
+  `no driver` when one is present — both paths still count as a finished
+  attempt with zero results, so the Network window shows `no networks
+  found` instead of ever pretending connectivity.
+- **Status:** honest reporting (no fake connectivity) was the v2.38.36
+  goal; the driver itself is future work — the QEMU environment has no
+  Wi-Fi device, so it cannot be developed or verified here yet.
+- **Workaround:** shell `wifi sim` arms the test radio (explicit, logged)
+  for development and smoke testing; all B/C smokes run against it.
 
 ## OPEN (v2.38.34): intermittent loss of PS/2 button events (worked around in the smoke harness)
 - **Symptom:** during QEMU smokes an occasional click (press/release pair)

@@ -1,5 +1,5 @@
 use crate::{kprintln, port, vprintln};
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 pub const PIC1_CMD: u16 = 0x20;
 pub const PIC1_DATA: u16 = 0x21;
@@ -23,6 +23,14 @@ pub const APIC_TIMER_VECTOR: u64 = 0x90;
 
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
+/// Keyboard byte FIFO (v2.38.36): the IRQ1 handler and the polled PS/2 path
+/// push every byte here and the idle loop drains them all, so a make code can
+/// no longer be overwritten by the same key's break (or the next key's make)
+/// while the main loop is stalled — the source of intermittently lost typed
+/// keys in QEMU.
+static KEY_FIFO_TAIL: AtomicUsize = AtomicUsize::new(0);
+static KEY_FIFO_HEAD: AtomicUsize = AtomicUsize::new(0);
+static KEY_FIFO: [AtomicU8; 256] = [const { AtomicU8::new(0) }; 256];
 /// Shift-key state (v2.38.34): set/cleared from the raw PS/2 byte stream
 /// (make `0x2A`/`0x36`, break `0xAA`/`0xB6`) so typed text вЂ” including the
 /// Network window SSID/password fields вЂ” sees uppercase and shifted symbols.
@@ -65,6 +73,33 @@ pub fn check_f8() {
             tries += 1;
         }
     }
+}
+
+/// Producer side of the keyboard FIFO: called from the IRQ1 handler with raw
+/// bytes and from `ps2::feed_key` with already-filtered make codes. Drops the
+/// byte when the 255-slot ring is full (can only happen if the idle loop is
+/// wedged for good).
+pub fn key_push(byte: u8) {
+    let head = KEY_FIFO_HEAD.load(Ordering::Relaxed);
+    let next = (head + 1) & 0xFF;
+    if next == KEY_FIFO_TAIL.load(Ordering::Relaxed) {
+        return;
+    }
+    KEY_FIFO[head].store(byte, Ordering::Relaxed);
+    KEY_FIFO_HEAD.store(next, Ordering::Relaxed);
+}
+
+/// Consumer side of the keyboard FIFO: the idle loop drains every queued byte
+/// each iteration (raw IRQ-path bytes keep their break/extended codes, so the
+/// loop still filters them exactly like before).
+pub fn key_pop() -> Option<u8> {
+    let tail = KEY_FIFO_TAIL.load(Ordering::Relaxed);
+    if tail == KEY_FIFO_HEAD.load(Ordering::Relaxed) {
+        return None;
+    }
+    let byte = KEY_FIFO[tail].load(Ordering::Relaxed);
+    KEY_FIFO_TAIL.store((tail + 1) & 0xFF, Ordering::Relaxed);
+    Some(byte)
 }
 
 #[inline(always)]
@@ -207,10 +242,9 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
                 crate::sched::tick(frame);
             }
             33 => {
-                LAST_SCANCODE.store(
-                    unsafe { port::inb(KEYBOARD_PORT) } as u64,
-                    Ordering::Relaxed,
-                );
+                let byte = unsafe { port::inb(KEYBOARD_PORT) };
+                LAST_SCANCODE.store(u64::from(byte), Ordering::Relaxed);
+                key_push(byte);
                 pic_eoi(vector);
             }
             _ => pic_eoi(vector),

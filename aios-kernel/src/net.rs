@@ -215,7 +215,9 @@ fn next_seq() -> u16 {
 /// the Wi-Fi uplink then carries the stack.
 pub fn init(devices: &[PciDevice]) -> Result<(), &'static str> {
     cmos_load();
-    let dev = devices.iter().find(|d| d.class == CLASS_NETWORK);
+    let dev = devices
+        .iter()
+        .find(|d| d.class == CLASS_NETWORK && !d.is_wifi());
     if let Some(dev) = dev {
         let nic = unsafe { Nic::init(dev)? };
         let mac = *nic.mac();

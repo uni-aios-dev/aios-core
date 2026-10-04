@@ -1511,6 +1511,7 @@ pub fn handle_scancode(sc: u8) -> bool {
                 win.note[win.note_len] = c as u8;
                 win.note_len += 1;
             }
+            crate::kprintln!("[serial] [gui] note '{}' note_len={}", c, win.note_len);
         }
     }
     true
@@ -2853,8 +2854,9 @@ struct NetDraft {
     /// Active field `0..=6` (`ip`, `mask`, `gw`, `dns1`, `dns2`, `ssid`,
     /// `pass`); [`NET_F_NONE`] means no field takes keys.
     focus: u8,
-    /// Last button-feedback word shown right of the mode buttons.
-    msg: [u8; 8],
+    /// Last button-feedback word shown right of the mode buttons (16 bytes
+    /// since v2.38.36, sized for `no wifi card`).
+    msg: [u8; 16],
     msg_len: u8,
 }
 
@@ -2880,7 +2882,7 @@ static mut NET_DRAFT: NetDraft = NetDraft {
     pass: [0; 64],
     pass_len: 0,
     focus: NET_F_NONE,
-    msg: [0; 8],
+    msg: [0; 16],
     msg_len: 0,
 };
 
@@ -2905,7 +2907,7 @@ fn net_draft_load() {
         pass: [0; 64],
         pass_len: 0,
         focus: NET_F_NONE,
-        msg: [0; 8],
+        msg: [0; 16],
         msg_len: 0,
     };
     d.ip_len = crate::net::fmt_ip(s.ip, &mut d.ip) as u8;
@@ -3012,6 +3014,7 @@ fn net_backspace() {
     if *len > 0 {
         *len -= 1;
     }
+    crate::kprintln!("[serial] [gui] backspace focus={} len={}", d.focus, *len);
 }
 
 /// Moves the field focus forward (Tab): `0 -> 1 -> .. -> 6 -> 0`, and wraps
@@ -3045,10 +3048,10 @@ fn net_button(btn: NetBtn) {
             crate::net::recheck();
             net_set_msg("check!");
         }
-        NetBtn::Scan => {
-            crate::wifi::start_scan();
-            net_set_msg("scan ok");
-        }
+        NetBtn::Scan => match crate::wifi::start_scan() {
+            Ok(()) => net_set_msg("scanning..."),
+            Err(e) => net_set_msg(e),
+        },
         NetBtn::Connect => net_connect(),
         NetBtn::Disc => {
             crate::wifi::disconnect();
@@ -3164,6 +3167,16 @@ fn net_key(sc: u8) -> bool {
                 return false;
             }
             net_type(c);
+            unsafe {
+                let d = &*core::ptr::addr_of!(NET_DRAFT);
+                crate::kprintln!(
+                    "[serial] [gui] type '{}' focus={} ssid_len={} pass_len={}",
+                    c,
+                    d.focus,
+                    d.ssid_len,
+                    d.pass_len
+                );
+            }
             dirty_kind(WinKind::Network);
             true
         }
@@ -3289,10 +3302,25 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     let ws = core::str::from_utf8(&buf[..wn]).unwrap_or("?");
     at(232, &format!("wifi {}", ws), TEXT);
 
+    let mut card_b = [0u8; 32];
+    let cn = crate::wifi::card_desc(&mut card_b);
+    let card = core::str::from_utf8(&card_b[..cn]).unwrap_or("?");
+    at(
+        240,
+        &format!("wifi card {}", card),
+        if crate::wifi::has_card() {
+            TEXT
+        } else {
+            TEXT_DIM
+        },
+    );
+
     let (results, count) = crate::wifi::scan_results();
     if count == 0 {
         let hint = if crate::wifi::scanning() {
             "scanning..."
+        } else if crate::wifi::scan_done() {
+            "no networks found"
         } else {
             "no scan yet"
         };

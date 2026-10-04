@@ -660,13 +660,13 @@ pub unsafe extern "C" fn _start() -> ! {
         vprintln!("USB: no xHCI controller");
     }
 
-    // --- Network stack: Wi-Fi test radio + wired NIC (e1000 / rtl8139) ----
-    if let Err(e) = wifi::init() {
+    // --- Network stack: Wi-Fi (honest real mode + optional sim) + wired NIC
+    if let Err(e) = wifi::init(&pci_devices[..pci_count]) {
         kprintln!("[serial] wifi init failed: {}", e);
     }
     let has_nic = pci_devices[..pci_count]
         .iter()
-        .any(|d| d.class == pci::CLASS_NETWORK);
+        .any(|d| d.class == pci::CLASS_NETWORK && !d.is_wifi());
     match net::init(&pci_devices[..pci_count]) {
         Ok(()) => {
             G_NET.store(if has_nic { 1 } else { -1 }, Ordering::Relaxed);
@@ -854,12 +854,10 @@ static PS2_MOVE: MoveLog = MoveLog::new();
 pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
-    let mut last_scancode = 0u64;
     let mut last_sc_ext = false;
     let mut last_usb_seq = 0u64;
     let mut last_mouse_seq = 0u64;
     let mut last_mouse_buttons = 0u8;
-    let mut last_ps2_seq = 0u32;
     let mut last_ps2m_seq = 0u32;
     let mut last_ps2m_buttons = 0u8;
     let mut last_tui_render = 0u64;
@@ -943,9 +941,7 @@ pub fn idle_loop() -> ! {
             );
             last_stats_print = ticks;
         }
-        let sc = interrupts::LAST_SCANCODE.load(Ordering::Relaxed);
-        if sc != last_scancode {
-            last_scancode = sc;
+        while let Some(sc) = interrupts::key_pop() {
             // Extended scan codes come as 0xE0/0xE1 followed by the real code;
             // drop the prefix and swallow the next byte so Win/arrow/Fn keys
             // can never reach the TUI/GUI character tables.
@@ -969,14 +965,14 @@ pub fn idle_loop() -> ! {
             }
             if sc & 0x80 == 0 {
                 let consumed = if gui::active() {
-                    gui::handle_scancode(sc as u8)
+                    gui::handle_scancode(sc)
                 } else {
-                    tui::handle_scancode(sc as u8)
+                    tui::handle_scancode(sc)
                 };
                 if consumed {
                     continue;
                 }
-                if let Some(c) = interrupts::scancode_to_char(sc as u8) {
+                if let Some(c) = interrupts::scancode_to_char(sc) {
                     vprintln!("[key] '{}' (0x{:02x})", c, sc);
                     kprintln!("[serial] key '{}' (0x{:02x})", c, sc);
                 } else {
@@ -1001,26 +997,6 @@ pub fn idle_loop() -> ! {
                 } else {
                     vprintln!("[usb-key] usage scancode 0x{:02x}", usb_sc);
                     kprintln!("[serial] usb key scancode 0x{:02x}", usb_sc);
-                }
-            }
-        }
-        // PS/2 native keyboard (i8042 IRQ-free path): mirrors the USB key band.
-        let ps2_seq = ps2::key_seq();
-        if ps2_seq != last_ps2_seq {
-            last_ps2_seq = ps2_seq;
-            let ps2_sc = ps2::key_scancode();
-            let consumed = if gui::active() {
-                gui::handle_scancode(ps2_sc as u8)
-            } else {
-                tui::handle_scancode(ps2_sc as u8)
-            };
-            if !consumed {
-                if let Some(c) = interrupts::scancode_to_char(ps2_sc as u8) {
-                    vprintln!("[ps2-key] '{}' (0x{:02x})", c, ps2_sc);
-                    kprintln!("[serial] ps2 key '{}' (0x{:02x})", c, ps2_sc);
-                } else {
-                    vprintln!("[ps2-key] scancode 0x{:02x}", ps2_sc);
-                    kprintln!("[serial] ps2 key scancode 0x{:02x}", ps2_sc);
                 }
             }
         }
@@ -1078,10 +1054,26 @@ pub fn idle_loop() -> ! {
             let seq = ps2::mouse_seq();
             let seq_changed = seq != last_ps2m_seq;
             last_ps2m_seq = seq;
-            let dx = ps2::mouse_dx();
-            let dy = ps2::mouse_dy();
+            let mut dx = ps2::mouse_dx();
+            let mut dy = ps2::mouse_dy();
             let buttons = ps2::mouse_buttons() as u8;
             let btn_changed = seq_changed && buttons != last_ps2m_buttons;
+            if btn_changed {
+                // A press settles every pending motion byte first: the
+                // per-drain step clamp (v2.38.35) can park a backlog, and
+                // dispatching the click mid-journey would hit a coordinate
+                // the pointer has not reached yet (the flaky missed-button
+                // clicks in QEMU).
+                for _ in 0..64 {
+                    let rx = ps2::mouse_dx();
+                    let ry = ps2::mouse_dy();
+                    dx += rx;
+                    dy += ry;
+                    if rx == 0 && ry == 0 {
+                        break;
+                    }
+                }
+            }
             if dx != 0 || dy != 0 || btn_changed {
                 let allowed = if gui::active() {
                     gui::input_allowed(dx, dy)

@@ -653,7 +653,7 @@ input.
 | 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
 | 4 | IPC | total send/recv, per-task mailbox occupancy |
 | 5 | Storage | AHCI/NVMe controller + LBA-read state (`none`/`error`/`ready`/`ready+rw`), MMIO window bytes used |
-| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`) |
+| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `wifi`, `wifi sim`, `wifi real`) |
 | 7 | About | version banner, controls help |
 
 ### Input
@@ -669,7 +669,12 @@ input.
   (`[tui] pointer runaway released`). Serial movement logs are aggregated to
   one `[serial] ps2 mouse … +N pkts dx=… dy=…` line per second per device.
 - In the Shell tab: printable keys append to the prompt, `Enter` (0x1C) runs
-  the command, `Backspace` (0x0E) edits, `Esc` (0x01) clears the line.
+  the command, `Backspace` (0x0E) edits, `Esc` (0x01) clears the line. Every
+  entered command is echoed to serial as `[serial] [shell] > <line>` so the
+  exact keystrokes that reached the shell are provable.
+- `wifi` (status), `wifi sim` (arm the simulated test radio) and `wifi real`
+  (back to the honest real mode) control which radio the Network window's
+  `Scan`/`Connect` use — the default is **real** (v2.38.36).
 - Keys consumed by the TUI are kept out of the console echo; unconsumed keys
   still print `[key] …` / `usb key …` to the console and serial as before.
 
@@ -842,19 +847,28 @@ focused) returns to the console/TUI.
   - `Test` triggers a manual connectivity recheck — status `check!`,
     serial `[serial] [net] manual check requested`; the globe and
     `state checking|internet|link-only|no-nic` follow the probes.
-  - *Wi-Fi (test radio, sim)*: `ssid` and `pass` fields plus `Scan`,
-    `Connect`, `Disc`. `Scan` (status `scan ok`) collects the three test
-    networks — `AIOS-Test` (open), `SecureNet` (WPA2, passphrase
-    `AIOS-Test`), `Neighbor` (open) — in ~0.5 s (`scan done (3 networks)`).
-    `Connect` (status `wait`, or `no ssid` if the SSID field is empty)
-    runs the full association: `connect <ssid> (wpa2|open)` → auth →
-    assoc → for WPA2 the 4-way handshake → DHCP over the AP LAN →
-    `[serial] [net] bound ip=10.0.9.15` → `internet ok`. `Disc`
-    (status `disc ok`) tears the link down (`disconnect`). This radio is a
-    **simulated test radio** — no real 802.11 controller behind it; all
-    AP-side traffic (beacons, auth/assoc, EAPOL, DHCP/ARP/ICMP/DNS on
-    `10.0.9.0/24`) is answered in-kernel, and it is labelled *sim* in the
-    boot log.
+  - *Wi-Fi*: `ssid` and `pass` fields plus `Scan`, `Connect`, `Disc`, over a
+    status line that reports the detected controller — `wifi card: <bdf>` or
+    `card: none` (v2.38.36 PCI class `02`/subclass `80` detection).
+    **Real mode is the default** (`radio: real (test radio off, shell: wifi
+    sim)`): `Scan` without a card is honestly refused (status `no card`,
+    serial `[wifi] scan: no wifi card`) and an empty result renders the
+    `no networks found` hint line. Arm the simulated radio from the shell
+    (`wifi sim`, `wifi real`, `wifi`) — only then does `Scan` (status
+    `scan ok`) collect the three test networks — `AIOS-Test` (open),
+    `SecureNet` (WPA2, passphrase `AIOS-Test`), `Neighbor` (open) — in
+    ~0.5 s (`scan done (3 networks)`). `Connect` (status `wait`, or
+    `no ssid` if the SSID field is empty) runs the full association:
+    `connect <ssid> (wpa2|open)`  auth  assoc  for WPA2 the 4-way
+    handshake  DHCP over the AP LAN  `[serial] [net] bound
+    ip=10.0.9.15`  `internet ok`. `Disc` (status `disc ok`) tears the
+    link down (`disconnect`). The sim radio is a **simulated test radio** -
+    no real 802.11 controller behind it; all AP-side traffic (beacons,
+    auth/assoc, EAPOL, DHCP/ARP/ICMP/DNS on `10.0.9.0/24`) is answered
+    in-kernel, and it is labelled *sim* in the boot log. Field typing is
+    logged per character on serial (`[gui] type '<c>' focus=… ssid_len=…
+    pass_len=…`, `[gui] backspace focus=… len=…`) so a truncated input is
+    provable.
   - Serial proof: `[gui] tray globe click`, `[gui] widget Network/<label>
     click` (`Apply`/`Test`/`Scan`/`Connect`/`Disc`; the address/SSID
     fields log with an empty label).

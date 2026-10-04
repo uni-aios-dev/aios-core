@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.38.35";
+pub(crate) const VERSION: &str = "AIOS kernel v2.38.36";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -166,6 +166,7 @@ fn shell_exec() {
     let cmd = core::mem::take(&mut s.input);
     let trimmed = cmd.trim();
     if !trimmed.is_empty() {
+        crate::kprintln!("[serial] [shell] > {}", trimmed);
         shell_push(&format!("> {}", trimmed));
         for line in run_command(trimmed) {
             shell_push(&line);
@@ -185,6 +186,9 @@ fn run_command(cmd: &str) -> Vec<String> {
             "  echo TEXT  echo text".to_string(),
             "  gui        enter windowed GUI mode".to_string(),
             "  tui        leave GUI, return to this console".to_string(),
+            "  wifi       radio mode + Wi-Fi card status".to_string(),
+            "  wifi sim   enable the test radio (3 sim APs)".to_string(),
+            "  wifi real  real radio only (card, no sim)".to_string(),
         ],
         "tabs" => vec![
             "1 System  2 Sched  3 USB  4 IPC".to_string(),
@@ -215,6 +219,30 @@ fn run_command(cmd: &str) -> Vec<String> {
         "tui" => {
             crate::gui::leave();
             vec!["returned to the console/TUI".to_string()]
+        }
+        "wifi" => {
+            let mut cb = [0u8; 32];
+            let cn = crate::wifi::card_desc(&mut cb);
+            let card = String::from_utf8_lossy(&cb[..cn]).into_owned();
+            vec![
+                format!(
+                    "mode: {}",
+                    if crate::wifi::sim() {
+                        "test radio (sim)"
+                    } else {
+                        "real"
+                    }
+                ),
+                format!("card: {}", card),
+            ]
+        }
+        "wifi sim" => {
+            crate::wifi::set_sim(true);
+            vec!["test radio enabled (sim, 3 APs)".to_string()]
+        }
+        "wifi real" => {
+            crate::wifi::set_sim(false);
+            vec!["real radio mode (test radio off)".to_string()]
         }
         _ => {
             if cmd == "echo" {
@@ -632,14 +660,17 @@ fn render_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         colors::FG,
         max_px,
     );
+    let mut card_b = [0u8; 32];
+    let card_n = crate::wifi::card_desc(&mut card_b);
     line(
         fb,
         y,
         0,
         &format!(
-            "net={}  state={}",
+            "net={}  state={}  wifi card={}",
             ctl_str(crate::G_NET.load(Ordering::Relaxed)),
-            crate::net::state().name()
+            crate::net::state().name(),
+            core::str::from_utf8(&card_b[..card_n]).unwrap_or("?")
         ),
         colors::FG,
         max_px,

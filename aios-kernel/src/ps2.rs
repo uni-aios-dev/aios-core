@@ -39,8 +39,6 @@ const GET_ID: u8 = 0xF2;
 static PS2_OK: AtomicBool = AtomicBool::new(false);
 /// Keyboard: monotonically increasing make-code sequence.
 static KEY_SEQ: AtomicU32 = AtomicU32::new(0);
-/// Keyboard: last make-code seen (scancode set 1).
-static KEY_SCANCODE: AtomicU32 = AtomicU32::new(0);
 /// Mouse: monotonically increasing packet sequence.
 static MOUSE_SEQ: AtomicU32 = AtomicU32::new(0);
 /// Mouse: horizontal delta accumulated since the last read (the reader swaps
@@ -61,11 +59,6 @@ static mut MOUSE_IDX: usize = 0;
 /// Keyboard make-code sequence (increments per processed byte).
 pub fn key_seq() -> u32 {
     KEY_SEQ.load(Ordering::Relaxed)
-}
-
-/// Latest keyboard make-code.
-pub fn key_scancode() -> u32 {
-    KEY_SCANCODE.load(Ordering::Relaxed)
 }
 
 /// Mouse packet sequence (increments per decoded packet).
@@ -261,8 +254,8 @@ fn feed_key(byte: u8) {
             crate::interrupts::SHIFT_DOWN.load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
-        KEY_SCANCODE.store(u32::from(byte), Ordering::Relaxed);
         KEY_SEQ.fetch_add(1, Ordering::Relaxed);
+        crate::interrupts::key_push(byte);
     }
 }
 

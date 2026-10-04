@@ -62,6 +62,14 @@ impl PciDevice {
         self.class == CLASS_SERIAL_BUS
     }
 
+    /// Whether this device is a Wi-Fi controller: network class `0x02`
+    /// subclass `0x80` ("other network controller", where 802.11 chips sit;
+    /// wired NICs are subclass `0x00`/`0x01`). USB/SDIO Wi-Fi adapters are
+    /// not PCI and are not seen here.
+    pub fn is_wifi(&self) -> bool {
+        self.class == CLASS_NETWORK && self.subclass == 0x80
+    }
+
     /// Human-readable class name for the class/subclass pair.
     pub fn class_name(&self) -> &'static str {
         class_name(self.class, self.subclass)
