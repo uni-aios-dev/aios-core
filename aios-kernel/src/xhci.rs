@@ -107,9 +107,6 @@ const IFACE_CLASS_HID: u8 = 3;
 // HID boot keyboard control requests.
 const REQ_SET_CONFIGURATION: u8 = 0x09;
 const REQ_SET_PROTOCOL: u8 = 0x0B;
-const REQ_HID_GET_REPORT: u8 = 0x01;
-const IFACE_DIR_IN: u8 = 0xA1;
-const USBSTS_HCE: u32 = 1 << 12;
 
 // HID boot protocol values: 1 = boot keyboard, 2 = boot mouse.
 const BOOT_KEYBOARD: u8 = 1;
@@ -153,6 +150,11 @@ static MOUSE_ACC_DY: AtomicI32 = AtomicI32::new(0);
 
 /// Last button byte (bit 0 = left, bit 1 = right, bit 2 = middle).
 pub static MOUSE_BUTTONS: AtomicU64 = AtomicU64::new(0);
+
+/// Button press edges (0-to-1 transitions in bits 0..2) latched by
+/// [`harvest_mouse`] and consumed by [`take_button_edges`], so a press whose
+/// release is harvested in the same poll is not lost.
+static MOUSE_BTN_EDGE: AtomicU64 = AtomicU64::new(0);
 
 static mut XB_OP: u64 = 0;
 static mut XB_RUN: u64 = 0;
@@ -718,7 +720,12 @@ fn harvest_mouse() {
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = unsafe { ptr::read_volatile(src.add(index)) };
     }
-    MOUSE_BUTTONS.store(u64::from(bytes[0]), Ordering::Relaxed);
+    let buttons = u64::from(bytes[0]);
+    let prev = MOUSE_BUTTONS.swap(buttons, Ordering::Relaxed);
+    // Latch press edges: a press+release pair that lands between two input
+    // polls leaves MOUSE_BUTTONS equal to the delivered state, so the edge
+    // (and the whole click) would otherwise vanish.
+    MOUSE_BTN_EDGE.fetch_or(buttons & !prev & 0x07, Ordering::Relaxed);
     let dx = i32::from(bytes[1] as i8);
     let dy = i32::from(bytes[2] as i8);
     MOUSE_DX.store((dx as i64) as u64, Ordering::Relaxed);
@@ -726,6 +733,13 @@ fn harvest_mouse() {
     MOUSE_ACC_DX.fetch_add(dx, Ordering::Relaxed);
     MOUSE_ACC_DY.fetch_add(dy, Ordering::Relaxed);
     MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Consumes the latched button press edges (see [`MOUSE_BTN_EDGE`]). The
+/// input band replays these so the GUI always observes the down transition
+/// of a press/release pair that coalesced into a single poll.
+pub fn take_button_edges() -> u64 {
+    MOUSE_BTN_EDGE.swap(0, Ordering::Relaxed)
 }
 
 /// Largest pointer step one drain may hand back (v2.38.35 pointer-jump fix):

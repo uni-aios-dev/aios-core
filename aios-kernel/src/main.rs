@@ -859,13 +859,58 @@ fn stage_check(name: &'static str, mark: &mut u64) {
     let now = interrupts::TICKS.load(Ordering::Relaxed);
     let delta = now.wrapping_sub(*mark);
     if delta >= 2 * interrupts::TIMER_HZ {
-        kprintln!(
-            "[serial] [stall] stage {} took {} ticks",
-            name,
-            delta
-        );
+        kprintln!("[serial] [stall] stage {} took {} ticks", name, delta);
     }
     *mark = now;
+}
+
+/// Delivers pointer button/motion states to the active screen owner. When
+/// `edge_press` is set the driver saw a left-button 0-to-1 transition since
+/// the last delivery, so a press whose release landed in the same poll
+/// (final state identical to the delivered one) is replayed here as up to
+/// three states - release of a stale held state, the press, and the final
+/// release - and the screen observes the down transition it would otherwise
+/// miss (the intermittent lost-click bug, v2.38.38). The first state carries
+/// `(dx, dy)`; later states carry no motion. Returns the state the screen
+/// now believes.
+fn deliver_pointer(
+    mut last: u8,
+    buttons: u8,
+    edge_press: bool,
+    dx: i32,
+    dy: i32,
+    log: impl Fn(u8, i32, i32),
+) -> u8 {
+    let mut states = [0u8; 3];
+    let mut n = 0;
+    if edge_press {
+        if last & 0x01 != 0 {
+            states[n] = last & !0x01;
+            n += 1;
+        }
+        states[n] = buttons | 0x01;
+        n += 1;
+        if buttons & 0x01 == 0 {
+            states[n] = buttons;
+            n += 1;
+        }
+    } else {
+        states[0] = buttons;
+        n = 1;
+    }
+    for (i, state) in states[..n].iter().enumerate() {
+        let (mx, my) = if i == 0 { (dx, dy) } else { (0, 0) };
+        if *state != last {
+            log(*state, mx, my);
+            last = *state;
+        }
+        if gui::active() {
+            gui::on_mouse(mx, my, *state);
+        } else {
+            tui::on_mouse(mx, my, *state);
+        }
+    }
+    last
 }
 
 pub fn idle_loop() -> ! {
@@ -1037,8 +1082,9 @@ pub fn idle_loop() -> ! {
             last_mouse_seq = seq;
             let (dx, dy) = xhci::take_mouse_delta();
             let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
+            let edge_press = xhci::take_button_edges() & 0x01 != 0;
             let btn_changed = seq_changed && buttons != last_mouse_buttons;
-            if dx != 0 || dy != 0 || btn_changed {
+            if dx != 0 || dy != 0 || btn_changed || edge_press {
                 // Runaway gate first: a suppressed stream must cost nothing at
                 // all — no log line, no cursor work, no repaint (v2.38.33).
                 let allowed = if gui::active() {
@@ -1047,11 +1093,6 @@ pub fn idle_loop() -> ! {
                     tui::input_allowed(dx, dy)
                 };
                 if allowed {
-                    if btn_changed {
-                        last_mouse_buttons = buttons;
-                        vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", buttons, dx, dy);
-                        kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", buttons, dx, dy);
-                    }
                     if dx != 0 || dy != 0 {
                         if let Some((n, sx, sy)) = USB_MOVE.note(dx, dy) {
                             vprintln!("[usb-mouse] +{} pkts dx={} dy={}", n, sx, sy);
@@ -1061,12 +1102,23 @@ pub fn idle_loop() -> ! {
                     // Hand the report to the screen owner (interactive TUI moves +
                     // repaints the arrow and switches tabs on a click; the windowed
                     // GUI drives icons/windows) and then redraw so the arrow is
-                    // freshly composited over it.
+                    // freshly composited over it. `deliver_pointer` replays a
+                    // press edge swallowed by same-poll press+release
+                    // coalescing (v2.38.38 lost-click fix).
+                    last_mouse_buttons = deliver_pointer(
+                        last_mouse_buttons,
+                        buttons,
+                        edge_press,
+                        dx,
+                        dy,
+                        |state, mx, my| {
+                            vprintln!("[usb-mouse] btns={:#x} dx={} dy={}", state, mx, my);
+                            kprintln!("[serial] usb mouse btns={:#x} dx={} dy={}", state, mx, my);
+                        },
+                    );
                     if gui::active() {
-                        gui::on_mouse(dx, dy, buttons);
                         gui::render();
                     } else {
-                        tui::on_mouse(dx, dy, buttons);
                         tui::render();
                     }
                 }
@@ -1082,8 +1134,9 @@ pub fn idle_loop() -> ! {
             let mut dx = ps2::mouse_dx();
             let mut dy = ps2::mouse_dy();
             let buttons = ps2::mouse_buttons() as u8;
+            let edge_press = ps2::take_button_edges() & 0x01 != 0;
             let btn_changed = seq_changed && buttons != last_ps2m_buttons;
-            if btn_changed {
+            if edge_press || btn_changed {
                 // A press settles every pending motion byte first: the
                 // per-drain step clamp (v2.38.35) can park a backlog, and
                 // dispatching the click mid-journey would hit a coordinate
@@ -1099,30 +1152,13 @@ pub fn idle_loop() -> ! {
                     }
                 }
             }
-            if dx != 0 || dy != 0 || btn_changed {
+            if dx != 0 || dy != 0 || btn_changed || edge_press {
                 let allowed = if gui::active() {
                     gui::input_allowed(dx, dy)
                 } else {
                     tui::input_allowed(dx, dy)
                 };
                 if allowed {
-                    if btn_changed {
-                        last_ps2m_buttons = buttons;
-                        vprintln!(
-                            "[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}",
-                            ps2::mouse_id(),
-                            buttons,
-                            dx,
-                            dy
-                        );
-                        kprintln!(
-                            "[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}",
-                            ps2::mouse_id(),
-                            buttons,
-                            dx,
-                            dy
-                        );
-                    }
                     if dx != 0 || dy != 0 {
                         if let Some((n, sx, sy)) = PS2_MOVE.note(dx, dy) {
                             vprintln!(
@@ -1141,11 +1177,36 @@ pub fn idle_loop() -> ! {
                             );
                         }
                     }
+                    let id = ps2::mouse_id();
+                    // `deliver_pointer` replays a press edge swallowed by
+                    // same-drain press+release coalescing (v2.38.38
+                    // lost-click fix) and logs every state it delivers.
+                    last_ps2m_buttons = deliver_pointer(
+                        last_ps2m_buttons,
+                        buttons,
+                        edge_press,
+                        dx,
+                        dy,
+                        |state, mx, my| {
+                            vprintln!(
+                                "[ps2-mouse] id=0x{:02x} btns={:#x} dx={} dy={}",
+                                id,
+                                state,
+                                mx,
+                                my
+                            );
+                            kprintln!(
+                                "[serial] ps2 mouse id=0x{:02x} btns={:#x} dx={} dy={}",
+                                id,
+                                state,
+                                mx,
+                                my
+                            );
+                        },
+                    );
                     if gui::active() {
-                        gui::on_mouse(dx, dy, buttons);
                         gui::render();
                     } else {
-                        tui::on_mouse(dx, dy, buttons);
                         tui::render();
                     }
                 }

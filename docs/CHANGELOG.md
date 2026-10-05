@@ -1,5 +1,38 @@
 # AIOS Development Log
 
+## v2.38.38 — PS/2 mouse button clicks: press edge latched (2026-10-05)
+
+The kernel-side root cause of the "sometimes the click does nothing" flake
+that the smoke harness had only worked around with dwell/verify retries.
+
+### Fixed
+- **Intermittent loss of mouse button clicks (OPEN from v2.38.34)** — when
+  QEMU delivered a press and its release inside one `ps2::drain()` (TCG
+  stalls under `-display none` make this common), `MOUSE_BUTTONS` returned
+  to its previous value and `btn_changed = seq_changed && buttons != last`
+  stayed false, so the main loop never delivered a press state to the GUI.
+  `gui.rs` dispatches clicks on the press edge (`if down != (prev & 0x01)`),
+  so the click vanished while the pointer/globe position stayed correct —
+  exactly the "reproducible only occasionally" symptom that left no serial
+  trace. `ps2::decode_packet` and `xhci::harvest_mouse` now latch
+  `prev & !cur & 0x07` into a `MOUSE_BTN_EDGE` atomic; when an edge is
+  pending, the new `main.rs::deliver_pointer` replays up to three states
+  (stale release → press carrying dx/dy → final release) so the GUI sees
+  every press. Deterministic zero-dwell repro (both `mouse_button` lines in
+  one HMP write, globe at 1266,786): old ISO **0/10 clicks (zero `btns=`
+  lines)**, v2.38.38 **10/10** — each click logs `btns=0x1` → `[gui] tray
+  globe click` → `btns=0x0`. Smokes A,B,C,D,E,F,H,I,J,M green; no
+  panics/page faults in 14 serials.
+
+### Removed
+- **Dead xHCI constants** `REQ_HID_GET_REPORT`, `IFACE_DIR_IN`,
+  `USBSTS_HCE` — leftovers of the v2.38.37 `probe_hid_state` removal.
+
+### Notes
+- Smoke scenarios **G** (window-geometry stress) and **K** (keyboard-routing
+  probe) fail *identically* on the v2.38.37 baseline ISO — pre-existing
+  harness/scenario issues, not regressions of this release.
+
 ## v2.38.37 — xHCI latency + ring-wrap fix + honest recovery log (2026-10-05)
 
 Two real kernel bugs found by the new stall instrumentation (a ~37 s

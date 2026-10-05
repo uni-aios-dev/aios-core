@@ -216,20 +216,33 @@
 - **Workaround:** shell `wifi sim` arms the test radio (explicit, logged)
   for development and smoke testing; all B/C smokes run against it.
 
-## OPEN (v2.38.34): intermittent loss of PS/2 button events (worked around in the smoke harness)
+## RESOLVED (v2.38.38): intermittent loss of PS/2 button events (coalesced press+release in one drain)
+- **Status:** RESOLVED in v2.38.38 — button edge latching (`MOUSE_BTN_EDGE`)
+  in `ps2::decode_packet`/`xhci::harvest_mouse` plus state replay in the new
+  `main.rs::deliver_pointer`.
 - **Symptom:** during QEMU smokes an occasional click (press/release pair)
-  does not register — the expected `[gui] … click` line never appears even
+  did not register — the expected `[gui] … click` line never appeared even
   though the pointer moved over the right widget (seen across scenarios
-  before the dwell/verify hardening; reproducible only occasionally).
-- **Suspected area:** `ps2::feed_key`/`main.rs` press→release edge
-  handling under back-to-back 3-byte packets, or QEMU `sendkey`/HMP timing
-  — not yet isolated (it never reproduced in a way that left a serial
-  trace of the missing byte).
-- **Workaround:** the smoke harness clicks with a longer dwell
-  (450/350 ms) and *verifies* each critical click by re-polling the serial
-  log for the proof line, retrying (with a small wiggle) up to 4 times
-  (`Click-Vfy`); all three scenarios are green with this. The kernel-side
-  root cause remains open.
+  before the dwell/verify hardening; reproducible only occasionally, and it
+  never left a serial trace of a missing byte — because nothing was missing).
+- **Root Cause:** QEMU (TCG stalls under `-display none`) delivers the press
+  and its release inside one `ps2::drain()`, so `MOUSE_BUTTONS` ends where
+  it started and `btn_changed = seq_changed && buttons != last` stays false —
+  the main loop never delivered a press state. `gui.rs` dispatches clicks on
+  the press edge (`if down != (prev & 0x01)`), so the click was silently
+  lost while the pointer/globe position stayed correct.
+- **Fix:** `decode_packet`/`harvest_mouse` latch `prev & !cur & 0x07` into a
+  `MOUSE_BTN_EDGE` atomic consumed by the main loop; when an edge is pending
+  `deliver_pointer` replays up to three states (stale release → press
+  carrying dx/dy → final release). Dead xHCI constants
+  (`REQ_HID_GET_REPORT`, `IFACE_DIR_IN`, `USBSTS_HCE`) removed with the
+  v2.38.37 probe.
+- **Verification:** deterministic zero-dwell repro (both `mouse_button`
+  lines in one HMP write, globe at 1266,786): old ISO **0/10 clicks, zero
+  `btns=` lines**, v2.38.38 **10/10** — each click logs `btns=0x1` →
+  `[gui] tray globe click` → `btns=0x0`; smokes A,B,C,D,E,F,H,I,J,M green,
+  no panics in 14 serials. The harness `Click-Vfy` dwell stays as a
+  QEMU-timing cushion, no longer a correctness workaround.
 
 ## OPEN (v2.38.34): QEMU CMOS is process-volatile — persistence proof must stay inside one QEMU run
 - **Symptom:** net settings saved to CMOS are lost when QEMU exits; a

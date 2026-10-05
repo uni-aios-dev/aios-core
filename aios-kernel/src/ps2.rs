@@ -50,6 +50,10 @@ static MOUSE_DX: AtomicI32 = AtomicI32::new(0);
 static MOUSE_DY: AtomicI32 = AtomicI32::new(0);
 /// Mouse: button bits of the newest packet (bit0 left, bit1 right, bit2 mid).
 static MOUSE_BUTTONS: AtomicU32 = AtomicU32::new(0);
+/// Mouse: press edges (0-to-1 button transitions) latched by
+/// [`decode_packet`] and consumed by [`take_button_edges`], so a press whose
+/// release lands in the same drain is not lost.
+static MOUSE_BTN_EDGE: AtomicU32 = AtomicU32::new(0);
 /// Identified AUX device ID (0 = standard mouse, 3 = IntelliMouse, 4 = 5-button).
 static MOUSE_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -306,6 +310,19 @@ fn decode_packet(pkt: &[u8; 3]) {
     // than one packet, so an overwrite silently drops the earlier chunk).
     MOUSE_DX.fetch_add(dx, Ordering::Relaxed);
     MOUSE_DY.fetch_add(dy, Ordering::Relaxed);
-    MOUSE_BUTTONS.store(u32::from(b0 & 0x07), Ordering::Relaxed);
+    let btns = u32::from(b0 & 0x07);
+    let prev = MOUSE_BUTTONS.swap(btns, Ordering::Relaxed);
+    // Latch every 0-to-1 button transition: a press whose release lands in
+    // the same drain leaves MOUSE_BUTTONS equal to the delivered state, so
+    // the edge (and with it the whole click) would otherwise vanish.
+    MOUSE_BTN_EDGE.fetch_or(btns & !prev & 0x07, Ordering::Relaxed);
     MOUSE_SEQ.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Consumes the latched button press edges (bits that went 0-to-1 in
+/// [`decode_packet`] since the previous call). The input band replays these
+/// so the GUI always observes the down transition of a press/release pair
+/// that coalesced into a single drain.
+pub fn take_button_edges() -> u32 {
+    MOUSE_BTN_EDGE.swap(0, Ordering::Relaxed)
 }
