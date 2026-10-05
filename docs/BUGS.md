@@ -34,6 +34,43 @@
   (`[serial] ps2 mouse id=0x00 … dx=116 dy=0`, clean press/release
   pairs); A ×2, B, C and the new E all green on the same ISO, PANIC 0.
 
+## RESOLVED (v2.38.37): ~37 s stall before the first USB keystroke (diagnostic EP0 probe inside `xhci::poll`)
+- **Status:** RESOLVED in v2.38.37 — the whole `probe_hid_state` path
+  (`PROBE_EVERY`, `PROBE_POLLS`, the fn) removed from `xhci::poll`.
+- **Symptom:** scenario M `Cmd-Latency`/`Type-Keys` reported 37 s (then
+  3.3 s on the second hit) before the first pattern landed; the new
+  `stage_check` instrumentation printed `[serial] [stall] stage xhci took
+  23941 ticks` and the probe line `[xhci] probe ep0 GET_REPORT dt=23941
+  ticks ok=false` — the same wall-clock window.
+- **Root cause:** every 40th `xhci::poll` issued a HID `GET_REPORT` EP0
+  control transfer purely for diagnostics. QEMU never completed it, so
+  `ep0_wait` spun the full `SPIN_LIMIT` (200 M iterations ≈ 38 wall
+  seconds) *inside the main loop*, twice per run — first at controller
+  bring-up, again after the probe counter wrapped. Everything else
+  (render, PS/2, tick) queued behind it.
+- **Fix/verification:** probe deleted; M latency 37 s → 0.2 s, no
+  `[stall]` lines; H (37/37), I (8/8), J (9/9) green on the same ISO.
+  `stage_check` stays as a permanent watchdog (2 × TIMER_HZ threshold).
+
+## RESOLVED (v2.38.37): USB keyboard/mouse died after exactly 31 events (link TRB written with the *new* lap cycle)
+- **Status:** RESOLVED in v2.38.37 — `set_link_cycle` moved *before* the
+  `cycle = !cycle` flip in all four ring wraps (`arm_ep1`, `arm_ep1_m`,
+  `push_ep0`, `cmd_run`).
+- **Symptom:** J2 (`Type-Keys` after `Send-Bs`) died reproducibly after 2
+  keys: exactly 31 `[xhci] kbd ev` lines then silence, retries identical
+  (Send-Bs 2/12, Type-Keys 0/9). Mouse kept working on its own ring
+  (never reached a wrap inside the run).
+- **Root cause:** `TRBS = 32`, link TRB at index 31. On wrap the old code
+  wrote the link, then flipped `cycle`, then called `set_link_cycle` with
+  the **new** cycle — but the controller validates the link TRB's toggle
+  against the **old** lap's cycle when it walks off the end. Mismatch ⇒
+  the ring stalls permanently at its first wrap, i.e. at the 31st armed
+  EP1 transfer. The same wrong-order bug sat in `push_ep0` (stalls EP0
+  after 31 control transfers) and `cmd_run` (after 31 commands).
+- **Fix/verification:** link written with the old cycle before the flip
+  (no-op on lap 0, correct afterwards). J now reports `[kbd ev]` = 70,
+  `FAIL` = 0; M (0.5 s), H (37/37), I (8/8) green on the same ISO.
+
 ## RESOLVED (v2.38.36): flaky keyboard loss during GUI entry / field typing (single-slot scancode buffer)
 - **Status:** RESOLVED in v2.38.36 — keyboard FIFO (256-slot ring,
   `key_push`/`key_pop`) drained by the idle loop before the mouse bands,
@@ -210,14 +247,26 @@
   the C smoke (both ends derive AAD from the same constant, so the change
   is one line plus re-verification).
 
-## OPEN (flaky): `aios-integration-tests::real_file_io::test_recovery_log_entries` fails intermittently under parallel `cargo test --workspace`
-- **Symptom:** occasionally `assertion left == right failed (left: 0,
-  right: 1)` at `tests/real_file_io.rs:105` when the whole workspace runs;
-  the suite passes in isolation and on an immediate rerun (v2.38.34 gate
-  run: first pass 1 failure, rerun 94/94 ok). Looks like a temp-file /
-  recovery-log race between parallel test binaries, not a product bug.
-- **Workaround:** rerun the suite (`cargo test -p aios-integration-tests
-  --test real_file_io`) or the whole workspace before trusting a red run.
+## RESOLVED (v2.38.37): `real_file_io::test_recovery_log_entries` failed on every run (raw bincode records split on `0x0A`)
+- **Status:** RESOLVED in v2.38.37 — records now framed as
+  `ENTRY:<lowercase-hex>\n` (`encode_hex`/`decode_hex` in
+  `aios-persistence/src/recovery.rs`); legacy raw lines still parse
+  through the existing bincode fallback.
+- **Symptom:** `assertion left == right failed (left: 0, right: 1)` at
+  `tests/real_file_io.rs:105` — `get_pending_entries()` returned nothing
+  even in isolation (3/3 red), not only under parallel load as earlier
+  believed.
+- **Root cause:** `log_entry` appended the raw bincode bytes plus `\n`,
+  and the reader split lines on `\n` — but bincode output routinely
+  contains `0x0A` (the current Unix-ms timestamp `1791172498541` has one
+  in byte 3), so the record was split mid-entry, deserialization failed
+  and every pending entry silently vanished. Time-dependent: it was
+  green whenever no serialized byte happened to be `0x0A`, red otherwise.
+- **Verification:** `cargo test -p aios-integration-tests --test
+  real_file_io` 12/12, `cargo test -p aios-persistence` green, full
+  `cargo test --workspace` green.
+
+## RESOLVED (v2.38.36): flaky keyboard loss during GUI entry / field typing (single-slot scancode buffer)
 
 ## OPEN (flaky): `aios-live-update::cow_live_update::tests::test_recover_from_crash` fails intermittently under parallel `cargo test --workspace`
 - **Symptom:** occasionally `assertion left == right failed (left: [],

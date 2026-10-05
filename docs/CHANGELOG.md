@@ -1,5 +1,56 @@
 # AIOS Development Log
 
+## v2.38.37 — xHCI latency + ring-wrap fix + honest recovery log (2026-10-05)
+
+Two real kernel bugs found by the new stall instrumentation (a ~37 s
+first-keystroke stall and a keyboard that died after 31 events), plus a
+newline-framing bug that made the workspace recovery-log test fail whenever
+the current timestamp contained a `0x0A` byte.
+
+### Added
+- **Idle-loop stage stall watchdog** (`src/main.rs`): `stage_check(name,
+  &mut mark)` after every idle-loop stage (yield, xhci, ps2, net, wifi,
+  tickprint, render, input) prints `[serial] [stall] stage <name> took <n>
+  ticks` when a stage pushed `TICKS` more than `2 * TIMER_HZ` past the
+  previous mark. This is what localized the v2.38.36 stall to `xhci::poll`.
+- **xHCI event failure diagnostics** (`src/xhci.rs`): a transfer event on
+  the keyboard/mouse endpoint with a non-success completion code now logs
+  `[serial] [xhci] kbd ev FAIL cc=<n>` / `mse ev FAIL cc=<n>` (success
+  stays quiet — the per-key log of earlier builds was noise).
+
+### Fixed
+- **~37 s stall before the first USB keystroke (OPEN from v2.38.36)** —
+  `xhci::poll` called the diagnostic `probe_hid_state()` every 40th poll;
+  the EP0 HID `GET_REPORT` control transfer never completed under QEMU
+  (`ok=false`) and spun the full `SPIN_LIMIT` (~200 M iterations ≈ 38 wall
+  seconds) *twice* per smoke run, inside the main loop. The whole probe
+  (`probe_hid_state`, `PROBE_EVERY`, `PROBE_POLLS`) is removed; the
+  `[probe] gate32-installed` boot marker stays. Scenario M latency:
+  37 s → 0.2 s; `[stall]` lines gone.
+- **Keyboard died after exactly 31 events (J2 flake)** — all four transfer
+  rings (`arm_ep1`, `arm_ep1_m`, `push_ep0`, `cmd_run`) wrote the link TRB
+  and called `set_link_cycle` **after** flipping `cycle`, so the link's
+  toggle bit held the *new* lap cycle while the controller expects the
+  *old* one when it walks past index `TRBS - 1` (= 31). The ring stalled
+  permanently on its first wrap — which is exactly the 31st armed EP1
+  transfer (31 keyboard events), after which no keystroke or mouse report
+  was ever collected again. `set_link_cycle` is now called **before** the
+  flip with the current (old) cycle; a no-op on lap 0, correct on every
+  later lap. J2 now passes 70 keyboard events with 0 failures.
+- **`test_recovery_log_entries` red on every run** (workspace gate
+  blocker) — `RecoveryLog` appended raw bincode records delimited by `\n`,
+  but bincode output routinely contains `0x0A` (the current Unix-ms
+  timestamp `1791172498541` has one in byte 3), so `get_pending_entries`
+  split a record in half, deserialization failed and *every* pending entry
+  silently disappeared (`left: 0, right: 1`). Records are now written as
+  `ENTRY:<lowercase-hex>\n` (`encode_hex`/`decode_hex` in
+  `aios-persistence/src/recovery.rs`); legacy raw lines still parse via the
+  existing fallback, so old logs stay readable. Flaky-test workarounds in
+  BUGS removed — the test is green deterministically.
+- **USB HID usage table gaps** (`src/xhci.rs`): added Enter (`0x28`),
+  Esc (`0x29`), Backspace (`0x2A`), Tab (`0x2B`) to `usage_to_scancode`
+  so a USB keyboard can drive the shell/GUI with those keys.
+
 ## v2.38.36 — honest Wi-Fi (card detection, real-mode default) + keyboard FIFO (2026-10-04)
 
 The Wi-Fi stack stopped pretending: a machine with no 802.11 controller now

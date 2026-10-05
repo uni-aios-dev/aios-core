@@ -31,6 +31,32 @@ pub struct RecoveryLog {
     next_id: u64,
 }
 
+/// Encodes bytes as lowercase hex so binary bincode records survive the
+/// newline-delimited log format (raw records can contain 0x0A bytes, which
+/// used to split a record in half and drop every pending entry).
+fn encode_hex(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len() * 2);
+    for byte in data {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    out
+}
+
+/// Decodes a lowercase hex string back to bytes; `None` on malformed input.
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    for pair in bytes.chunks(2) {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+    }
+    Some(out)
+}
+
 impl RecoveryLog {
     /// Create recovery log
     pub fn new(log_path: PathBuf, max_entries: usize) -> Result<Self> {
@@ -71,9 +97,7 @@ impl RecoveryLog {
             .open(&self.log_path)
             .map_err(|e| AIOSException::IPCError(e.to_string()))?;
 
-        file.write_all(&data)
-            .map_err(|e| AIOSException::IPCError(e.to_string()))?;
-        file.write_all(b"\n")
+        file.write_all(format!("ENTRY:{}\n", encode_hex(&data)).as_bytes())
             .map_err(|e| AIOSException::IPCError(e.to_string()))?;
 
         let id = self.next_id;
@@ -127,6 +151,14 @@ impl RecoveryLog {
                             completed_ids.push(id);
                         }
                     }
+                } else if let Some(hex_bytes) = line_bytes.strip_prefix(b"ENTRY:") {
+                    if let Ok(s) = std::str::from_utf8(hex_bytes) {
+                        if let Some(bytes) = decode_hex(s) {
+                            if let Ok(entry) = bincode::deserialize::<RecoveryEntry>(&bytes) {
+                                raw_entries.push(entry);
+                            }
+                        }
+                    }
                 } else if let Ok(entry) = bincode::deserialize::<RecoveryEntry>(line_bytes) {
                     raw_entries.push(entry);
                 }
@@ -174,9 +206,7 @@ impl RecoveryLog {
                     .open(&self.log_path)
                     .map_err(|e| AIOSException::IPCError(e.to_string()))?;
 
-                file.write_all(&data)
-                    .map_err(|e| AIOSException::IPCError(e.to_string()))?;
-                file.write_all(b"\n")
+                file.write_all(format!("ENTRY:{}\n", encode_hex(&data)).as_bytes())
                     .map_err(|e| AIOSException::IPCError(e.to_string()))?;
 
                 self.next_id += 1;

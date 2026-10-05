@@ -177,10 +177,6 @@ static mut XM_EP1_DEQ: usize = 0;
 static mut XM_EP1_CYCLE: bool = false;
 static mut XM_EP1_BUF: u64 = 0;
 
-/// GET_REPORT probe cadence: issue one HID GET_REPORT control transfer every
-/// N idle-loop polls so the driver logs what QEMU's device HID queue holds.
-const PROBE_EVERY: u32 = 40;
-static mut PROBE_POLLS: u32 = 0;
 static mut PROBE_ENTERED: bool = false;
 
 /// Per-controller state kept while the controller is being brought up.
@@ -489,7 +485,7 @@ impl Xhci {
 
         // A boot mouse is optional: bring it up the same way on a second
         // slot, skipping the keyboard's port. Reuses the input/output
-        // contexts — the HC only needs them transiently per command.
+        // contexts - the HC only needs them transiently per command.
         let mouse_slot = match find_hid_dev(&mut core, max_ports, BOOT_MOUSE, port) {
             Ok((mport, mspeed, mslot, mmaxpkt, minterval)) => {
                 core.port = mport;
@@ -557,15 +553,6 @@ pub fn poll() {
     let mut deq = unsafe { XB_EV_DEQ };
     let mut cycle = unsafe { XB_EV_CYCLE };
 
-    if slot != 0 {
-        unsafe {
-            PROBE_POLLS = (PROBE_POLLS + 1) % PROBE_EVERY;
-            if PROBE_POLLS == 0 {
-                probe_hid_state();
-            }
-        }
-    }
-
     for _ in 0..TRBS {
         let trb = trb_read(ev, deq);
         if trb[3] & TRB_CYCLE != cycle as u32 {
@@ -593,13 +580,19 @@ pub fn poll() {
         );
         if kind == TRB_TRANSFER && ep_id == 3 {
             let cc = trb[2] >> 24;
-            if cc == COMP_SUCCESS || cc == COMP_SHORT_PACKET {
-                if ev_slot == slot {
+            if ev_slot == slot {
+                if cc == COMP_SUCCESS || cc == COMP_SHORT_PACKET {
                     harvest_report();
                     arm_ep1();
-                } else if mslot != 0 && ev_slot == mslot {
+                } else {
+                    crate::kprintln!("[serial] [xhci] kbd ev FAIL cc={}", cc);
+                }
+            } else if mslot != 0 && ev_slot == mslot {
+                if cc == COMP_SUCCESS || cc == COMP_SHORT_PACKET {
                     harvest_mouse();
                     arm_ep1_m();
+                } else {
+                    crate::kprintln!("[serial] [xhci] mse ev FAIL cc={}", cc);
                 }
             }
         }
@@ -662,6 +655,10 @@ fn usage_to_scancode(usage: u8) -> Option<u8> {
         0x04..=0x1D => Some(LETTER_SCANS[(usage - 0x04) as usize]),
         0x1E..=0x26 => Some(0x02 + (usage - 0x1E)),
         0x27 => Some(0x0B),
+        0x28 => Some(0x1C),
+        0x29 => Some(0x01),
+        0x2A => Some(0x0E),
+        0x2B => Some(0x0F),
         0x2C => Some(0x39),
         0x2D => Some(0x0C),
         0x2E => Some(0x0D),
@@ -692,9 +689,9 @@ fn arm_ep1() {
     ];
     trb_write(ep1, deq, &trb);
     if deq + 1 == TRBS - 1 {
+        set_link_cycle(ep1, cycle, true);
         deq = 0;
         cycle = !cycle;
-        set_link_cycle(ep1, cycle, true);
     } else {
         deq += 1;
     }
@@ -768,9 +765,9 @@ fn arm_ep1_m() {
     ];
     trb_write(ep1, deq, &trb);
     if deq + 1 == TRBS - 1 {
+        set_link_cycle(ep1, cycle, true);
         deq = 0;
         cycle = !cycle;
-        set_link_cycle(ep1, cycle, true);
     } else {
         deq += 1;
     }
@@ -784,82 +781,6 @@ fn arm_ep1_m() {
     let slot = u64::from(unsafe { XM_SLOT });
     dbg_kprintln!("[serial] [xhci] arm_ep1_m deq={} dbell=3", deq);
     mmio32w(db + slot * 4, 3);
-}
-
-/// Diagnostic probe: issues an EP0 HID GET_REPORT control transfer and prints
-/// the 8-byte boot report plus USBSTS. Lets us see whether QEMU's device HID
-/// queue actually received injected keys, decoupling input routing from the
-/// interrupt-IN harvest path.
-fn probe_hid_state() {
-    let mut core = Core {
-        run: unsafe { XB_RUN },
-        op: unsafe { XB_OP },
-        db: unsafe { XB_DB },
-        csz: 32,
-        slot: unsafe { XB_SLOT },
-        port: 0,
-        speed: 0,
-        cmd: 0,
-        cmd_deq: 0,
-        cmd_cycle: false,
-        ev: unsafe { XB_EV },
-        ev_deq: unsafe { XB_EV_DEQ },
-        ev_cycle: unsafe { XB_EV_CYCLE },
-        dcbaa: 0,
-        in_ctx: 0,
-        out_ctx: 0,
-        data: unsafe { XB_DATA },
-        ep0: unsafe { XB_EP0 },
-        ep0_deq: unsafe { XB_EP0_DEQ },
-        ep0_cycle: unsafe { XB_EP0_CYCLE },
-        ep0_maxpkt: 64,
-        ep1: 0,
-        ep1_deq: 0,
-        ep1_cycle: false,
-        ep1_buf: 0,
-        ep1_m: 0,
-        ep1_m_deq: 0,
-        ep1_m_cycle: false,
-        ep1_m_buf: 0,
-    };
-
-    let data = core.data;
-    match ep0_ctrl(&mut core, IFACE_DIR_IN, REQ_HID_GET_REPORT, 0, 0, 8, data) {
-        Ok(()) => {
-            let mut bytes = [0u8; 8];
-            for (index, slot) in bytes.iter_mut().enumerate() {
-                *slot = unsafe {
-                    ptr::read_volatile(
-                        (memory::physical_to_virtual(core.data) as *const u8).add(index),
-                    )
-                };
-            }
-            let usbsts = mmio32(core.op + USBSTS);
-            dbg_kprintln!(
-                "[serial] [xhci] GET_REPORT {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} usbsts={:08x}{}",
-                bytes[0],
-                bytes[1],
-                bytes[2],
-                bytes[3],
-                bytes[4],
-                bytes[5],
-                bytes[6],
-                bytes[7],
-                usbsts,
-                if usbsts & USBSTS_HCE != 0 { " HCE!" } else { "" }
-            );
-        }
-        Err(e) => {
-            dbg_kprintln!("[serial] [xhci] GET_REPORT failed: {}", e);
-        }
-    }
-
-    unsafe {
-        XB_EV_DEQ = core.ev_deq;
-        XB_EV_CYCLE = core.ev_cycle;
-        XB_EP0_DEQ = core.ep0_deq;
-        XB_EP0_CYCLE = core.ep0_cycle;
-    }
 }
 
 /// Resets a specific root-port device and returns its port number and speed.
@@ -1039,9 +960,9 @@ fn push_ep0(core: &mut Core, mut trb: [u32; 4]) {
     trb[3] |= core.ep0_cycle as u32;
     trb_write(core.ep0, core.ep0_deq, &trb);
     if core.ep0_deq + 1 == TRBS - 1 {
+        set_link_cycle(core.ep0, core.ep0_cycle, true);
         core.ep0_deq = 0;
         core.ep0_cycle = !core.ep0_cycle;
-        set_link_cycle(core.ep0, core.ep0_cycle, true);
     } else {
         core.ep0_deq += 1;
     }
@@ -1185,9 +1106,9 @@ fn cmd_run(core: &mut Core, mut trb: [u32; 4]) -> Result<[u32; 4], &'static str>
     trb[3] |= core.cmd_cycle as u32;
     trb_write(core.cmd, core.cmd_deq, &trb);
     if core.cmd_deq + 1 == TRBS - 1 {
+        set_link_cycle(core.cmd, core.cmd_cycle, true);
         core.cmd_deq = 0;
         core.cmd_cycle = !core.cmd_cycle;
-        set_link_cycle(core.cmd, core.cmd_cycle, true);
     } else {
         core.cmd_deq += 1;
     }

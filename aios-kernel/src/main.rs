@@ -851,6 +851,23 @@ static USB_MOVE: MoveLog = MoveLog::new();
 /// Movement log of the PS/2 (i8042 AUX) pointer band.
 static PS2_MOVE: MoveLog = MoveLog::new();
 
+/// Diagnostic: reports an idle-loop stage whose execution pushed `TICKS` more
+/// than two seconds past the previous stage mark (the ~35 s first-keystroke
+/// stall of v2.38.36 hunts). `mark` is updated in place so every call measures
+/// only its own stage.
+fn stage_check(name: &'static str, mark: &mut u64) {
+    let now = interrupts::TICKS.load(Ordering::Relaxed);
+    let delta = now.wrapping_sub(*mark);
+    if delta >= 2 * interrupts::TIMER_HZ {
+        kprintln!(
+            "[serial] [stall] stage {} took {} ticks",
+            name,
+            delta
+        );
+    }
+    *mark = now;
+}
+
 pub fn idle_loop() -> ! {
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
@@ -863,18 +880,25 @@ pub fn idle_loop() -> ! {
     let mut last_tui_render = 0u64;
     let mut last_gui_render = 0u64;
     let mut last_sensor_render = 0u64;
+    let mut stage_mark = interrupts::TICKS.load(Ordering::Relaxed);
     loop {
         crate::sched::yield_kernel();
+        stage_check("yield", &mut stage_mark);
         xhci::poll();
+        stage_check("xhci", &mut stage_mark);
         ps2::drain();
+        stage_check("ps2", &mut stage_mark);
         net::poll();
+        stage_check("net", &mut stage_mark);
         wifi::poll();
+        stage_check("wifi", &mut stage_mark);
         let ticks = interrupts::TICKS.load(Ordering::Relaxed);
         if ticks >= interrupts::TIMER_HZ && ticks - last_tick_print >= interrupts::TIMER_HZ {
             vprintln!("[tick] {}s", ticks / interrupts::TIMER_HZ);
             kprintln!("[serial] tick {}s", ticks / interrupts::TIMER_HZ);
             last_tick_print = ticks;
         }
+        stage_check("tickprint", &mut stage_mark);
         // Monitor: the windowed GUI repaints at (at least) the 60 FPS target —
         // every tick of the 100 Hz LAPIC/PIT timer with the RAM-backbuffer
         // damage blit the cost is a memcpy of the live windows only. The TUI
@@ -899,6 +923,7 @@ pub fn idle_loop() -> ! {
                 last_tui_render = ticks;
             }
         }
+        stage_check("render", &mut stage_mark);
         // Hardware heartbeat: toggles the bottom-right probe square (direct
         // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if
         // the lock-based console is wedged. Toggles at 2 Hz (every half-second
@@ -1126,6 +1151,7 @@ pub fn idle_loop() -> ! {
                 }
             }
         }
+        stage_check("input", &mut stage_mark);
         // Park the CPU. With the PIT IRQ arriving (legacy PIC alive) a plain
         // `hlt` is woken by each hardware tick. On boards where IRQ0 never
         // reaches the CPU (UEFI APIC routing), `hlt` would sleep forever, so
