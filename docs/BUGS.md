@@ -1,5 +1,61 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.38.40): USB HID usage table dropped F-keys/keypad and mistranslated punctuation (scenario K red on every ISO)
+
+- **Status:** RESOLVED in v2.38.40 — `usage_to_scancode` extended and
+  corrected, unmapped usages logged under `DEBUG_MODE`; harness `kp_plus`
+  → `kp_add`.
+- **Symptom:** scenario K (keyboard-routing probe with usb-kbd attached)
+  failed its three checks on every ISO since the probe existed —
+  `key scancode 0x41`, `usb key scancode`, `key scancode 0x4e`, always
+  "identically on baseline". The same table gap corrupted live typing: the
+  Network IP field received `10,0,2,15` for J's `10.0.2.15` (every `.`
+  became `,`).
+- **Root causes:**
+  1. With usb-kbd attached, QEMU's HMP `sendkey` reaches the guest only over
+     USB HID — the PS/2 i8042 receives nothing (confirmed by detaching USB:
+     `key scancode 0x41` appears immediately). Every key must therefore
+     survive `usage_to_scancode`, but the table covered only
+     letters/digits/basic punctuation: F1–F12 (`0x3A..=0x45`), the lock
+     keys and the keypad block (`0x54..=0x63`) returned `None` and the press
+     was dropped without a log line.
+  2. The punctuation tail was shifted one HID slot from `0x30` (slot `0x2F`
+     missing): `0x30..0x39` mapped one slot late — `.` → `,`, `/` → `.`,
+     CapsLock → `/`, …
+  3. `scancode_to_char` (PS/2 side) lacked set-1 `0x29` (grave) and mapped
+     `0x2B` to grave/tilde instead of `\`/`|`.
+  4. The harness sent `sendkey kp_plus`; QEMU's key name is `kp_add` (the
+     monitor accepts `kp_plus` silently and delivers nothing).
+- **Fix:** corrected and extended `usage_to_scancode` (F1–F12,
+  Caps/Scroll/Num, keypad ops/digits/dot via the new `KP_SCANS` table;
+  E0-extended keys stay unmapped to match PS/2's `0xE0` drop), fixed
+  `scancode_to_char` `0x29`/`0x2B`, `harvest_report` now logs
+  `[xhci] usb key usage 0xNN unmapped` behind F8 `DEBUG_MODE` instead of
+  dropping silently; harness uses `kp_add`.
+- **Verification:** K 3/3 PASS (first green run ever) with serial evidence
+  `usb key scancode 0x41` ×3 + `usb key scancode 0x4e`; J's type lines show
+  `type '.'` (real dots); 11/12 smokes green on the release ISO.
+
+## OPEN (v2.38.40): mouse deltas lost during title drag — scenario G's post-drag coordinates drift (scan-widget checks red)
+
+- **Status:** OPEN
+- **Symptom:** after G5–G7 (drag down / drag further / drag back) the Network
+  window sits ~15 px below the position G's hardcoded widget rows assume
+  (title bar measured at y=578 instead of the expected 593), and the final
+  `[gui] widget Network/Scan click` / `scan done (3 networks)` checks fail.
+  G passed once (v2.38.39 batch) and now fails on BOTH the current ISO and
+  the bit-identical v2.38.39 release ISO downloaded from GitHub — not a
+  v2.38.40 regression.
+- **Analysis:** the harness tracks cursor belief by summing sent deltas; a
+  partial delta loss (~14 px in G6, the whole G7 drag became a no-op)
+  diverges belief from the actual cursor, the window ends up low, and the
+  next grab misses the title band. Horizontal deltas stayed exact in every
+  run. Re-basing widget rows from a screendump title probe does not help by
+  itself (window shift ≠ cursor drift), so the fix belongs in the input path.
+- **Next:** isolate where deltas are dropped (i8042 overflow drop vs GUI
+  title-drag band vs packet timing around `mouse_button 0`), or make G
+  measure the window position per run.
+
 ## RESOLVED (v2.38.35): pointer jump — cursor teleports across the desktop onto the task bar (overflow packets + unbounded backlog)
 - **Status:** RESOLVED in v2.38.35 — whole-packet drop of 8042 overflow
   packets in `ps2::decode_packet`, a `MOUSE_MAX_STEP = 256` px per-axis

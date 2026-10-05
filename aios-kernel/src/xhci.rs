@@ -118,6 +118,9 @@ const LETTER_SCANS: [u8; 26] = [
     0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
 ];
 
+// Set-1 scancodes for HID keypad usages 0x59..=0x61 (kp_1..kp_9).
+const KP_SCANS: [u8; 9] = [0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49];
+
 /// Monotonic counter bumped every time a fresh USB keyboard report arrives
 /// with at least one newly-pressed key. The scheduler idle loop watches this.
 pub static KEY_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -629,6 +632,8 @@ fn harvest_report() {
             if let Some(sc) = usage_to_scancode(*key) {
                 KEY_SCANCODE.store(u64::from(sc), Ordering::Relaxed);
                 KEY_SEQ.fetch_add(1, Ordering::Relaxed);
+            } else {
+                dbg_kprintln!("[serial] [xhci] usb key usage 0x{:02x} unmapped", *key);
             }
             break;
         }
@@ -664,15 +669,28 @@ fn usage_to_scancode(usage: u8) -> Option<u8> {
         0x2C => Some(0x39),
         0x2D => Some(0x0C),
         0x2E => Some(0x0D),
-        0x30 => Some(0x1A),
-        0x31 => Some(0x1B),
+        0x2F => Some(0x1A),
+        0x30 => Some(0x1B),
+        0x31 => Some(0x2B),
         0x33 => Some(0x27),
         0x34 => Some(0x28),
-        0x35 => Some(0x2B),
-        0x36 => Some(0x2B),
-        0x37 => Some(0x33),
-        0x38 => Some(0x34),
-        0x39 => Some(0x35),
+        0x35 => Some(0x29),
+        0x36 => Some(0x33),
+        0x37 => Some(0x34),
+        0x38 => Some(0x35),
+        0x39 => Some(0x39),
+        0x3A..=0x43 => Some(0x3B + (usage - 0x3A)),
+        0x44 => Some(0x57),
+        0x45 => Some(0x58),
+        0x47 => Some(0x46),
+        0x53 => Some(0x45),
+        0x54 => Some(0x35),
+        0x55 => Some(0x37),
+        0x56 => Some(0x4A),
+        0x57 => Some(0x4E),
+        0x59..=0x61 => Some(KP_SCANS[(usage - 0x59) as usize]),
+        0x62 => Some(0x52),
+        0x63 => Some(0x53),
         _ => None,
     }
 }

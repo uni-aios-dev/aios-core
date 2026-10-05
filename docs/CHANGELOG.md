@@ -1,5 +1,53 @@
 # AIOS Development Log
 
+## v2.38.40 — USB HID keyboard table: F-keys, keypad, correct punctuation (K probe green) (2026-10-06)
+
+Closes the long-standing scenario K keyboard-routing probe (three checks red
+on every ISO since it existed, "identically on baseline") and two live typing
+bugs it exposed. Root-cause class: `usage_to_scancode` silently dropped or
+mistranslated USB HID usages — and with usb-kbd attached QEMU's HMP `sendkey`
+reaches the guest only over the USB path, so nothing arrived at all.
+
+### Fixed
+- **`src/xhci.rs` `usage_to_scancode` punctuation tail** — it was shifted
+  one HID slot from `0x30` (the `[` slot `0x2F` missing entirely): `]` typed
+  `[`, `\` typed `]`, backquote typed `\`, `,` typed `\`, `.` typed `,`,
+  `/` typed `.`, CapsLock typed `/`. J's `10.0.2.15` really landed as
+  `10,0,2,15` in the Network IP field (only the first char was asserted, so
+  the bug stayed invisible).
+- **`src/interrupts.rs` `scancode_to_char`** — set-1 `0x29` (grave) was
+  missing and `0x2B` mapped to grave/tilde; now `0x29` → `` ` ``/`~` and
+  `0x2B` → `\`/`|`, so the PS/2 and USB paths agree on backquote/backslash.
+
+### Added
+- **F1–F12, lock keys and the keypad block in `usage_to_scancode`** —
+  usages `0x3A..=0x45` (F1–F10 → set-1 `0x3B..=0x44`, F11 `0x57`, F12
+  `0x58`), Caps/Scroll/Num Lock, keypad `/ * - +`, `kp_1..kp_9` (new
+  `KP_SCANS` table), `kp_0`, `kp_.`. E0-extended usages (arrows, Home/End,
+  keypad Enter, PrintScreen) stay unmapped on purpose — the PS/2 path drops
+  the `0xE0` pair outright, so both paths now behave the same.
+- **Unmapped-usage log**: `harvest_report` prints
+  `[xhci] usb key usage 0xNN unmapped` (gated behind the F8 `DEBUG_MODE`)
+  instead of dropping the press silently — the very silence that hid the
+  table gaps for weeks.
+
+### Notes
+- Scenario K: **3/3 PASS for the first time ever** — serial shows
+  `usb key scancode 0x41` ×3 (F7) and `usb key scancode 0x4e` (keypad +).
+  Routing fact confirmed by probe: with usb-kbd attached the PS/2 i8042
+  receives nothing from HMP `sendkey` (detach USB and `key scancode 0x41`
+  appears immediately). QEMU's key name for keypad + is `kp_add` — `kp_plus`
+  is accepted by the monitor without any error and never delivered (harness
+  fixed to `kp_add`).
+- Smokes on the release ISO: A, B, C, D, E, F, H, I, J, K, M green (11/12);
+  J now types `10.0.2.15` with real dots. **G still fails its two scan-widget
+  checks** — proven NOT a regression: the bit-identical v2.38.39 release ISO
+  (downloaded from GitHub) fails G the same way in the same harness. G's
+  hardcoded post-drag rows drift because mouse deltas are lost during the
+  title-drag sequence (window measured 15 px low after G6, the G7 drag became
+  a no-op); tracked in BUGS.md as OPEN. No panics, page faults or `[stall]`
+  lines in any serial log.
+
 ## v2.38.39 — vector-style desktop: AA rounding, shadows, gradients, vector glyphs (2026-10-05)
 
 Visual overhaul of the kernel GUI built on a new allocation-free anti-aliased
