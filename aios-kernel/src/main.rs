@@ -30,6 +30,7 @@ mod syscalls;
 mod thermal;
 mod tui;
 mod user;
+mod vector;
 mod wifi;
 mod xhci;
 

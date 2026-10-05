@@ -352,18 +352,145 @@ impl Framebuffer {
 
     /// Fills an axis-aligned rectangle, clipped to the framebuffer bounds.
     ///
+    /// Implemented as one pack plus a packed-value write per scanline (no
+    /// per-pixel bounds/branch checks), which is the workhorse behind every
+    /// GUI repaint: a full 1280x800 clear costs one tight store loop per row
+    /// instead of a million `put_pixel` calls.
+    ///
     /// # Safety
     /// The framebuffer must still be mapped.
     pub unsafe fn fill_rect(&self, x: usize, y: usize, w: usize, h: usize, color: Color) {
-        if !self.is_usable() {
+        if !self.is_usable() || w == 0 || h == 0 {
             return;
         }
+        let x0 = x.min(self.width);
         let x1 = (x + w).min(self.width);
+        let y0 = y.min(self.height);
         let y1 = (y + h).min(self.height);
-        for row in y..y1 {
-            for col in x..x1 {
-                self.put_pixel(col, row, color);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        let packed = self.pack(color);
+        for row in y0..y1 {
+            self.write_row(row, x0, x1, packed);
+        }
+    }
+
+    /// Fills an axis-aligned rectangle with a vertical two-stop gradient:
+    /// `top` at the rectangle's first scanline, `bottom` at its last
+    /// (linear per-row interpolation of the three `0x00RRGGBB` channels).
+    /// Clipped exactly like [`Self::fill_rect`].
+    ///
+    /// Cost equals [`Self::fill_rect`] plus one channel lerp per row — never
+    /// per pixel — so it is safe for large desktop repaints.
+    ///
+    /// # Safety
+    /// The framebuffer must still be mapped.
+    pub unsafe fn fill_rect_vgrad(
+        &self,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        top: Color,
+        bottom: Color,
+    ) {
+        if !self.is_usable() || w == 0 || h == 0 {
+            return;
+        }
+        let x0 = x.min(self.width);
+        let x1 = (x + w).min(self.width);
+        let y0 = y.min(self.height);
+        let y1 = (y + h).min(self.height);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        let span = (y1 - y0).saturating_sub(1) as i32;
+        let tr = ((top >> 16) & 0xff) as i32;
+        let tg = ((top >> 8) & 0xff) as i32;
+        let tb = (top & 0xff) as i32;
+        let br = ((bottom >> 16) & 0xff) as i32;
+        let bg = ((bottom >> 8) & 0xff) as i32;
+        let bb = (bottom & 0xff) as i32;
+        for row in y0..y1 {
+            let color = if span == 0 {
+                top
+            } else {
+                let k = (row - y0) as i32;
+                let mix = |t: i32, b: i32| -> u32 {
+                    let v = t + (((b - t) * k + span / 2) / span);
+                    v as u32
+                };
+                (mix(tr, br) << 16) | (mix(tg, bg) << 8) | mix(tb, bb)
+            };
+            let packed = self.pack(color);
+            self.write_row(row, x0, x1, packed);
+        }
+    }
+
+    /// Reads a pixel back as `0x00RRGGBB` (inverse of [`Self::pack`]), used
+    /// by the vector layer to alpha-blend over what is already on the surface.
+    ///
+    /// # Safety
+    /// The framebuffer must still be mapped.
+    pub unsafe fn get_color(&self, x: usize, y: usize) -> Color {
+        if x >= self.width || y >= self.height || !self.is_usable() {
+            return 0;
+        }
+        let packed = self.read_pixel(x, y);
+        let unscale = |v: u32, shift: u8, size: u8| -> u32 {
+            if size == 0 {
+                return 0;
             }
+            let masked = (v >> shift) & ((1u32 << size.min(31)) - 1);
+            if size >= 8 {
+                masked & 0xff
+            } else if size >= 4 {
+                (masked << (8 - size)) | (masked >> (2 * size - 8))
+            } else {
+                masked << (8 - size)
+            }
+        };
+        (unscale(packed, self.red_shift, self.red_size) << 16)
+            | (unscale(packed, self.green_shift, self.green_size) << 8)
+            | unscale(packed, self.blue_shift, self.blue_size)
+    }
+
+    /// Writes `[x0, x1)` of scanline `y` with an already-packed hardware
+    /// pixel value: one tight store loop per scanline, no bounds checks
+    /// (the caller clips). `self.is_usable()` must hold.
+    ///
+    /// # Safety
+    /// The framebuffer must be mapped and `(x0..x1, y)` inside its bounds.
+    unsafe fn write_row(&self, y: usize, x0: usize, x1: usize, packed: u32) {
+        let line = self.base.add(y * self.pitch + x0 * self.bytes_per_pixel);
+        let count = x1 - x0;
+        match self.bytes_per_pixel {
+            4 => {
+                let p = line as *mut u32;
+                for i in 0..count {
+                    core::ptr::write_unaligned(p.add(i), packed);
+                }
+            }
+            3 => {
+                let b0 = (packed & 0xff) as u8;
+                let b1 = ((packed >> 8) & 0xff) as u8;
+                let b2 = ((packed >> 16) & 0xff) as u8;
+                for i in 0..count {
+                    let p = line.add(i * 3);
+                    core::ptr::write_unaligned(p, b0);
+                    core::ptr::write_unaligned(p.add(1), b1);
+                    core::ptr::write_unaligned(p.add(2), b2);
+                }
+            }
+            2 => {
+                let p = line as *mut u16;
+                let v = packed as u16;
+                for i in 0..count {
+                    core::ptr::write_unaligned(p.add(i), v);
+                }
+            }
+            _ => {}
         }
     }
 

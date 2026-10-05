@@ -1327,7 +1327,7 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   - `.cargo/config.toml` links with `-Tlinker.ld`; `linker.ld` is the Limine higher-half script (base `0xffffffff80000000`, `ENTRY(_start)`, keeps `.requests_start`/`.requests`/`.requests_end`).
   - `main.rs` declares the Limine request statics (`BaseRevision`, `EntryPoint(_start)`, `StackSize(64 KiB)`, `Hhdm`, `Memmap`, `Rsdp`, `Framebuffer`) and `#[no_mangle] pub unsafe extern "C" fn _start() -> !`, which reads the HHDM offset, RSDP and framebuffer responses.
   - `serial` — COM1 polling UART driver (`outb`/`inb`), `kprintln!`.
-  - `framebuffer` — `Framebuffer` over the Limine GOP/VBE buffer: `put_pixel`/`fill_rect`/`clear`/`scroll_up`/`read_pixel`, 2/3/4 bytes-per-pixel chosen from the Limine channel masks; `colors` palette. The base pointer is Limine's `address` verbatim — per the protocol it already carries the HHDM offset (`phys + hhdm`), so no extra translation is ever applied (v2.38.13 documents this on `base_addr()`). Since v2.38.13 `direct_test(color)` fills the whole panel strictly through `core::ptr::write_volatile`, addressing pixels by the physical stride (`pitch / bytes_per_pixel`), so the compiler cannot elide the stores and the scanline walk matches hardware layout even when `pitch != width * bytes_per_pixel`.
+  - `framebuffer` — `Framebuffer` over the Limine GOP/VBE buffer: `put_pixel`/`fill_rect`/`clear`/`scroll_up`/`read_pixel`, 2/3/4 bytes-per-pixel chosen from the Limine channel masks; `colors` palette. The base pointer is Limine's `address` verbatim — per the protocol it already carries the HHDM offset (`phys + hhdm`), so no extra translation is ever applied (v2.38.13 documents this on `base_addr()`). Since v2.38.13 `direct_test(color)` fills the whole panel strictly through `core::ptr::write_volatile`, addressing pixels by the physical stride (`pitch / bytes_per_pixel`), so the compiler cannot elide the stores and the scanline walk matches hardware layout even when `pitch != width * bytes_per_pixel`. Since v2.38.39 `fill_rect` fills row-wise through the private `write_row` (one `pack` per call, 4/3/2 bpp branch chosen once) instead of a naive per-pixel loop, and the module gained `fill_rect_vgrad` (two-stop vertical wash, one channel lerp per row) plus `get_color` (pixel readback used by the vector layer's blender).
   - `console` — spin-locked text console on the framebuffer (glyphs drawn through the font below, wraps at the screen width, scrolls); `vprintln!`. Since v2.38.10 it reserves the bottom `GLYPH_H` row as a fixed overlay strip; `scroll_up(pixels, fill, region_height)` is bounded to the console region so overlay pixels (heartbeat square, drawn by `idle_loop`) are never scrolled/ghosted. Since v2.38.21 the console only owns a compact top strip (`CONSOLE_TOP_ROWS` = 6 rows); the interactive TUI panel owns every row below it, so the boot log scrolls in its own small window and the panel is the primary screen. Since v2.38.22 `print`/`write_bytes` return early while `gui::active()`, so the windowed desktop is never garbled by kernel log lines (serial logging is unaffected).
   - `font8x8` — vendored public-domain 8x8 bitmap font, `BASIC: [[u8; 8]; 128]` (Basic Latin). The `font8x8` crate 0.3.1 is `std`-only and cannot be used here.
   - `psf` — (v2.38.13) `no_std` parser for the Linux console-font formats: PSF1 (`36 04` magic, 256/512-glyph mode flag, width fixed at 8 bits, height from the header) and PSF2 (`72 B5 4A 86` magic; header size, glyph count, bytes/glyph, width and height as little-endian `u32`), plus a bounds-checked `glyph(index)` accessor over the bitmap area. `synth_psf2_basic()` builds a valid PSF2 stream from the embedded `font8x8::BASIC` glyphs so the whole parse/render path is exercised at boot without shipping a separate font binary.
@@ -1409,7 +1409,16 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   and pushes only the damaged rectangle to VRAM with
   `Framebuffer::blit_region` (one `copy_nonoverlapping` per scanline) — the
   panel sees only complete frames, so there is no flicker or tearing. VRAM is
-  written exactly once per dirty row. Continuous paths (cursor, drag, live
+  written exactly once per dirty row. Since v2.38.39 painting goes through
+  the `vector` module — a coverage-based anti-aliased layer (`fill_round` /
+  `fill_round_grad` / `stroke_round` / `fill_circle` / `stroke_ellipse` /
+  `line` / `shadow_round`, corner masks `TL/TR/BR/BL/ALL/TOP`, colour
+  helpers `mix`/`blend`) that keeps edge cost O(perimeter) by reusing row
+  fills for interiors: windows and icon tiles get 7px rounding, a soft drop
+  shadow and an edge stroke, the desktop and task bar get two-stop washes
+  (`Framebuffer::fill_rect_vgrad`), the tray globe becomes a true circle
+  with ring/meridian/equator, and every `dirty_rect` is padded by
+  `SHADOW_PAD = 7` so shadow spill repains with its shape. Continuous paths (cursor, drag, live
   System/Uptime windows) mark only their own rectangles via
   `mark_live_dirty()`. `idle_loop` drives `gui::render()` on its own cadence —
   every tick of the 100 Hz timer (≈100 FPS) since v2.38.24 — plus an immediate

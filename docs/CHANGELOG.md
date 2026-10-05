@@ -1,5 +1,58 @@
 # AIOS Development Log
 
+## v2.38.39 — vector-style desktop: AA rounding, shadows, gradients, vector glyphs (2026-10-05)
+
+Visual overhaul of the kernel GUI built on a new allocation-free anti-aliased
+vector layer: rounded shapes with proper edge coverage, soft drop shadows and
+subtle washes, all damage-driven like before (no full-screen effects).
+
+### Added
+- **`src/vector.rs`** — the kernel's vector drawing layer, coverage-based and
+  O(perimeter) on edges (interiors reuse row fills): `fill_round` /
+  `fill_round_grad` (rounded rect, solid or two-stop vertical gradient, AA
+  only in the corner boxes), `stroke_round` (symmetric 1px outline),
+  `fill_circle`, `stroke_ellipse`, `line` (perpendicular-distance AA),
+  `shadow_round` (SDF band with linear alpha falloff, drawn *before* the
+  shape), plus `mix`/`blend` colour helpers and the `TL/TR/BR/BL/ALL/TOP`
+  corner masks.
+- **`Framebuffer::fill_rect_vgrad`** (two-stop vertical wash, one lerp per
+  row) and **`Framebuffer::get_color`** (pixel readback the blender needs);
+  `fill_rect` itself was rewritten row-wise through `write_row` (4/3/2 bpp
+  branches chosen once per call) — the old naive per-pixel `put_pixel` loop.
+
+### Changed
+- **Desktop** — vertical wash `DESK_TOP → DESK_BOT`; the truncated integer
+  interpolation lands exactly on the old flat `08 0C 14` at the screen
+  midpoint, so the GUI-entry probe `(1100,400) = 8,12,20` is unchanged.
+- **Windows** — 7px rounded corners, soft drop shadow, a light hairline under
+  the title bar and a subtle edge stroke; the close plate carries the
+  window's top-right radius so the cluster stays flush with the frame.
+  Titles stay flat (`TITLE_ON`/`TITLE_OFF`) — the E-scenario probes still
+  match exactly.
+- **Task bar** — vertical wash with a brighter top hairline, rounded slot
+  plates, and the link-state globe redrawn as a circle (state fill + light
+  ring + meridian + equator) inside a recessed pill. Harness globe sample
+  moved to `(1267,789)` — exact `48,192,96` (Internet) with no meridian
+  coverage.
+- **Desktop icons** — rounded 104×56 tiles (the width fits `System` /
+  `Uptime` = 6×16px labels; the old 84px tiles clipped them), accent pill,
+  per-app vector glyphs (sliders / clock face / info circle / wireframe
+  globe / stacked bars) and centered labels (`open` line removed).
+- **Buttons** — widget plates and dialog buttons are rounded (r=4); input
+  field borders keep their flat geometry (probe-stable).
+- **Damage** — `dirty_rect` pads every rectangle by `SHADOW_PAD = 7`, so
+  shadow spill repaints together with its shape on close/move/resize.
+
+### Notes
+- Smokes: A,B,D,E,F,G,H,I,J,M green; **C flaked once** (mouse motion not
+  delivered to the guest in one run, zero `[gui]` input lines) and is green
+  on rerun; **K** still fails its 3 scancode checks *identically on the
+  baseline ISO* — pre-existing, not a regression. G is green this release
+  (previously listed as pre-existing failure).
+- No panics/page faults/`[stall]` lines in any of the 13 serial logs; AA
+  cost stays inside the existing damage budget (corner boxes only, band
+  shadows only around shapes).
+
 ## v2.38.38 — PS/2 mouse button clicks: press edge latched (2026-10-05)
 
 The kernel-side root cause of the "sometimes the click does nothing" flake

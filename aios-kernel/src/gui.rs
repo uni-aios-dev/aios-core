@@ -33,7 +33,7 @@
 
 use crate::framebuffer::{colors, Color, Framebuffer};
 use crate::interrupts::{TICKS, TIMER_HZ};
-use crate::{console, tui};
+use crate::{console, tui, vector};
 use alloc::format;
 use alloc::string::String;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -48,7 +48,9 @@ const TITLE_BTN: usize = 16;
 /// Width of the three-button cluster (minimize / maximize-restore / close)
 /// anchored to the right end of the title bar.
 const TITLE_BTNS: usize = 3 * TITLE_BTN;
-const ICON_W: usize = 84;
+/// Desktop icon tile width: fits the longest label (`System` / `Uptime` =
+/// 6 glyphs x 16 px) with margin at the centered position.
+const ICON_W: usize = 104;
 const ICON_H: usize = 56;
 const TASKBAR_H: usize = 18;
 /// Width of the hit zone along a window's outer edge that starts a resize
@@ -95,7 +97,20 @@ const EDGE_T: u8 = 4;
 /// Resize-drag edge mask: bottom edge.
 const EDGE_B: u8 = 8;
 
-const DESK_BG: Color = 0x00_08_0c_14;
+/// Desktop background wash: top and bottom stops of the vertical gradient;
+/// their midpoint is the classic flat desktop `08 0C 14`, so the GUI-entry
+/// pixel probe at (1100, 400) still resolves exactly.
+const DESK_TOP: Color = 0x00_0c_10_18;
+const DESK_BOT: Color = 0x00_04_08_10;
+/// Corner radius shared by windows, dialogs and desktop icon tiles.
+const WIN_R: i32 = 7;
+/// Desktop icon tile background (v2.38.39 vector restyle).
+const TILE_BG: Color = 0x00_0e_16_28;
+/// Damage pad: soft shadows spill a few pixels past their shape, so every
+/// damage rectangle is unioned wider than its content by this margin.
+const SHADOW_PAD: usize = 7;
+/// Taskbar top stop of the vertical wash (v2.38.39).
+const BAR_TOP: Color = 0x00_1a_22_3a;
 const TITLE_ON: Color = 0x00_2e_5a_c2;
 const TITLE_OFF: Color = 0x00_20_2c_48;
 const WIN_BG: Color = 0x00_18_24_48;
@@ -394,14 +409,17 @@ fn dirty_all() {
     }
 }
 
-/// Unions a pixel rectangle into the pending damage.
+/// Unions a pixel rectangle into the pending damage, padded by
+/// [`SHADOW_PAD`] so shadow spill is repainted together with its shape.
 fn dirty_rect(x: usize, y: usize, w: usize, h: usize) {
+    let x0 = x.saturating_sub(SHADOW_PAD);
+    let y0 = y.saturating_sub(SHADOW_PAD);
     unsafe {
         let d = &mut *core::ptr::addr_of_mut!(DIRTY);
-        d.x0 = d.x0.min(x);
-        d.y0 = d.y0.min(y);
-        d.x1 = d.x1.max(x.saturating_add(w));
-        d.y1 = d.y1.max(y.saturating_add(h));
+        d.x0 = d.x0.min(x0);
+        d.y0 = d.y0.min(y0);
+        d.x1 = d.x1.max(x.saturating_add(w).saturating_add(SHADOW_PAD));
+        d.y1 = d.y1.max(y.saturating_add(h).saturating_add(SHADOW_PAD));
     }
 }
 
@@ -2169,7 +2187,16 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
             BTN_BG
         };
         unsafe {
-            fb.fill_rect(ax, ay, w, h, plate);
+            vector::fill_round(
+                fb,
+                ax as i32,
+                ay as i32,
+                w as i32,
+                h as i32,
+                4,
+                vector::ALL,
+                plate,
+            );
         }
         let tx = ax + w.saturating_sub(label.len() * console::GLYPH_W) / 2;
         let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
@@ -2325,6 +2352,20 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
 /// the damage (drawn bottom-up so the z-order stays correct), then the arrow
 /// last. Idle repaints are therefore limited to the live telemetry windows
 /// instead of the whole screen.
+/// Desktop background colour of scanline `row`: the slow vertical wash from
+/// [`DESK_TOP`] to [`DESK_BOT`]. Channel steps truncate toward zero, which
+/// makes the screen midpoint land exactly on the classic flat desktop tone.
+fn desk_color(row: usize, h: usize) -> Color {
+    let span = (h.max(2) - 1) as i32;
+    let k = row.min(h.saturating_sub(1)) as i32;
+    let ch = |shift: u32| -> u32 {
+        let t = ((DESK_TOP >> shift) & 0xff) as i32;
+        let b = ((DESK_BOT >> shift) & 0xff) as i32;
+        (t + ((b - t) * k) / span) as u32
+    };
+    (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+
 pub fn render() {
     let Some(vram) = console::framebuffer() else {
         return;
@@ -2349,8 +2390,11 @@ pub fn render() {
     };
     let back = back_fb(vram);
     let target: &Framebuffer = back.as_ref().unwrap_or(vram);
-    unsafe {
-        target.fill_rect(rx0, ry0, rw, rh, DESK_BG);
+    let screen_h = vram.height();
+    for row in ry0..(ry0 + rh) {
+        unsafe {
+            target.fill_rect(rx0, row, rw, 1, desk_color(row, screen_h));
+        }
     }
     draw_icons(target, &d);
     let task_y = vram.height().saturating_sub(TASKBAR_H);
@@ -2458,35 +2502,100 @@ fn draw_icons(fb: &Framebuffer, clip: &Rect) {
         if !rect_overlaps(clip, ix, iy, ICON_W, ICON_H) {
             continue;
         }
+        let (tx, ty) = (ix as i32, iy as i32);
         unsafe {
-            fb.fill_rect(ix, iy, ICON_W, ICON_H, 0x00_0e_16_28);
-            fb.fill_rect(ix, iy, ICON_W, 5, ICON_ACC);
+            vector::shadow_round(
+                fb,
+                tx,
+                ty,
+                ICON_W as i32,
+                ICON_H as i32,
+                WIN_R,
+                4,
+                80,
+                0x00_00_04_0a,
+            );
+            vector::fill_round(
+                fb,
+                tx,
+                ty,
+                ICON_W as i32,
+                ICON_H as i32,
+                WIN_R,
+                vector::ALL,
+                TILE_BG,
+            );
+            vector::stroke_round(
+                fb,
+                tx,
+                ty,
+                ICON_W as i32,
+                ICON_H as i32,
+                WIN_R,
+                vector::ALL,
+                vector::mix(TILE_BG, TEXT_DIM, 90),
+            );
+            vector::fill_round(fb, tx + 6, ty + 6, 18, 4, 2, vector::ALL, ICON_ACC);
+            draw_icon_glyph(fb, kind, tx + ICON_W as i32 / 2, ty + 21);
         }
+        let label = icon_label(kind);
+        let lw = label.len() * console::GLYPH_W;
         tui::draw_text(
             fb,
-            ix + 8,
-            iy + 24,
-            icon_label(kind),
+            ix + ICON_W.saturating_sub(lw) / 2,
+            iy + 34,
+            label,
             TEXT,
-            0x00_0e_16_28,
+            TILE_BG,
             ix + ICON_W,
         );
-        tui::draw_text(
-            fb,
-            ix + 8,
-            iy + 40,
-            "open",
-            TEXT_DIM,
-            0x00_0e_16_28,
-            ix + ICON_W,
-        );
+    }
+}
+
+/// Vector glyph centred inside a desktop icon tile: sliders (System), clock
+/// face (Uptime), info circle (About), wireframe globe (Net) and stacked
+/// bars (Tasks), painted in accent/dim tints over [`TILE_BG`].
+fn draw_icon_glyph(fb: &Framebuffer, kind: WinKind, cx: i32, cy: i32) {
+    let dim = vector::mix(TILE_BG, TEXT, 210);
+    unsafe {
+        match kind {
+            WinKind::System => {
+                for (row, knob) in [(-6i32, -4), (0, 5), (6, -7)] {
+                    vector::line(fb, cx - 10, cy + row, cx + 10, cy + row, dim);
+                    vector::fill_circle(fb, cx + knob, cy + row, 2, ICON_ACC);
+                }
+            }
+            WinKind::Clock => {
+                vector::stroke_ellipse(fb, cx, cy, 8, 8, dim);
+                vector::line(fb, cx, cy, cx, cy - 5, ICON_ACC);
+                vector::line(fb, cx, cy, cx + 4, cy + 2, ICON_ACC);
+            }
+            WinKind::About => {
+                vector::stroke_ellipse(fb, cx, cy, 8, 8, dim);
+                vector::fill_round(fb, cx - 1, cy - 5, 2, 7, 1, vector::ALL, ICON_ACC);
+                vector::fill_circle(fb, cx, cy + 4, 1, ICON_ACC);
+            }
+            WinKind::Network => {
+                vector::stroke_ellipse(fb, cx, cy, 8, 8, ICON_ACC);
+                vector::stroke_ellipse(fb, cx, cy, 4, 8, dim);
+                vector::line(fb, cx - 8, cy, cx + 8, cy, dim);
+            }
+            WinKind::Tasks => {
+                for (row, w) in [(0i32, 18), (6, 14), (12, 10)] {
+                    let c = if row == 0 { ICON_ACC } else { dim };
+                    vector::fill_round(fb, cx - w / 2, cy - 8 + row, w, 3, 1, vector::ALL, c);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
 fn draw_taskbar(fb: &Framebuffer) {
     let y = fb.height().saturating_sub(TASKBAR_H);
     unsafe {
-        fb.fill_rect(0, y, fb.width(), TASKBAR_H, BAR_BG);
+        fb.fill_rect_vgrad(0, y, fb.width(), TASKBAR_H, BAR_TOP, BAR_BG);
+        fb.fill_rect(0, y, fb.width(), 1, vector::mix(BAR_TOP, TEXT_DIM, 110));
     }
     let mut bx = 4;
     for i in taskbar_slots() {
@@ -2504,16 +2613,49 @@ fn draw_taskbar(fb: &Framebuffer) {
                 BAR_BG
             };
             unsafe {
-                fb.fill_rect(bx, y, w, TASKBAR_H, bg);
+                vector::fill_round(
+                    fb,
+                    bx as i32,
+                    y as i32,
+                    w as i32,
+                    (TASKBAR_H - 1) as i32,
+                    3,
+                    vector::ALL,
+                    bg,
+                );
             }
             tui::draw_text(fb, bx + 4, y, title, TEXT, bg, bx + w);
             bx += w + 4;
         }
     }
-    let gx = fb.width().saturating_sub(14);
+    // Tray: a recessed pill holding the state globe (circle + ring +
+    // meridian + equator), painted inside [width-20, width-4).
+    let gx = fb.width().saturating_sub(20);
+    let cx = fb.width().saturating_sub(12);
+    let cy = (y + TASKBAR_H / 2) as i32;
     let color = globe_color();
     unsafe {
-        fb.fill_rect(gx, y + (TASKBAR_H - 10) / 2, 10, 10, color);
+        vector::fill_round(
+            fb,
+            gx as i32,
+            (y + 1) as i32,
+            16,
+            (TASKBAR_H - 2) as i32,
+            4,
+            vector::ALL,
+            BAR_MIN,
+        );
+        vector::fill_circle(fb, cx as i32, cy, 5, color);
+        vector::stroke_ellipse(fb, cx as i32, cy, 5, 5, vector::mix(color, TEXT, 80));
+        vector::stroke_ellipse(fb, cx as i32, cy, 2, 5, vector::mix(color, TEXT, 45));
+        vector::line(
+            fb,
+            cx as i32 - 5,
+            cy,
+            cx as i32 + 5,
+            cy,
+            vector::mix(color, TEXT, 45),
+        );
     }
 }
 
@@ -2542,9 +2684,23 @@ fn globe_color() -> Color {
 fn draw_window(fb: &Framebuffer, win: &Window) {
     let title_bg = if win.focused { TITLE_ON } else { TITLE_OFF };
     let title = win_live_title(win);
+    let (vx, vy) = (win.x as i32, win.y as i32);
+    let (vw, vh) = (win.w as i32, win.h as i32);
+    let title_i = TITLE_H as i32;
     unsafe {
-        fb.fill_rect(win.x, win.y, win.w, TITLE_H, title_bg);
-        fb.fill_rect(win.x, win.y + TITLE_H, win.w, win.h - TITLE_H, WIN_BG);
+        vector::shadow_round(fb, vx, vy, vw, vh, WIN_R, 5, 95, 0x00_00_03_07);
+        vector::fill_round(fb, vx, vy, vw, vh, WIN_R, vector::ALL, WIN_BG);
+        vector::fill_round(fb, vx, vy, vw, title_i, WIN_R, vector::TOP, title_bg);
+        vector::fill_round(
+            fb,
+            vx,
+            vy + title_i - 1,
+            vw,
+            1,
+            0,
+            0,
+            vector::mix(title_bg, TEXT, 40),
+        );
     }
     // Body text clips at the window's own right edge (resize-safe); the
     // title text additionally stops before the three-button cluster.
@@ -2553,15 +2709,32 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
     let title_max = edge.min(win.x + win.w.saturating_sub(TITLE_BTNS + 2));
     tui::draw_text(fb, win.x + 6, win.y + 1, title, TEXT, title_bg, title_max);
     // Right-anchored cluster: minimize [w-48,w-32), maximize [w-32,w-16),
-    // close [w-16,w).
+    // close [w-16,w). The close plate carries the window's top-right corner
+    // radius so it stays flush with the rounded frame.
     let bx = win.x + win.w.saturating_sub(TITLE_BTNS);
     unsafe {
-        fb.fill_rect(bx, win.y, TITLE_BTNS, TITLE_H, BTN_BG);
+        vector::fill_round(
+            fb,
+            bx as i32,
+            vy,
+            (TITLE_BTNS - TITLE_BTN) as i32,
+            title_i,
+            0,
+            0,
+            BTN_BG,
+        );
+        vector::fill_round(
+            fb,
+            (bx + TITLE_BTN) as i32,
+            vy,
+            TITLE_BTN as i32,
+            title_i,
+            WIN_R,
+            vector::TR,
+            CLOSE_BG,
+        );
     }
     let mx = bx + TITLE_BTN;
-    unsafe {
-        fb.fill_rect(mx, win.y, TITLE_BTN, TITLE_H, CLOSE_BG);
-    }
     // Minimize: a low bar.
     unsafe {
         fb.fill_rect(bx + 3, win.y + 11, 10, 2, TEXT);
@@ -2593,6 +2766,19 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         tui::draw_glyph(fb, px, win.y + 1, *byte, TEXT, CLOSE_BG);
         px += console::GLYPH_W;
     }
+    // Edge definition: a soft 1px outline straddling the rounded frame.
+    unsafe {
+        vector::stroke_round(
+            fb,
+            vx,
+            vy,
+            vw,
+            vh,
+            WIN_R,
+            vector::ALL,
+            vector::mix(WIN_BG, TEXT_DIM, 110),
+        );
+    }
     let mut y = win.y + TITLE_H + 8;
     match win.kind {
         WinKind::Welcome => draw_welcome(fb, win, &mut y, max_px),
@@ -2612,9 +2798,39 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
 fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
     let (x, y) = modal_pos(fb);
     let max = x + DLG_W - 6;
+    let (vx, vy) = (x as i32, y as i32);
     unsafe {
-        fb.fill_rect(x, y, DLG_W, DLG_H, WIN_BG);
-        fb.fill_rect(x, y, DLG_W, TITLE_H, TITLE_ON);
+        vector::shadow_round(
+            fb,
+            vx,
+            vy,
+            DLG_W as i32,
+            DLG_H as i32,
+            WIN_R,
+            6,
+            110,
+            0x00_00_03_07,
+        );
+        vector::fill_round(
+            fb,
+            vx,
+            vy,
+            DLG_W as i32,
+            DLG_H as i32,
+            WIN_R,
+            vector::ALL,
+            WIN_BG,
+        );
+        vector::fill_round(
+            fb,
+            vx,
+            vy,
+            DLG_W as i32,
+            TITLE_H as i32,
+            WIN_R,
+            vector::TOP,
+            TITLE_ON,
+        );
     }
     tui::draw_text(fb, x + 6, y + 1, "Confirm", TEXT, TITLE_ON, max);
     let question = format!("Close {}?", win_label(kind, title));
@@ -2642,8 +2858,26 @@ fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
     );
     let ry = y + DLG_BTN_Y;
     unsafe {
-        fb.fill_rect(x + DLG_OK_X, ry, DLG_OK_W, DLG_BTN_H, BAR_ON);
-        fb.fill_rect(x + DLG_CANCEL_X, ry, DLG_CANCEL_W, DLG_BTN_H, BTN_BG);
+        vector::fill_round(
+            fb,
+            (x + DLG_OK_X) as i32,
+            ry as i32,
+            DLG_OK_W as i32,
+            DLG_BTN_H as i32,
+            4,
+            vector::ALL,
+            BAR_ON,
+        );
+        vector::fill_round(
+            fb,
+            (x + DLG_CANCEL_X) as i32,
+            ry as i32,
+            DLG_CANCEL_W as i32,
+            DLG_BTN_H as i32,
+            4,
+            vector::ALL,
+            BTN_BG,
+        );
     }
     modal_btn_label(fb, "OK", x + DLG_OK_X, ry, DLG_OK_W, BAR_ON);
     modal_btn_label(fb, "Cancel", x + DLG_CANCEL_X, ry, DLG_CANCEL_W, BTN_BG);

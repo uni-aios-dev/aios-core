@@ -684,11 +684,17 @@ The kernel shell command `gui` switches the whole screen from the console+TUI to
 a full-screen windowed desktop (`src/gui.rs`). `tui` (or `Esc` with no window
 focused) returns to the console/TUI.
 
-- **Desktop layout**: background, left icon column (System / Uptime / About /
-  Net / Tasks), bottom task bar with one button per open window plus the
-  link-state globe at the far right.
-- **Windows**: title bar (focused = bright blue, unfocused = dimmed), a
-  minimize / maximize / close button cluster and live content:
+- **Desktop layout** (v2.38.39): washed dark-blue background (a touch lighter
+  at the top), rounded 104×56 icon tiles with an accent pill, per-app vector
+  glyphs (sliders / clock face / info circle / wireframe globe / stacked
+  bars) and centered labels, bottom task bar with a vertical wash and a top
+  hairline, one rounded plate per open window plus the link-state globe — a
+  circle with ring, meridian and equator inside a recessed pill — at the far
+  right.
+- **Windows** (v2.38.39): 7px rounded corners with a soft drop shadow and a
+  subtle edge stroke; title bar (focused = bright blue, unfocused = dimmed)
+  with a hairline underneath, a minimize / maximize / close button cluster
+  (the close plate follows the frame's top-right radius) and live content:
   - *Welcome* — types the message line; shows the control help.
   - *System* — the same telemetry as the TUI System tab (tick, tick mode,
     switches, IPC totals, temperature, lid, PS/2/USB counters, allocated frames).
