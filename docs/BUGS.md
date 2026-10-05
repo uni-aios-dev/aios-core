@@ -268,18 +268,30 @@
 
 ## RESOLVED (v2.38.36): flaky keyboard loss during GUI entry / field typing (single-slot scancode buffer)
 
-## OPEN (flaky): `aios-live-update::cow_live_update::tests::test_recover_from_crash` fails intermittently under parallel `cargo test --workspace`
+## RESOLVED (v2.38.37): `aios-live-update::cow_live_update::tests::test_recover_from_crash` failed under parallel `cargo test --workspace` (same framing bug as the recovery log)
+- **Status:** RESOLVED in v2.38.37 — the `ENTRY:<hex>` framing fix in
+  `aios-persistence/src/recovery.rs` covers this test too; the fix itself
+  shipped with the v2.38.37 commit while this BUGS entry stayed open (the
+  sibling `real_file_io` entry was closed at release time, this one was
+  missed). Added the regression test
+  `test_entry_framing_survives_newline_bytes`, which reproduces the old
+  failure deterministically and proves the new framing prevents it.
 - **Symptom:** occasionally `assertion left == right failed (left: [],
-  right: [42])` at `aios-live-update/src/cow_live_update.rs:231` when the
-  whole workspace runs; the test and its whole crate pass in isolation and
-  on an immediate rerun (v2.38.34 release-gate run: first pass 1 failure,
-  `cargo test -p aios-live-update` green 3/3 afterwards). The test relies
-  on a `tempfile::tempdir()` journal surviving a simulated crash inside the
-  same process — under parallel workspace load the recovered log comes back
-  empty. Test-only flake, not a product bug (the engine recovers `[42]`
-  deterministically when run alone).
-- **Workaround:** rerun the suite (`cargo test -p aios-live-update
-  --lib cow_live_update`) or the whole workspace before trusting a red run.
+  right: [42])` at `aios-live-update/src/cow_live_update.rs:231`; the test
+  and its whole crate passed in isolation (v2.38.34 gate run: 1 failure,
+  then `cargo test -p aios-live-update` green 3/3).
+- **Root cause:** not a load race — the same time-dependent corruption as
+  `real_file_io`: `recover_from_crash()` reads records through
+  `get_pending_entries()`, and `log_entry("hotswap_start", "block_42")`
+  wrote a raw bincode record delimited by `\n`. The serialized record
+  contained `0x0A` (a byte of the Unix-ms timestamp — exactly the
+  `real_file_io` mechanism), the line split mid-record, deserialization
+  failed, the pending list came back empty → `recovered = []` instead of
+  `[42]`. The failure depended only on the current time, not on load —
+  the "parallel workspace" correlation in the earlier entry was spurious.
+- **Verification:** `cargo test -p aios-live-update` 23/23,
+  `cargo test -p aios-persistence` 13/13 (including the new regression
+  test), clippy 0 warnings.
 
 ## RESOLVED (v2.38.33): real-hardware pointer runaway — cursor pinned bottom-left, task-bar flicker, input log storm
 - **Status:** RESOLVED in v2.38.33 — runaway gate (`gui::input_allowed` /

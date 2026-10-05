@@ -256,4 +256,41 @@ mod tests {
 
         // File may or may not exist after clear on Windows
     }
+
+    #[test]
+    fn test_entry_framing_survives_newline_bytes() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let log = RecoveryLog::new(temp_file.path().to_path_buf(), 100).unwrap();
+
+        // A record whose serialization embeds 0x0A - the Unix-ms timestamp of
+        // the original bug (1791172498541) has one in byte 3, which made the
+        // raw newline-delimited format split the record in half and drop it.
+        let entry = RecoveryEntry {
+            id: 0,
+            timestamp_ms: 1_791_172_498_541,
+            operation: "hotswap_start".into(),
+            target: "block_42".into(),
+            status: "pending".into(),
+            metadata: None,
+        };
+        let data = bincode::serialize(&entry).unwrap();
+        assert!(
+            data.contains(&0x0A),
+            "record must contain 0x0A to prove the point"
+        );
+
+        // Old raw format: the record splits at the embedded newline and every
+        // pending entry is silently lost.
+        let mut raw = data.clone();
+        raw.push(b'\n');
+        fs::write(temp_file.path(), &raw).unwrap();
+        assert_eq!(log.get_pending_entries().unwrap().len(), 0);
+
+        // Current framed format: the same bytes survive the round trip.
+        fs::write(temp_file.path(), format!("ENTRY:{}\n", encode_hex(&data))).unwrap();
+        let pending = log.get_pending_entries().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].operation, "hotswap_start");
+        assert_eq!(pending[0].target, "block_42");
+    }
 }
