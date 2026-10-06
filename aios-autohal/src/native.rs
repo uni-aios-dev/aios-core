@@ -505,7 +505,7 @@ mod udev {
     }
 
     /// Parse a `"ACTION@/dev/path\0KEY=VALUE\0…"` uevent buffer.
-    fn parse_uevent(buf: &[u8]) -> Option<NativeEvent> {
+    pub(super) fn parse_uevent(buf: &[u8]) -> Option<NativeEvent> {
         let text = std::str::from_utf8(buf).ok()?;
         let action = text.split('@').next().unwrap_or("");
         let added = matches!(action, "add" | "bind" | "change");
