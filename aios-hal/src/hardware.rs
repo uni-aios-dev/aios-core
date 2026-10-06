@@ -232,7 +232,6 @@ impl HardwareProfile {
                 for line in content.lines() {
                     if let Some(val) = line.strip_prefix("MemTotal:") {
                         let kb: u64 = val
-                            .trim()
                             .split_whitespace()
                             .next()
                             .and_then(|s| s.parse().ok())
@@ -259,6 +258,7 @@ impl HardwareProfile {
     /// Parses `wmic memorychip ... /format:csv` output into (total_bytes, speed_mhz, dimm_count).
     ///
     /// Rows have a leading Node column; short or malformed lines are skipped instead of panicking.
+    #[allow(dead_code)]
     fn parse_wmic_memory_csv(stdout: &str) -> MemoryInfo {
         let mut total_bytes: u64 = 0;
         let mut dimm_count = 0u32;
@@ -987,6 +987,7 @@ impl HardwareProfile {
             .unwrap_or(0)
     }
 
+    #[allow(dead_code)]
     fn extract_pnp_vendor_id(dev_id: &str) -> u16 {
         dev_id
             .split('\\')
@@ -996,6 +997,7 @@ impl HardwareProfile {
             .unwrap_or(0)
     }
 
+    #[allow(dead_code)]
     fn extract_pnp_product_id(dev_id: &str) -> u16 {
         dev_id
             .split('\\')
@@ -1005,12 +1007,16 @@ impl HardwareProfile {
             .unwrap_or(0)
     }
 
+    #[allow(dead_code)]
     fn extract_pnp_parent(dev_id: &str) -> String {
         dev_id.split('\\').nth(2).unwrap_or("unknown").to_string()
     }
 
     fn scan_pci() -> Vec<PciDevice> {
+        #[cfg(target_os = "windows")]
         let mut devices = Vec::new();
+        #[cfg(not(target_os = "windows"))]
+        let devices = Vec::new();
 
         #[cfg(target_os = "windows")]
         {
