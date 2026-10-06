@@ -1,5 +1,29 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.39.0): embedded JS engine has no event loop / module / network support (documented scope limits)
+
+- **Status:** OPEN (known limits, surfaced to the user — each limit is
+  reported as a `console` note at runtime; not regressions, deliberate
+  scope of the first engine cut).
+- **Symptom:** pages relying on ES modules (`<script type="module">`),
+  `document.write`, dynamically injected `<script>` elements, `fetch`/XHR
+  data loading, `location.href` navigation or dispatched `error` events
+  render their static HTML only — the script half is skipped or degraded.
+  `addEventListener` handlers are stored but never fired (no event loop).
+- **Design rationale:** the engine runs each page in a fresh, single-shot
+  `boa_engine::Context` (JSON-in / `JSON.stringify`-out bridge, zero host
+  functions) and flushes timers exactly once after load — deterministic
+  post-load state for the text renderer beats a half-implemented event
+  loop. Rust keeps the network (`reqwest`) so `fetch` cannot bypass the
+  block's config/timeouts.
+- **Workaround:** pages needing those features can be opened with `B`/`n`
+  (full native WebView window), or the headless Chromium fallback renders
+  JS-heavy shells when it is available.
+- **Next:** candidates in order — fire stored listeners for a small set of
+  synthetic events (load/error), `<script type="module">` via boa's module
+  loader, `location.href` → engine navigation (needs session callback),
+  and a host-backed `fetch` that goes through `NetworkClient`.
+
 ## RESOLVED (v2.38.40): USB HID usage table dropped F-keys/keypad and mistranslated punctuation (scenario K red on every ISO)
 
 - **Status:** RESOLVED in v2.38.40 — `usage_to_scancode` extended and
