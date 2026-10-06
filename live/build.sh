@@ -41,6 +41,10 @@ ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-static-bin"
 file "$W/aios-bin" 2>/dev/null || true
 file "$W/aios-gui-bin" 2>/dev/null || true
 file "$W/aios-static-bin" 2>/dev/null || true
+# The browser only works if the primary binaries really link libwebkit2gtk;
+# a silent crt-static regression would ship a TUI-only ISO.
+grep -aq "libwebkit2gtk-4.1" "$W/aios-bin" || { echo "FATAL: aios not linked against libwebkit2gtk-4.1"; exit 1; }
+grep -aq "libwebkit2gtk-4.1" "$W/aios-gui-bin" || { echo "FATAL: aios-gui not linked against libwebkit2gtk-4.1"; exit 1; }
 
 echo "=== [2] building rootfs ==="
 rm -rf "$W/rootfs" "$W/iso" "$W/initramfs" "$W/out"
@@ -68,6 +72,12 @@ chroot "$W/rootfs" /sbin/apk add --no-cache \
   eudev || echo "NOTE: apk trigger errors ignored (grub-probe in chroot)"
 umount "$W/rootfs/dev" 2>/dev/null || true
 umount "$W/rootfs/proc" 2>/dev/null || true
+
+# chroot apk failure is swallowed above (grub-probe triggers can fail in a
+# chroot) — verify the load-bearing pieces actually landed or abort loudly.
+for f in usr/bin/Xorg usr/lib/libwebkit2gtk-4.1.so.0 boot/vmlinuz-lts etc/init.d/rcS; do
+  [ -e "$W/rootfs/$f" ] || { echo "FATAL: rootfs missing $f (chroot apk failed?)"; exit 1; }
+done
 
 mkdir -p "$W/rootfs/usr/local/bin" "$W/rootfs/etc/init.d" "$W/rootfs/root" "$W/rootfs/boot"
 cp "$W/aios-bin" "$W/rootfs/usr/local/bin/aios"

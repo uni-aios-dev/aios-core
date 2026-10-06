@@ -27,7 +27,7 @@ jobs:
         run: |
           df -h /
           docker pull rust:alpine
-          docker run --rm \
+          docker run --rm --privileged \
             -e CARGO_NET_OFFLINE=false \
             -v "$PWD:/src" \
             -v "$PWD/live:/work" \
