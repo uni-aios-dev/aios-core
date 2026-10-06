@@ -1,5 +1,79 @@
 # AIOS Development Log
 
+## v2.40.0 — embedded JS engine, iteration 2: lifecycle events, dynamic scripts, navigation (2026-10-06)
+
+Feature release closing three of the documented v2.39.0 engine limits:
+the synthetic `DOMContentLoaded`/`load` lifecycle now fires (listeners and
+`onload` properties run, `document.readyState` walks
+`loading → interactive → complete`), `<script>` elements created by page
+code execute in capped discovery rounds, and script/meta-refresh navigation
+is followed through a hop-capped engine loop. Kernel code is untouched
+(VERSION only), so the smoke suite is expected to stay green.
+
+### Added
+- **Lifecycle events (`src/script_prelude.js`, `src/script.rs`)** —
+  `ScriptEngine::fire_dom_content_loaded`/`fire_load` dispatch synthetic
+  events through a real dispatch core: `addEventListener` storage now works
+  for `document`, `window` and every node; `on<type>` properties
+  (`window.onload`, `document.onreadystatechange`, ...) run as handlers;
+  handler exceptions are caught into the console (`[js] <type> handler
+  error: ...`, message + stack). Event order per phase: `readystatechange`
+  → `DOMContentLoaded` on the document; `readystatechange` → `load` on
+  window → `load` on document. Timeline in `run_page_scripts`: page +
+  user scripts → dynamic rounds → `DOMContentLoaded` → dynamic rounds →
+  timer flush → `load` → final dynamic rounds.
+- **Event dispatch surface (`src/script_prelude.js`)** — working
+  `dispatchEvent` on nodes/document/window, `Event`/`CustomEvent`
+  constructors, `window.addEventListener/removeEventListener`,
+  reflective `src`/`href` attributes (`script.src = ...` now lands in the
+  DOM as an attribute).
+- **Dynamic `<script>` execution (`src/engine.rs`, `src/script.rs`)** —
+  after every lifecycle phase the engine walks the live DOM
+  (`__aiosCollectScripts`) for script elements created by page code:
+  inline code runs in place, `src` is resolved against the page URL and
+  fetched through `NetworkClient`; each element is marked once (no
+  duplicates), caps are 8 discovery rounds / 20 scripts per page with a
+  console note when hit; module/non-JS types keep their skip notes.
+  Parser-inserted scripts are pre-marked (`__aiosMarkScripts`), so only
+  page-created elements enter the rounds.
+- **Navigation loop (`src/engine.rs`, `src/html_parser.rs`)** —
+  `location.href`/`location.assign/replace` requests and zero-delay
+  `<meta http-equiv="refresh">` (new `HtmlParser::extract_meta_refresh`,
+  `MetaRefresh`) are now followed: each hop re-runs the full pipeline
+  (scripts, lifecycle, rounds) on the fetched target, up to
+  `MAX_NAV_HOPS = 5`; guards emit `[nav]` console lines for the same-URL
+  loop, non-http schemes (`mailto:`...), the hop limit and fetch
+  failures. `Page::url` is the final URL of the chain. Delayed meta
+  refresh (`N > 0`) is reported and ignored.
+- **`unsafe impl Send for ScriptEngine` (documented)** — the boa context
+  now legitimately spans async `NetworkClient` fetches in the page
+  pipeline, while `BrowserBlock::block_on` requires `Send` futures;
+  the engine stays confined to a single logical task (polls never
+  overlap), which is the standard assumption for embedding a
+  single-threaded script engine in an async host.
+- **`document.readyState`** — starts `"loading"`, moves to
+  `"interactive"` at `DOMContentLoaded` and `"complete"` at `load`
+  (firing `readystatechange` each time); `BrowserEngine::evaluate`
+  (`eval_js` replay of a stored post-load page) marks the page loaded
+  before running the snippet.
+
+### Tests
+- 23 new tests (engine 102 total in-crate, workspace green): lifecycle
+  handler order/readyState console evidence, thrown handler isolation,
+  dynamic inline/chain/external/failure flows, self-replicating script
+  termination at the round cap, `location.href` followed end-to-end on a
+  local HTTP test server, meta refresh (immediate/delayed/same-URL),
+  hop-limit chain, non-http refusal, nav fetch failure keeping the
+  current page; script-level unit tests for fire/readyState/dispatch and
+  one-shot dynamic collection with module skip.
+
+### Notes
+- Remaining documented limits (BUGS): ES modules skipped (no module
+  loader), `document.write` no-op, `fetch`/XHR rejected (network stays in
+  Rust), no user-input event loop (clicks/keys never dispatch), `error`
+  events stored not auto-dispatched. ES modules and host-backed `fetch`
+  are the next candidates.
+
 ## v2.39.0 — embedded JavaScript engine + full-featured browser: scripts, history, tabs, bookmarks (2026-10-06)
 
 Feature release. `aios-browser` grows from a fetch-and-scrape client into a

@@ -23,7 +23,12 @@
   };
   const errStr = (e) => {
     try {
-      if (e && e.message) return String(e.stack || e.message);
+      if (e && e.message) {
+        const msg = String(e.message);
+        const stack = e.stack ? String(e.stack) : "";
+        if (!stack || stack.includes(msg)) return stack || msg;
+        return msg + "\n" + stack;
+      }
       return String(e);
     } catch (_) {
       return "<unprintable error>";
@@ -64,6 +69,73 @@
     assert: (cond, ...rest) => { if (!cond) mkLog("assert")(...rest); },
     count: () => {},
     clear: () => { globalThis.__console.length = 0; },
+  };
+
+  /* ---- events: listener storage, dispatch, constructors ----------------- */
+  const ensureBag = (obj) => {
+    if (!obj.__ev) Object.defineProperty(obj, "__ev", { value: {}, enumerable: false, writable: true, configurable: true });
+    return obj.__ev;
+  };
+  const addLis = (obj, type, fn) => {
+    if (typeof fn !== "function") return;
+    const k = String(type);
+    const bag = ensureBag(obj);
+    (bag[k] = bag[k] || []).push(fn);
+  };
+  const removeLis = (obj, type, fn) => {
+    const list = obj.__ev && obj.__ev[String(type)];
+    if (list) { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); }
+  };
+  const mkEvent = (type, target) => ({
+    type: String(type),
+    target: target || null,
+    currentTarget: null,
+    bubbles: true,
+    cancelable: true,
+    defaultPrevented: false,
+    timeStamp: Date.now(),
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() {},
+    stopImmediatePropagation() {},
+    composedPath() { return [this.target]; },
+  });
+  const asEvent = (evt, target) => {
+    if (evt && typeof evt === "object") { if (!evt.target) evt.target = target; return evt; }
+    return mkEvent(String(evt), target);
+  };
+  const callHandler = (fn, self, evt, label) => {
+    try { fn.call(self, evt); }
+    catch (e) { note("[js] " + label + " handler error: " + errStr(e)); }
+  };
+  const fireAt = (obj, evt) => {
+    const list = obj.__ev && obj.__ev[evt.type];
+    if (list) for (const fn of list.slice()) callHandler(fn, obj, evt, evt.type);
+    const prop = obj["on" + evt.type];
+    if (typeof prop === "function") callHandler(prop, obj, evt, "on" + evt.type);
+    return !evt.defaultPrevented;
+  };
+  globalThis.Event = class Event {
+    constructor(type, init) {
+      init = init || {};
+      this.type = String(type);
+      this.bubbles = !!init.bubbles;
+      this.cancelable = !!init.cancelable;
+      this.composed = !!init.composed;
+      this.target = null;
+      this.currentTarget = null;
+      this.defaultPrevented = false;
+      this.timeStamp = Date.now();
+    }
+    preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+    stopPropagation() {}
+    stopImmediatePropagation() {}
+    get isTrusted() { return true; }
+  };
+  globalThis.CustomEvent = class CustomEvent extends globalThis.Event {
+    constructor(type, init) {
+      super(type, init);
+      this.detail = init && init.detail !== undefined ? init.detail : null;
+    }
   };
 
   /* ---- raw node helpers ------------------------------------------------ */
@@ -275,6 +347,8 @@
     defineGetSet(n, "outerHTML", () => serialize(n));
     defineGetSet(n, "id", () => getAttr(n, "id") || "", (v) => setAttr(n, "id", v));
     defineGetSet(n, "className", () => getAttr(n, "class") || "", (v) => setAttr(n, "class", v));
+    defineGetSet(n, "src", () => getAttr(n, "src") || "", (v) => setAttr(n, "src", v));
+    defineGetSet(n, "href", () => getAttr(n, "href") || "", (v) => setAttr(n, "href", v));
     defineGetSet(n, "value", () => getAttr(n, "value") || "", (v) => setAttr(n, "value", v));
     defineGetSet(n, "style", () => {
       if (!n.__style) Object.defineProperty(n, "__style", { value: {}, enumerable: false, writable: true, configurable: true });
@@ -322,17 +396,9 @@
     n.querySelector = (s) => queryAll(n, s)[0] || null;
     n.querySelectorAll = (s) => queryAll(n, s);
     n.getElementsByTagName = (t) => queryAll(n, t);
-    n.addEventListener = (type, fn) => {
-      if (!n.__ev) Object.defineProperty(n, "__ev", { value: {}, enumerable: false, writable: true, configurable: true });
-      const k = String(type);
-      (n.__ev[k] = n.__ev[k] || []).push(fn);
-    };
-    n.removeEventListener = (type, fn) => {
-      const k = String(type);
-      const list = n.__ev && n.__ev[k];
-      if (list) { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); }
-    };
-    n.dispatchEvent = () => true;
+    n.addEventListener = (type, fn) => addLis(n, type, fn);
+    n.removeEventListener = (type, fn) => removeLis(n, type, fn);
+    n.dispatchEvent = (evt) => fireAt(n, asEvent(evt, n));
     n.cloneNode = (deep) => {
       const copy = JSON.parse(JSON.stringify(n));
       return hydrate(copy, null);
@@ -390,7 +456,7 @@
   });
 
   const doc = {
-    get readyState() { return "complete"; },
+    get readyState() { return meta().readyState || "loading"; },
     get URL() { return meta().url; },
     get documentURI() { return meta().url; },
     get title() { return meta().title; },
@@ -428,19 +494,9 @@
     writeln(...parts) { doc.write(...parts); },
     open() { return doc; },
     close() {},
-    addEventListener(type, fn) {
-      const m = meta();
-      m.listeners = m.listeners || {};
-      const k = String(type);
-      m.listeners[k] = m.listeners[k] || [];
-      m.listeners[k].push(fn);
-    },
-    removeEventListener(type, fn) {
-      const m = meta();
-      const list = m.listeners && m.listeners[String(type)];
-      if (list) { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); }
-    },
-    dispatchEvent() { return true; },
+    addEventListener(type, fn) { addLis(doc, type, fn); },
+    removeEventListener(type, fn) { removeLis(doc, type, fn); },
+    dispatchEvent(evt) { return fireAt(doc, asEvent(evt, doc)); },
     get location() { return location; },
     get defaultView() { return globalThis; },
   };
@@ -449,6 +505,9 @@
   /* ---- window / globals ------------------------------------------------ */
   globalThis.location = location;
   globalThis.window = globalThis;
+  globalThis.addEventListener = (type, fn) => addLis(globalThis, type, fn);
+  globalThis.removeEventListener = (type, fn) => removeLis(globalThis, type, fn);
+  globalThis.dispatchEvent = (evt) => fireAt(globalThis, asEvent(evt, globalThis));
   globalThis.self = globalThis;
   globalThis.top = globalThis;
   globalThis.parent = globalThis;
@@ -481,6 +540,64 @@
     getAllResponseHeaders() { return ""; }
     addEventListener() {}
     removeEventListener() {}
+  };
+
+  /* ---- lifecycle events + dynamic <script> discovery -------------------- */
+  globalThis.__aiosFire = (type) => {
+    const m = meta();
+    if (type === "DOMContentLoaded") {
+      m.readyState = "interactive";
+      fireAt(doc, mkEvent("readystatechange", doc));
+      fireAt(doc, mkEvent("DOMContentLoaded", doc));
+    } else if (type === "load") {
+      m.readyState = "complete";
+      fireAt(doc, mkEvent("readystatechange", doc));
+      fireAt(globalThis, mkEvent("load", doc));
+      fireAt(doc, mkEvent("load", doc));
+    }
+    return true;
+  };
+
+  const markScript = (n) => {
+    if (!n.__ran) Object.defineProperty(n, "__ran", { value: true, enumerable: false, configurable: true });
+  };
+  const isJsType = (raw) => {
+    const kind = String(raw || "").toLowerCase().split(";")[0].trim();
+    return kind === "" || kind === "text/javascript" || kind === "application/javascript"
+      || kind === "text/ecmascript" || kind === "application/ecmascript";
+  };
+  const scriptCode = (n) => {
+    let out = "";
+    for (const c of n.children) if (c.tag === TEXT) out += c.text;
+    return out;
+  };
+  /* Mark the parser-inserted batch (executed by the Rust side itself) so
+   * later collection only yields page-created elements. */
+  globalThis.__aiosMarkScripts = () => {
+    const walk = (n) => { if (n.tag === "script") markScript(n); for (const c of n.children) walk(c); };
+    walk(dom());
+  };
+  /* New <script> elements appended by page code: marked here, returned once. */
+  globalThis.__aiosCollectScripts = () => {
+    const out = [];
+    const walk = (n) => {
+      if (n.tag === "script" && !n.__ran) {
+        markScript(n);
+        const type = getAttr(n, "type") || "";
+        if (String(type).toLowerCase() === "module") {
+          note("[js] skipped module script (no module loader)");
+          return;
+        }
+        if (!isJsType(type)) return;
+        const src = getAttr(n, "src");
+        if (src) { out.push({ src: String(src), code: null }); return; }
+        const code = scriptCode(n);
+        if (code.trim()) out.push({ src: null, code });
+      }
+      for (const c of n.children) walk(c);
+    };
+    walk(dom());
+    return out;
   };
 
   /* ---- timers: queued, flushed once after load, capped ------------------ */

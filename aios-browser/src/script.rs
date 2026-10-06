@@ -26,6 +26,18 @@ const MAX_CONSOLE_LINES: usize = 200;
 /// Cap for callbacks executed in a single timer flush.
 const MAX_TIMER_FLUSH: usize = 1000;
 
+/// A `<script>` element created by page code after the initial parse,
+/// collected by [`ScriptEngine::collect_dynamic_scripts`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct DynamicScript {
+    /// The element's raw `src` attribute (exactly one of `src`/`code` is set).
+    #[serde(default)]
+    pub src: Option<String>,
+    /// The element's inline source text (exactly one of `src`/`code` is set).
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
 /// Collected outcome of executing a page's scripts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScriptReport {
@@ -84,7 +96,9 @@ pub struct ScriptOutcome {
     /// Final URL (`location.href` reads it; `location.x = ...` requests are
     /// surfaced through `nav` instead of being followed automatically).
     pub url: String,
-    /// Navigation requested by a script (`location.href = ...`), not followed.
+    /// Navigation requested by a script (`location.href = ...`). Returned to
+    /// the engine, which follows it through [`crate::BrowserEngine`]'s
+    /// hop-capped navigation loop instead of loading it here.
     pub nav: Option<String>,
     /// Capped `console.*` lines.
     pub console: Vec<String>,
@@ -107,6 +121,15 @@ pub struct ScriptEngine {
     context: Context,
 }
 
+/// SAFETY: a `ScriptEngine` is confined to one logical task. The boa context
+/// is only touched while that task is being polled and two polls of a task
+/// never overlap, so moving the handle between threads across `await` points
+/// never exposes boa's non-atomic `Rc`s to concurrent use — the standard
+/// assumption behind embedding single-threaded script engines in async hosts
+/// (needed because the engine spans `NetworkClient` fetches in the page
+/// pipeline and `BrowserBlock::block_on` requires `Send` futures).
+unsafe impl Send for ScriptEngine {}
+
 impl ScriptEngine {
     /// Create a context for `dom` with the prelude loaded and the page state
     /// (`url`, `title`, `ua`) injected into `__meta`.
@@ -119,7 +142,6 @@ impl ScriptEngine {
             "ua": ua,
             "nav": null,
             "cookie": "",
-            "listeners": {},
             "local_storage": {},
             "session_storage": {},
         });
@@ -127,6 +149,9 @@ impl ScriptEngine {
         let boot = format!("globalThis.__dom = {dom_json}; globalThis.__meta = {meta_json}; globalThis.__console = [];");
         eval_raw(&mut context, &boot)?;
         eval_raw(&mut context, PRELUDE)?;
+        // The parser-inserted <script> batch is executed by the engine itself;
+        // mark it so later collection only returns page-created elements.
+        eval_raw(&mut context, "globalThis.__aiosMarkScripts();")?;
         Ok(Self { context })
     }
 
@@ -144,6 +169,32 @@ impl ScriptEngine {
             &mut self.context,
             &format!("globalThis.__aiosFlushTimers({MAX_TIMER_FLUSH});"),
         );
+    }
+
+    /// Fire the synthetic `DOMContentLoaded` event: `document` listeners and
+    /// `on*` property handlers run, `document.readyState` moves to
+    /// `"interactive"` (a `readystatechange` event fires first).
+    pub fn fire_dom_content_loaded(&mut self) -> Result<(), String> {
+        eval_raw(
+            &mut self.context,
+            r#"globalThis.__aiosFire("DOMContentLoaded");"#,
+        )
+    }
+
+    /// Fire the synthetic `load` event: `document.readyState` becomes
+    /// `"complete"` (`readystatechange`), then `window` and `document` load
+    /// listeners plus `onload` properties run.
+    pub fn fire_load(&mut self) -> Result<(), String> {
+        eval_raw(&mut self.context, r#"globalThis.__aiosFire("load");"#)
+    }
+
+    /// Collect `<script>` elements that page code appended to the DOM after
+    /// the initial parse. Each element is marked on collection, so it is
+    /// returned exactly once; `src` is left unresolved (the engine resolves
+    /// it against the page URL and fetches it).
+    pub fn collect_dynamic_scripts(&mut self) -> Result<Vec<DynamicScript>, String> {
+        let json = eval_json(&mut self.context, "globalThis.__aiosCollectScripts()")?;
+        serde_json::from_str(&json).map_err(|e| format!("dynamic scripts: {e}"))
     }
 
     /// Evaluate a snippet and convert the result into a [`ScriptValue`].
@@ -470,5 +521,94 @@ mod tests {
         let mut e = engine_for("<html><body></body></html>");
         let err = e.evaluate("throw new Error('boom')").unwrap_err();
         assert!(err.contains("boom"), "error was: {err}");
+    }
+
+    #[test]
+    fn lifecycle_events_reach_handlers() {
+        let mut e = engine_for("<html><head><title>T</title></head><body></body></html>");
+        e.run(
+            r#"
+            document.addEventListener("DOMContentLoaded", () => { document.title = "dcl seen"; });
+            window.addEventListener("load", () => { document.title = document.title + " + load"; });
+            "#,
+        )
+        .unwrap();
+        e.fire_dom_content_loaded().unwrap();
+        e.fire_load().unwrap();
+        let out = e.finish().unwrap();
+        assert_eq!(out.title, "dcl seen + load");
+    }
+
+    #[test]
+    fn ready_state_walks_loading_interactive_complete() {
+        let mut e = engine_for("<html><body></body></html>");
+        assert_eq!(
+            e.evaluate("document.readyState").unwrap(),
+            ScriptValue::String("loading".into())
+        );
+        e.fire_dom_content_loaded().unwrap();
+        assert_eq!(
+            e.evaluate("document.readyState").unwrap(),
+            ScriptValue::String("interactive".into())
+        );
+        e.fire_load().unwrap();
+        assert_eq!(
+            e.evaluate("document.readyState").unwrap(),
+            ScriptValue::String("complete".into())
+        );
+    }
+
+    #[test]
+    fn manual_event_dispatch_runs_node_listener() {
+        let mut e = engine_for(r#"<html><body><div id="d"></div></body></html>"#);
+        e.run(
+            r#"
+            const d = document.getElementById("d");
+            d.addEventListener("ping", (ev) => { d.textContent = "got " + ev.detail; });
+            d.dispatchEvent(new CustomEvent("ping", { detail: 7 }));
+            "#,
+        )
+        .unwrap();
+        let out = e.finish().unwrap();
+        let html = crate::serialize::dom_to_html(&out.dom);
+        assert!(html.contains("got 7"), "html: {html}");
+    }
+
+    #[test]
+    fn dynamic_scripts_collected_once_and_typed() {
+        let mut e = engine_for(r#"<html><body><script>1</script></body></html>"#);
+        // Parser-inserted scripts are pre-marked: nothing dynamic yet.
+        assert!(e.collect_dynamic_scripts().unwrap().is_empty());
+        e.run(
+            r#"
+            const s = document.createElement("script");
+            s.textContent = "1 + 1";
+            document.body.appendChild(s);
+            const ext = document.createElement("script");
+            ext.setAttribute("src", "/late.js");
+            document.body.appendChild(ext);
+            const mod = document.createElement("script");
+            mod.setAttribute("type", "module");
+            mod.textContent = "export {}";
+            document.body.appendChild(mod);
+            "#,
+        )
+        .unwrap();
+        let specs = e.collect_dynamic_scripts().unwrap();
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].code.as_deref(), Some("1 + 1"));
+        assert_eq!(specs[0].src, None);
+        assert_eq!(specs[1].src.as_deref(), Some("/late.js"));
+        assert_eq!(specs[1].code, None);
+        // Each element is returned exactly once.
+        assert!(e.collect_dynamic_scripts().unwrap().is_empty());
+        let out = e.finish().unwrap();
+        assert!(
+            out.console
+                .iter()
+                .any(|l| l.contains("skipped module script")),
+            "console: {:?}",
+            out.console
+        );
     }
 }

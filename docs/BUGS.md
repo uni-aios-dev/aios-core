@@ -1,28 +1,61 @@
 # AIOS Known Bugs & Workarounds
 
-## OPEN (v2.39.0): embedded JS engine has no event loop / module / network support (documented scope limits)
+## OPEN (v2.40.0): embedded JS engine still has no module loader / network from JS / input events (documented scope limits)
 
 - **Status:** OPEN (known limits, surfaced to the user — each limit is
   reported as a `console` note at runtime; not regressions, deliberate
-  scope of the first engine cut).
+  scope cuts). v2.40.0 closed the lifecycle/dynamic-script/navigation
+  parts of the previous entry (see RESOLVED below).
 - **Symptom:** pages relying on ES modules (`<script type="module">`),
-  `document.write`, dynamically injected `<script>` elements, `fetch`/XHR
-  data loading, `location.href` navigation or dispatched `error` events
-  render their static HTML only — the script half is skipped or degraded.
-  `addEventListener` handlers are stored but never fired (no event loop).
+  `document.write`, or `fetch`/XHR data loading render their static HTML
+  only — the script half is skipped or degraded. There is still no real
+  event loop: user-input events (click, keydown, ...) are never dispatched
+  because the text browser produces no input events, and `error` events
+  registered via listeners are stored but only fired if page code calls
+  `dispatchEvent` itself. Synthetic `DOMContentLoaded`/`load` and manual
+  `dispatchEvent` DO fire (v2.40.0).
 - **Design rationale:** the engine runs each page in a fresh, single-shot
   `boa_engine::Context` (JSON-in / `JSON.stringify`-out bridge, zero host
-  functions) and flushes timers exactly once after load — deterministic
-  post-load state for the text renderer beats a half-implemented event
-  loop. Rust keeps the network (`reqwest`) so `fetch` cannot bypass the
-  block's config/timeouts.
+  functions), flushes timers exactly once after `DOMContentLoaded` and
+  fires `load` once before readback — deterministic post-load state for
+  the text renderer beats a half-implemented event loop. Rust keeps the
+  network (`reqwest`) so `fetch` cannot bypass the block's
+  config/timeouts.
 - **Workaround:** pages needing those features can be opened with `B`/`n`
   (full native WebView window), or the headless Chromium fallback renders
   JS-heavy shells when it is available.
-- **Next:** candidates in order — fire stored listeners for a small set of
-  synthetic events (load/error), `<script type="module">` via boa's module
-  loader, `location.href` → engine navigation (needs session callback),
-  and a host-backed `fetch` that goes through `NetworkClient`.
+- **Next:** candidates in order — `<script type="module">` via boa's
+  module loader, a host-backed `fetch`/XHR that goes through
+  `NetworkClient`, then (if ever needed) timer-driven event dispatch for
+  input.
+
+## RESOLVED (v2.40.0): lifecycle events, dynamic <script> and navigation never fired/ran/followed
+
+- **Status:** RESOLVED in v2.40.0.
+- **Symptom (v2.39.0):** `addEventListener` handlers were stored but
+  never fired (`DOMContentLoaded`/`load` never came, `readyState` was
+  stuck at `"complete"`), `<script>` elements created by page code were
+  silently skipped, and `location.href = ...` / `<meta
+  http-equiv="refresh">` printed `[js] navigation ... requested (not
+  followed)` instead of loading the target.
+- **Fix:**
+  1. A shared dispatch core (`fireAt` + `__aiosFire`) in the prelude
+     fires `readystatechange`/`DOMContentLoaded` on the document and
+     `readystatechange`/`load` on window+document at the right points of
+     the page pipeline; `on<type>` properties participate as handlers;
+     `Event`/`CustomEvent` + `dispatchEvent` now work on every node.
+  2. `__aiosMarkScripts` pre-marks parser-inserted scripts;
+     `__aiosCollectScripts` discovery rounds (8 rounds / 20 scripts,
+     shared across lifecycle phases) execute page-created inline and
+     `src` scripts (`src` fetched through `NetworkClient`).
+  3. `build_page` follows script navigation and zero-delay meta refresh
+     through a hop-capped loop (`MAX_NAV_HOPS = 5`) with `[nav]` console
+     traces and guards (same-URL, non-http scheme, fetch failure);
+     `Page::url` is the chain's final URL.
+- **Verification:** 23 new tests (102 in-crate total, workspace green),
+  including end-to-end chains against a local HTTP test server;
+  `document.readyState` walks `loading → interactive → complete` with
+  console evidence.
 
 ## RESOLVED (v2.38.40): USB HID usage table dropped F-keys/keypad and mistranslated punctuation (scenario K red on every ISO)
 

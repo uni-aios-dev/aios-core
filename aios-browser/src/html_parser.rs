@@ -83,6 +83,15 @@ fn heading_level(tag: &str) -> Option<usize> {
     rest.parse::<usize>().ok().filter(|n| (1..=6).contains(n))
 }
 
+/// A `<meta http-equiv="refresh">` navigation request found in a document.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetaRefresh {
+    /// Delay before the redirect, in seconds (`0` = immediate).
+    pub delay_secs: u64,
+    /// The target URL from `content="N; url=..."` (`None` = same document).
+    pub target: Option<String>,
+}
+
 pub struct HtmlParser;
 
 impl HtmlParser {
@@ -194,6 +203,46 @@ impl HtmlParser {
                     .join(" ")
             })
             .unwrap_or_default()
+    }
+
+    /// Find the document's `<meta http-equiv="refresh" content="...">`
+    /// navigation request, if any. Only the first valid refresh wins.
+    pub fn extract_meta_refresh(html: &str) -> Option<MetaRefresh> {
+        let document = Html::parse_document(html);
+        let selector = Selector::parse("meta[http-equiv]").unwrap();
+        for element in document.select(&selector) {
+            let http_equiv = element.value().attr("http-equiv").unwrap_or("");
+            if !http_equiv.trim().eq_ignore_ascii_case("refresh") {
+                continue;
+            }
+            let content = match element.value().attr("content") {
+                Some(c) => c,
+                None => continue,
+            };
+            let (delay_raw, rest) = match content.find(';') {
+                Some(i) => (&content[..i], Some(&content[i + 1..])),
+                None => (content, None),
+            };
+            let Ok(delay_secs) = delay_raw.trim().parse::<u64>() else {
+                continue;
+            };
+            let target = rest
+                .map(str::trim)
+                .and_then(|r| {
+                    let lower = r.to_ascii_lowercase();
+                    let pos = lower.find("url=")?;
+                    let raw = r[pos + 4..].trim();
+                    let unquoted = raw
+                        .strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .or_else(|| raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                        .unwrap_or(raw);
+                    Some(unquoted.trim().to_string())
+                })
+                .filter(|t| !t.is_empty());
+            return Some(MetaRefresh { delay_secs, target });
+        }
+        None
     }
 
     /// Render a subtree in flow (block) context.
@@ -551,5 +600,43 @@ mod tests {
         let dom = HtmlParser::parse(html, "https://example.com/");
         assert_eq!(dom.tag, "document");
         assert!(!dom.children.is_empty());
+    }
+
+    #[test]
+    fn test_extract_meta_refresh_immediate() {
+        let html =
+            r#"<head><meta http-equiv="refresh" content="0; url=https://other.test/next"></head>"#;
+        let refresh = HtmlParser::extract_meta_refresh(html).unwrap();
+        assert_eq!(refresh.delay_secs, 0);
+        assert_eq!(refresh.target.as_deref(), Some("https://other.test/next"));
+    }
+
+    #[test]
+    fn test_extract_meta_refresh_delayed_and_relative() {
+        let html = r#"<meta http-equiv="REFRESH" content='5;url=/later'>"#;
+        let refresh = HtmlParser::extract_meta_refresh(html).unwrap();
+        assert_eq!(refresh.delay_secs, 5);
+        assert_eq!(refresh.target.as_deref(), Some("/later"));
+    }
+
+    #[test]
+    fn test_extract_meta_refresh_without_url_is_none_target() {
+        let html = r#"<meta http-equiv="refresh" content="3">"#;
+        let refresh = HtmlParser::extract_meta_refresh(html).unwrap();
+        assert_eq!(refresh.delay_secs, 3);
+        assert_eq!(refresh.target, None);
+    }
+
+    #[test]
+    fn test_extract_meta_refresh_invalid_content_ignored() {
+        assert!(HtmlParser::extract_meta_refresh(
+            r#"<meta http-equiv="refresh" content="soon; url=/x">"#
+        )
+        .is_none());
+        assert!(HtmlParser::extract_meta_refresh(
+            r#"<meta http-equiv="Content-Type" content="text/html">"#
+        )
+        .is_none());
+        assert!(HtmlParser::extract_meta_refresh("<html><body>x</body></html>").is_none());
     }
 }

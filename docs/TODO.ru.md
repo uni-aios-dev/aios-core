@@ -418,7 +418,16 @@
   - [x] IPC-команды `BrowserBlock`: `back`, `forward`, `reload`, `new_tab`, `close_tab`, `select_tab`, `session_status`, `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`, `add_user_script`; `browser_status` отдаёт `execute_scripts` + вкладки + флаги навигации
   - [x] Userscripts: инжект с матчем паттерна (`url_matches`) после скриптов страницы; `BrowserConfig.execute_scripts = false` выключает конвейер; `Page` несёт `console`/`scripts_executed`/`script_errors`
   - [x] UI: клавиша `J` в TUI `aios` — панель JS-консоли (число скриптов, ошибки, строки console), подсказка в футере, лог статистики после загрузки, `web_navigate` использует `normalize_url`; `aios-tui::fetch_url` гонит полный `BrowserEngine`
-  - [ ] Известные ограничения (задокументированы): ES-модули пропускаются, `document.write` — no-op, динамические `<script>` не исполняются, `fetch`/XHR отклоняются (сеть остаётся в Rust), `location.href` не навигирует, события `error` хранятся, но не диспатчатся
+  - [ ] Известные ограничения (задокументированы, BUGS OPEN v2.40.0): ES-модули пропускаются, `document.write` — no-op, `fetch`/XHR отклоняются (сеть остаётся в Rust), нет event loop для ввода, события `error` хранятся, но не диспатчатся автоматически
+
+- [x] **Фаза 25d: Итерация движка 2 — события жизненного цикла, динамические скрипты, навигация — ЗАВЕРШЕНА (v2.40.0)**
+  - [x] Синтетические `DOMContentLoaded`/`load`: реальное ядро диспетчеризации (`fireAt`) для документа/окна/узлов, обработчики-свойства `on<type>`, цепочка `readystatechange`, `document.readyState` проходит `loading → interactive → complete`, исключения обработчиков перехватываются в консоль
+  - [x] Поверхность событий: конструкторы `Event`/`CustomEvent`, работающий `dispatchEvent`, `window.addEventListener/removeEventListener`, рефлексивные атрибуты `src`/`href`
+  - [x] Исполнение динамических `<script>`: раунды обнаружения `__aiosMarkScripts`/`__aiosCollectScripts` по всем фазам жизненного цикла (общие лимиты 8 раундов / 20 скриптов), инлайн выполняется на месте, `src` грузится через `NetworkClient`, skip-заметки module/не-JS сохранены
+  - [x] Цикл навигации: `location.href`/`assign`/`replace` и meta refresh с нулевой задержкой (`HtmlParser::extract_meta_refresh`) выполняются с `MAX_NAV_HOPS = 5`, `[nav]`-трассировками в консоли, защитами (same-URL петля, не-http схема, ошибка загрузки), `Page::url` = финальный URL
+  - [x] `unsafe impl Send for ScriptEngine` (документировано): движок закономерно пересекает асинхронные fetch'и, а `block_on` требует `Send`-фьючерсы
+  - [x] Тесты: +23 (порядок lifecycle/readyState, изоляция упавшего обработчика, инлайн/цепочка/внешний/ошибка динамических скриптов, завершение на лимите раундов, end-to-end навигация против локального HTTP тест-сервера, meta refresh немедленный/с задержкой/same-URL, hop-лимит, отказ схемы); всего в crate 102
+  - [ ] Будущее: ES-модули через загрузчик модулей boa; host-backed `fetch`/XHR через `NetworkClient`
 
 - [x] **Фаза 40: Хранилище блоков — источники, каталог, установщик, сервис обновлений — ЗАВЕРШЕНА**
   - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), локально (`local:path`), HTTP-сервис обновлений (`http://host:port`)
