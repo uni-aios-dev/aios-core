@@ -443,6 +443,15 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [ ] Future: embed the webview as an in-window child of the GUI Browser tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
   - [x] Future: headless render-to-text fallback for JS-heavy sites — `aios-browser::headless` dumps the DOM in a headless Chromium-class browser (`msedge`/`chromium`/`google-chrome`, override via `AIOS_HEADLESS_BROWSER`, `--no-sandbox` via `AIOS_HEADLESS_NO_SANDBOX`) when the plain fetch yields no readable text; adopted only when the rendered text is substantially richer (v2.17.0)
 
+- [x] **Phase 25c: Embedded JS Engine & Stateful Browser Session — COMPLETE (v2.39.0)**
+  - [x] Execute page `<script>` on load via embedded boa 0.22 (fresh context per page; JSON-in/JSON-out DOM bridge, zero host functions; `script_prelude.js` hydrates DOM/console/location/storage/timers, `__aiosFlushTimers` once after all scripts)
+  - [x] DOM → HTML serializer (`src/serialize.rs`, VOID/RAW_TEXT-aware) so mutations re-enter the parse pipeline
+  - [x] `BrowserSession`: per-tab back/forward stacks, `reload`, tabs (`new_tab`/`close_tab`/`select_tab`), bookmarks (JSON persistence), `normalize_url`, `eval_js` (replays stored post-script HTML), `SessionSnapshot` for live-update state (legacy `(config, state)` blobs still restore)
+  - [x] IPC commands on `BrowserBlock`: `back`, `forward`, `reload`, `new_tab`, `close_tab`, `select_tab`, `session_status`, `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`, `add_user_script`; `browser_status` reports `execute_scripts` + tabs + nav flags
+  - [x] Userscripts: pattern-matched (`url_matches`) injection after page scripts; `BrowserConfig.execute_scripts = false` disables the pipeline; `Page` carries `console`/`scripts_executed`/`script_errors`
+  - [x] UI: TUI `aios` `J` JS-console sidebar (script count, errors, console lines), footer hint, post-load stats log, `web_navigate` uses `normalize_url`; `aios-tui::fetch_url` runs the full `BrowserEngine`
+  - [ ] Known limits (documented): ES modules skipped, `document.write` no-op, dynamic `<script>` not executed, `fetch`/XHR rejected (network stays in Rust), `location.href` does not navigate, `error` events stored not dispatched
+
 - [x] **Phase 40: Block Store — Sources, Catalog, Installer, Update Service — COMPLETE**
   - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), local (`local:path`), HTTP update service (`http://host:port`)
   - [x] `aios-store::catalog`: `fetch_index`/`download_block` (async HTTP + local scan of `*.wasm`/`*.bin` + sidecar JSON), `parse_name_version`

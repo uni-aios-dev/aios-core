@@ -411,6 +411,15 @@
   - [ ] Будущее: нативный браузер в Live ISO — добавить WebKitGTK в Alpine rootfs и собирать `aios`/`aios-gui` с включённой фичей `webview`, чтобы клавиши `B`/`n` и вкладка GUI Browser работали и на live USB (в v2.32.0 образ поставляется без неё)
   - [x] Будущее: headless render-to-text fallback для JS-тяжёлых сайтов — `aios-browser::headless` дампит DOM в headless-браузере класса Chromium (`msedge`/`chromium`/`google-chrome`, переопределение через `AIOS_HEADLESS_BROWSER`, `--no-sandbox` через `AIOS_HEADLESS_NO_SANDBOX`), когда обычная загрузка не даёт читаемого текста; принимается только если отрендеренный текст заметно богаче (v2.17.0)
 
+- [x] **Фаза 25c: Встроенный JS-движок и состоятельная браузерная сессия — ЗАВЕРШЕНА (v2.39.0)**
+  - [x] Исполнение `<script>` страницы при загрузке через встроенный boa 0.22 (свежий контекст на страницу; DOM-мост JSON-in/JSON-out с нулём host-функций; `script_prelude.js` гидратит DOM/console/location/хранилища/таймеры, `__aiosFlushTimers` один раз после всех скриптов)
+  - [x] Сериализатор DOM → HTML (`src/serialize.rs`, с учётом VOID/RAW_TEXT), чтобы мутации возвращались в конвейер парсинга
+  - [x] `BrowserSession`: стеки back/forward на вкладку, `reload`, вкладки (`new_tab`/`close_tab`/`select_tab`), закладки (JSON-персистентность), `normalize_url`, `eval_js` (воспроизведение сохранённого post-script HTML), `SessionSnapshot` для передачи состояния при live-update (старые блобы `(config, state)` тоже восстанавливаются)
+  - [x] IPC-команды `BrowserBlock`: `back`, `forward`, `reload`, `new_tab`, `close_tab`, `select_tab`, `session_status`, `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`, `add_user_script`; `browser_status` отдаёт `execute_scripts` + вкладки + флаги навигации
+  - [x] Userscripts: инжект с матчем паттерна (`url_matches`) после скриптов страницы; `BrowserConfig.execute_scripts = false` выключает конвейер; `Page` несёт `console`/`scripts_executed`/`script_errors`
+  - [x] UI: клавиша `J` в TUI `aios` — панель JS-консоли (число скриптов, ошибки, строки console), подсказка в футере, лог статистики после загрузки, `web_navigate` использует `normalize_url`; `aios-tui::fetch_url` гонит полный `BrowserEngine`
+  - [ ] Известные ограничения (задокументированы): ES-модули пропускаются, `document.write` — no-op, динамические `<script>` не исполняются, `fetch`/XHR отклоняются (сеть остаётся в Rust), `location.href` не навигирует, события `error` хранятся, но не диспатчатся
+
 - [x] **Фаза 40: Хранилище блоков — источники, каталог, установщик, сервис обновлений — ЗАВЕРШЕНА**
   - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), локально (`local:path`), HTTP-сервис обновлений (`http://host:port`)
   - [x] `aios-store::catalog`: `fetch_index`/`download_block` (async HTTP + локальное сканирование `*.wasm`/`*.bin` + sidecar JSON), `parse_name_version`

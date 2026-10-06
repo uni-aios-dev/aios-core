@@ -1,5 +1,68 @@
 # AIOS Development Log
 
+## v2.39.0 — embedded JavaScript engine + full-featured browser: scripts, history, tabs, bookmarks (2026-10-06)
+
+Feature release. `aios-browser` grows from a fetch-and-scrape client into a
+real browsing engine: every fetched page is executed through an embedded
+pure-Rust JavaScript engine (boa 0.22), and the block-level IPC surface
+gains a stateful session (back/forward stacks, multiple tabs, bookmarks,
+userscripts, `eval_js`). Kernel code is untouched (VERSION only), so the
+smoke suite is expected to stay green.
+
+### Added
+- **JS execution on page load (`src/script.rs`, `src/script_prelude.js`)** —
+  a fresh boa context per page; Rust injects `__dom` (serialized DOM),
+  `__meta` (url/title/ua/...) and `__console`, then evaluates a ~500-line
+  prelude that hydrates real DOM objects (getElementById/querySelector,
+  textContent/innerHTML mutation, createElement/appendChild,
+  addEventListener storage, location with navigation surfaced not followed),
+  a console shim (capped, level-prefixed), `localStorage/sessionStorage`
+  on `__meta`, and a timer queue: `setTimeout/setInterval` are recorded and
+  flushed exactly once after all scripts ran (`__aiosFlushTimers`, each
+  callback at most once per flush). Zero host functions — the readback is
+  `JSON.stringify` of the mutated `__dom`/`__meta`/`__console`, re-parsed
+  by the existing `HtmlParser` + new `src/serialize.rs` `dom_to_html`.
+- **`src/serialize.rs` — DOM → HTML serializer** — round-trips the parser,
+  honours VOID/RAW_TEXT elements, escapes text/attrs, sanitizes
+  script-produced attribute names.
+- **`src/session.rs` — `BrowserSession`** — per-tab back/forward stacks,
+  bookmarks (add/remove/JSON persistence, URL normalization),
+  `normalize_url` (adds `https://` when no scheme), `eval_js` (fresh
+  context replaying the stored post-script HTML without re-running page
+  scripts), `SessionSnapshot` for live-update state transfer (pages are
+  refetched on demand; legacy `(config, state)` state blobs still restore).
+- **IPC commands in `src/block.rs`** — `back`, `forward`, `reload`,
+  `new_tab`, `close_tab`, `select_tab`, `session_status`,
+  `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`,
+  `add_user_script`; `browser_status` now reports `execute_scripts`,
+  tab counts and navigation flags. `browse` goes through the session, so
+  history accumulates across IPC calls.
+- **Userscripts (`BrowserConfig` + `BrowserEngine`)** — pattern-matched
+  (`url_matches` globs/substrings) scripts injected after the page's own
+  ones; `BrowserConfig.execute_scripts = false` disables the whole
+  pipeline. `Page` now carries `console`, `scripts_executed`,
+  `script_errors`.
+- **TUI `aios` JS console panel** — new `J` key opens a third sidebar mode
+  showing script count, errors (red) and console lines; the footer hints
+  `'J' js console (N scripts, M errors)`; page load logs
+  `scripts=N errors=M console=K` when a page ran scripts.
+- **`aios-tui` fetch path uses `BrowserEngine`** — `fetch_url` now runs the
+  full engine (fetch → parse → scripts → render), so the dashboard web tab
+  executes page scripts too; `navigate_web` uses `normalize_url`.
+
+### Notes
+- Known engine limitations (documented, note surfaced in the JS console):
+  ES modules are skipped, `document.write` is a no-op, `fetch`/XHR reject
+  with a note (network stays in Rust), dynamically inserted `<script>` is
+  not executed, `location.href` assignment does not navigate, `error`
+  events are stored but not dispatched. Rationale: single-threaded,
+  deterministic post-load state beats a partial event loop.
+- Design: a fresh boa context per `evaluate`/page keeps the engine stateless
+  across IPC calls; `eval_js` replays the stored HTML, so it is cheap and
+  cannot corrupt the session's page.
+- Gates: fmt/clippy (0 warnings)/workspace tests all green; aios-browser
+  crate: 79 tests (36 new for script/session/block coverage).
+
 ## v2.38.40 — USB HID keyboard table: F-keys, keypad, correct punctuation (K probe green) (2026-10-06)
 
 Closes the long-standing scenario K keyboard-routing probe (three checks red

@@ -906,9 +906,15 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         )));
     }
     if !app.web.bookmark_naming && !app.web.current_url.is_empty() && app.web.page.is_some() {
+        let (scripts, errors) = app
+            .web
+            .page
+            .as_ref()
+            .map(|p| (p.scripts_executed, p.script_errors.len()))
+            .unwrap_or((0, 0));
         content_items.push(ListItem::new(Line::from(Span::styled(
             format!(
-                " 'a' bookmark  'm' bookmarks ({}) ",
+                " 'a' bookmark  'm' bookmarks ({})  'J' js console ({scripts} scripts, {errors} errors) ",
                 app.web.bookmarks.len()
             ),
             Style::default().fg(Color::DarkGray),
@@ -934,7 +940,42 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     );
     frame.render_widget(content, chunks[0]);
 
-    let right_items: Vec<ListItem> = if app.web.show_bookmarks {
+    let right_items: Vec<ListItem> = if app.web.show_js_console {
+        let width = sidebar_width.saturating_sub(2) as usize;
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(ref page) = app.web.page {
+            lines.push(format!(
+                "scripts: {}  errors: {}",
+                page.scripts_executed,
+                page.script_errors.len()
+            ));
+            for err in &page.script_errors {
+                lines.push(format!("[error] {err}"));
+            }
+            for entry in &page.console {
+                lines.push(entry.clone());
+            }
+        }
+        if lines.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                " No script output on this page ",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            lines
+                .iter()
+                .map(|l| {
+                    let is_error = l.starts_with("[error]");
+                    let style = if is_error {
+                        Style::default().fg(Color::Red)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+                    ListItem::new(Line::from(Span::styled(compact_label(l, width), style)))
+                })
+                .collect()
+        }
+    } else if app.web.show_bookmarks {
         if app.web.bookmarks.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
                 " No bookmarks yet — press 'a' to add ",
@@ -982,7 +1023,9 @@ fn draw_web_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
             None => vec![ListItem::new(Line::from(" No links yet "))],
         }
     };
-    let right_title = if app.web.show_bookmarks {
+    let right_title = if app.web.show_js_console {
+        " JS Console — Esc "
+    } else if app.web.show_bookmarks {
         " Bookmarks — j/k o d Esc "
     } else {
         " Links "

@@ -13,7 +13,9 @@ use std::time::Duration;
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
 use aios_bridge::dto::{StorePublishRequest, StorePublishResponse};
+use aios_browser::engine::BrowserEngine;
 use aios_browser::html_parser::HtmlParser;
+use aios_browser::types::BrowserConfig;
 use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
@@ -60,22 +62,28 @@ fn http_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
 }
 
 fn fetch_url(url: &str) -> Result<PageContent, Box<dyn std::error::Error>> {
-    let resp = http_client()?
-        .get(url)
-        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
-        .send()?;
-    let html = resp.text()?;
-    let title = HtmlParser::extract_title(&html);
-    let text = HtmlParser::extract_text(&html);
-    let links = HtmlParser::extract_links(&html, url)
-        .into_iter()
-        .map(|l| (l.text, l.href))
-        .collect();
+    let engine = BrowserEngine::new(BrowserConfig {
+        user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            .into(),
+        timeout_secs: 15,
+        ..BrowserConfig::default()
+    });
+    // Dedicated current-thread runtime: fetch_url runs on a plain spawned
+    // thread with no ambient tokio context.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let page = rt.block_on(engine.navigate(url))?;
     Ok(PageContent {
-        url: url.to_string(),
-        title,
-        text,
-        links,
+        url: page.url.clone(),
+        title: page.title.clone(),
+        text: page.text_content.clone(),
+        links: page
+            .links
+            .iter()
+            .map(|l| (l.text.clone(), l.href.clone()))
+            .collect(),
     })
 }
 
@@ -155,11 +163,7 @@ fn navigate_web(state: &mut DashboardState, raw: &str) {
         return;
     }
     if is_url_input(raw) {
-        let url = if raw.starts_with("http://") || raw.starts_with("https://") {
-            raw.to_string()
-        } else {
-            format!("https://{raw}")
-        };
+        let url = aios_browser::normalize_url(raw);
         load_url(state, &url, true);
     } else {
         let prev = state.web_state.current_url.clone();

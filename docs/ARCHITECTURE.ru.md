@@ -1106,6 +1106,18 @@ User Input (TUI)
   - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
   - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → результаты + AI-краткое содержание
 
+### Фаза 25b: Встроенный JS-движок и состоятельная браузерная сессия (`aios-browser`, v2.39.0) — *ЗАВЕРШЕНО*
+- **Конвейер исполнения JS** (`src/script.rs` + `src/script_prelude.js`): каждая загруженная страница проходит через встроенный чистый-Rust движок (boa 0.22)
+  - Ноль host-функций: Rust инжектит `__dom` (дерево `DomNode` как JSON), `__meta` (url/title/user-agent/слушатели/хранилища) и `__console`, вычисляет прелоад, запускает скрипты страницы + userscripts, затем читает обратно `JSON.stringify(__dom/__meta/__console)` — нет поверхности FFI на каждую функцию моста
+  - Свежий `boa_engine::Context` на страницу/`evaluate`: движок stateless между IPC-вызовами, детерминирован и защищён от утечек между страницами; `eval_js` воспроизводит сохранённый post-script HTML без повторного запуска скриптов
+  - Прелоад даёт: гидрацию DOM (getElementById/querySelector(All), мутации textContent/innerHTML, createElement/appendChild/insertBefore/remove, атрибуты, хранение addEventListener), консоль-шим с префиксами уровней и лимитом, `location` (сеттер href отражает навигацию в `__meta.nav` — намеренно не выполняется), `localStorage`/`sessionStorage` поверх `__meta`, шимы `alert`/`confirm`/`prompt`, отклоняемые с заметкой в консоли `fetch`/XHR (сеть остаётся в Rust), очередь таймеров `__aiosFlushTimers` с одним flush после всех скриптов (каждый callback ≤ 1× за flush)
+  - Известные ограничения (задокументированы, заметка уходит в консоль): ES-модули пропускаются, `document.write` — no-op, динамические `<script>` не исполняются, события `error` хранятся, но не диспатчатся
+- **Сериализатор DOM → HTML** (`src/serialize.rs`): round-trip с `HtmlParser::parse`, VOID/RAW_TEXT-наборы элементов, экранирование текста/атрибутов, санитизация имён атрибутов, созданных скриптами
+- **`BrowserSession`** (`src/session.rs`): движок + стеки back/forward на вкладку + закладки + userscripts
+  - `normalize_url` (добавляет `https://` без схемы; экспортируется для переиспользования в UI), `back`/`forward`/`reload`/`new_tab`/`close_tab`/`select_tab`, add/remove закладок с JSON-персистентностью, `eval_js`, `SessionSnapshot` для передачи состояния при live-update (страницы перезапрашиваются по требованию; старые блобы `(config, state)` тоже восстанавливаются)
+- **IPC `BrowserBlock`** (`src/block.rs`): прежняя поверхность (`browse`, `open_native`, `browser_status`, `HealthCheck`) плюс `back`, `forward`, `reload`, `new_tab`, `close_tab`, `select_tab`, `session_status`, `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`, `add_user_script`; `browse` идёт через сессию, поэтому история накапливается; извлечение состояния = `(BrowserConfig, BlockState, SessionSnapshot)` с fallback-восстановлением старого 2-кортежа
+- **Интеграция в UI**: вкладка Web в TUI `aios` — `J` открывает панель JS-консоли (число скриптов, ошибки красным, строки консоли), подсказка в футере, после загрузки лог `scripts=N errors=M console=K`, `web_navigate` использует `normalize_url`; `aios-tui::fetch_url` гонит полный `BrowserEngine` (fetch → парсинг → скрипты) на выделенном однониточном рантайме
+
 ### Фаза 28: Headless Daemon (`aios-daemon`) — *ЗАВЕРШЕНО*
 - **Крейт `aios-daemon`**:
   - Бинарник `aiosd`: headless-сервер с той же инициализацией, что и `aios-tui`, без терминала

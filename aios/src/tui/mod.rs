@@ -740,11 +740,7 @@ fn web_navigate(app: &mut TuiApp, raw: &str) {
         return;
     }
     let url = if is_url_input(raw) {
-        if raw.starts_with("http://") || raw.starts_with("https://") {
-            raw.to_string()
-        } else {
-            format!("https://{raw}")
-        }
+        aios_browser::normalize_url(raw)
     } else {
         app.web.search_query = raw.to_string();
         format!(
@@ -771,6 +767,17 @@ fn web_poll(app: &mut TuiApp) {
                 Ok(page) => {
                     let url = page.url.clone();
                     let is_active = tab_idx == app.web.active_tab;
+                    if page.scripts_executed > 0 || !page.script_errors.is_empty() {
+                        push_log(
+                            &app.logs,
+                            format!(
+                                "AIOS: web: scripts={} errors={} console={}",
+                                page.scripts_executed,
+                                page.script_errors.len(),
+                                page.console.len()
+                            ),
+                        );
+                    }
                     tab.url = url.clone();
                     tab.page = Some(page);
                     tab.scroll = 0;
@@ -1685,6 +1692,14 @@ fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
         return;
     }
 
+    if app.web.show_js_console {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('J') => app.web.show_js_console = false,
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('g') => {
             app.web.url_input.clear();
@@ -1709,6 +1724,9 @@ fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
                 .web
                 .bookmarks_sel
                 .min(app.web.bookmarks.len().saturating_sub(1));
+        }
+        KeyCode::Char('J') => {
+            app.web.show_js_console = true;
         }
         KeyCode::Char('j') | KeyCode::Down => web_link_move(app, 1),
         KeyCode::Char('k') | KeyCode::Up => web_link_move(app, -1),

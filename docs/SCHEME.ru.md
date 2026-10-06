@@ -287,7 +287,7 @@ StatefulBlock::handle_message() → Response(ok|err)             [aios-core::blo
 
 | Крейт | Ключевой API |
 |---|---|
-| `aios-browser` (8 файлов · 1.4 тыс. · 36 т) | `BrowserEngine::navigate(url)`, `HtmlParser::{parse,extract_text,extract_links,extract_title}`, `Renderer::{render_page,to_text}`, headless-фолбэк браузерного движка, `BrowserBlock` |
+| `aios-browser` (11 файлов · 3.1 тыс. · 79 т) | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный JS-движок boa (`ScriptEngine`, прелоад скриптов), `HtmlParser::{parse,extract_text,extract_links,extract_title}`, `Renderer::{render_page,to_text}`, сериализатор `dom_to_html`, headless-фолбэк браузерного движка, `BrowserBlock` |
 | `aios-search` (5 файлов · 0.4 тыс. · 7 т) | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + LLM TL;DR в `SearchSummarizer` |
 | `aios-webview` (2 файла · 0.3 тыс. · 7 т) | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке через event-loop proxy; постоянный профиль; правило адресной строки `resolve_target()` |
 | `aios-net-config` (5 файлов · 0.9 тыс. · 32 т) | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |

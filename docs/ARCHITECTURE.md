@@ -1112,6 +1112,18 @@ Three adaptive AI modes depending on hardware resources:
   - `POST /api/v1/browse` — `{"url": "..."}` → title, text_content, links
   - `POST /api/v1/search` — `{"query":"...","backend":"...","max_results":N,"enable_summary":bool}` → results + AI summary
 
+### Phase 25b: Embedded JS Engine & Stateful Browser Session (`aios-browser`, v2.39.0) — *COMPLETED*
+- **JS execution pipeline** (`src/script.rs` + `src/script_prelude.js`): every fetched page runs through an embedded pure-Rust engine (boa 0.22)
+  - Zero host functions: Rust injects `__dom` (the parsed `DomNode` tree as JSON), `__meta` (url/title/user-agent/listeners/storage) and `__console`, evaluates the prelude, runs page scripts + userscripts, then reads back `JSON.stringify(__dom/__meta/__console)` — no per-bridge-function FFI surface to keep in sync
+  - Fresh `boa_engine::Context` per page/`evaluate`: the engine is stateless across IPC calls, deterministic and immune to cross-page leakage; `eval_js` replays the stored post-script HTML without re-running page scripts
+  - Prelude provides: DOM hydration (getElementById/querySelector(All), textContent/innerHTML mutation, createElement/appendChild/insertBefore/remove, attributes, addEventListener storage), console shim with level prefixes and caps, `location` (href setter surfaces navigation in `__meta.nav` — deliberately not followed), `localStorage`/`sessionStorage` backed by `__meta`, `alert`/`confirm`/`prompt` shims, `fetch`/XHR rejected with a console note (network stays in Rust), timer queue `__aiosFlushTimers` flushed once after all scripts (each callback ≤ 1× per flush)
+  - Known limits (documented, noted into the console): ES modules skipped, `document.write` no-op, dynamic `<script>` not executed, `error` events stored not dispatched
+- **DOM → HTML serializer** (`src/serialize.rs`): round-trips `HtmlParser::parse`, honours VOID/RAW_TEXT element sets, escapes text/attrs, sanitizes script-produced attribute names
+- **`BrowserSession`** (`src/session.rs`): engine + per-tab back/forward stacks + bookmarks + userscripts
+  - `normalize_url` (adds `https://` when no scheme; exported for UI reuse), `back`/`forward`/`reload`/`new_tab`/`close_tab`/`select_tab`, bookmark add/remove/JSON persistence, `eval_js`, `SessionSnapshot` for live-update state transfer (pages refetched on demand; legacy `(config, state)` blobs still restore)
+- **`BrowserBlock` IPC** (`src/block.rs`): previous surface (`browse`, `open_native`, `browser_status`, `HealthCheck`) plus `back`, `forward`, `reload`, `new_tab`, `close_tab`, `select_tab`, `session_status`, `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`, `add_user_script`; `browse` routes through the session so history accumulates; state extract = `(BrowserConfig, BlockState, SessionSnapshot)` with fallback restore of the old 2-tuple
+- **UI integration**: TUI `aios` web tab — `J` opens a JS console sidebar (script count, errors in red, console lines), footer hint, post-load `scripts=N errors=M console=K` log line, `web_navigate` uses `normalize_url`; `aios-tui::fetch_url` runs the full `BrowserEngine` (fetch → parse → scripts) on a dedicated current-thread runtime
+
 ### Phase 28: Headless Daemon (`aios-daemon`) — *COMPLETED*
 - **`aios-daemon` crate**:
   - `aiosd` binary: headless server performing the same initialization as `aios-tui` without terminal access

@@ -325,7 +325,7 @@ The same network commands are available from the Shell as `net get` / `net set`.
 
 ### Web Tab (6)
 
-The built-in text-mode browser loads pages in the background (the TUI stays responsive). The omnibox accepts a full URL, a bare host (`example.com`), or a plain search query (searched via DuckDuckGo). A sidebar lists the links of the current page; the page text wraps to the pane width and can be scrolled. The current page can be saved as a **bookmark** (`a`) and managed in the **bookmarks panel** (`m`); bookmarks persist in `AIOS_DATA_DIR/web_bookmarks.json`. Multiple pages can be open as **browser tabs** (`t` opens a new one, `x` closes the active one, `[`/`]` switch); each tab keeps its own page, scroll, link selection and back-history. For JavaScript-heavy sites that serve an almost empty HTML shell, the browser automatically falls back to a headless Chromium-class render (uses `msedge`/`chromium`/`google-chrome` on `PATH` or in standard install locations; override the binary with `AIOS_HEADLESS_BROWSER`, add `--no-sandbox` with `AIOS_HEADLESS_NO_SANDBOX=1`) and shows the fully rendered content.
+The built-in text-mode browser loads pages in the background (the TUI stays responsive). The omnibox accepts a full URL, a bare host (`example.com`), or a plain search query (searched via DuckDuckGo). A sidebar lists the links of the current page; the page text wraps to the pane width and can be scrolled. The current page can be saved as a **bookmark** (`a`) and managed in the **bookmarks panel** (`m`); bookmarks persist in `AIOS_DATA_DIR/web_bookmarks.json`. Multiple pages can be open as **browser tabs** (`t` opens a new one, `x` closes the active one, `[`/`]` switch); each tab keeps its own page, scroll, link selection and back-history. Page **JavaScript executes on load** (embedded boa engine): script errors and `console` output are collected per page and can be viewed in the **JS console panel** (`J`), and a `scripts=N errors=M console=K` line is written to the log when a page ran scripts. For JavaScript-heavy sites that serve an almost empty HTML shell, the browser automatically falls back to a headless Chromium-class render (uses `msedge`/`chromium`/`google-chrome` on `PATH` or in standard install locations; override the binary with `AIOS_HEADLESS_BROWSER`, add `--no-sandbox` with `AIOS_HEADLESS_NO_SANDBOX=1`) and shows the fully rendered content.
 
 | Key | Action |
 |-----|--------|
@@ -344,7 +344,8 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `a` | Save the current page as a bookmark (name prefilled with the page title) |
 | `m` | Toggle the bookmarks panel (replaces the links list while open) |
 | — | Inside the bookmarks panel: `j`/`k` move, `o`/`Enter` open, `d` delete, `Esc` close |
-| `Esc` | Unfocus the omnibox or close the bookmarks panel |
+| `J` | Open the **JS console panel** (script count, script errors in red, `console.log` lines; page scripts now execute on load) |
+| `Esc` | Unfocus the omnibox, or close the bookmarks / JS console panel |
 
 ### Shell Tab (7)
 

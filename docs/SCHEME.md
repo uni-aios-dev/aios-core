@@ -287,7 +287,7 @@ Pipeline (5 steps): detect → DriverStore lookup → fetch/adapt → validate+g
 
 | Crate | Key API |
 |---|---|
-| `aios-browser` (8 files · 1.4k ln · 36 t) | `BrowserEngine::navigate(url)`, `HtmlParser::{parse,extract_text,extract_links,extract_title}`, `Renderer::{render_page,to_text}`, headless Chromium-class dump fallback, `BrowserBlock` |
+| `aios-browser` (11 files · 3.1k ln · 79 t) | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine (`ScriptEngine`, script prelude), `HtmlParser::{parse,extract_text,extract_links,extract_title}`, `Renderer::{render_page,to_text}`, `dom_to_html` serializer, headless Chromium-class dump fallback, `BrowserBlock` |
 | `aios-search` (5 files · 0.4k ln · 7 t) | `SearchEngine::{search}` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` (2 files · 0.3k ln · 7 t) | `WebBrowser::{open,navigate,back,forward,close}` on background thread via event-loop proxy; persistent profile; `resolve_target()` omnibox rule |
 | `aios-net-config` (5 files · 0.9k ln · 32 t) | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |

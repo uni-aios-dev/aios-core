@@ -67,6 +67,8 @@ pub struct WebState {
     pub bookmarks_sel: usize,
     /// Whether the bookmarks panel is open instead of the links list.
     pub show_bookmarks: bool,
+    /// Whether the JS console panel is open instead of the links list.
+    pub show_js_console: bool,
     /// Whether the bookmark-name input line is active (`a` after a page load).
     pub bookmark_naming: bool,
     /// Buffer for the bookmark name being typed.
@@ -97,6 +99,7 @@ impl Default for WebState {
             bookmarks: Vec::new(),
             bookmarks_sel: 0,
             show_bookmarks: false,
+            show_js_console: false,
             bookmark_naming: false,
             bookmark_name: String::new(),
             tabs: vec![WebTab::default()],
