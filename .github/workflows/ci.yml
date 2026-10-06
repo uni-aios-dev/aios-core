@@ -60,7 +60,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      - name: Run tests (bounded — surface the hang point on timeout)
+        run: |
+          set -o pipefail
+          timeout --signal=ABRT 60m cargo test --workspace -- --nocapture 2>&1 | tee test-output.log || {
+            echo '=== tests failed or timed out - last 80 lines ==='
+            tail -80 test-output.log
+            exit 1
+          }
 
   coverage:
     name: Coverage

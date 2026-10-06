@@ -71,6 +71,9 @@ pub struct NativeHotplugMonitor {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     rx: Option<Receiver<NativeEvent>>,
+    /// Window handle published by the Windows pump; on other platforms the
+    /// field stays zero and is only written, never read.
+    #[cfg_attr(not(windows), allow(dead_code))]
     hwnd: Arc<AtomicUsize>,
 }
 
