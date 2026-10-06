@@ -75,7 +75,8 @@ umount "$W/rootfs/proc" 2>/dev/null || true
 
 # chroot apk failure is swallowed above (grub-probe triggers can fail in a
 # chroot) — verify the load-bearing pieces actually landed or abort loudly.
-for f in usr/bin/Xorg usr/lib/libwebkit2gtk-4.1.so.0 boot/vmlinuz-lts etc/init.d/rcS; do
+# (etc/init.d/rcS is copied further below, right before it is needed.)
+for f in usr/bin/Xorg usr/lib/libwebkit2gtk-4.1.so.0 boot/vmlinuz-lts; do
   [ -e "$W/rootfs/$f" ] || { echo "FATAL: rootfs missing $f (chroot apk failed?)"; exit 1; }
 done
 
