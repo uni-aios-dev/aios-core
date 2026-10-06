@@ -62,6 +62,7 @@ mod windows_affinity {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(non_camel_case_types)]
 mod linux_affinity {
     use aios_core::error::{AIOSException, Result};
 
