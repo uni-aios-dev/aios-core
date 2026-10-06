@@ -8,14 +8,14 @@ W=/tmp
 echo "=== [0] toolchain ==="
 apk update
 apk add --no-cache \
-  rust cargo musl-dev gcc g++ pkgconfig openssl-dev \
+  rust cargo musl-dev gcc g++ pkgconf openssl-dev \
   squashfs-tools cpio xz gzip \
   busybox-static \
   grub grub-bios grub-efi xorriso mtools dosfstools \
   util-linux-misc \
   ca-certificates \
   libxcb-dev libxkbcommon-dev libxi-dev libxrandr-dev libxcursor-dev \
-  libxinerama-dev libx11-dev libglvnd-dev mesa-dev libwayland-dev \
+  libxinerama-dev libx11-dev mesa-dev wayland-dev \
   fontconfig-dev libxft-dev libxrender-dev eudev-dev \
   webkit2gtk-4.1-dev gtk+3.0-dev
 
@@ -61,7 +61,7 @@ chroot "$W/rootfs" /sbin/apk add --no-cache \
   xorg-server xauth xrandr \
   xf86-input-evdev xf86-input-libinput libinput \
   xf86-video-fbdev xf86-video-vesa \
-  mesa mesa-dri-gallium libglvnd \
+  mesa mesa-dri-gallium \
   libxcb libx11 libxi libxrandr libxcursor libxinerama libxext \
   libxkbcommon fontconfig ttf-dejavu \
   webkit2gtk-4.1 \
