@@ -146,7 +146,11 @@ mod tests {
         let runner = WatchdogRunner::start(test_config());
         let hb = Heartbeat::new(1, b"runner_test_secret");
         runner.receive_heartbeat(&hb).unwrap();
-        assert_eq!(runner.stats(), (1, 0));
+        assert_eq!(runner.stats().0, 1);
+        assert_eq!(
+            runner.watchdog().lock().unwrap().last_heartbeat().map(|h| h.sequence),
+            Some(1)
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 
