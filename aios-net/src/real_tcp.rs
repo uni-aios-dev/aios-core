@@ -170,6 +170,12 @@ impl RealTcpBlock {
 
         match listener.accept() {
             Ok((stream, peer)) => {
+                // Linux does not inherit O_NONBLOCK across accept (Windows does),
+                // so receive() would block forever on an idle connection.
+                stream
+                    .set_nonblocking(true)
+                    .map_err(|e| AIOSException::Generic(format!("TCP nonblocking: {e}")))?;
+
                 stream
                     .set_nodelay(self.config.nodelay)
                     .map_err(|e| AIOSException::Generic(format!("TCP nodelay: {e}")))?;
