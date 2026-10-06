@@ -1,4 +1,4 @@
-use libc::{c_char, c_int, c_ulong};
+﻿use libc::{c_char, c_int, c_ulong};
 use std::ffi::CStr;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
@@ -27,27 +27,49 @@ fn run() -> i32 {
     set_user_env();
     bring_userspace();
 
-    let targets: [(&CStr, &[&CStr]); 2] = [
-        (c"/system/aios-core", &[c"/system/aios-core"]),
-        (c"/installer", &[c"/installer"]),
-    ];
-
-    for (path, args) in targets {
-        match run_block(path, args) {
+    // The primary TUI is dynamically linked against the squashfs userspace
+    // (musl + libwebkit2gtk for the native browser). When that userspace is
+    // missing the exec fails with exit 127 вЂ” fall back to the static
+    // engine-less TUI kept in the initramfs so the console keeps working.
+    let exec_failed = match run_block(c"/system/aios-core", &[c"/system/aios-core"]) {
+        RunResult::TermRequested => {
+            log("aios-init: shutdown requested вЂ” entering idle loop");
+            idle()
+        }
+        RunResult::GaveUp(code) => {
+            log(&format!(
+                "aios-init: block /system/aios-core gave up (last exit {code})"
+            ));
+            code == 127
+        }
+    };
+    if exec_failed {
+        match run_block(c"/system/aios-core.static", &[c"/system/aios-core.static"]) {
             RunResult::TermRequested => {
-                log("aios-init: shutdown requested — entering idle loop");
+                log("aios-init: shutdown requested вЂ” entering idle loop");
                 idle();
             }
             RunResult::GaveUp(code) => {
                 log(&format!(
-                    "aios-init: block {} gave up (last exit {code})",
-                    path.to_string_lossy()
+                    "aios-init: block /system/aios-core.static gave up (last exit {code})"
                 ));
             }
         }
     }
 
-    log("aios-init: no AIOS block found — starting emergency shell");
+    match run_block(c"/installer", &[c"/installer"]) {
+        RunResult::TermRequested => {
+            log("aios-init: shutdown requested вЂ” entering idle loop");
+            idle();
+        }
+        RunResult::GaveUp(code) => {
+            log(&format!(
+                "aios-init: block /installer gave up (last exit {code})"
+            ));
+        }
+    }
+
+    log("aios-init: no AIOS block found вЂ” starting emergency shell");
     emergency_shell()
 }
 
@@ -215,11 +237,11 @@ fn emergency_shell() -> ! {
             ));
             let code = supervise(pid);
             if TERM_REQUESTED.load(Ordering::SeqCst) {
-                log("aios-init: shutdown requested — entering idle loop");
+                log("aios-init: shutdown requested вЂ” entering idle loop");
                 idle();
             }
             log(&format!(
-                "aios-init: shell pid {pid} exited (code {code}) — respawning"
+                "aios-init: shell pid {pid} exited (code {code}) вЂ” respawning"
             ));
             attempts += 1;
             std::thread::sleep(Duration::from_millis(500));
@@ -301,16 +323,20 @@ fn mount_all() {
 
 /// Set the environment the kernel blocks need to reach the full userspace and
 /// the GUI session: standard PATH, terminal type, `DISPLAY` for X, a writable
-/// `AIOS_DATA_DIR` (the squashfs root is read-only) and an XDG runtime dir.
+/// `AIOS_DATA_DIR` (the squashfs root is read-only), an XDG runtime dir and
+/// WebKitGTK workarounds for the live session (llvmpipe software rendering,
+/// no user namespaces for the web-process sandbox).
 fn set_user_env() {
-    let _ = std::env::set_var(
+    std::env::set_var(
         "PATH",
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     );
-    let _ = std::env::set_var("TERM", "linux");
-    let _ = std::env::set_var("DISPLAY", ":0");
-    let _ = std::env::set_var("AIOS_DATA_DIR", "/tmp/.aios");
-    let _ = std::env::set_var("XDG_RUNTIME_DIR", "/run/aios");
+    std::env::set_var("TERM", "linux");
+    std::env::set_var("DISPLAY", ":0");
+    std::env::set_var("AIOS_DATA_DIR", "/tmp/.aios");
+    std::env::set_var("XDG_RUNTIME_DIR", "/run/aios");
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    std::env::set_var("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1");
 }
 
 /// Run the userspace bring-up script (`/sfs-up.sh`). It loads storage/loop
@@ -325,7 +351,7 @@ fn bring_userspace() {
             log(&format!("aios-init: userspace bring-up exit code {code}"));
         }
         None => {
-            log("aios-init: userspace bring-up script unavailable — TUI only");
+            log("aios-init: userspace bring-up script unavailable вЂ” TUI only");
         }
     }
 }
@@ -352,7 +378,7 @@ fn mount_fs(source: &CStr, target: &CStr, fstype: &CStr, flags: c_ulong) -> bool
 }
 
 fn setup_dev_nodes() {
-    log("aios-init: devtmpfs unavailable — creating basic device nodes");
+    log("aios-init: devtmpfs unavailable вЂ” creating basic device nodes");
     mknod(c"/dev/console", 5, 1, 0o600);
     mknod(c"/dev/null", 1, 3, 0o666);
     mknod(c"/dev/tty", 5, 0, 0o666);

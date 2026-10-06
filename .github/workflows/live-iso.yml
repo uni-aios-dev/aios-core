@@ -1,0 +1,43 @@
+name: Live ISO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'live/**'
+      - 'aios/**'
+      - 'aios-gui/**'
+      - 'aios-init/**'
+      - 'aios-webview/**'
+      - '.github/workflows/live-iso.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Live ISO
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build aios-live.iso (rust:alpine container)
+        run: |
+          df -h /
+          docker pull rust:alpine
+          docker run --rm \
+            -e CARGO_NET_OFFLINE=false \
+            -v "$PWD:/src" \
+            -v "$PWD/live:/work" \
+            rust:alpine sh /work/build.sh
+          df -h /
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: aios-live-iso
+          path: live/out/aios-live.iso
+          if-no-files-found: error
+          compression-level: 0

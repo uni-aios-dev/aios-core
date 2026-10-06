@@ -16,19 +16,31 @@ apk add --no-cache \
   ca-certificates \
   libxcb-dev libxkbcommon-dev libxi-dev libxrandr-dev libxcursor-dev \
   libxinerama-dev libx11-dev libglvnd-dev mesa-dev libwayland-dev \
-  fontconfig-dev libxft-dev libxrender-dev eudev-dev
+  fontconfig-dev libxft-dev libxrender-dev eudev-dev \
+  webkit2gtk-4.1-dev gtk+3.0-dev
 
 command -v grub-mkrescue >/dev/null 2>&1 || apk add --no-cache grub-bios
 
-echo "=== [1] building aios + aios-gui (musl, no webview engine) ==="
+echo "=== [1] building aios + aios-gui (musl, webview engine ON, dynamic) ==="
 cd /src
+# The engine-enabled binaries are linked dynamically against the Alpine
+# rootfs (musl + libwebkit2gtk-4.1.so): crt-static must be off so wry's
+# pkg-config deps resolve as shared libraries.
+CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
+  cargo build -p aios --release
+CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
+  cargo build -p aios-gui --release
+# Fully static engine-less TUI kept in the initramfs: it is what aios-init
+# falls back to (exit 127) when the squashfs userspace is missing and the
+# dynamic binary cannot exec.
 cargo build -p aios --release --no-default-features
-cargo build -p aios-gui --release --no-default-features
-cp "$CARGO_TARGET_DIR/release/aios" "$W/aios-bin"
-cp "$CARGO_TARGET_DIR/release/aios-gui" "$W/aios-gui-bin"
-ls -la "$W/aios-bin" "$W/aios-gui-bin"
+cp /tmp/target-dyn/release/aios "$W/aios-bin"
+cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
+cp /tmp/target/release/aios "$W/aios-static-bin"
+ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-static-bin"
 file "$W/aios-bin" 2>/dev/null || true
 file "$W/aios-gui-bin" 2>/dev/null || true
+file "$W/aios-static-bin" 2>/dev/null || true
 
 echo "=== [2] building rootfs ==="
 rm -rf "$W/rootfs" "$W/iso" "$W/initramfs" "$W/out"
@@ -52,6 +64,7 @@ chroot "$W/rootfs" /sbin/apk add --no-cache \
   mesa mesa-dri-gallium libglvnd \
   libxcb libx11 libxi libxrandr libxcursor libxinerama libxext \
   libxkbcommon fontconfig ttf-dejavu \
+  webkit2gtk-4.1 \
   eudev || echo "NOTE: apk trigger errors ignored (grub-probe in chroot)"
 umount "$W/rootfs/dev" 2>/dev/null || true
 umount "$W/rootfs/proc" 2>/dev/null || true
@@ -81,6 +94,8 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export TERM=linux
 export DISPLAY=:0
 export AIOS_DATA_DIR=/tmp/.aios
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 EOF
 
 cat > "$W/rootfs/etc/motd" <<'EOF'
@@ -106,6 +121,8 @@ else
   chmod +x "$W/initramfs/init"
   cp "$W/aios-bin" "$W/initramfs/system/aios-core"
   chmod +x "$W/initramfs/system/aios-core"
+  cp "$W/aios-static-bin" "$W/initramfs/system/aios-core.static"
+  chmod +x "$W/initramfs/system/aios-core.static"
   cp /bin/busybox.static "$W/initramfs/bin/busybox"
   chmod +x "$W/initramfs/bin/busybox"
   ln -sf busybox "$W/initramfs/bin/sh"
