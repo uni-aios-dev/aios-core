@@ -601,13 +601,14 @@ Keybindings: `q`/`Ctrl+C`=Quit, `1-7`/`Alt+1-7`=Tab (Alt works while typing in S
 
 The TUI cannot render real web pages (no CSS/JS engine), so the full-featured browser is a **native window** powered by `wry` (WebView2 on Windows, WebKitGTK on Linux, WKWebView on macOS) on a `winit` event loop:
 
-- `WebBrowser::open(target)` spawns the browser on a dedicated background thread; the caller receives a handle and never blocks
-- Commands (`navigate`, `back`, `forward`, `close`) are posted to the browser's event loop via `winit::EventLoopProxy` and applied asynchronously
+- `WebBrowser::open(target)` starts a **single process-wide background thread** on first use and reuses it afterwards (GTK may be initialized by exactly one thread): the first call blocks only until the window exists, later calls present and navigate the existing window; the handle never blocks the caller
+- Commands (`navigate`, `back`, `forward`, `close`) are posted to the browser's event loop via `winit::EventLoopProxy` and applied asynchronously; `close` hides the window while the engine thread keeps running (the next `open` presents it again)
+- **Linux loop integration (v2.43.0):** the engine thread calls `gtk::init()` before building the event loop, enables `EventLoopBuilderExtX11::with_any_thread(true)`, seeds writable `HOME`/`XDG_*`/`DISPLAY=:0` defaults for the headless live boot, and drains `gtk::events_pending()` from `about_to_wait` on a 16 ms `WaitUntil` poll — winit's X11 loop cannot see the glib sources of GTK/WebKit (their own X connection, web-process IPC), so without the pump the window would freeze
 - Cookies and storage persist between restarts through a `WebContext` backed by a profile directory (`AIOS_DATA_DIR`/`aios/webview`, or the OS data dir)
 - `resolve_target()` implements the omnibox rule shared with the TUI: full `http(s)` URL → as-is, bare host → `https://`, anything else → DuckDuckGo (HTML edition) query
 - `launcher` module resolves the `aios-gui` binary (sibling of the current executable, then `PATH`) and spawns the GUI dashboard
 
-**Feature gating (v2.32.0):** the wry/winit engine lives in the optional `webview` feature (default on). `launcher` and `resolve_target` are pure `std` and always compile, so the TUI `W` key works even when the engine is disabled; only `B`/`n` (kernel `WebBrowser`) and the GUI Browser tab are gated. The live image builds both `aios` and `aios-gui` with `--no-default-features` — no WebKitGTK dependency in the Alpine rootfs.
+**Feature gating (v2.32.0):** the wry/winit engine lives in the optional `webview` feature (default on; on Linux it pulls the `gtk` crate). `launcher` and `resolve_target` are pure `std` and always compile, so the TUI `W` key works even when the engine is disabled; only `B`/`n` (kernel `WebBrowser`) and the GUI Browser tab are gated. The live image builds `aios`/`aios-gui` with `--no-default-features`, but feature unification through `aios-tui → aios-webview` keeps the webview enabled: `live/build.sh` FATAL-checks that both primary binaries link `libwebkit2gtk-4.1`, because the browser-from-flash-drive is a shipped requirement.
 
 ### GUI Dashboard (`aios-gui`)
 

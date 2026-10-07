@@ -1,5 +1,30 @@
 # AIOS: Известные баги и обходные пути
 
+## RESOLVED (v2.43.0): нативный браузер паниковал с «GTK has not been initialized» (второй шаг после v2.42.0)
+
+- **Статус:** RESOLVED в v2.43.0.
+- **Причина:** v2.42.0 починил any-thread event loop winit, и выполнение
+  наконец дошло до WebKitGTK. По документации wry, `gtk::init()` нужно
+  вызывать в потоке webview до создания любого объекта webkit2gtk
+  (`ApplicationInfo::new` проверяет `assert_initialized_main_thread!`),
+  а gtk-rs запоминает инициализирующий поток на весь процесс —
+  последующий `WebBrowser::open` из нового потока паниковал бы с
+  «Attempted to initialize GTK from two different threads».
+- **Симптом:** в serial-логе `thread 'aios-webview' panicked at
+  webkit2gtk-2.0.2/src/auto/application_info.rs:21:5: GTK has not been
+  initialized. Call gtk::init first.` `WebKitNetworkProcess` появился,
+  но окно так и не появилось.
+- **Фикс:** вызов `gtk::init()` в потоке движка; поток движка —
+  синглтон на процесс (повторные open переиспользуют окно, `close`
+  скрывает его); опустошение `gtk::main_iteration_do(false)` из
+  `about_to_wait` winit с опросом раз в 16 мс (`WaitUntil`); подсев
+  записываемых `HOME`/`XDG_*` для read-only корня live-системы.
+- **Риск:** GTK/WebKit работают из фонового потока с прокачкой 60 Гц
+  вместо главного цикла GTK — приемлемо для однооконного браузера.
+  Состояние GTK глобально для процесса: если поток движка на Linux
+  когда-нибудь завершится, нативный браузер станет недоступен до
+  перезапуска AIOS (сообщается чистой ошибкой, без паники).
+
 ## RESOLVED (v2.42.0): нативный браузер паниковал при live-загрузке — EventLoop winit в фоновом потоке
 
 - **Статус:** RESOLVED в v2.42.0.

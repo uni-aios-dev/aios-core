@@ -1,5 +1,33 @@
 # AIOS Development Log
 
+## v2.43.0 — native browser: gtk::init on the engine thread, single engine thread, GTK pump (2026-10-07)
+
+### Fixed
+- **Native browser still died right after the winit fix: `GTK has not
+  been initialized. Call gtk::init first`.** With the any-thread event
+  loop running (v2.42.0), wry reached WebKitGTK object creation
+  (`webkit2gtk::ApplicationInfo::new`) and panicked because GTK must be
+  initialized by the thread that uses it. The engine thread now calls
+  `gtk::init()` before building the event loop.
+- **Second `WebBrowser::open` would panic with `Attempted to initialize
+  GTK from two different threads`.** GTK records its initializing thread
+  for the whole process, so the previous "a fresh thread per open"
+  design could only ever work once. The engine is now a process-wide
+  singleton: the first open starts the thread, later opens reuse the
+  window (`Navigate` presents it again) and `close()` merely hides it —
+  matching the TUI's own single-handle registry.
+- **The window would freeze after opening (no GTK pump).** winit's X11
+  loop sleeps until an X event arrives on ITS connection, while
+  GTK/WebKit sources (their own X connection, web-process IPC) live on
+  the glib context. The loop now drains `gtk::events_pending()` in
+  `about_to_wait` and arms a 16 ms `WaitUntil` deadline so those events
+  are actually dispatched.
+- **Read-only live root vs. GTK user directories.** On Linux the engine
+  now defaults `HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` and
+  `XDG_DATA_HOME` to writable tmpfs paths (`/tmp/…`) before GTK first
+  touches them; GTK is added as a Linux-only optional dependency of the
+  `webview` feature.
+
 ## v2.42.0 — live webview works: any_thread winit event loop, serial-seeded network (2026-10-07)
 
 ### Fixed

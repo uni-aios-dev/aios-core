@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["webview"]
-webview = ["dep:wry", "dep:winit"]
+webview = ["dep:wry", "dep:winit", "dep:gtk"]
 
 [dependencies]
 wry = { version = "0.56", optional = true }
@@ -13,6 +13,9 @@ winit = { version = "0.30", optional = true }
 url = "2"
 dirs = "6"
 log = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

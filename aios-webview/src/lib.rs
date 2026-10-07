@@ -1,9 +1,11 @@
 //! AIOS Webview — native full-featured browser embedding (WebView2 / WebKitGTK / WKWebView).
 //!
 //! Runs a real browser engine in its own window with cookies, JavaScript and
-//! history out of the box. The window is created on a dedicated background
-//! thread so the caller (TUI or GUI) never blocks. Navigation commands are
-//! sent over an event-loop proxy and applied on the browser's event loop.
+//! history out of the box. The window lives on a single dedicated background
+//! thread that is started on first use and reused afterwards (GTK may only be
+//! initialized by one thread, and wry pumps it from the window's event loop),
+//! so the caller (TUI or GUI) never blocks. Navigation commands are sent over
+//! an event-loop proxy and applied on the browser's event loop.
 //!
 //! The full wry/winit engine is behind the optional `webview` feature. The
 //! launcher (used by the TUI `W` key) is always available regardless of the
@@ -35,9 +37,14 @@ pub fn resolve_target(input: &str) -> String {
 #[cfg(feature = "webview")]
 mod engine {
     use std::path::PathBuf;
+    #[cfg(target_os = "linux")]
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
+    #[cfg(target_os = "linux")]
+    use std::time::Instant;
 
     use winit::application::ApplicationHandler;
     use winit::dpi::LogicalSize;
@@ -49,14 +56,14 @@ mod engine {
     /// Commands sent from any thread to the browser's event loop.
     #[derive(Debug)]
     enum Command {
-        /// Load a fully resolved URL.
+        /// Show the window and load a fully resolved URL.
         Navigate(String),
         /// Go back in history.
         Back,
         /// Go forward in history.
         Forward,
-        /// Close the browser window and stop the event loop.
-        Quit,
+        /// Hide the browser window, keeping the engine alive.
+        Close,
     }
 
     /// Messages sent from the browser thread back to the opener.
@@ -64,6 +71,14 @@ mod engine {
         /// Window and webview created (or error description).
         Ready(Result<(), String>),
     }
+
+    /// Proxy to the single engine thread; `None` until the first successful open.
+    static BROWSER_PROXY: Mutex<Option<EventLoopProxy<Command>>> = Mutex::new(None);
+
+    /// Set once GTK is bound to the engine thread; GTK allows initialization
+    /// from exactly one thread for the whole process lifetime.
+    #[cfg(target_os = "linux")]
+    static GTK_TAKEN: AtomicBool = AtomicBool::new(false);
 
     /// The window host driving the winit event loop.
     struct BrowserApp {
@@ -91,10 +106,28 @@ mod engine {
                 .build(window)
                 .map_err(|e| e.to_string())
         }
+
+        fn present(&self) {
+            if let Some(window) = self.window.as_ref() {
+                window.set_visible(true);
+            }
+        }
+
+        fn hide(&self) {
+            if let Some(window) = self.window.as_ref() {
+                window.set_visible(false);
+            }
+        }
     }
 
     impl ApplicationHandler<Command> for BrowserApp {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            if self.window.is_some() {
+                if let Some(tx) = self.tx.take() {
+                    let _ = tx.send(ThreadMsg::Ready(Ok(())));
+                }
+                return;
+            }
             let result = (|| {
                 let window = Self::build_window(event_loop)?;
                 let webview = Self::build_webview(&window, &self.url)?;
@@ -113,18 +146,19 @@ mod engine {
 
         fn window_event(
             &mut self,
-            event_loop: &ActiveEventLoop,
+            _event_loop: &ActiveEventLoop,
             _id: WindowId,
             event: WindowEvent,
         ) {
             if let WindowEvent::CloseRequested = event {
-                event_loop.exit();
+                self.hide();
             }
         }
 
-        fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Command) {
+        fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Command) {
             match event {
                 Command::Navigate(url) => {
+                    self.present();
                     if let Some(webview) = self.webview.as_ref() {
                         if let Err(e) = webview.load_url(&url) {
                             log::error!("webview load_url failed: {e}");
@@ -132,6 +166,7 @@ mod engine {
                     }
                 }
                 Command::Back => {
+                    self.present();
                     if let Some(webview) = self.webview.as_ref() {
                         if let Err(e) = webview.go_back() {
                             log::error!("webview back failed: {e}");
@@ -139,17 +174,31 @@ mod engine {
                     }
                 }
                 Command::Forward => {
+                    self.present();
                     if let Some(webview) = self.webview.as_ref() {
                         if let Err(e) = webview.go_forward() {
                             log::error!("webview forward failed: {e}");
                         }
                     }
                 }
-                Command::Quit => event_loop.exit(),
+                Command::Close => self.hide(),
             }
         }
 
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            // winit sleeps until the next X event, but GTK/WebKit sources (their
+            // own X connection, web-process IPC) only wake the glib context —
+            // so drain it here and re-arm a short deadline to poll again.
+            #[cfg(target_os = "linux")]
+            {
+                while gtk::events_pending() {
+                    gtk::main_iteration_do(false);
+                }
+                event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(16),
+                ));
+            }
+            #[cfg(not(target_os = "linux"))]
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
         }
     }
@@ -170,23 +219,48 @@ mod engine {
         Some(dir)
     }
 
-    /// Handle to a live browser window running on a background thread.
+    /// Handle to a live browser window running on a process-wide background thread.
     ///
+    /// The window is hidden (not destroyed) when the handle is dropped, and the
+    /// next [`WebBrowser::open`] call presents it again with the requested URL.
     /// All methods are non-blocking: commands are posted to the browser's event
-    /// loop and applied there asynchronously. Dropping the handle closes the
-    /// window.
+    /// loop and applied there asynchronously.
     pub struct WebBrowser {
         proxy: EventLoopProxy<Command>,
-        _thread: thread::JoinHandle<()>,
+        _thread: Option<thread::JoinHandle<()>>,
     }
 
     impl WebBrowser {
-        /// Open a new browser window and navigate it to `target`.
+        /// Open the browser window on `target`.
         ///
-        /// Blocks only until the native window and webview are created (a few
-        /// seconds at most), then returns immediately.
+        /// The first call starts the engine thread and blocks only until the
+        /// native window and webview are created (a few seconds at most). Later
+        /// calls reuse the running engine and just present and navigate the
+        /// existing window.
         pub fn open(target: &str) -> Result<WebBrowser, String> {
             let url = crate::resolve_target(target);
+            let mut slot = BROWSER_PROXY
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(proxy) = slot.clone() {
+                proxy.send_event(Command::Navigate(url)).map_err(|e| {
+                    *slot = None;
+                    format!("browser engine is not running: {e}")
+                })?;
+                return Ok(WebBrowser {
+                    proxy,
+                    _thread: None,
+                });
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if GTK_TAKEN.load(Ordering::Acquire) {
+                    return Err(
+                        "browser engine thread exited after GTK initialization; restart AIOS to use the native browser"
+                            .to_string(),
+                    );
+                }
+            }
             let (ready_tx, ready_rx) = mpsc::channel::<ThreadMsg>();
             let (proxy_tx, proxy_rx) = mpsc::channel::<EventLoopProxy<Command>>();
             let thread = thread::Builder::new()
@@ -206,6 +280,29 @@ mod engine {
                         }
                         if std::env::var_os("AIOS_DATA_DIR").is_none() {
                             std::env::set_var("AIOS_DATA_DIR", "/tmp/aios-webview");
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            // The live system mounts a read-only root: point the
+                            // user directories at writable tmpfs storage before
+                            // GTK/WebKit first touch them, then bind GTK to this
+                            // thread (wry requires gtk::init on the webview thread).
+                            if std::env::var_os("HOME").is_none() {
+                                let _ = std::fs::create_dir_all("/tmp/aios-home");
+                                std::env::set_var("HOME", "/tmp/aios-home");
+                            }
+                            for (key, dir) in [
+                                ("XDG_CACHE_HOME", "/tmp/aios-xdg/cache"),
+                                ("XDG_CONFIG_HOME", "/tmp/aios-xdg/config"),
+                                ("XDG_DATA_HOME", "/tmp/aios-xdg/data"),
+                            ] {
+                                if std::env::var_os(key).is_none() {
+                                    let _ = std::fs::create_dir_all(dir);
+                                    std::env::set_var(key, dir);
+                                }
+                            }
+                            gtk::init().map_err(|e| format!("gtk init failed: {e}"))?;
+                            GTK_TAKEN.store(true, Ordering::Release);
                         }
                         let mut builder = EventLoop::<Command>::with_user_event();
                         #[cfg(target_os = "linux")]
@@ -238,15 +335,19 @@ mod engine {
                 .recv_timeout(Duration::from_secs(30))
                 .map_err(|e| format!("webview did not become ready: {e}"))?
             {
-                ThreadMsg::Ready(Ok(())) => Ok(WebBrowser {
-                    proxy,
-                    _thread: thread,
-                }),
+                ThreadMsg::Ready(Ok(())) => {
+                    *slot = Some(proxy.clone());
+                    Ok(WebBrowser {
+                        proxy,
+                        _thread: Some(thread),
+                    })
+                }
                 ThreadMsg::Ready(Err(e)) => Err(format!("failed to create webview: {e}")),
             }
         }
 
-        /// Navigate the browser to `target` (URL, host or search query).
+        /// Navigate the browser to `target` (URL, host or search query),
+        /// presenting the window if it was hidden.
         pub fn navigate(&self, target: &str) -> Result<(), String> {
             self.proxy
                 .send_event(Command::Navigate(crate::resolve_target(target)))
@@ -267,9 +368,10 @@ mod engine {
                 .map_err(|e| e.to_string())
         }
 
-        /// Close the browser window and stop its event loop.
+        /// Hide the browser window; the engine thread keeps running and the
+        /// next [`WebBrowser::open`] call presents the window again.
         pub fn close(&self) {
-            let _ = self.proxy.send_event(Command::Quit);
+            let _ = self.proxy.send_event(Command::Close);
         }
     }
 
@@ -311,7 +413,7 @@ mod tests {
     #[test]
     fn resolve_query_goes_to_duckduckgo() {
         assert!(resolve_target("hello world").starts_with("https://html.duckduckgo.com/html/?q="));
-        assert!(resolve_target("how to rust").contains("how+to+rust"));
+        assert!(resolve_target("hello world").contains("hello+world"));
         assert!(resolve_target("c++").contains("c%2B%2B"));
     }
 

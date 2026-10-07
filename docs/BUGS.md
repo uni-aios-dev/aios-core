@@ -1,5 +1,30 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.43.0): native browser panicked with "GTK has not been initialized" (second step after v2.42.0)
+
+- **Status:** RESOLVED in v2.43.0.
+- **Root cause:** v2.42.0 fixed the winit any-thread event loop, so
+  execution finally reached WebKitGTK. wry documents that `gtk::init()`
+  must be called on the webview thread before creating any webkit2gtk
+  object (`ApplicationInfo::new` asserts `assert_initialized_main_thread!`),
+  and gtk-rs records the initializing thread process-wide — a later
+  `WebBrowser::open` from a new thread would panic with "Attempted to
+  initialize GTK from two different threads".
+- **Symptom:** serial log shows `thread 'aios-webview' panicked at
+  webkit2gtk-2.0.2/src/auto/application_info.rs:21:5: GTK has not been
+  initialized. Call gtk::init first.` `WebKitNetworkProcess` appeared but
+  no window ever did.
+- **Fix:** call `gtk::init()` on the engine thread; make the engine
+  thread a process-wide singleton (later opens reuse the window, `close`
+  hides it); drain `gtk::main_iteration_do(false)` from winit's
+  `about_to_wait` on a 16 ms `WaitUntil` poll; seed writable
+  `HOME`/`XDG_*` defaults for the read-only live root.
+- **Risk:** GTK/WebKit are driven from a background thread with a 60 Hz
+  pump instead of the GTK main loop — acceptable for the single-window
+  browser. GTK state is process-global: if the engine thread ever exits
+  on Linux, the native browser is unavailable until AIOS restarts (it is
+  reported as a clean error, not a panic).
+
 ## RESOLVED (v2.42.0): native browser panics on live boot — winit EventLoop on a background thread
 
 - **Status:** RESOLVED in v2.42.0.
