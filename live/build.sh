@@ -33,9 +33,14 @@ CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
 # Fully static engine-less TUI kept in the initramfs: it is what aios-init
 # falls back to (exit 127) when the squashfs userspace is missing and the
 # dynamic binary cannot exec. Must be crt-static: the initramfs carries no
-# ld-musl loader.
-CARGO_TARGET_DIR=/tmp/target RUSTFLAGS="-C target-feature=+crt-static" \
-  cargo build -p aios --release --no-default-features
+# ld-musl loader. Note: RUSTFLAGS=-crt-static must NOT be applied to the
+# whole build - proc-macro crates (async-trait et al.) cannot be produced
+# statically on a musl host. So deps are built normally and only the final
+# crate is re-linked with the static CRT via `cargo rustc`'s pass-through
+# flags.
+CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features
+CARGO_TARGET_DIR=/tmp/target cargo rustc -p aios --release --no-default-features \
+  -- -C target-feature=+crt-static
 cp /tmp/target-dyn/release/aios "$W/aios-bin"
 cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
 cp /tmp/target/release/aios "$W/aios-static-bin"
@@ -132,8 +137,8 @@ if [ "${USE_BUSYBOX_INIT:-0}" = "1" ]; then
 else
   echo "=== [3a] aios-init mode (default): kernel TUI as PID 1 ==="
   cd /src/aios-init
-  CARGO_TARGET_DIR=/tmp/target RUSTFLAGS="-C target-feature=+crt-static" \
-    cargo build --release
+  CARGO_TARGET_DIR=/tmp/target cargo build --release
+  CARGO_TARGET_DIR=/tmp/target cargo rustc --release -- -C target-feature=+crt-static
   cp "$CARGO_TARGET_DIR/release/aios-init" "$W/initramfs/init"
   chmod +x "$W/initramfs/init"
   # PID 1 must be a fully static binary: the initramfs has no ld-musl loader,
