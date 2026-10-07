@@ -148,7 +148,12 @@ mod tests {
         runner.receive_heartbeat(&hb).unwrap();
         assert_eq!(runner.stats().0, 1);
         assert_eq!(
-            runner.watchdog().lock().unwrap().last_heartbeat().map(|h| h.sequence),
+            runner
+                .watchdog()
+                .lock()
+                .unwrap()
+                .last_heartbeat()
+                .map(|h| h.sequence),
             Some(1)
         );
         std::thread::sleep(Duration::from_millis(10));
