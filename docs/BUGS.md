@@ -1,5 +1,28 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.42.0): native browser panics on live boot — winit EventLoop on a background thread
+
+- **Status:** RESOLVED in v2.42.0.
+- **Root cause:** `WebBrowser::open` builds the winit `EventLoop` on the
+  `aios-webview` worker thread; winit 0.30.13 treats that as a
+  cross-platform hazard and panics at
+  `platform_impl/linux/mod.rs:725` ("Initializing the event loop outside
+  of the main thread …"). Because the panic killed only the webview
+  thread, the TUI kept running and the failure showed up silently (no
+  WebKit process ever appeared). A second, compounding issue: on the
+  headless live boot the environment has no `DISPLAY`/`XDG_RUNTIME_DIR`,
+  so even a permitted loop could not map a window.
+- **Symptom:** after pressing `B` on the Web tab nothing opens; the serial
+  log shows the `thread 'aios-webview' … panicked` message and no
+  WebKit/GTK processes.
+- **Fix:** enable `EventLoopBuilderExtX11::with_any_thread(true)` on
+  Linux and default `DISPLAY=:0`, `XDG_RUNTIME_DIR=/run`,
+  `AIOS_DATA_DIR=/tmp/aios-webview` (writable tmpfs) before the loop
+  connects.
+- **Risk:** running the winit loop off the main thread can affect window
+  focus/raising edge cases on X11; acceptable for a single-window browser
+  driven from the TUI. Revisit if multi-window GUI work is added.
+
 ## RESOLVED (v2.41.0): live ISO booted to black screen / kernel panic — dynamic /init in a loader-less initramfs
 
 - **Status:** RESOLVED in v2.41.0.

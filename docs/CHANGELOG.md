@@ -1,5 +1,32 @@
 # AIOS Development Log
 
+## v2.42.0 — live webview works: any_thread winit event loop, serial-seeded network (2026-10-07)
+
+### Fixed
+- **Native browser (`B` on the Web tab) panicked on the live ISO.** The
+  webview window is created on a dedicated background thread, but winit
+  0.30.13 panics when an `EventLoop` is initialized off the process main
+  thread (`thread 'aios-webview' panicked … winit/mod.rs:725`), so the
+  browser never opened on the flash-boot. `aios-webview` now enables
+  `EventLoopBuilderExtX11::with_any_thread(true)` on Linux; it also seeds
+  the headless boot environment (unset `DISPLAY` → `:0`,
+  `XDG_RUNTIME_DIR` → `/run`, `AIOS_DATA_DIR` → `/tmp/aios-webview`) so
+  the window can actually be mapped on the VT7 X server.
+- **Live-boot web browsing had no DNS.** `/etc` is bind-mounted from the
+  read-only squashfs, so neither the DHCP deconfig script nor the static
+  fallback could write `resolv.conf`; hostname fetches in the Web tab
+  always failed. `live/sfs-up.sh` now bind-mounts a writable temp file
+  over `/etc/resolv.conf`, re-runs `udhcpc` after udev settles (with the
+  full command + exit code logged to the serial console), and seeds
+  nameservers (`10.0.2.3`, `8.8.8.8`, `1.1.1.1`) plus a live DNS probe
+  (`ping example.com`) when no lease is obtained.
+- **QEMU harness could not drive the serial TUI.** `sendkey` injects into
+  the PS/2 keyboard (VGA console) while the TUI reads `/dev/console` →
+  `ttyS0`; with `-serial file:` the serial had no input path, so keys
+  never reached the TUI. The iteration harness now uses a bidirectional
+  `-serial tcp:…,server,nowait` socket so the full browser flow can be
+  scripted end-to-end. (Test-infra only, no product change.)
+
 ## v2.41.0 — live ISO boot fix + CI hardening (2026-10-07)
 
 ### Fixed

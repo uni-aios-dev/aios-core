@@ -1,5 +1,28 @@
 # AIOS: Известные баги и обходные пути
 
+## RESOLVED (v2.42.0): нативный браузер паниковал при live-загрузке — EventLoop winit в фоновом потоке
+
+- **Статус:** RESOLVED в v2.42.0.
+- **Причина:** `WebBrowser::open` строит winit `EventLoop` в рабочем
+  потоке `aios-webview`; winit 0.30.13 считает это угрозой
+  кросс-платформенной совместимости и паникует на
+  `platform_impl/linux/mod.rs:725` («Initializing the event loop outside
+  of the main thread …»). Паника убивала только поток webview — TUI
+  продолжал работать, и отказ был тихим (процесс WebKit так и не
+  появлялся). Вторая усугубляющая причина: в headless live-буте в
+  окружении нет `DISPLAY`/`XDG_RUNTIME_DIR`, поэтому даже разрешённый
+  цикл не смог бы показать окно.
+- **Симптом:** после нажатия `B` на веб-табе ничего не открывается; в
+  serial-логе сообщение `thread 'aios-webview' … panicked` и нет
+  процессов WebKit/GTK.
+- **Фикс:** включён `EventLoopBuilderExtX11::with_any_thread(true)` на
+  Linux и подсев `DISPLAY=:0`, `XDG_RUNTIME_DIR=/run`,
+  `AIOS_DATA_DIR=/tmp/aios-webview` (записываемый tmpfs) до коннекта
+  цикла.
+- **Риск:** запуск цикла winit вне главного потока может сказываться на
+  фокусе/райзе окна в X11; приемлемо для одноконного браузера,
+  управляемого из TUI. Пересмотреть при добавлении многооконного GUI.
+
 ## RESOLVED (v2.41.0): Live ISO грузился до чёрного экрана / kernel panic — динамический /init в initramfs без загрузчика
 
 - **Статус:** RESOLVED в v2.41.0.

@@ -193,9 +193,29 @@ mod engine {
                 .name("aios-webview".into())
                 .spawn(move || {
                     let run = || -> Result<(), String> {
-                        let event_loop = EventLoop::<Command>::with_user_event()
-                            .build()
-                            .map_err(|e| e.to_string())?;
+                        // Headless live boot (initramfs → /dev/console): no
+                        // graphical session exists, so DISPLAY and friends are
+                        // unset. Default to the standard X server started on
+                        // :0 and a writable data dir before the loop connects,
+                        // otherwise the window cannot be mapped.
+                        if std::env::var_os("DISPLAY").is_none() {
+                            std::env::set_var("DISPLAY", ":0");
+                        }
+                        if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+                            std::env::set_var("XDG_RUNTIME_DIR", "/run");
+                        }
+                        if std::env::var_os("AIOS_DATA_DIR").is_none() {
+                            std::env::set_var("AIOS_DATA_DIR", "/tmp/aios-webview");
+                        }
+                        let mut builder = EventLoop::<Command>::with_user_event();
+                        #[cfg(target_os = "linux")]
+                        {
+                            // The webview thread is not the process main thread;
+                            // opt out of the default main-thread-only restriction.
+                            use winit::platform::x11::EventLoopBuilderExtX11;
+                            builder.with_any_thread(true);
+                        }
+                        let event_loop = builder.build().map_err(|e| e.to_string())?;
                         let proxy = event_loop.create_proxy();
                         let _ = proxy_tx.send(proxy);
                         let mut app = BrowserApp {
