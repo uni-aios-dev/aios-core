@@ -1,5 +1,27 @@
 # AIOS Development Log
 
+## v2.41.0 — live ISO boot fix + CI hardening (2026-10-07)
+
+### Fixed
+- **Live ISO never booted (kernel panic).** `aios-init` and the static
+  `aios-core.static` fallback were compiled with a dynamic PT_INTERP
+  (`/lib/ld-musl-x86_64.so.1`), but the initramfs ships no ld-musl loader,
+  so `execve("/init")` failed with ENOENT and the kernel panicked before
+  the TUI ever started. `live/build.sh` now builds both binaries with
+  `-C target-feature=+crt-static` and FATAL-checks the resulting files for
+  the `ld-musl` interpreter path, so a regression fails the build instead
+  of shipping an unbootable ISO.
+- **`test_tcp_no_data_pending` hung on Linux.** `aios-net`'s accepted TCP
+  streams were left blocking (Linux does not inherit O_NONBLOCK from the
+  listening socket), so `receive()` blocked forever on an idle peer.
+  `accept_pending` now calls `set_nonblocking(true)` on every accepted
+  stream.
+- **`test_runner_receives_heartbeat` was flaky.** The watchdog background
+  thread could charge a missed heartbeat before the test delivered one;
+  the assertion now checks the received sequence instead of a raw tuple.
+- **CI Format gate.** The watchdog assertion chain was reformatted to
+  satisfy `cargo fmt`.
+
 ## v2.40.0 — embedded JS engine, iteration 2: lifecycle events, dynamic scripts, navigation (2026-10-06)
 
 Feature release closing three of the documented v2.39.0 engine limits:

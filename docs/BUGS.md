@@ -1,5 +1,25 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.41.0): live ISO booted to black screen / kernel panic — dynamic /init in a loader-less initramfs
+
+- **Status:** RESOLVED in v2.41.0.
+- **Root cause:** `aios-init` (PID 1) and `aios-core.static` were linked
+  dynamically: `readelf` showed `PT_INTERP /lib/ld-musl-x86_64.so.1`. The
+  initramfs intentionally ships only static binaries (busybox.static) and
+  no ld-musl loader, so `execve("/init")` failed with ENOENT and the
+  kernel panicked before any TUI rendered (the QEMU run showed a stable
+  dark screen; the serial log ended at GRUB). Every live artifact up to
+  then was unbootable.
+- **Fix:** `live/build.sh` builds `aios-init` and the static fallback with
+  `-C target-feature=+crt-static` and aborts the build if the interpreter
+  path `ld-musl` is found in either binary.
+- **Workaround (legacy):** booting with `init=/bin/sh` still works from
+  the initramfs because busybox is fully static.
+- **Risk:** none known remaining; the FATAL check doubles as a regression
+  gate for the "static PID 1 + loader-less initramfs" invariant.
+
+# AIOS Known Bugs & Workarounds
+
 ## OPEN (v2.40.0): embedded JS engine still has no module loader / network from JS / input events (documented scope limits)
 
 - **Status:** OPEN (known limits, surfaced to the user — each limit is
