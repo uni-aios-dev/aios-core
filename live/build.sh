@@ -32,8 +32,10 @@ CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
   cargo build -p aios-gui --release
 # Fully static engine-less TUI kept in the initramfs: it is what aios-init
 # falls back to (exit 127) when the squashfs userspace is missing and the
-# dynamic binary cannot exec.
-cargo build -p aios --release --no-default-features
+# dynamic binary cannot exec. Must be crt-static: the initramfs carries no
+# ld-musl loader.
+CARGO_TARGET_DIR=/tmp/target RUSTFLAGS="-C target-feature=+crt-static" \
+  cargo build -p aios --release --no-default-features
 cp /tmp/target-dyn/release/aios "$W/aios-bin"
 cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
 cp /tmp/target/release/aios "$W/aios-static-bin"
@@ -45,6 +47,9 @@ file "$W/aios-static-bin" 2>/dev/null || true
 # a silent crt-static regression would ship a TUI-only ISO.
 grep -aq "libwebkit2gtk-4.1" "$W/aios-bin" || { echo "FATAL: aios not linked against libwebkit2gtk-4.1"; exit 1; }
 grep -aq "libwebkit2gtk-4.1" "$W/aios-gui-bin" || { echo "FATAL: aios-gui not linked against libwebkit2gtk-4.1"; exit 1; }
+# The static fallback must not reference a dynamic loader that the initramfs
+# does not ship (that made /init fail with exec: ENOENT -> kernel panic).
+grep -aq "/lib/ld-musl" "$W/aios-static-bin" && { echo "FATAL: aios-static-bin is dynamically linked (initramfs has no ld-musl)"; exit 1; }
 
 echo "=== [2] building rootfs ==="
 rm -rf "$W/rootfs" "$W/iso" "$W/initramfs" "$W/out"
@@ -127,9 +132,13 @@ if [ "${USE_BUSYBOX_INIT:-0}" = "1" ]; then
 else
   echo "=== [3a] aios-init mode (default): kernel TUI as PID 1 ==="
   cd /src/aios-init
-  cargo build --release
+  CARGO_TARGET_DIR=/tmp/target RUSTFLAGS="-C target-feature=+crt-static" \
+    cargo build --release
   cp "$CARGO_TARGET_DIR/release/aios-init" "$W/initramfs/init"
   chmod +x "$W/initramfs/init"
+  # PID 1 must be a fully static binary: the initramfs has no ld-musl loader,
+  # and a dynamic /init fails exec with ENOENT -> "Requested init failed" panic.
+  grep -aq "/lib/ld-musl" "$W/initramfs/init" && { echo "FATAL: /init is dynamically linked (initramfs has no ld-musl)"; exit 1; }
   cp "$W/aios-bin" "$W/initramfs/system/aios-core"
   chmod +x "$W/initramfs/system/aios-core"
   cp "$W/aios-static-bin" "$W/initramfs/system/aios-core.static"
