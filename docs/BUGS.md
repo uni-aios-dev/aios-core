@@ -68,34 +68,56 @@
 
 # AIOS Known Bugs & Workarounds
 
-## OPEN (v2.40.0): embedded JS engine still has no module loader / network from JS / input events (documented scope limits)
+## OPEN (v2.44.0): embedded JS engine has no input-event loop / document.write / auto error dispatch (documented scope limits)
 
 - **Status:** OPEN (known limits, surfaced to the user — each limit is
   reported as a `console` note at runtime; not regressions, deliberate
-  scope cuts). v2.40.0 closed the lifecycle/dynamic-script/navigation
-  parts of the previous entry (see RESOLVED below).
-- **Symptom:** pages relying on ES modules (`<script type="module">`),
-  `document.write`, or `fetch`/XHR data loading render their static HTML
-  only — the script half is skipped or degraded. There is still no real
-  event loop: user-input events (click, keydown, ...) are never dispatched
-  because the text browser produces no input events, and `error` events
-  registered via listeners are stored but only fired if page code calls
-  `dispatchEvent` itself. Synthetic `DOMContentLoaded`/`load` and manual
-  `dispatchEvent` DO fire (v2.40.0).
+  scope cuts). v2.44.0 closed the ES-module and network-from-JS parts of
+  the previous entry (see RESOLVED below).
+- **Symptom:** `document.write` remains a no-op, and there is still no
+  real event loop: user-input events (click, keydown, ...) are never
+  dispatched because the text browser produces no input events, and
+  `error` events registered via listeners are stored but only fired if
+  page code calls `dispatchEvent` itself. Synthetic
+  `DOMContentLoaded`/`load` and manual `dispatchEvent` DO fire (v2.40.0).
 - **Design rationale:** the engine runs each page in a fresh, single-shot
   `boa_engine::Context` (JSON-in / `JSON.stringify`-out bridge, zero host
   functions), flushes timers exactly once after `DOMContentLoaded` and
   fires `load` once before readback — deterministic post-load state for
   the text renderer beats a half-implemented event loop. Rust keeps the
-  network (`reqwest`) so `fetch` cannot bypass the block's
-  config/timeouts.
+  network (`reqwest`, through `NetworkClient`) so `fetch` cannot bypass
+  the block's config/timeouts.
 - **Workaround:** pages needing those features can be opened with `B`/`n`
   (full native WebView window), or the headless Chromium fallback renders
   JS-heavy shells when it is available.
-- **Next:** candidates in order — `<script type="module">` via boa's
-  module loader, a host-backed `fetch`/XHR that goes through
-  `NetworkClient`, then (if ever needed) timer-driven event dispatch for
-  input.
+- **Next:** (if ever needed) timer-driven event dispatch for input,
+  `document.write` streaming, and automatic `error`-event dispatch.
+
+## RESOLVED (v2.44.0): ES modules and fetch/XMLHttpRequest from page scripts
+
+- **Status:** RESOLVED in v2.44.0.
+- **Symptom (v2.40.0):** `<script type="module">` elements were skipped
+  with a `[js] skipped module script` note; `fetch()` always rejected and
+  `XMLHttpRequest` never produced a response, so pages loaded no data from
+  JavaScript.
+- **Fix:**
+  1. `ScriptEngine::run_module` parses the source with boa's `Module::parse`
+     and evaluates it via `load_link_evaluate`, so `export`/`import`
+     syntax is accepted and module top-level code runs; static and dynamic
+     `type="module"` scripts take this path.
+  2. A cooperative two-phase network bridge: the prelude parks each
+     `fetch`/`XMLHttpRequest` in a JS queue (`globalThis.__net`), the engine
+     drains it via `pending_requests()`, performs the request through
+     `NetworkClient::request` (GET/POST/PUT/DELETE/HEAD) and resolves the
+     promise/callback with `resolve_request(id, FetchResponse)`. Bounded by
+     `MAX_FETCH_ROUNDS = 8` / `MAX_FETCHES = 32`; `fetch` resolves to a
+     `Response` (`ok`/`status`/`headers`/`text()`/`json()`) and XHR fires
+     `readystatechange`/`load`/`loadend` (transport failures fire `error`).
+  3. The prelude gained `URL`/`URLSearchParams` shims so relative request
+     URLs resolve against the page URL.
+- **Verification:** 4 new tests (106 in-crate total, workspace green):
+  module evaluation with `export`, fetch queue + resolve round-trip,
+  transport-error rejection, and XHR `onload` delivery.
 
 ## RESOLVED (v2.40.0): lifecycle events, dynamic <script> and navigation never fired/ran/followed
 

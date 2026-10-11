@@ -1,5 +1,44 @@
 # Журнал разработки AIOS
 
+## v2.44.0 — встроенный JS-движок: ES-модули + host-backed fetch/XMLHttpRequest (2026-10-12)
+
+### Добавлено
+- **Поддержка `<script type="module">` в текстовом браузере.** Статические и
+  динамически созданные module-скрипты теперь разбираются и исполняются через
+  загрузчик ES-модулей boa (`Module::parse` + `load_link_evaluate`) вместо
+  пропуска, поэтому синтаксис `export`/`import` принимается, а top-level код
+  модуля выполняется в контексте страницы (`aios-browser/src/script.rs`,
+  `engine.rs`).
+- **`fetch()` и `XMLHttpRequest`, доходящие до сети.** Теперь prelude кладёт
+  каждый запрос в JS-очередь (`globalThis.__net`), а движок вычерпывает её
+  между фазами скриптов, выполняет запрос через `NetworkClient` блока и
+  резолвит отложенный promise/колбэк — кооперативная двухфазная модель,
+  сохраняющая дизайн песочницы без host-функций, но позволяющая коду страницы
+  грузить данные. `fetch` резолвится в `Response`
+  (`ok`/`status`/`statusText`/`headers`/`text()`/`json()`); XHR шлёт
+  `readystatechange`/`load`/`loadend`, а при транспортном сбое — `error`
+  (`aios-browser/src/script_prelude.js`).
+- **Шимы `URL` / `URLSearchParams`** в prelude, чтобы относительные URL
+  запросов разрешались относительно URL страницы без нативной реализации.
+- **`NetworkClient::request(method, url, body)`** — помощник для
+  GET/POST/PUT/DELETE/HEAD, возвращающий структурный `FetchResponse` (статус,
+  финальный URL, заголовки, тело, транспортная ошибка), где не-2xx — это
+  данные, а не ошибка (`aios-browser/src/network.rs`, `types.rs`).
+
+### Изменено
+- У `ScriptEngine` появились `run_module`, `pending_requests` и
+  `resolve_request`; у `DynamicScript` — флаг `module`. Конвейер страницы
+  теперь чередует поиск динамических скриптов с обслуживанием запросов,
+  ограничено `MAX_FETCH_ROUNDS = 8` / `MAX_FETCHES = 32`.
+- BUGS OPEN (v2.44.0) сужен до оставшихся ограничений: нет event loop для
+  ввода, `document.write` — no-op, и нет авто-рассылки событий `error`.
+
+### Верификация
+- 4 новых теста в крейте (всего 106 в `aios-browser`, workspace зелёный):
+  исполнение модуля с `export`, цикл очередь+резолв для fetch, отклонение при
+  транспортной ошибке и доставка `onload` у XHR. `cargo clippy` чист,
+  `cargo fmt` применён.
+
 ## v2.43.0 — нативный браузер: gtk::init в потоке движка, единый поток движка, прокачка GTK (2026-10-07)
 
 ### Исправлено

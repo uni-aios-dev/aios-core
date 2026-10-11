@@ -2,7 +2,7 @@ use crate::html_parser::HtmlParser;
 use crate::network::NetworkClient;
 use crate::script::{url_matches, ScriptEngine, ScriptReport, ScriptValue};
 use crate::serialize::dom_to_html;
-use crate::types::{BrowserConfig, BrowserError, DomNode, Page, UserScript};
+use crate::types::{BrowserConfig, BrowserError, DomNode, FetchResponse, Page, UserScript};
 
 /// Additional page loads a single `navigate()` may trigger through script
 /// navigation (`location.href = ...`) and `<meta http-equiv="refresh">`.
@@ -12,6 +12,11 @@ const MAX_NAV_HOPS: usize = 5;
 const MAX_DYNAMIC_ROUNDS: usize = 8;
 /// Upper bound of page-created `<script>` elements executed per page.
 const MAX_DYNAMIC_SCRIPTS: usize = 20;
+/// Upper bound of drain rounds for page script `fetch`/`XMLHttpRequest`
+/// requests (each round may enqueue more requests from `.then` callbacks).
+const MAX_FETCH_ROUNDS: usize = 8;
+/// Upper bound of script network requests served per page.
+const MAX_FETCHES: usize = 32;
 
 /// A `<script>` element collected from the parsed document, in document
 /// order: either inline code or a resolved external URL.
@@ -19,6 +24,8 @@ struct ScriptSpec {
     label: String,
     code: Option<String>,
     src: Option<String>,
+    /// `true` for `<script type="module">`, evaluated as a module.
+    module: bool,
 }
 
 /// Result of one page's script pass: the mutated markup, the final
@@ -211,13 +218,13 @@ impl BrowserEngine {
         let dom = HtmlParser::parse(html, url);
         let specs = collect_scripts(&dom, url, report);
 
-        let mut sources: Vec<(String, String)> = Vec::new();
+        let mut sources: Vec<(String, String, bool)> = Vec::new();
         for spec in specs {
             if let Some(code) = spec.code {
-                sources.push((spec.label, code));
+                sources.push((spec.label, code, spec.module));
             } else if let Some(src) = spec.src {
                 match self.network.fetch(&src).await {
-                    Ok(code) => sources.push((spec.label, code)),
+                    Ok(code) => sources.push((spec.label, code, spec.module)),
                     Err(e) => report
                         .errors
                         .push(format!("{}: fetch failed: {e}", spec.label)),
@@ -226,8 +233,13 @@ impl BrowserEngine {
         }
 
         let mut engine = ScriptEngine::new(&dom, url, title, &self.config.user_agent)?;
-        for (label, code) in &sources {
-            match engine.run(code) {
+        for (label, code, module) in &sources {
+            let result = if *module {
+                engine.run_module(code)
+            } else {
+                engine.run(code)
+            };
+            match result {
                 Ok(()) => report.executed += 1,
                 Err(e) => report.errors.push(format!("{label}: {e}")),
             }
@@ -245,21 +257,50 @@ impl BrowserEngine {
 
         let mut rounds = 0usize;
         let mut dynamic = 0usize;
-        self.run_dynamic_rounds(url, &mut engine, report, &mut rounds, &mut dynamic)
-            .await;
+        let mut fetched = 0usize;
+        self.settle(
+            url,
+            &mut engine,
+            report,
+            &mut rounds,
+            &mut dynamic,
+            &mut fetched,
+        )
+        .await;
         if let Err(e) = engine.fire_dom_content_loaded() {
             report.errors.push(format!("DOMContentLoaded: {e}"));
         }
-        self.run_dynamic_rounds(url, &mut engine, report, &mut rounds, &mut dynamic)
-            .await;
+        self.settle(
+            url,
+            &mut engine,
+            report,
+            &mut rounds,
+            &mut dynamic,
+            &mut fetched,
+        )
+        .await;
         engine.flush_timers();
-        self.run_dynamic_rounds(url, &mut engine, report, &mut rounds, &mut dynamic)
-            .await;
+        self.settle(
+            url,
+            &mut engine,
+            report,
+            &mut rounds,
+            &mut dynamic,
+            &mut fetched,
+        )
+        .await;
         if let Err(e) = engine.fire_load() {
             report.errors.push(format!("load: {e}"));
         }
-        self.run_dynamic_rounds(url, &mut engine, report, &mut rounds, &mut dynamic)
-            .await;
+        self.settle(
+            url,
+            &mut engine,
+            report,
+            &mut rounds,
+            &mut dynamic,
+            &mut fetched,
+        )
+        .await;
         if rounds >= MAX_DYNAMIC_ROUNDS {
             report.console.push(format!(
                 "[js] dynamic script round limit reached ({MAX_DYNAMIC_ROUNDS})"
@@ -280,6 +321,85 @@ impl BrowserEngine {
             title: new_title,
             nav: outcome.nav,
         })
+    }
+
+    /// Interleave dynamic-script discovery with script network requests until
+    /// both stop producing new work (bounded by the shared
+    /// [`MAX_DYNAMIC_ROUNDS`]/[`MAX_FETCH_ROUNDS`] caps): run the scripts that
+    /// page code created, then serve the `fetch`/`XMLHttpRequest` calls they
+    /// (or their `.then` callbacks) queued, then repeat if the responses
+    /// created more scripts.
+    async fn settle(
+        &self,
+        url: &str,
+        engine: &mut ScriptEngine,
+        report: &mut ScriptReport,
+        rounds: &mut usize,
+        dynamic: &mut usize,
+        fetched: &mut usize,
+    ) {
+        for _ in 0..MAX_FETCH_ROUNDS {
+            self.run_dynamic_rounds(url, engine, report, rounds, dynamic)
+                .await;
+            let before = *fetched;
+            self.resolve_fetches(url, engine, report, fetched).await;
+            if *fetched == before {
+                break;
+            }
+        }
+    }
+
+    /// Serve every `fetch`/`XMLHttpRequest` queued by page scripts, resolving
+    /// each parked promise/callback with the [`NetworkClient`] response.
+    /// Relative URLs resolve against `url`; requests over the caps are
+    /// rejected so no promise is left pending forever.
+    async fn resolve_fetches(
+        &self,
+        url: &str,
+        engine: &mut ScriptEngine,
+        report: &mut ScriptReport,
+        fetched: &mut usize,
+    ) {
+        let base = url::Url::parse(url).ok();
+        for _ in 0..MAX_FETCH_ROUNDS {
+            let requests = match engine.pending_requests() {
+                Ok(r) if r.is_empty() => return,
+                Ok(r) => r,
+                Err(e) => {
+                    report.errors.push(format!("fetch: {e}"));
+                    return;
+                }
+            };
+            for req in requests {
+                if *fetched >= MAX_FETCHES || base.is_none() {
+                    let reason = if base.is_none() {
+                        "invalid page URL"
+                    } else {
+                        "fetch limit reached"
+                    };
+                    let _ =
+                        engine.resolve_request(&req.id, &FetchResponse::failure(&req.url, reason));
+                    continue;
+                }
+                *fetched += 1;
+                let method = req.method.as_deref().unwrap_or("GET").to_ascii_uppercase();
+                let resolved = base
+                    .as_ref()
+                    .and_then(|b| b.join(&req.url).ok())
+                    .map(|u| u.to_string())
+                    .unwrap_or_else(|| req.url.clone());
+                let response = self
+                    .network
+                    .request(&method, &resolved, req.body.as_deref())
+                    .await;
+                if let Err(e) = engine.resolve_request(&req.id, &response) {
+                    report.errors.push(format!("fetch resolve: {e}"));
+                }
+            }
+        }
+        report.console.push(format!(
+            "[js] fetch round limit reached ({MAX_FETCH_ROUNDS})"
+        ));
     }
 
     /// Collect and execute `<script>` elements created by page code since the
@@ -315,11 +435,8 @@ impl BrowserEngine {
                 }
                 *dynamic += 1;
                 let label = format!("dynamic script #{}", *dynamic);
-                match spec.code {
-                    Some(code) => match engine.run(&code) {
-                        Ok(()) => report.executed += 1,
-                        Err(e) => report.errors.push(format!("{label}: {e}")),
-                    },
+                let source = match spec.code {
+                    Some(code) => Some(code),
                     None => {
                         let src = spec.src.unwrap_or_default();
                         let resolved = base
@@ -328,18 +445,32 @@ impl BrowserEngine {
                             .map(|u| u.to_string());
                         match resolved {
                             Some(resolved) => match self.network.fetch(&resolved).await {
-                                Ok(code) => match engine.run(&code) {
-                                    Ok(()) => report.executed += 1,
-                                    Err(e) => report.errors.push(format!("{label}: {e}")),
-                                },
-                                Err(e) => report
-                                    .errors
-                                    .push(format!("{label} [src {src}]: fetch failed: {e}")),
+                                Ok(code) => Some(code),
+                                Err(e) => {
+                                    report
+                                        .errors
+                                        .push(format!("{label} [src {src}]: fetch failed: {e}"));
+                                    None
+                                }
                             },
-                            None => report
-                                .errors
-                                .push(format!("{label}: cannot resolve src {src}")),
+                            None => {
+                                report
+                                    .errors
+                                    .push(format!("{label}: cannot resolve src {src}"));
+                                None
+                            }
                         }
+                    }
+                };
+                if let Some(code) = source {
+                    let result = if spec.module {
+                        engine.run_module(&code)
+                    } else {
+                        engine.run(&code)
+                    };
+                    match result {
+                        Ok(()) => report.executed += 1,
+                        Err(e) => report.errors.push(format!("{label}: {e}")),
                     }
                 }
             }
@@ -375,8 +506,8 @@ impl BrowserEngine {
 
 /// Walk the document in order and collect every executable `<script>`:
 /// inline code as-is, external `src` resolved against `base_url`.
-/// Non-JS types are skipped; `module` is skipped with a console note
-/// (the embedded engine has no module loader).
+/// Non-JS types are skipped; `module` scripts are collected with their
+/// `module` flag set and evaluated through the JS module loader.
 fn collect_scripts(dom: &DomNode, base_url: &str, report: &mut ScriptReport) -> Vec<ScriptSpec> {
     let mut out = Vec::new();
     let mut index = 0usize;
@@ -395,18 +526,14 @@ fn collect_scripts(dom: &DomNode, base_url: &str, report: &mut ScriptReport) -> 
         };
         let raw_type = get("type").to_ascii_lowercase();
         let kind = raw_type.split(';').next().unwrap_or("").trim().to_string();
+        let is_module = kind == "module";
         match kind.as_str() {
             ""
             | "text/javascript"
             | "application/javascript"
             | "text/ecmascript"
-            | "application/ecmascript" => {}
-            "module" => {
-                report.console.push(format!(
-                    "[js] skipped module script #{index} (no module loader)"
-                ));
-                return;
-            }
+            | "application/ecmascript"
+            | "module" => {}
             _ => return,
         }
 
@@ -422,6 +549,7 @@ fn collect_scripts(dom: &DomNode, base_url: &str, report: &mut ScriptReport) -> 
                     label,
                     code: None,
                     src: Some(url),
+                    module: is_module,
                 }),
                 None => report
                     .errors
@@ -443,6 +571,7 @@ fn collect_scripts(dom: &DomNode, base_url: &str, report: &mut ScriptReport) -> 
             label: format!("script #{index}"),
             code: Some(code),
             src: None,
+            module: is_module,
         });
     });
     out

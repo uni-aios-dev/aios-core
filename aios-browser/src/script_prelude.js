@@ -524,22 +524,236 @@
   globalThis.requestAnimationFrame = (fn) => { try { fn(0); } catch (e) { note("[js] rAF error: " + errStr(e)); } return 1; };
   globalThis.cancelAnimationFrame = () => {};
   globalThis.matchMedia = () => ({ matches: false, addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {} });
-  globalThis.fetch = () => {
-    note("[js] fetch() is not supported by the AIOS text browser");
-    return Promise.reject(new Error("fetch is not supported"));
+  /* ---- URL / URLSearchParams shim -------------------------------------- */
+  const resolveHref = (raw, base) => {
+    let u = String(raw == null ? "" : raw);
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(u)) return u;
+    const b = String(base || meta().url || "");
+    if (u.startsWith("//")) {
+      const m = b.match(/^([a-zA-Z][\w+.-]*:)/);
+      return (m ? m[1] : "http:") + u;
+    }
+    if (u.startsWith("/")) {
+      const m = b.match(/^([a-zA-Z][\w+.-]*:\/\/[^/?#]*)/);
+      return (m ? m[1] : "") + u;
+    }
+    const cut = b.replace(/[?#].*$/, "");
+    const slash = cut.lastIndexOf("/");
+    const dir = slash >= 0 ? cut.slice(0, slash + 1) : cut + "/";
+    if (u.startsWith("./")) u = u.slice(2);
+    return dir + u;
+  };
+  const urlParts = (u) => {
+    const m = u.match(/^([^:]+:)?(?:\/\/([^/?#]*))?([^?#]*)(\?[^#]*)?(#.*)?$/) || [];
+    return { protocol: m[1] || "", host: m[2] || "", pathname: m[3] || "/", search: m[4] || "", hash: m[5] || "" };
+  };
+  globalThis.URL = class URL {
+    constructor(url, base) {
+      const href = resolveHref(url, base);
+      this.href = href;
+      const p = urlParts(href);
+      this.protocol = p.protocol;
+      this.host = p.host;
+      this.hostname = p.host.split(":")[0];
+      this.port = p.host.includes(":") ? p.host.split(":")[1] : "";
+      this.pathname = p.pathname || "/";
+      this.search = p.search;
+      this.hash = p.hash;
+      this.origin = p.protocol + (p.host ? "//" + p.host : "");
+    }
+    toString() { return this.href; }
+    get searchParams() { return new globalThis.URLSearchParams(this.search.replace(/^\?/, "")); }
+  };
+  globalThis.URLSearchParams = class URLSearchParams {
+    constructor(init) {
+      this._map = [];
+      if (typeof init === "string") {
+        for (const pair of init.replace(/^\?/, "").split("&")) {
+          if (!pair) continue;
+          const i = pair.indexOf("=");
+          const k = i < 0 ? pair : pair.slice(0, i);
+          const v = i < 0 ? "" : pair.slice(i + 1);
+          try { this._map.push([decodeURIComponent(k), decodeURIComponent(v.replace(/\+/g, " "))]); }
+          catch (_) { this._map.push([k, v]); }
+        }
+      }
+    }
+    get(k) { for (const p of this._map) if (p[0] === String(k)) return p[1]; return null; }
+    has(k) { return this.get(k) !== null; }
+    getAll(k) { return this._map.filter((p) => p[0] === String(k)).map((p) => p[1]); }
+    set(k, v) {
+      for (const p of this._map) if (p[0] === String(k)) { p[1] = String(v); return; }
+      this._map.push([String(k), String(v)]);
+    }
+    append(k, v) { this._map.push([String(k), String(v)]); }
+    delete(k) { this._map = this._map.filter((p) => p[0] !== String(k)); }
+    toString() { return this._map.map(([a, b]) => encodeURIComponent(a) + "=" + encodeURIComponent(b)).join("&"); }
+  };
+
+  /* ---- network bridge: cooperative two-phase fetch/XMLHttpRequest ------- *
+   * The engine has no host functions, so a request is parked in __net and
+   * the Rust side drains the queue between script phases, fetches through
+   * its NetworkClient and calls __aiosNetResolve(id, responseJson). */
+  globalThis.__net = { seq: 1, pending: {}, requests: [] };
+  const netQueue = (id, entry) => {
+    globalThis.__net.pending[id] = entry;
+  };
+  globalThis.__aiosTakeRequests = () => {
+    const r = globalThis.__net.requests;
+    globalThis.__net.requests = [];
+    return r;
+  };
+  const mkHeaders = (map) => ({
+    get(name) {
+      const k = String(name).toLowerCase();
+      return Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null;
+    },
+    has(name) { return this.get(name) !== null; },
+    forEach(fn) { for (const k of Object.keys(map)) fn(map[k], k, this); },
+  });
+  const mkResponse = (res) => {
+    const text = res.body == null ? "" : String(res.body);
+    const headers = mkHeaders(res.headers || {});
+    const response = {
+      ok: res.status >= 200 && res.status < 300,
+      status: res.status,
+      statusText: res.status_text || "",
+      url: res.url || "",
+      redirected: false,
+      type: "basic",
+      headers,
+      text: () => Promise.resolve(text),
+      json: () => {
+        try { return Promise.resolve(JSON.parse(text)); }
+        catch (e) { return Promise.reject(e); }
+      },
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+      blob: () => Promise.resolve(null),
+      clone: () => mkResponse(res),
+    };
+    return response;
+  };
+  globalThis.__aiosNetResolve = (id, res) => {
+    const entry = globalThis.__net.pending[id];
+    if (!entry) return;
+    delete globalThis.__net.pending[id];
+    try {
+      if (res.error) entry.reject(new TypeError("Failed to fetch: " + res.error));
+      else if (entry.xhr) entry.resolve(res);
+      else entry.resolve(mkResponse(res));
+    } catch (e) { note("[js] fetch resolve error: " + errStr(e)); }
+  };
+  const normalizeUrl = (input) => {
+    if (typeof input === "string") return input;
+    if (input && typeof input.url === "string") return input.url;
+    return String(input);
+  };
+  const absoluteUrl = (u) => {
+    try { return new URL(u, meta().url).toString(); } catch (_) { return String(u); }
+  };
+  globalThis.fetch = (input, init) => {
+    init = init || {};
+    const method = String(init.method || "GET").toUpperCase();
+    const body = init.body != null ? String(init.body) : null;
+    const url = absoluteUrl(normalizeUrl(input));
+    return new Promise((resolve, reject) => {
+      const id = String(globalThis.__net.seq++);
+      netQueue(id, { resolve, reject });
+      globalThis.__net.requests.push({ id, url, method, body, kind: "fetch" });
+    });
+  };
+  globalThis.Request = class Request {
+    constructor(input, init) {
+      init = init || {};
+      this.url = absoluteUrl(normalizeUrl(input));
+      this.method = String(init.method || "GET").toUpperCase();
+      this.body = init.body != null ? init.body : null;
+      this.headers = mkHeaders(init.headers || {});
+    }
+  };
+  globalThis.Headers = class Headers {
+    constructor(init) {
+      this._map = {};
+      if (init) for (const k of Object.keys(init)) this._map[String(k).toLowerCase()] = String(init[k]);
+    }
+    get(n) { const k = String(n).toLowerCase(); return Object.prototype.hasOwnProperty.call(this._map, k) ? this._map[k] : null; }
+    set(n, v) { this._map[String(n).toLowerCase()] = String(v); }
+    has(n) { return this.get(n) !== null; }
+    forEach(fn) { for (const k of Object.keys(this._map)) fn(this._map[k], k, this); }
   };
   globalThis.XMLHttpRequest = class XMLHttpRequest {
     constructor() {
       this.readyState = 0;
       this.status = 0;
+      this.statusText = "";
       this.responseText = "";
+      this.response = "";
+      this.responseType = "";
+      this.onreadystatechange = null;
+      this.onload = null;
+      this.onerror = null;
+      this.onloadend = null;
+      this._headers = {};
+      this._listeners = {};
+      this._method = "GET";
+      this._url = "";
     }
-    open() { note("[js] XMLHttpRequest is not supported by the AIOS text browser"); }
-    send() {}
-    setRequestHeader() {}
-    getAllResponseHeaders() { return ""; }
-    addEventListener() {}
-    removeEventListener() {}
+    open(method, url) {
+      this._method = String(method || "GET").toUpperCase();
+      this._url = absoluteUrl(String(url));
+      this.readyState = 1;
+      this._fire("readystatechange");
+    }
+    setRequestHeader(k, v) { this._headers[String(k)] = String(v); }
+    addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); }
+    removeEventListener(type, fn) {
+      const list = this._listeners[type];
+      if (list) { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); }
+    }
+    _fire(type) {
+      const ev = { type, target: this, currentTarget: this };
+      const prop = this["on" + type];
+      if (typeof prop === "function") { try { prop.call(this, ev); } catch (e) { note("[js] xhr " + type + " error: " + errStr(e)); } }
+      const list = this._listeners[type];
+      if (list) for (const fn of list.slice()) { try { fn.call(this, ev); } catch (e) { note("[js] xhr " + type + " error: " + errStr(e)); } }
+    }
+    send(body) {
+      this.readyState = 2;
+      const id = String(globalThis.__net.seq++);
+      netQueue(id, {
+        xhr: true,
+        resolve: (res) => this._done(res),
+        reject: () => this._fail(),
+      });
+      globalThis.__net.requests.push({
+        id, url: this._url, method: this._method,
+        body: body != null ? String(body) : null, kind: "xhr",
+      });
+    }
+    _done(res) {
+      this.status = res.status || 0;
+      this.statusText = res.status_text || "";
+      this._responseHeaders = res.headers || {};
+      this.responseText = res.body == null ? "" : String(res.body);
+      this.response = this.responseText;
+      this.readyState = 4;
+      this._fire("readystatechange");
+      this._fire("load");
+      this._fire("loadend");
+    }
+    _fail() {
+      this.status = 0;
+      this.readyState = 4;
+      this._fire("readystatechange");
+      this._fire("error");
+      this._fire("loadend");
+    }
+    abort() {}
+    getAllResponseHeaders() {
+      const map = (this._responseHeaders || {});
+      return Object.keys(map).map((k) => k + ": " + map[k]).join("\r\n");
+    }
+    getResponseHeader() { return null; }
   };
 
   /* ---- lifecycle events + dynamic <script> discovery -------------------- */
@@ -584,15 +798,12 @@
       if (n.tag === "script" && !n.__ran) {
         markScript(n);
         const type = getAttr(n, "type") || "";
-        if (String(type).toLowerCase() === "module") {
-          note("[js] skipped module script (no module loader)");
-          return;
-        }
-        if (!isJsType(type)) return;
+        const isModule = String(type).toLowerCase() === "module";
+        if (!isModule && !isJsType(type)) return;
         const src = getAttr(n, "src");
-        if (src) { out.push({ src: String(src), code: null }); return; }
+        if (src) { out.push({ src: String(src), code: null, module: isModule }); return; }
         const code = scriptCode(n);
-        if (code.trim()) out.push({ src: null, code });
+        if (code.trim()) out.push({ src: null, code, module: isModule });
       }
       for (const c of n.children) walk(c);
     };

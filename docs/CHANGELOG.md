@@ -1,5 +1,44 @@
 # AIOS Development Log
 
+## v2.44.0 — embedded JS engine: ES modules + host-backed fetch/XMLHttpRequest (2026-10-12)
+
+### Added
+- **`<script type="module">` support in the text browser.** Static and
+  dynamically-created module scripts are now parsed and evaluated through
+  boa's ES-module loader (`Module::parse` + `load_link_evaluate`) instead of
+  being skipped, so `export`/`import` syntax is accepted and module
+  top-level code runs in the page context (`aios-browser/src/script.rs`,
+  `engine.rs`).
+- **`fetch()` and `XMLHttpRequest` that reach the network.** The prelude now
+  parks each request in a JS queue (`globalThis.__net`) and the engine drains
+  it between script phases, performs the request through the block's
+  `NetworkClient` and resolves the parked promise/callback — a cooperative
+  two-phase model that keeps the sandbox's zero-host-function design while
+  letting page code load data. `fetch` resolves to a `Response`
+  (`ok`/`status`/`statusText`/`headers`/`text()`/`json()`); XHR fires
+  `readystatechange`/`load`/`loadend` and `error` on transport failure
+  (`aios-browser/src/script_prelude.js`).
+- **`URL` / `URLSearchParams` shims** in the prelude so relative request URLs
+  resolve against the page URL without a native implementation.
+- **`NetworkClient::request(method, url, body)`** — a GET/POST/PUT/DELETE/HEAD
+  helper returning a structured `FetchResponse` (status, final URL, headers,
+  body, transport error) where non-2xx is data, not an error
+  (`aios-browser/src/network.rs`, `types.rs`).
+
+### Changed
+- `ScriptEngine` gained `run_module`, `pending_requests` and `resolve_request`;
+  `DynamicScript` gained a `module` flag. The page pipeline now interleaves
+  dynamic-script discovery with request servicing, bounded by
+  `MAX_FETCH_ROUNDS = 8` / `MAX_FETCHES = 32`.
+- BUGS OPEN (v2.44.0) narrowed to the remaining limits: no input-event loop,
+  `document.write` no-op, and no automatic `error`-event dispatch.
+
+### Verification
+- 4 new in-crate tests (106 total in `aios-browser`, workspace green):
+  module evaluation with `export`, fetch queue+resolve round-trip,
+  transport-error rejection and XHR `onload` delivery. `cargo clippy` clean,
+  `cargo fmt` applied.
+
 ## v2.43.0 — native browser: gtk::init on the engine thread, single engine thread, GTK pump (2026-10-07)
 
 ### Fixed

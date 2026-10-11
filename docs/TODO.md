@@ -450,7 +450,7 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [x] IPC commands on `BrowserBlock`: `back`, `forward`, `reload`, `new_tab`, `close_tab`, `select_tab`, `session_status`, `add_bookmark`, `list_bookmarks`, `remove_bookmark`, `eval_js`, `add_user_script`; `browser_status` reports `execute_scripts` + tabs + nav flags
   - [x] Userscripts: pattern-matched (`url_matches`) injection after page scripts; `BrowserConfig.execute_scripts = false` disables the pipeline; `Page` carries `console`/`scripts_executed`/`script_errors`
   - [x] UI: TUI `aios` `J` JS-console sidebar (script count, errors, console lines), footer hint, post-load stats log, `web_navigate` uses `normalize_url`; `aios-tui::fetch_url` runs the full `BrowserEngine`
-  - [ ] Known limits (documented, BUGS OPEN v2.40.0): ES modules skipped, `document.write` no-op, `fetch`/XHR rejected (network stays in Rust), no input-event loop, `error` events stored not auto-dispatched
+  - [ ] Known limits (documented, BUGS OPEN v2.44.0): `document.write` no-op, no input-event loop, `error` events stored not auto-dispatched
 
 - [x] **Phase 25d: Engine Iteration 2 — Lifecycle Events, Dynamic Scripts, Navigation — COMPLETE (v2.40.0)**
   - [x] Synthetic `DOMContentLoaded`/`load`: real dispatch core (`fireAt`) for document/window/nodes, `on<type>` property handlers, `readystatechange` chain, `document.readyState` walks `loading → interactive → complete`, handler exceptions caught into the console
@@ -459,7 +459,8 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [x] Navigation loop: `location.href`/`assign`/`replace` and zero-delay `<meta http-equiv="refresh">` (`HtmlParser::extract_meta_refresh`) followed with `MAX_NAV_HOPS = 5`, `[nav]` console traces, guards (same-URL loop, non-http scheme, fetch failure), `Page::url` = final URL
   - [x] `unsafe impl Send for ScriptEngine` (documented): engine legitimately spans async fetches while `block_on` needs `Send` futures
   - [x] Tests: +23 (lifecycle order/readyState, thrown-handler isolation, dynamic inline/chain/external/failure, round-cap termination, end-to-end nav against a local HTTP test server, meta refresh immediate/delayed/same-URL, hop limit, scheme refusal); 102 in-crate total
-  - [ ] Future: ES modules via boa module loader; host-backed `fetch`/XHR through `NetworkClient`
+  - [x] ES modules via boa's module loader (`Module::parse` + `load_link_evaluate`); host-backed `fetch`/XHR through `NetworkClient` — cooperative two-phase queue (`globalThis.__net`), `MAX_FETCH_ROUNDS = 8` / `MAX_FETCHES = 32`, `URL`/`URLSearchParams` shims (v2.44.0)
+  - [ ] Future: input-event loop, `document.write`, automatic `error`-event dispatch
 
 - [x] **Phase 40: Block Store — Sources, Catalog, Installer, Update Service — COMPLETE**
   - [x] `aios-store::source`: `StoreSource`/`SourceKind` — GitHub (`github:owner/repo`), local (`local:path`), HTTP update service (`http://host:port`)

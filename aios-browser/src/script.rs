@@ -14,7 +14,8 @@
 //! - A fresh context per page keeps evaluations deterministic and lets the
 //!   stateless IPC block replay any stored page for `eval_js`.
 
-use crate::types::DomNode;
+use crate::types::{DomNode, FetchRequest, FetchResponse};
+use boa_engine::module::Module;
 use boa_engine::{Context, JsString, JsValue, Source};
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,9 @@ pub struct DynamicScript {
     /// The element's inline source text (exactly one of `src`/`code` is set).
     #[serde(default)]
     pub code: Option<String>,
+    /// `true` for `<script type="module">` — run through the module loader.
+    #[serde(default)]
+    pub module: bool,
 }
 
 /// Collected outcome of executing a page's scripts.
@@ -160,6 +164,72 @@ impl ScriptEngine {
     /// the remaining scripts (mirroring a browser's per-script isolation).
     pub fn run(&mut self, source: &str) -> Result<(), String> {
         eval_raw(&mut self.context, source)
+    }
+
+    /// Evaluate one `<script type="module">` in the page context.
+    ///
+    /// The source is parsed as an ECMAScript module and its top-level code is
+    /// evaluated through boa's module loader (so `export` statements are
+    /// accepted and `import` specifiers resolve through the context's default
+    /// loader). A module whose imports cannot be resolved surfaces as a
+    /// rejected promise, reported to the caller but leaving the context usable.
+    pub fn run_module(&mut self, source: &str) -> Result<(), String> {
+        let module = Module::parse(
+            Source::from_bytes(source.as_bytes()),
+            None,
+            &mut self.context,
+        )
+        .map_err(|e| format_js_error(&e, &mut self.context))?;
+        let promise = module.load_link_evaluate(&mut self.context);
+        let global = self.context.global_object().clone();
+        global
+            .set(
+                JsString::from("__aios_mod_err"),
+                JsValue::null(),
+                false,
+                &mut self.context,
+            )
+            .map_err(|e| format_js_error(&e, &mut self.context))?;
+        global
+            .set(
+                JsString::from("__aios_mod_promise"),
+                promise,
+                false,
+                &mut self.context,
+            )
+            .map_err(|e| format_js_error(&e, &mut self.context))?;
+        eval_raw(
+            &mut self.context,
+            "globalThis.__aios_mod_promise.then(function () {}, function (e) { \
+             globalThis.__aios_mod_err = (e && e.message) ? String(e.message) : String(e); });",
+        )?;
+        drain_jobs(&mut self.context);
+        let raw = eval_json(&mut self.context, "globalThis.__aios_mod_err")?;
+        let reason: Option<String> = serde_json::from_str(&raw).unwrap_or(None);
+        match reason {
+            Some(message) => Err(format!("module: {message}")),
+            None => Ok(()),
+        }
+    }
+
+    /// Take the script network requests queued since the last drain.
+    ///
+    /// The engine calls this between script phases, performs each request
+    /// through its [`NetworkClient`](crate::network::NetworkClient) and feeds
+    /// the response back via [`ScriptEngine::resolve_request`].
+    pub fn pending_requests(&mut self) -> Result<Vec<FetchRequest>, String> {
+        let json = eval_json(&mut self.context, "globalThis.__aiosTakeRequests()")?;
+        serde_json::from_str(&json).map_err(|e| format!("fetch requests: {e}"))
+    }
+
+    /// Settle a parked `fetch`/`XMLHttpRequest` with its response.
+    pub fn resolve_request(&mut self, id: &str, response: &FetchResponse) -> Result<(), String> {
+        let id_json = serde_json::to_string(id).map_err(|e| e.to_string())?;
+        let res_json = serde_json::to_string(response).map_err(|e| e.to_string())?;
+        eval_raw(
+            &mut self.context,
+            &format!("globalThis.__aiosNetResolve({id_json}, {res_json});"),
+        )
     }
 
     /// Execute queued `setTimeout`/`setInterval` callbacks once, in `ms` order,
@@ -595,20 +665,102 @@ mod tests {
         )
         .unwrap();
         let specs = e.collect_dynamic_scripts().unwrap();
-        assert_eq!(specs.len(), 2);
+        assert_eq!(specs.len(), 3);
         assert_eq!(specs[0].code.as_deref(), Some("1 + 1"));
         assert_eq!(specs[0].src, None);
+        assert!(!specs[0].module);
         assert_eq!(specs[1].src.as_deref(), Some("/late.js"));
         assert_eq!(specs[1].code, None);
+        assert!(!specs[1].module);
+        assert_eq!(specs[2].code.as_deref(), Some("export {}"));
+        assert!(specs[2].module);
         // Each element is returned exactly once.
         assert!(e.collect_dynamic_scripts().unwrap().is_empty());
-        let out = e.finish().unwrap();
-        assert!(
-            out.console
-                .iter()
-                .any(|l| l.contains("skipped module script")),
-            "console: {:?}",
-            out.console
+    }
+
+    #[test]
+    fn module_scripts_evaluate_with_exports() {
+        let mut e = engine_for(r#"<html><body></body></html>"#);
+        e.run_module("const x = 40; globalThis.__mod = x + 2; export {};")
+            .unwrap();
+        assert_eq!(
+            e.evaluate("globalThis.__mod").unwrap(),
+            ScriptValue::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn fetch_requests_are_queued_and_resolved() {
+        let mut e = engine_for(r#"<html><body></body></html>"#);
+        e.run(
+            r#"
+            globalThis.__got = null;
+            fetch("/api/hello").then((r) => r.text()).then((t) => { globalThis.__got = t; });
+            "#,
+        )
+        .unwrap();
+        let requests = e.pending_requests().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url, "https://example.com/api/hello");
+        assert_eq!(requests[0].method.as_deref(), Some("GET"));
+        assert!(e.pending_requests().unwrap().is_empty());
+
+        let response = crate::types::FetchResponse {
+            status: 200,
+            status_text: "OK".into(),
+            body: "hi".into(),
+            ..Default::default()
+        };
+        e.resolve_request(&requests[0].id, &response).unwrap();
+        assert_eq!(
+            e.evaluate("globalThis.__got").unwrap(),
+            ScriptValue::String("hi".into())
+        );
+    }
+
+    #[test]
+    fn fetch_transport_error_rejects() {
+        let mut e = engine_for(r#"<html><body></body></html>"#);
+        e.run(
+            r#"
+            globalThis.__err = null;
+            fetch("/nope").catch((e) => { globalThis.__err = e.name; });
+            "#,
+        )
+        .unwrap();
+        let requests = e.pending_requests().unwrap();
+        let response = crate::types::FetchResponse::failure("/nope", "boom");
+        e.resolve_request(&requests[0].id, &response).unwrap();
+        assert_eq!(
+            e.evaluate("globalThis.__err").unwrap(),
+            ScriptValue::String("TypeError".into())
+        );
+    }
+
+    #[test]
+    fn xhr_invokes_onload() {
+        let mut e = engine_for(r#"<html><body></body></html>"#);
+        e.run(
+            r#"
+            globalThis.__xhr = null;
+            const x = new XMLHttpRequest();
+            x.onload = () => { globalThis.__xhr = x.status + ":" + x.responseText; };
+            x.open("GET", "/data.json");
+            x.send();
+            "#,
+        )
+        .unwrap();
+        let requests = e.pending_requests().unwrap();
+        assert_eq!(requests[0].kind.as_deref(), Some("xhr"));
+        let response = crate::types::FetchResponse {
+            status: 200,
+            body: "{}".into(),
+            ..Default::default()
+        };
+        e.resolve_request(&requests[0].id, &response).unwrap();
+        assert_eq!(
+            e.evaluate("globalThis.__xhr").unwrap(),
+            ScriptValue::String("200:{}".into())
         );
     }
 }
