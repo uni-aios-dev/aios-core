@@ -833,12 +833,14 @@ v2.38.11-18 (статичный дашборд только для просмо�
   `[gui] modal close <label> confirmed`; `Esc` / `Cancel` пишет
   `[gui] modal close <label> canceled`, а набранный текст остаётся.
   Закрытие окна с пустой заметкой диалог не показывает.
-- **Диалог восстановления после сбоя (v2.45.0)**: когда ring-3 задача
-  сбоит (деление на ноль, неверный опкод, general protection или page
+- **Диалог восстановления после сбоя (v2.45.0, бюджет v2.45.1)**: когда ring-3
+  задача сбоит (деление на ноль, неверный опкод, general protection или page
   fault), ядро больше не останавливается — задача замораживается, а поверх
   рабочего стола (выше окон и диалога подтверждения) открывается оверлей
-  `Task Error` с `pid <n> faulted: <reason>` и снятым
-  `snap rip=… rsp=… cs=…`. Разрешается кликом по пластине или клавишей:
+  `Task Error` с `pid <n> faulted: <reason> (crash #N/3)` и снятым
+  `snap rip=… rsp=… hash=0x…` (хэш — это FNV-1a-хэш состояния снапшота,
+  повторно проверяемый Rollback'ом). Разрешается кликом по пластине или
+  клавишей:
   | Клавиша | Действие |
   |---------|----------|
   | `R` | **Rollback** — восстановить снятый фрейм задачи и продолжить её |
@@ -847,9 +849,14 @@ v2.38.11-18 (статичный дашборд только для просмо�
 
   Пока оверлей открыт, он владеет клавиатурой и мышью (прочие клавиши пишут
   `[gui] crash dialog blocks scancode 0x..`, клики вне пластин —
-  `[gui] crash dialog blocks click (x,y)`). Открытие пишет
+  `[gui] crash dialog blocks click (x,y)`). **Бюджет сбоев:** задача, сбоевшая
+  более 3 раз, запирает диалог на Terminate — подсказка становится `fault
+  budget exceeded: only T = Terminate`, пластины Rollback/Resume гаснут, а
+  `R`/`Enter`/`S` логируют `[gui] crash dialog blocks resume|rollback: over
+  fault budget`. Открытие пишет
   `[gui] crash dialog open pid <n>`; решения логируются как
-  `[fault] pid <n> <rollback|terminate|resume>`. Спасаются только ring-3
+  `[fault] pid <n> <rollback|terminate|resume>`, за которым идёт итоговая строка
+  `[fault] totals faults=N resume=N terminate=N rollback=N`. Спасаются только ring-3
   задачи: сбой в контексте ядра (или double fault) по-прежнему останавливает
   систему. Об ограничении «снапшот только по метаданным» — см. `BUGS.md`
   (OPEN v2.45.0).

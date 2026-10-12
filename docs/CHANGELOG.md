@@ -1,5 +1,45 @@
 # AIOS Development Log
 
+## v2.45.1 — kernel fault recovery: state hash, fault budget, history ring (2026-10-12)
+
+### Added
+- **State hash in the kernel snapshot.** `TaskSnapshot` now carries a
+  `state_hash` — a lightweight FNV-1a hash of the captured register bundle
+  (`pid`, `rip`, `cs`, `rsp`, `rflags`) — fulfilling the "ID + stack pointer +
+  state hash" snapshot contract. Rollback re-computes the hash and logs
+  `[fault] ... rollback state verified|mismatch`, so snapped state corruption
+  is caught instead of blindly jumping back.
+- **Per-task fault budget (`MAX_FAULTS_PER_TASK = 3`).** `FaultRecord.count`
+  counts how many times the pid has faulted. Once a task exceeds the budget the
+  dialog locks to **Terminate only**: `crash_key` / `crash_click` block Resume
+  and Rollback (`[gui] crash dialog blocks resume/rollback: over fault
+  budget`), the `resolve` guard ignores non-Terminate decisions (`over fault
+  budget: only Terminate`), and the dialog draws the Rollback/Resume plates
+  dim. Terminate resets the counter so a respawned task starts fresh. A
+  defective task can no longer loop the crash dialog.
+- **Fault history ring + resolution statistics.** Every resolved fault is
+  pushed into a bounded `FAULT_HISTORY_LEN = 8` ring; `fault_total()` /
+  `resolution_count(action)` expose the aggregate, printed as a serial line
+  after each resolution: `[fault] totals faults=N resume=N terminate=N
+  rollback=N`.
+
+### Changed
+- Kernel crash dialog shows `(crash #N/3)` on the fault line, the state hash in
+  the snapshot line (`hash=0x…`), and switches its hint to `fault budget
+  exceeded: only T = Terminate` with only the Terminate plate armed when the
+  budget is exhausted. The intercept `[fault]` log line carries the same crash
+  counter.
+- Host parity summary: the host snapshot already tracked crash counts; the
+  kernel now matches it with a hard budget instead of a hint.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none` (`cargo build`
+  + `cargo clippy`, zero warnings); `cargo fmt` clean. New `#[cfg(test)]` cases
+  in `fault.rs` cover the state-hash stability/sensitivity, budget-forced
+  Terminate, history-ring wrap and resolution counters (type-checked through a
+  host-target test compile; the bare target has no `test` crate, per the
+  established kernel policy).
+
 ## v2.45.0 — fault tolerance & recovery: per-task isolation + interactive crash dialog (2026-10-12)
 
 ### Added

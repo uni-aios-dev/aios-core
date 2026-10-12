@@ -964,31 +964,50 @@ fn crash_click(fb: &Framebuffer, x: usize, y: usize) {
     if !crate::fault::pending() {
         return;
     }
+    let budget_locked = crate::fault::over_budget_current();
     let ((rx, ry), (tx, ty), (sx, sy)) = crash_btn_rects(fb);
     let hit =
         |bx: usize, bw: usize, by: usize| x >= bx && x < bx + bw && y >= by && y < by + CDLG_BTN_H;
     if hit(rx, CDLG_RB_W, ry) {
-        crate::fault::resolve(crate::fault::Recovery::Rollback);
+        if budget_locked {
+            crate::kprintln!("[gui] crash dialog blocks rollback click: over fault budget");
+        } else {
+            crate::fault::resolve(crate::fault::Recovery::Rollback);
+        }
     } else if hit(tx, CDLG_TM_W, ty) {
         crate::fault::resolve(crate::fault::Recovery::Terminate);
     } else if hit(sx, CDLG_RS_W, sy) {
-        crate::fault::resolve(crate::fault::Recovery::Resume);
+        if budget_locked {
+            crate::kprintln!("[gui] crash dialog blocks resume click: over fault budget");
+        } else {
+            crate::fault::resolve(crate::fault::Recovery::Resume);
+        }
     } else {
         crate::kprintln!("[gui] crash dialog blocks click ({},{})", x, y);
     }
 }
 
 /// Keyboard routing while the crash dialog is up: `Enter` resumes, `R` rolls
-/// back, `T` terminates, everything else is consumed and logged.
+/// back, `T` terminates, everything else is consumed and logged. Over the
+/// task's fault budget only `T`/`Enter`-on-Rollback-less actions resolve
+/// (Resume and Rollback are blocked).
 fn crash_key(sc: u8) -> bool {
     let resume = sc == 0x1C
         || crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'s'));
     if resume {
-        crate::fault::resolve(crate::fault::Recovery::Resume);
+        if crate::fault::over_budget_current() {
+            crate::kprintln!("[gui] crash dialog blocks resume: over fault budget");
+        } else {
+            crate::fault::resolve(crate::fault::Recovery::Resume);
+        }
         return true;
     }
     if crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'r')) {
-        crate::fault::resolve(crate::fault::Recovery::Rollback);
+        if crate::fault::over_budget_current() {
+            crate::kprintln!("[gui] crash dialog blocks rollback: over fault budget");
+        } else {
+            crate::fault::resolve(crate::fault::Recovery::Rollback);
+        }
         return true;
     }
     if crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'t')) {
@@ -3053,22 +3072,37 @@ fn draw_crash_dialog(fb: &Framebuffer) {
     }
     tui::draw_text(fb, x + 6, y + 1, "Task Error", TEXT, TITLE_CRASH, max);
     let mut ly = y + TITLE_H + 8;
+    let budget_locked = crate::fault::over_budget_current();
     let (task_line, snap_line, hint_line) = match crate::fault::peek() {
         Some(record) => {
             let snap = &record.snapshot;
             (
-                format!("pid {} faulted: {}", snap.pid, record.kind.name()),
                 format!(
-                    "snap rip={:#x} rsp={:#x} cs={:#x}",
-                    snap.rip, snap.rsp, snap.cs
+                    "pid {} faulted: {} (crash #{}/{})",
+                    snap.pid,
+                    record.kind.name(),
+                    record.count,
+                    crate::fault::MAX_FAULTS_PER_TASK
                 ),
-                "R = Rollback   T = Terminate   Enter/S = Resume",
+                format!(
+                    "snap rip={:#x} rsp={:#x} hash={:#x}",
+                    snap.rip, snap.rsp, snap.state_hash
+                ),
+                if budget_locked {
+                    "fault budget exceeded: only T = Terminate"
+                } else {
+                    "R = Rollback   T = Terminate   Enter/S = Resume"
+                },
             )
         }
         None => (
             String::from("fault in an unknown task"),
             String::from("waiting for record..."),
-            "R = Rollback   T = Terminate   Enter/S = Resume",
+            if budget_locked {
+                "fault budget exceeded: only T = Terminate"
+            } else {
+                "R = Rollback   T = Terminate   Enter/S = Resume"
+            },
         ),
     };
     tui::draw_text(fb, x + 12, ly, &task_line, TEXT_HOT, WIN_BG, max);
@@ -3077,6 +3111,13 @@ fn draw_crash_dialog(fb: &Framebuffer) {
     ly += console::GLYPH_H + 6;
     tui::draw_text(fb, x + 12, ly, hint_line, TEXT_DIM, WIN_BG, max);
     let ((rx, ry), (tx, ty), (sx, sy)) = crash_btn_rects(fb);
+    // Over the fault budget only the Terminate plate stays armed; Rollback and
+    // Resume are drawn dim so the only actionable path is visually obvious.
+    let (rb_bg, rs_bg, tm_bg) = if budget_locked {
+        (BTN_BG, BTN_BG, BAR_ON)
+    } else {
+        (BAR_ON, BAR_ON, BTN_BG)
+    };
     unsafe {
         vector::fill_round(
             fb,
@@ -3086,7 +3127,7 @@ fn draw_crash_dialog(fb: &Framebuffer) {
             CDLG_BTN_H as i32,
             4,
             vector::ALL,
-            BAR_ON,
+            rb_bg,
         );
         vector::fill_round(
             fb,
@@ -3096,7 +3137,7 @@ fn draw_crash_dialog(fb: &Framebuffer) {
             CDLG_BTN_H as i32,
             4,
             vector::ALL,
-            BTN_BG,
+            tm_bg,
         );
         vector::fill_round(
             fb,
@@ -3109,9 +3150,9 @@ fn draw_crash_dialog(fb: &Framebuffer) {
             BAR_ON,
         );
     }
-    modal_btn_label(fb, "Rollback", rx, ry, CDLG_RB_W, BAR_ON);
-    modal_btn_label(fb, "Terminate", tx, ty, CDLG_TM_W, BTN_BG);
-    modal_btn_label(fb, "Resume", sx, sy, CDLG_RS_W, BAR_ON);
+    modal_btn_label(fb, "Rollback", rx, ry, CDLG_RB_W, rb_bg);
+    modal_btn_label(fb, "Terminate", tx, ty, CDLG_TM_W, tm_bg);
+    modal_btn_label(fb, "Resume", sx, sy, CDLG_RS_W, rs_bg);
 }
 
 /// Centers a button label inside its plate (v2.38.30 dialog buttons).

@@ -96,10 +96,7 @@ impl CrashDialogState {
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .button("Rollback — retry from snapshot")
-                        .clicked()
-                    {
+                    if ui.button("Rollback — retry from snapshot").clicked() {
                         chosen = Some(RecoveryAction::Rollback);
                     }
                     if ui.button("Terminate").clicked() {

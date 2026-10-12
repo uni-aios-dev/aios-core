@@ -1418,16 +1418,21 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
 - `sched` — tick-driven round-robin over `MAX_TASKS = 6` traps frames (slot 0 = idle, worker = 1, four ring-3 demos in slots 2..5). Ring-3 tasks are preemptive (switched at any hardware timer IRQ — PIT or LAPIC); ring-0 tasks switch only cooperatively via `yield_kernel` (`int 0xfa`), guarded by the `hw_tick` predicate which also covers vector `0x90`. Before v2.38.12, boards whose legacy PIC never delivered IRQ0 (UEFI IO-APIC routing) had **no preemption interrupts** — a ring-3 task that never syscalls yielded the tick economy to nobody — so demo programs keep sleeping (`SYS_SLEEP`) forever and must never end in a busy loop; the LAPIC timer restores preemption on those boards. `idle_loop` still detects no-hardware-ticks (`IRQ32_SEEN == false`) and synthesizes the 100 Hz cadence by polling the PIT countdown. Since v2.38.20 `schedule()` also applies a thermal gate: while `thermal::critical()` is set it skips ring-3 tasks (`frame.cs == USER_CS`), so demo tasks pause on a hot die while kernel and idle tasks still run and the TUI keeps refreshing.
   - `memory` — paging core over the Limine HHDM (`physical_offset = hhdm.offset`). `translate` walks the active page tables (PML4/PDPT/PD/PT, huge pages) reading physical memory through the HHDM; `map_page`/`unmap_page` edit tables and allocate page-table frames on demand, flushing the TLB with `invlpg`; `init` builds a bump frame allocator over the Limine `MEMMAP_USABLE` regions supplied as `MemRegion { start, end }`; `selftest` maps a scratch page, writes/reads a pattern and verifies `translate` before and after unmap. `verify_region(virt, bytes)` (v2.38.13) walks the live tables and reports a `RegionCheck { pages_total, pages_present, pages_writable }`, counting huge-page leaves per 4 KiB sub-page with the leaf's own flags — the boot path uses it to prove the whole GOP VRAM range is mapped. `map_mmio(phys, size)` maps device BAR pages into a dedicated window at `0xffffff00_2000_0000` (PML4 slot 510) — the HHDM covers RAM only; `physical_to_virtual(phys)` returns the HHDM alias used for DMA buffers.
   - `heap` — 4 MiB kernel heap (`HEAP_START = 0xffff_ff00_0000_0000`, `HEAP_SIZE = 4 MiB`) mapped page-by-page by `memory::map_page`; `#[global_allocator]` free-list allocator — first-fit over an *address-sorted* free list: `alloc` splits with the remainder left at its original address (order survives), `dealloc` inserts in place and coalesces with **both** adjacent neighbours (the old list-head-only merge stranded adjacent fragments and caused long-run OOM), spin-lock guarded; `init_heap` sets up the single free block, `test_heap` allocates `Vec`/`String`/`Box` and stress-cycles 200 strings, `fragmentation_selftest` (v2.38.33, run from `main` right after `test_heap`) carves 24 × 96 KiB blocks, frees them in allocation order and re-acquires 1.5 MiB contiguously via `try_reserve_exact`, logging `heap: fragmentation self-test ok` (smoke-grepped) or `FAILED`. The GUI backbuffer sits at `HEAP_START + 4 MiB` — abutting but page-disjoint.
-- `fault` — (v2.45.0) Ring-0 fault interceptor, the kernel twin of the host
-  `run_isolated`. `intercept(frame, kind)` is called from the exception handlers
-  for a **user** frame: it captures a `TaskSnapshot` (`pid`, `rip`, `cs`, `rsp`,
-  `rflags`) from the `InterruptFrame`, publishes a `FaultRecord`
-  (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault }`),
-  freezes the task (`sched::freeze_task`) and calls `schedule(frame)` to switch
-  away. `peek()`/`pending()` feed the GUI overlay and `resolve(Recovery)` applies
-  `Resume` (`unfreeze_task`), `Terminate` (`remove_task`) or `Rollback`
-  (`restore_task` re-enters at the captured frame). Kernel-context frames still
-  take `interrupts::fatal_with`.
+- `fault` — (v2.45.0, extended v2.45.1) Ring-0 fault interceptor, the kernel
+  twin of the host `run_isolated`. `intercept(frame, kind)` is called from the
+  exception handlers for a **user** frame: it captures a `TaskSnapshot`
+  (`pid`, `rip`, `cs`, `rsp`, `rflags`, `state_hash` — the latter an FNV-1a hash
+  of the register bundle), publishes a `FaultRecord`
+  (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault }`,
+  `count =` nth fault of the pid), freezes the task (`sched::freeze_task`) and
+  calls `schedule(frame)` to switch away. `peek()`/`pending()` feed the GUI
+  overlay and `resolve(Recovery)` applies `Resume` (`unfreeze_task`),
+  `Terminate` (`remove_task`) or `Rollback` (`restore_task` re-enters at the
+  captured frame, re-verifying the `state_hash`). A per-task **fault budget**
+  (`MAX_FAULTS_PER_TASK = 3`) locks the dialog to Terminate once exceeded; every
+  resolution is pushed into a bounded history ring
+  (`FAULT_HISTORY_LEN = 8`) with `fault_total()` / `resolution_count()`
+  aggregates. Kernel-context frames still take `interrupts::fatal_with`.
 - `tui` — interactive on-screen TUI (v2.38.11, view-only dashboard; **interactive
   since v2.38.19**): the TUI is the **primary screen** — a compact boot-log strip
   (`console::CONSOLE_TOP_ROWS` = 6 rows) stays on top and `render()` paints the

@@ -1413,16 +1413,22 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `sched` — round-robin по тикам таймера над `MAX_TASKS = 6` кадрами (слот 0 = idle, worker = 1, четыре ring-3 демо-задачи в слотах 2..5). Ring-3 задачи вытесняемы (переключаются по любому аппаратному тику — PIT или LAPIC); ring-0 задачи переключаются только кооперативно через `yield_kernel` (`int 0xfa`), что охраняет предикат `hw_tick`, покрывающий и вектор `0x90`. До v2.38.12 на платах, где legacy PIC не доставлял IRQ0 (маршрутизация через IO-APIC), **прерываний для вытеснения не было** — ring-3 задача без syscall не отдавала CPU никому, останавливая экономику тиков; LAPIC-таймер вернул вытеснение на таких платах, но демо-программы по-прежнему обязаны спать (`SYS_SLEEP`). `idle_loop` по-прежнему обнаруживает отсутствие аппаратных тиков (`IRQ32_SEEN == false`) и синтезирует тактовость 100 Гц опросом счётчика PIT. С v2.38.20 `schedule()` также применяет термальный затвор: пока стоит `thermal::critical()`, ring-3 задачи (`frame.cs == USER_CS`) пропускаются — демо-задачи замирают на горячем кристалле, а задачи ядра и idle продолжают работать, TUI продолжает обновляться.
   - `memory` — ядро paging поверх HHDM Limine (`physical_offset = hhdm.offset`). `translate` обходит активные таблицы страниц (PML4/PDPT/PD/PT, большие страницы), читая физическую память через HHDM; `map_page`/`unmap_page` редактируют таблицы и выделяют кадры для таблиц по требованию, сбрасывая TLB через `invlpg`; `init` строит bump-аллокатор кадров по регионам `MEMMAP_USABLE` Limine, переданным как `MemRegion { start, end }`; `selftest` мапит тестовую страницу, пишет/читает паттерн и проверяет `translate` до и после unmap. `verify_region(virt, bytes)` (v2.38.13) обходит живые таблицы и возвращает `RegionCheck { pages_total, pages_present, pages_writable }`, считая huge-листья по одной записи на 4 КиБ-субстраницу с флагами самого листа — загрузочный путь использует её, чтобы доказать, что весь диапазон VRAM GOP промаплен. `map_mmio(phys, size)` мапит страницы BAR устройств в выделенное окно `0xffffff00_2000_0000` (слот PML4 510) — HHDM покрывает только RAM; `physical_to_virtual(phys)` возвращает HHDM-алиас, используемый для DMA-буферов.
   - `heap` — куча ядра 4 МиБ (`HEAP_START = 0xffff_ff00_0000_0000`, `HEAP_SIZE = 4 MiB`), замаплена страница за страницей через `memory::map_page`; `#[global_allocator]` free-list аллокатор — first-fit по *адресно-отсортированному* списку свободных: `alloc` сплитит с остатком на исходном адресе (порядок выживает), `dealloc` вставляет по порядку и сливается с **обеими** соседними блоками при смежности (прежнее слияние только с головой списка оставляло соседние фрагменты и вело к OOM на долгих сессиях), под spin-lock; `init_heap` создаёт единый свободный блок, `test_heap` выделяет `Vec`/`String`/`Box` и стресс-цикл из 200 строк,   `fragmentation_selftest` (v2.38.33, запускается из `main` сразу за `test_heap`) вырезает 24 × 96 KiB блока, освобождает их в порядке аллокации и заново добывает 1.5 MiB целиком через `try_reserve_exact`, логируя `heap: fragmentation self-test ok` (грепается смоуком) или `FAILED`. GUI backbuffer стоит на `HEAP_START + 4 MiB` — впритык, но без пересечения страниц.
-- `fault` — (v2.45.0) Перехватчик фолтов Ring 0, ядерный близнец host-функции
-  `run_isolated`. `intercept(frame, kind)` вызывается из обработчиков исключений
-  для **пользовательского** фрейма: снимает `TaskSnapshot` (`pid`, `rip`, `cs`,
-  `rsp`, `rflags`) из `InterruptFrame`, публикует `FaultRecord`
-  (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault }`),
-  замораживает задачу (`sched::freeze_task`) и вызывает `schedule(frame)` для
-  ухода с неё. `peek()`/`pending()` питают GUI-оверлей, а `resolve(Recovery)`
-  применяет `Resume` (`unfreeze_task`), `Terminate` (`remove_task`) или
-  `Rollback` (`restore_task` возвращается в снятый фрейм). Фреймы ядрового
-  контекста по-прежнему идут в `interrupts::fatal_with`.
+- `fault` — (v2.45.0, расширен v2.45.1) Перехватчик фолтов Ring 0, ядерный
+  близнец host-функции `run_isolated`. `intercept(frame, kind)` вызывается из
+  обработчиков исключений для **пользовательского** фрейма: снимает
+  `TaskSnapshot` (`pid`, `rip`, `cs`, `rsp`, `rflags`, `state_hash` — последний
+  это FNV-1a-хэш набора регистров) из `InterruptFrame`, публикует `FaultRecord`
+  (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault }`,
+  `count =` номер сбоя данного pid), замораживает задачу
+  (`sched::freeze_task`) и вызывает `schedule(frame)` для ухода с неё.
+  `peek()`/`pending()` питают GUI-оверлей, а `resolve(Recovery)` применяет
+  `Resume` (`unfreeze_task`), `Terminate` (`remove_task`) или `Rollback`
+  (`restore_task` возвращается в снятый фрейм с повторной проверкой
+  `state_hash`). Пер-задачный **бюджет сбоев** (`MAX_FAULTS_PER_TASK = 3`)
+  запирает диалог на Terminate при его исчерпании; каждое решение уходит в
+  ограниченное кольцо истории (`FAULT_HISTORY_LEN = 8`) с агрегатами
+  `fault_total()` / `resolution_count()`. Фреймы ядрового контекста
+  по-прежнему идут в `interrupts::fatal_with`.
 - `tui` — интерактивный экранный TUI (v2.38.11 — дашборд только для просмотра;
   **интерактивен с v2.38.19**): **основной экран** — компактная полоса журнала
   загрузки (`console::CONSOLE_TOP_ROWS` = 6 строк) остаётся вверху, а `render()`
