@@ -20,9 +20,12 @@
 //! `[sched] idle`.
 //!
 //! Since v2.45.3 the outgoing-context refresh also runs the **hang watchdog**:
-//! it records when each ring-3 task's saved `rip` last changed and hands a task
-//! stalled for [`HANG_WATCHDOG_TICKS`] to `fault::record_hang` (freeze + crash
-//! dialog), catching a busy-spin hang that never raises a CPU exception.
+//! it tracks when each ring-3 task's saved `rip` last changed and when it last
+//! made a syscall, and hands a task that did neither for
+//! [`HANG_WATCHDOG_TICKS`] to `fault::record_hang` (freeze + crash dialog),
+//! catching a busy-spin hang that never raises a CPU exception. Since v2.46.0 a
+//! fresh [`note_activity`] heartbeat (bumped by every `int 0x80`) counts as
+//! progress, so a task looping on one syscall site is never false-flagged.
 
 use crate::gdt::{KERNEL_CS, USER_CS, USER_DS};
 use crate::interrupts::InterruptFrame;
@@ -46,12 +49,13 @@ extern "C" {
 /// Switch cadence: preemption fires 4 times per second.
 const SWITCH_DIVIDER: u64 = TIMER_HZ / 4;
 
-/// Hang watchdog: a ring-3 task whose saved `rip` stays unchanged for this
-/// many ticks (wall clock) is declared hung — the scheduler freezes it and
-/// raises the crash dialog (Terminate/Resume/Rollback), charging the task's
-/// fault budget. Deliberately generous (10 s) so bounded buffer-fill loops in
-/// the demo tasks never false-positive; a true infinite spinner is caught a
-/// few seconds later.
+/// Hang watchdog: a ring-3 task that neither moves its saved `rip` nor makes a
+/// syscall for this many ticks (wall clock) is declared hung — the scheduler
+/// freezes it and raises the crash dialog (Terminate/Resume/Rollback), charging
+/// the task's fault budget. Deliberately generous (10 s) so bounded buffer-fill
+/// loops in the demo tasks never false-positive; a true infinite spinner is
+/// caught a few seconds later. A task that keeps calling syscalls counts as
+/// making progress even when preemption keeps sampling the same `rip`.
 pub const HANG_WATCHDOG_TICKS: u64 = 10 * TIMER_HZ;
 
 /// One slot is always reserved for the CPU-wide idle task (slot 0).
@@ -123,6 +127,11 @@ static mut SWITCH_COUNT: u64 = 0;
 /// hung and frozen through the crash dialog.
 static mut STALL_SINCE: [u64; MAX_TASKS] = [0; MAX_TASKS];
 static mut STALL_RIP: [u64; MAX_TASKS] = [0; MAX_TASKS];
+/// Per-slot tick of the last observed forward progress (a syscall, via
+/// [`note_activity`]). The hang watchdog treats a fresh heartbeat as progress,
+/// so a ring-3 task that keeps making syscalls is never declared hung even when
+/// its sampled `rip` never changes (e.g. a loop on a single `int 0x80` site).
+static mut LAST_ACTIVITY: [u64; MAX_TASKS] = [0; MAX_TASKS];
 /// True until <code>kernel_main</code> hands off to <code>idle_loop</code>.
 ///
 /// While set, schedule() refuses to capture or switch the boot context (slot
@@ -181,10 +190,30 @@ fn stall_rip() -> &'static mut [u64; MAX_TASKS] {
     }
 }
 
+fn activity() -> &'static mut [u64; MAX_TASKS] {
+    unsafe {
+        #[allow(static_mut_refs)]
+        &mut *core::ptr::addr_of_mut!(LAST_ACTIVITY)
+    }
+}
+
+/// Record forward progress for `pid`. Called from every `int 0x80` syscall and
+/// from the explicit [`SYS_PING`](crate::syscalls::SYS_PING) heartbeat; a task
+/// idle in userspace (no syscalls) does not count as making progress. Out-of-
+/// range pids (idle/kernel) are ignored.
+pub fn note_activity(pid: u32) {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return;
+    }
+    activity()[idx] = TICKS.load(Ordering::Relaxed);
+}
+
 /// Reset the hang-watchdog bookkeeping for a slot (spawn/remove/restore).
 fn reset_stall(slot: usize, now: u64) {
     stall_since()[slot] = now;
     stall_rip()[slot] = 0;
+    activity()[slot] = now;
 }
 
 pub fn init() {
@@ -280,6 +309,22 @@ pub fn task_asleep(pid: u32) -> bool {
     t[idx].present && t[idx].sleep_until != 0 && t[idx].sleep_until > TICKS.load(Ordering::Relaxed)
 }
 
+/// Snapshot of a registered task's saved CPU frame, sealed with its state hash.
+/// The fault resolver uses it on Resume to verify the frozen task still carries
+/// exactly the frame it was queued with (full register-bundle integrity gate).
+/// Returns `None` for the idle/kernel slot or an absent task.
+pub fn task_snapshot(pid: u32) -> Option<crate::fault::TaskSnapshot> {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return None;
+    }
+    let t = tasks();
+    if !t[idx].present {
+        return None;
+    }
+    Some(crate::fault::TaskSnapshot::capture(pid, &t[idx].frame))
+}
+
 /// Called from the timer interrupt path; performs the periodic preemptive
 /// switch by rewriting the trap frame in place.
 pub fn tick(frame: &mut InterruptFrame) {
@@ -356,8 +401,11 @@ pub fn schedule(frame: &mut InterruptFrame) {
             saved.cs = frame.cs;
             saved.ss = frame.ss;
             saved.rflags = frame.rflags;
-            // Hang watchdog: a ring-3 task whose rip has not moved for
-            // HANG_WATCHDOG_TICKS is declared hung. The fault queue keeps it
+            // Hang watchdog: a ring-3 task that has neither moved its rip nor
+            // made a syscall for HANG_WATCHDOG_TICKS is declared hung. A fresh
+            // activity heartbeat (> the stall anchor) counts as progress and
+            // moves the anchor up, so a task busily calling syscalls from one
+            // rip is never false-flagged. The fault queue keeps a frozen task
             // behind any decision already awaiting input; freezing here is safe
             // — the task is current, so no other executor holds its slot, and
             // the rotation below simply skips the now-frozen slot.
@@ -366,21 +414,16 @@ pub fn schedule(frame: &mut InterruptFrame) {
                 if stall_rip()[slot] != saved.rip {
                     stall_rip()[slot] = saved.rip;
                     stall_since()[slot] = ticks;
-                } else if ticks.wrapping_sub(stall_since()[slot]) >= HANG_WATCHDOG_TICKS {
-                    crate::fault::record_hang(crate::fault::TaskSnapshot {
-                        pid: slot as u32,
-                        rip: saved.rip,
-                        cs: saved.cs,
-                        rsp: saved.rsp,
-                        rflags: saved.rflags,
-                        state_hash: crate::fault::TaskSnapshot::state_hash(
-                            slot as u32,
-                            saved.rip,
-                            saved.cs,
-                            saved.rsp,
-                            saved.rflags,
-                        ),
-                    });
+                }
+                let last_activity = activity()[slot];
+                if last_activity > stall_since()[slot] {
+                    stall_since()[slot] = last_activity;
+                }
+                if ticks.wrapping_sub(stall_since()[slot]) >= HANG_WATCHDOG_TICKS {
+                    crate::fault::record_hang(crate::fault::TaskSnapshot::capture(
+                        slot as u32,
+                        saved,
+                    ));
                     stall_since()[slot] = ticks;
                 }
             }
@@ -546,8 +589,10 @@ pub fn remove_task(pid: u32) {
 }
 
 /// Restore a frozen task's saved fault-boundary state (Rollback recovery
-/// action): writes the snapshot's `rip`/`cs`/`rsp`/`rflags` back into the
-/// task frame so a resume re-enters at the fault point, then unfreezes.
+/// action): writes the snapshot's whole CPU frame — frame selectors/pointers
+/// and every general-purpose register — back into the task frame so a resume
+/// re-enters at the fault point with the exact captured register bundle, then
+/// unfreezes.
 pub fn restore_task(pid: u32, snapshot: crate::fault::TaskSnapshot) {
     let idx = pid as usize;
     if idx == 0 || idx >= MAX_TASKS {
@@ -555,14 +600,31 @@ pub fn restore_task(pid: u32, snapshot: crate::fault::TaskSnapshot) {
     }
     let t = tasks();
     if t[idx].present {
-        t[idx].frame.rip = snapshot.rip;
-        t[idx].frame.cs = snapshot.cs;
-        t[idx].frame.rsp = snapshot.rsp;
-        t[idx].frame.rflags = snapshot.rflags;
+        let f = &mut t[idx].frame;
+        f.rip = snapshot.rip;
+        f.cs = snapshot.cs;
+        f.rsp = snapshot.rsp;
+        f.rflags = snapshot.rflags;
+        f.ss = snapshot.ss;
+        f.rax = snapshot.rax;
+        f.rbx = snapshot.rbx;
+        f.rcx = snapshot.rcx;
+        f.rdx = snapshot.rdx;
+        f.rsi = snapshot.rsi;
+        f.rdi = snapshot.rdi;
+        f.rbp = snapshot.rbp;
+        f.r8 = snapshot.r8;
+        f.r9 = snapshot.r9;
+        f.r10 = snapshot.r10;
+        f.r11 = snapshot.r11;
+        f.r12 = snapshot.r12;
+        f.r13 = snapshot.r13;
+        f.r14 = snapshot.r14;
+        f.r15 = snapshot.r15;
         t[idx].valid_frame = true;
         t[idx].sleep_until = 0;
         reset_stall(idx, TICKS.load(Ordering::Relaxed));
-        crate::vprintln!("[sched] task {} rolled back", pid);
+        crate::vprintln!("[sched] task {} rolled back (full frame)", pid);
         crate::kprintln!("[serial] [sched] task {} rolled back", pid);
     }
 }

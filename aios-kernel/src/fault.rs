@@ -2,14 +2,15 @@
 //!
 //! CPU exceptions in user tasks are the Ring-0 twin of the host-side
 //! `catch_unwind` in `aios-process-mgr`. Instead of falling into a global
-//! `fatal` halt, the interceptor captures a light [`TaskSnapshot`] of the
-//! faulting task — pid, instruction pointer, stack pointer, flags and a
-//! lightweight FNV-1a [`TaskSnapshot::state_hash`] of that register bundle —
-//! freezes it (the scheduler skips it forever, marked via its `sleep_until`
-//! deadline) and publishes a [`FaultRecord`]. The interactive crash dialog —
-//! drawn by the windowed GUI over the desktop — answers with **Resume**
-//! (unfreeze, ignore), **Terminate** (remove the task) or **Rollback**
-//! (restore the captured `rip`/`rsp`/segment/frame, verified against the
+//! `fatal` halt, the interceptor captures a [`TaskSnapshot`] of the faulting
+//! task — its pid, the frame selectors/pointers and the **entire
+//! general-purpose register bundle**, sealed by a lightweight FNV-1a
+//! [`TaskSnapshot::state_hash`] — freezes it (the scheduler skips it forever,
+//! marked via its `sleep_until` deadline) and publishes a [`FaultRecord`]. The
+//! interactive crash dialog — drawn by the windowed GUI over the desktop —
+//! answers with **Resume** (verified unfreeze, ignore), **Terminate** (remove
+//! the task) or **Rollback** (restore the full captured CPU frame, verified
+//! against the
 //! Faults and hangs are enqueued in a bounded **system fault queue**
 //! ([`FAULT_QUEUE_LEN`]): several tasks may be frozen at once, and the crash
 //! dialog resolves them oldest-first, advancing to the next record without
@@ -49,6 +50,12 @@ pub const MAX_FAULTS_PER_TASK: u8 = 3;
 /// Depth of the bounded fault history ring (diagnostics).
 pub const FAULT_HISTORY_LEN: usize = 8;
 
+/// Depth of the bounded kernel fault **event ring** (the ring-3 / host fault
+/// feed drained by [`SYS_FAULT_POLL`](crate::syscalls::SYS_FAULT_POLL)). On
+/// overflow the oldest event is dropped so a monitor always sees recent
+/// activity.
+pub const FAULT_EVENT_LEN: usize = 16;
+
 /// Depth of the pending **system fault queue**. Faults and hangs are enqueued
 /// oldest-first and the crash dialog resolves the front; a task is frozen while
 /// its record waits. One slot per task is enough (at most `MAX_TASKS - 1` user
@@ -86,9 +93,14 @@ impl FaultCode {
     }
 }
 
-/// Lightweight pre-fault task state captured by the interceptor, restored by
-/// the Rollback action. Deliberately small (no memory image) — it only needs
-/// to bring the task back to its fault boundary and carry an integrity hash.
+/// Pre-fault task CPU state captured by the interceptor, restored by the
+/// Rollback action. Deliberately small (no memory image): the frame
+/// selectors/pointers plus the **whole general-purpose register bundle** are
+/// enough to resume the task exactly at its fault boundary — Rollback restores
+/// every register, not just `rip`/`rsp` — and the FNV-1a
+/// [`hash_of`](TaskSnapshot::hash_of) covers the whole bundle so an in-memory
+/// record (Rollback) or the live task frame (Resume) can be verified against
+/// it.
 #[derive(Clone, Copy)]
 pub struct TaskSnapshot {
     /// Task slot (pid maps 1:1 to the slot).
@@ -101,24 +113,115 @@ pub struct TaskSnapshot {
     pub rsp: u64,
     /// Flags at the fault.
     pub rflags: u64,
-    /// Lightweight FNV-1a hash of the register bundle; verifies the record on
+    /// Stack segment at the fault (user segment for rescued tasks).
+    pub ss: u64,
+    /// Accumulator at the fault.
+    pub rax: u64,
+    /// Base register at the fault.
+    pub rbx: u64,
+    /// Counter register at the fault.
+    pub rcx: u64,
+    /// Data register at the fault.
+    pub rdx: u64,
+    /// Source index at the fault.
+    pub rsi: u64,
+    /// Destination index at the fault.
+    pub rdi: u64,
+    /// Base pointer at the fault.
+    pub rbp: u64,
+    /// Extended register r8 at the fault.
+    pub r8: u64,
+    /// Extended register r9 at the fault.
+    pub r9: u64,
+    /// Extended register r10 at the fault.
+    pub r10: u64,
+    /// Extended register r11 at the fault.
+    pub r11: u64,
+    /// Extended register r12 at the fault.
+    pub r12: u64,
+    /// Extended register r13 at the fault.
+    pub r13: u64,
+    /// Extended register r14 at the fault.
+    pub r14: u64,
+    /// Extended register r15 at the fault.
+    pub r15: u64,
+    /// Lightweight FNV-1a hash of the whole bundle; verifies the record on
     /// Rollback and identifies it in the history ring.
     pub state_hash: u64,
 }
 
 impl TaskSnapshot {
+    /// Capture the full register bundle of `frame` for `pid`, sealing it with
+    /// its [`hash_of`](TaskSnapshot::hash_of).
+    pub fn capture(pid: u32, frame: &InterruptFrame) -> Self {
+        let mut snap = Self {
+            pid,
+            rip: frame.rip,
+            cs: frame.cs,
+            rsp: frame.rsp,
+            rflags: frame.rflags,
+            ss: frame.ss,
+            rax: frame.rax,
+            rbx: frame.rbx,
+            rcx: frame.rcx,
+            rdx: frame.rdx,
+            rsi: frame.rsi,
+            rdi: frame.rdi,
+            rbp: frame.rbp,
+            r8: frame.r8,
+            r9: frame.r9,
+            r10: frame.r10,
+            r11: frame.r11,
+            r12: frame.r12,
+            r13: frame.r13,
+            r14: frame.r14,
+            r15: frame.r15,
+            state_hash: 0,
+        };
+        snap.state_hash = snap.hash_of();
+        snap
+    }
+
     /// FNV-1a hash of the captured register bundle — the "state hash" the
     /// snapshot carries. Deterministic, cheap, and catches in-memory record
-    /// corruption when Rollback re-verifies it.
-    pub fn state_hash(pid: u32, rip: u64, cs: u64, rsp: u64, rflags: u64) -> u64 {
+    /// corruption when Rollback or Resume re-verifies it.
+    pub fn hash_of(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for v in [pid as u64, rip, cs, rsp, rflags] {
+        for v in [
+            self.pid as u64,
+            self.rip,
+            self.cs,
+            self.rsp,
+            self.rflags,
+            self.ss,
+            self.rax,
+            self.rbx,
+            self.rcx,
+            self.rdx,
+            self.rsi,
+            self.rdi,
+            self.rbp,
+            self.r8,
+            self.r9,
+            self.r10,
+            self.r11,
+            self.r12,
+            self.r13,
+            self.r14,
+            self.r15,
+        ] {
             for b in v.to_ne_bytes() {
                 h ^= b as u64;
                 h = h.wrapping_mul(0x0000_0100_0000_01b3);
             }
         }
         h
+    }
+
+    /// True when the stored `state_hash` matches a fresh hash of the bundle —
+    /// the record-integrity check Rollback performs before restoring.
+    pub fn verify(&self) -> bool {
+        self.hash_of() == self.state_hash
     }
 }
 
@@ -157,6 +260,24 @@ impl Recovery {
     }
 }
 
+/// A compact kernel fault notification for the ring-3 / host event feed — the
+/// freestanding twin of the host-side `aios_core::fault::FaultReport`. Every
+/// detected fault/hang is appended to a bounded ring ([`FAULT_EVENT_LEN`]) and
+/// drained, oldest-first, through the [`SYS_FAULT_POLL`](crate::syscalls::SYS_FAULT_POLL)
+/// syscall so a monitor task (or a future kernel→host bridge) can observe the
+/// kernel's recovery traffic without the crash dialog.
+#[derive(Clone, Copy)]
+pub struct FaultEvent {
+    /// Faulting task id.
+    pub pid: u32,
+    /// Fault category (the [`FaultCode`] discriminant).
+    pub kind: u16,
+    /// Running fault count for the task at detection time.
+    pub count: u8,
+    /// Instruction pointer at the fault.
+    pub rip: u64,
+}
+
 static FAULT_PENDING: AtomicBool = AtomicBool::new(false);
 /// The pending system fault queue (FIFO): faults/hangs awaiting a decision.
 /// `QUEUE_HEAD` is the front (what the dialog shows), `QUEUE_LEN` the depth.
@@ -169,6 +290,11 @@ static mut HISTORY_NEXT: usize = 0;
 static mut HISTORY_ITEMS: usize = 0;
 static mut FAULT_TOTAL: u64 = 0;
 static mut RESOLUTIONS: [u64; 3] = [0; 3];
+/// The bounded kernel fault event ring: `EV_HEAD` is the oldest unread event,
+/// `EV_LEN` the number pending.
+static mut EVENTS: [Option<FaultEvent>; FAULT_EVENT_LEN] = [None; FAULT_EVENT_LEN];
+static mut EV_HEAD: usize = 0;
+static mut EV_LEN: usize = 0;
 
 fn counters() -> &'static mut [u8; MAX_TASKS] {
     unsafe {
@@ -191,6 +317,51 @@ fn ring() -> &'static mut [Option<FaultRecord>; FAULT_HISTORY_LEN] {
     }
 }
 
+fn events() -> &'static mut [Option<FaultEvent>; FAULT_EVENT_LEN] {
+    unsafe {
+        #[allow(static_mut_refs)]
+        &mut *core::ptr::addr_of_mut!(EVENTS)
+    }
+}
+
+/// Append a fault event to the kernel event ring. On overflow the oldest event
+/// is dropped so a monitor always observes the most recent activity.
+fn post_event(event: FaultEvent) {
+    unsafe {
+        let len = core::ptr::addr_of!(EV_LEN).read();
+        let head = core::ptr::addr_of!(EV_HEAD).read();
+        if len >= FAULT_EVENT_LEN {
+            events()[head] = Some(event);
+            *core::ptr::addr_of_mut!(EV_HEAD) = (head + 1) % FAULT_EVENT_LEN;
+        } else {
+            events()[(head + len) % FAULT_EVENT_LEN] = Some(event);
+            *core::ptr::addr_of_mut!(EV_LEN) = len + 1;
+        }
+    }
+}
+
+/// Drain the oldest kernel fault event, if any (backs
+/// [`SYS_FAULT_POLL`](crate::syscalls::SYS_FAULT_POLL)).
+pub fn poll_event() -> Option<FaultEvent> {
+    unsafe {
+        let len = core::ptr::addr_of!(EV_LEN).read();
+        if len == 0 {
+            return None;
+        }
+        let head = core::ptr::addr_of!(EV_HEAD).read();
+        let event = events()[head];
+        events()[head] = None;
+        *core::ptr::addr_of_mut!(EV_HEAD) = (head + 1) % FAULT_EVENT_LEN;
+        *core::ptr::addr_of_mut!(EV_LEN) = len - 1;
+        event
+    }
+}
+
+/// How many kernel fault events are queued and unread.
+pub fn events_queued() -> usize {
+    unsafe { core::ptr::addr_of!(EV_LEN).read() }
+}
+
 /// Publish a pending fault record and charge the task's crash counter.
 ///
 /// Shared by the exception interceptor and the scheduler hang watchdog; the
@@ -203,6 +374,12 @@ fn publish(pid: u32, kind: FaultCode, snapshot: TaskSnapshot) -> u8 {
         c[slot] = c[slot].saturating_add(1);
         c[slot]
     };
+    post_event(FaultEvent {
+        pid,
+        kind: kind as u16,
+        count,
+        rip: snapshot.rip,
+    });
     unsafe {
         let len = core::ptr::addr_of!(QUEUE_LEN).read();
         if len >= FAULT_QUEUE_LEN {
@@ -235,18 +412,7 @@ pub fn intercept(frame: &mut InterruptFrame, kind: FaultCode) {
         crate::interrupts::fatal_with(0x7000_0000 + kind as u32, kind.name());
     }
     let pid = crate::sched::current_pid();
-    let count = publish(
-        pid,
-        kind,
-        TaskSnapshot {
-            pid,
-            rip: frame.rip,
-            cs: frame.cs,
-            rsp: frame.rsp,
-            rflags: frame.rflags,
-            state_hash: TaskSnapshot::state_hash(pid, frame.rip, frame.cs, frame.rsp, frame.rflags),
-        },
-    );
+    let count = publish(pid, kind, TaskSnapshot::capture(pid, frame));
     crate::vprintln!(
         "[fault] pid {} {} at rip={:#x} (crash #{}/{}) -> frozen, awaiting recovery",
         pid,
@@ -411,14 +577,34 @@ pub fn resolve(action: Recovery) {
     let pid = record.snapshot.pid;
     match action {
         Recovery::Resume => {
-            crate::sched::unfreeze_task(pid);
-            crate::vprintln!(
-                "[fault] pid {} {}, ignoring {}",
-                pid,
-                action.name(),
-                record.kind.name()
-            );
-            crate::kprintln!("[serial] [fault] pid {} {}", pid, action.name());
+            // Integrity gate: the frozen task's live frame must still match the
+            // snapshot it was queued with (same sealed hash). If the frame was
+            // clobbered between freeze and decision, resuming would re-enter
+            // garbage — force the safe Terminate instead.
+            let intact = crate::sched::task_snapshot(pid)
+                .is_some_and(|live| live.verify() && live.state_hash == record.snapshot.state_hash);
+            if intact {
+                crate::sched::unfreeze_task(pid);
+                crate::vprintln!(
+                    "[fault] pid {} {}, ignoring {} state verified",
+                    pid,
+                    action.name(),
+                    record.kind.name()
+                );
+                crate::kprintln!(
+                    "[serial] [fault] pid {} {} state verified",
+                    pid,
+                    action.name()
+                );
+            } else {
+                crate::sched::remove_task(pid);
+                counters()[pid as usize] = 0;
+                crate::vprintln!("[fault] pid {} resume state mismatch -> terminate", pid);
+                crate::kprintln!(
+                    "[serial] [fault] pid {} resume state mismatch -> terminate",
+                    pid
+                );
+            }
         }
         Recovery::Terminate => {
             crate::sched::remove_task(pid);
@@ -432,13 +618,7 @@ pub fn resolve(action: Recovery) {
             crate::kprintln!("[serial] [fault] pid {} {}", pid, action.name());
         }
         Recovery::Rollback => {
-            let verified = TaskSnapshot::state_hash(
-                pid,
-                record.snapshot.rip,
-                record.snapshot.cs,
-                record.snapshot.rsp,
-                record.snapshot.rflags,
-            ) == record.snapshot.state_hash;
+            let verified = record.snapshot.verify();
             crate::sched::restore_task(pid, record.snapshot);
             crate::vprintln!(
                 "[fault] pid {} {} to rip={:#x} state {}",
@@ -509,14 +689,32 @@ mod tests {
     }
 
     fn snap(pid: u32, rip: u64) -> TaskSnapshot {
-        TaskSnapshot {
+        let mut s = TaskSnapshot {
             pid,
             rip,
             cs: 0x1b,
             rsp: 0x7fff,
             rflags: 0x202,
-            state_hash: TaskSnapshot::state_hash(pid, rip, 0x1b, 0x7fff, 0x202),
-        }
+            ss: 0x23,
+            rax: 1,
+            rbx: 2,
+            rcx: 3,
+            rdx: 4,
+            rsi: 5,
+            rdi: 6,
+            rbp: 7,
+            r8: 8,
+            r9: 9,
+            r10: 10,
+            r11: 11,
+            r12: 12,
+            r13: 13,
+            r14: 14,
+            r15: 15,
+            state_hash: 0,
+        };
+        s.state_hash = s.hash_of();
+        s
     }
 
     #[test]
@@ -541,17 +739,58 @@ mod tests {
     #[test]
     fn state_hash_is_stable_and_sensitive() {
         let snap = snap(3, 0x401234);
-        let same = TaskSnapshot::state_hash(3, 0x401234, 0x1b, 0x7fff, 0x202);
-        assert_eq!(snap.state_hash, same);
+        assert!(snap.verify());
+        let mut same = snap;
+        assert_eq!(snap.hash_of(), same.hash_of());
+        same.rip = 0x401235;
+        assert_ne!(snap.hash_of(), same.hash_of());
+        let mut other = snap;
+        other.pid = 4;
+        assert_ne!(snap.hash_of(), other.hash_of());
+        let mut reg = snap;
+        reg.rax ^= 0xdead;
         assert_ne!(
-            snap.state_hash,
-            TaskSnapshot::state_hash(3, 0x401235, 0x1b, 0x7fff, 0x202)
+            snap.hash_of(),
+            reg.hash_of(),
+            "the hash covers the general-purpose registers"
         );
-        assert_ne!(
-            snap.state_hash,
-            TaskSnapshot::state_hash(4, 0x401234, 0x1b, 0x7fff, 0x202)
-        );
-        assert_ne!(snap.state_hash, 0);
+        assert_ne!(snap.hash_of(), 0);
+    }
+
+    #[test]
+    fn capture_seals_frame() {
+        let frame = InterruptFrame {
+            r15: 15,
+            r14: 14,
+            r13: 13,
+            r12: 12,
+            r11: 11,
+            r10: 10,
+            r9: 9,
+            r8: 8,
+            rdi: 6,
+            rsi: 5,
+            rbp: 7,
+            rbx: 2,
+            rdx: 4,
+            rcx: 3,
+            ds: 0x23,
+            rax: 1,
+            vector: 0,
+            error_code: 0,
+            rip: 0x401000,
+            cs: 0x1b,
+            rflags: 0x202,
+            rsp: 0x8000,
+            ss: 0x23,
+        };
+        let snap = TaskSnapshot::capture(3, &frame);
+        assert_eq!(snap.pid, 3);
+        assert_eq!(snap.rip, 0x401000);
+        assert_eq!(snap.rax, 1);
+        assert_eq!(snap.r15, 15);
+        assert_eq!(snap.ss, 0x23);
+        assert!(snap.verify());
     }
 
     #[test]
@@ -560,10 +799,7 @@ mod tests {
         assert_eq!(snap.pid, 3);
         assert_eq!(snap.rip, 0x401234);
         assert_eq!(snap.cs, 0x1b);
-        assert_eq!(
-            snap.state_hash,
-            TaskSnapshot::state_hash(3, 0x401234, 0x1b, 0x7fff, 0x202)
-        );
+        assert!(snap.verify());
     }
 
     #[test]
@@ -651,14 +887,7 @@ mod tests {
     fn hang_record_publishes_and_resolves() {
         FAULT_PENDING.store(false, Ordering::Relaxed);
         counters()[5] = 0;
-        let snapshot = TaskSnapshot {
-            pid: 5,
-            rip: 0x2340,
-            cs: 0x1b,
-            rsp: 0x9fff,
-            rflags: 0x202,
-            state_hash: TaskSnapshot::state_hash(5, 0x2340, 0x1b, 0x9fff, 0x202),
-        };
+        let snapshot = snap(5, 0x2340);
         record_hang(snapshot);
         assert!(pending(), "a detected hang opens the recovery gate");
         let rec = peek().expect("hang published a record");
@@ -693,6 +922,34 @@ mod tests {
         assert!(!pending(), "the gate clears once the queue drains");
         counters()[1] = 0;
         counters()[2] = 0;
+    }
+
+    #[test]
+    fn fault_events_are_drained_oldest_first() {
+        while poll_event().is_some() {}
+        post_event(FaultEvent {
+            pid: 1,
+            kind: FaultCode::DivideError as u16,
+            count: 1,
+            rip: 0x1111,
+        });
+        post_event(FaultEvent {
+            pid: 2,
+            kind: FaultCode::Hang as u16,
+            count: 2,
+            rip: 0x2222,
+        });
+        assert_eq!(events_queued(), 2);
+        let first = poll_event().expect("first event");
+        assert_eq!(first.pid, 1);
+        assert_eq!(first.kind, FaultCode::DivideError as u16);
+        assert_eq!(first.rip, 0x1111);
+        let second = poll_event().expect("second event");
+        assert_eq!(second.pid, 2);
+        assert_eq!(second.kind, FaultCode::Hang as u16);
+        assert_eq!(second.rip, 0x2222);
+        assert_eq!(events_queued(), 0);
+        assert!(poll_event().is_none());
     }
 
     #[test]

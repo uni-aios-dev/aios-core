@@ -676,11 +676,13 @@ input.
 - `wifi` (status), `wifi sim` (arm the simulated test radio) and `wifi real`
   (back to the honest real mode) control which radio the Network window's
   `Scan`/`Connect` use — the default is **real** (v2.38.36).
-- `faults` (v2.45.2, queue v2.45.4) prints the fault-recovery aggregate —
-  `total`, `resume`, `terminate`, `rollback`, `queued` counters — then one line
+- `faults` (v2.45.2, queue v2.45.4, events v2.46.0) prints the fault-recovery
+  aggregate — `total`, `resume`, `terminate`, `rollback`, `queued`, `events`
+  counters — then one line
   per resolved record in the ring (`pid N <kind> (crash #k) rip=… hash=…`,
   oldest first), a `queued:` line per still-pending fault, and a `(dialog
-  pending …)` marker while a task awaits a decision.
+  pending …)` marker while a task awaits a decision. `events` is the unread
+  depth of the kernel fault event ring drained by ring-3 via `SYS_FAULT_POLL`.
 - Keys consumed by the TUI are kept out of the console echo; unconsumed keys
   still print `[key] …` / `usb key …` to the console and serial as before.
 
@@ -826,22 +828,24 @@ focused) returns to the console/TUI.
   `[gui] modal close <label> confirmed`; `Esc` / `Cancel` logs
   `[gui] modal close <label> canceled` and the typed text stays. Closing a
   window with an empty note never shows the dialog.
-- **Crash recovery dialog (v2.45.0, budget v2.45.1, hang v2.45.3)**: when a
+- **Crash recovery dialog (v2.45.0, budget v2.45.1, hang v2.45.3, frame/progress v2.46.0)**: when a
   ring-3 task faults
   (divide error, invalid opcode, general protection or page fault) the kernel no
   longer halts — the task is frozen and a `Task Error` overlay opens over the
   desktop (above windows and the confirm dialog) showing `pid <n> faulted:
   <reason> (crash #N/3)` and the captured
-  `snap rip=… rsp=… hash=0x…` (the hash is the snapshot's FNV-1a state-hash,
-  re-verified by Rollback). Since v2.45.3 the same overlay also catches a
-  **hang**: a ring-3 task whose instruction pointer does not change for 10 s
-  (no syscall, sleep or progress) is frozen by the scheduler watchdog, the
+  `snap rip=… rsp=… hash=0x…` (the hash seals the snapshot's **full CPU frame** —
+  all 16 general-purpose registers plus `rip`/`cs`/`rsp`/`rflags`/`ss`, FNV-1a).
+  Since v2.45.3 the same overlay also catches a
+  **hang**: a ring-3 task that neither changes its instruction pointer nor makes a
+  syscall for 10 s is frozen by the scheduler watchdog (the `SYS_PING` progress
+  heartbeat also counts as activity), the
   title reads `Task Hung`, and the line reads `pid <n> hung: hang (crash #N/3)`;
   the serial log shows `[hang] pid <n> stalled at rip=… frozen`. Resolve it by
   clicking a plate or pressing a key:
   | Key | Action |
   |-----|--------|
-  | `R` | **Rollback** — restore the task's captured frame and resume |
+  | `R` | **Rollback** — restore the task's captured full CPU frame and resume |
   | `T` | **Terminate** — remove the task from the scheduler |
   | `Enter` / `S` | **Resume** — ignore the fault and requeue the task |
 
@@ -854,13 +858,18 @@ focused) returns to the console/TUI.
   resume|rollback: over fault budget`. Opening logs
   `[gui] crash dialog open pid <n>`; resolutions log `[fault] pid <n>
   <rollback|terminate|resume>` followed by a totals line
-  `[fault] totals faults=N resume=N terminate=N rollback=N`. Only ring-3 tasks
+  `[fault] totals faults=N resume=N terminate=N rollback=N`. **Rollback**
+  restores every captured register and logs `state verified` (or `mismatch`);
+  **Resume** first checks the frozen task's live frame against the queued
+  snapshot's sealed hash — an intact task is unfrozen (`state verified`), a
+  clobbered one is force-Terminated (`resume state mismatch -> terminate`). Only
+  ring-3 tasks
   are rescued: a fault in kernel context (or a double fault) still halts. Since
   v2.45.4 multiple faults/hangs may be pending at once in the **system fault
   queue**: the dialog shows the oldest and, when more are waiting, appends
   `(+N more queued)` to the task line; resolving one advances to the next (logged
   `[fault] queue: pid <n> <kind> next (K queued)`) without the dialog closing.
-  See `BUGS.md` (OPEN v2.45.0) for the metadata-only snapshot limitation.
+  See `BUGS.md` (OPEN v2.45.0) for the no-memory-image limitation.
 - **Restore of closed z-order (v2.38.31)**: a window remembers its place in
   the stack when it closes. Reopening it — desktop icon, task-bar button, or
   a ring-3 client presenting again — puts it back at that spot *between* its

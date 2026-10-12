@@ -223,12 +223,13 @@ fn run_command(cmd: &str) -> Vec<String> {
         }
         "faults" => {
             let mut lines = vec![format!(
-                "faults total={} resume={} terminate={} rollback={} queued={}",
+                "faults total={} resume={} terminate={} rollback={} queued={} events={}",
                 crate::fault::fault_total(),
                 crate::fault::resolution_count(crate::fault::Recovery::Resume),
                 crate::fault::resolution_count(crate::fault::Recovery::Terminate),
                 crate::fault::resolution_count(crate::fault::Recovery::Rollback),
-                crate::fault::queued()
+                crate::fault::queued(),
+                crate::fault::events_queued()
             )];
             for rec in crate::fault::history_records() {
                 let s = &rec.snapshot;

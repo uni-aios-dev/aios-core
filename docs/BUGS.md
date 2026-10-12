@@ -1,31 +1,36 @@
 # AIOS Known Bugs & Workarounds
 
-## OPEN (v2.45.3): hang watchdog is a heuristic (rip-stability), not true progress tracking
+## RESOLVED (v2.46.0): hang watchdog now tracks real progress (syscalls) + cooperative heartbeat
 
-- **Status:** OPEN — a known limitation of the v2.45.3 hang detector, by design.
-- **Limit:** the kernel declares a ring-3 task hung when its saved instruction
-  pointer is unchanged for `HANG_WATCHDOG_TICKS` (10 s). A legitimate
-  compute-bound task that spends >10 s executing basically the same instruction
-  (e.g. a single-instruction busy loop) could false-positive. The window is
-  generous and the demo tasks' bounded buffer-fill loops move their `rip`
-  constantly, so this never fires in practice today.
-- **Mitigation:** the detection is non-destructive — it only opens the
-  operator-driven `Task Hung` dialog; choosing **Resume** unfreezes the task and
-  resets its 10 s window (`sched::unfreeze_task`), and the per-task fault budget
-  caps repeated re-flagging at 3. A future revision could track a true progress
-  counter (syscalls/sleeps) instead of raw `rip`.
+- **Status:** RESOLVED in v2.46.0 (was OPEN through v2.45.3).
+- **Was:** the v2.45.3 detector declared a ring-3 task hung purely on `rip`
+  stability for `HANG_WATCHDOG_TICKS` (10 s), so a task looping on a single
+  instruction could false-positive.
+- **Fix:** the watchdog now treats fresh **syscall activity** as progress. The
+  scheduler keeps a per-slot `LAST_ACTIVITY` tick bumped by every `int 0x80`
+  (`sched::note_activity`, called at the top of the syscall dispatcher), and the
+  detector fires only when a ring-3 task has **both** an unchanged `rip` and no
+  syscall since the stall anchor. A task looping on one `int 0x80` site is thus
+  never flagged. Long **compute** loops that make no syscall at all can opt out
+  explicitly with the new `SYS_PING` heartbeat.
+- **Residual (by design):** a pure compute-bound loop that neither changes `rip`
+  nor issues any syscall (including `SYS_PING`) is still indistinguishable from a
+  hang — unfixable without program cooperation — and is caught after 10 s. The
+  detection stays non-destructive (operator dialog + 3-fault cap), so a false
+  positive is a recoverable prompt, not a fault.
 
 ## OPEN (v2.45.0): fault recovery is metadata-only and cannot rescue ring-0 faults
 
 - **Status:** OPEN — known limits of the v2.45.0 fault-tolerance system, by
   design; not a regression.
 - **Limits:**
-  1. A `TaskSnapshot` carries metadata only (pid, name, priority, RAM quota,
-     block id, crash count) — **no memory image**. `Rollback` therefore resumes
-     the task's lifecycle, it does not rewind heap/stack state; a task that
-     mutated shared state before faulting is not bit-identically restored. The
-     kernel-side `TaskSnapshot` stores the trap frame (`rip`/`cs`/`rsp`/
-     `rflags`) and re-enters at the fault boundary for the same reason.
+  1. A host `TaskSnapshot` carries metadata only (pid, name, priority, RAM
+     quota, block id, crash count) — **no memory image**; `Rollback` resumes the
+     task's lifecycle, it does not rewind heap/stack state. The **kernel**
+     `TaskSnapshot` was upgraded in v2.46.0 to the full CPU frame — all 16
+     general-purpose registers plus `rip`/`cs`/`rsp`/`rflags`/`ss` — and Rollback
+     restores every register, so the kernel resumes the exact captured CPU state;
+     it still carries no memory image, though.
   2. **Ring-0 faults still halt the kernel.** A `#PF`/`#GP`/`#UD`/`#DE` with
      `cs == KERNEL_CS` (kernel thread or idle context) has no resumable user
      boundary and takes the existing `fatal` path — only ring-3 tasks are

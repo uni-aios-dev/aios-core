@@ -1,5 +1,49 @@
 # AIOS Development Log
 
+## v2.46.0 — full-CPU-frame recovery: register-complete snapshots, Resume integrity gate, progress-aware watchdog, kernel fault feed (2026-10-12)
+
+### Added
+- **Full register-bundle `TaskSnapshot`** (`aios-kernel/src/fault.rs`). The
+  snapshot now carries the whole saved CPU frame — all 16 general-purpose
+  registers (`rax`…`r15`) plus `rip`/`cs`/`rsp`/`rflags`/`ss` — instead of just
+  `rip`/`cs`/`rsp`/`rflags`. `TaskSnapshot::capture(pid, &InterruptFrame)` seals
+  it with `hash_of()` (FNV-1a over the whole bundle); `verify()` re-checks a
+  record's integrity.
+- **Register-complete Rollback** (`aios-kernel/src/sched.rs`). `restore_task`
+  now writes every captured register back into the task frame, so Rollback
+  resumes the exact fault-time CPU state (the restore stub already reloads the
+  full frame on the way out).
+- **Resume integrity gate** (`fault::resolve`). Before unfreezing on Resume the
+  resolver compares the frozen task's live frame (`sched::task_snapshot(pid)`)
+  against the queued snapshot's sealed hash. A clobbered frame is not resumed —
+  it is forced to Terminate, so a corrupted record cannot re-enter garbage.
+  Logs `state verified` / `resume state mismatch -> terminate`.
+- **Progress-aware hang watchdog** (`aios-kernel/src/sched.rs` +
+  `syscalls::note_activity`). The watchdog now fires only when a ring-3 task has
+  **both** an unchanged `rip` **and** no syscall since the stall anchor: every
+  `int 0x80` bumps a per-slot `LAST_ACTIVITY` tick, so a task looping on one
+  syscall site is never false-flagged. Closes the v2.45.3 OPEN bug.
+- **`SYS_PING` (7)** — cooperative progress heartbeat: a long compute loop that
+  makes no other syscall calls it to keep the watchdog at bay (returns `0`).
+- **Kernel fault event feed** (`fault::FaultEvent`, `FAULT_EVENT_LEN = 16`).
+  Every detected fault/hang is appended to a bounded ring drained by the new
+  **`SYS_FAULT_POLL` (8)** syscall (`rax = pid` or `u64::MAX`, `rcx = rip`,
+  `rdx = kind | (count << 32)`) — the freestanding twin of the host
+  `aios_core::fault::FaultReport` IPC. `events_queued()` reports the backlog.
+
+### Changed
+- `intercept` and the hang path build snapshots via `TaskSnapshot::capture`;
+  `publish` also posts a `FaultEvent`.
+- Kernel shell `faults` command reports `events=N` (the unread fault-feed depth)
+  in its header.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. New `#[cfg(test)]` cases `capture_seals_frame`,
+  `fault_events_are_drained_oldest_first`, and the reworked
+  `state_hash_is_stable_and_sensitive` (register-sensitivity) — host
+  test-compile pass; bare-target `test` crate still unsupported, per policy.
+
 ## v2.45.4 — system fault queue: multiple frozen tasks, dialog resolves them in order (2026-10-12)
 
 ### Added

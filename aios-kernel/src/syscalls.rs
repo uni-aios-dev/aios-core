@@ -11,6 +11,12 @@
 //!   (`SYS_GETPID`) and tick-based blocking sleep (`SYS_SLEEP`), which
 //!   cooperates with the scheduler so a sleeping task stops consuming CPU and
 //!   the kernel falls back to the idle context until the deadline passes.
+//!
+//! Fault recovery (v2.46.0) adds two more gates: `SYS_PING`, the cooperative
+//! progress heartbeat that keeps the scheduler's hang watchdog from false-
+//! flagging a long compute loop, and `SYS_FAULT_POLL`, which drains the bounded
+//! kernel fault event ring so a ring-3 monitor can observe the kernel's
+//! recovery traffic (the freestanding twin of the host `FaultReport` IPC).
 
 use alloc::string::String;
 
@@ -22,6 +28,15 @@ pub const SYS_WRITE: u64 = 3;
 pub const SYS_GETPID: u64 = 4;
 pub const SYS_SLEEP: u64 = 5;
 pub const SYS_GUI: u64 = 6;
+/// Progress heartbeat (v2.46.0): a ring-3 task that computes for a long time
+/// without issuing other syscalls calls `SYS_PING` to tell the hang watchdog it
+/// is alive. Bumps the task's activity clock and returns `0` in `rax`.
+pub const SYS_PING: u64 = 7;
+/// Drain one kernel fault event — the kernel→ring-3 recovery feed (the
+/// freestanding twin of the host `aios_core::fault::FaultReport`). Returns
+/// `rax = pid` (or `u64::MAX` when the ring is empty), `rcx = faulting rip`,
+/// and `rdx = kind | (count << 32)`.
+pub const SYS_FAULT_POLL: u64 = 8;
 
 /// Maximum number of user string bytes a single `SYS_WRITE` copies into the
 /// kernel console (a hard cap against runaway pointers).
@@ -162,6 +177,9 @@ pub fn mailbox_len(pid: u32) -> usize {
 pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
     let pid = crate::sched::current_pid();
     note_first(pid);
+    // Every syscall is forward progress: tell the hang watchdog so a task
+    // looping on one `int 0x80` site is never declared hung.
+    crate::sched::note_activity(pid);
     match frame.rax {
         SYS_SEND => {
             let ok = send(pid, frame.rdi as u32, frame.rcx);
@@ -221,6 +239,21 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         SYS_GUI => {
             crate::gui::client_syscall(pid, frame);
         }
+        SYS_PING => {
+            // note_activity already ran at entry; the pings are intentionally
+            // silent so a long compute loop can heartbeat without console spam.
+            frame.rax = 0;
+        }
+        SYS_FAULT_POLL => match crate::fault::poll_event() {
+            Some(event) => {
+                frame.rax = event.pid as u64;
+                frame.rcx = event.rip;
+                frame.rdx = event.kind as u64 | ((event.count as u64) << 32);
+            }
+            None => {
+                frame.rax = u64::MAX;
+            }
+        },
         other => {
             vprintln!("[sysc] unknown syscall {} from pid {}", other, pid);
             kprintln!("[serial] [sysc] unknown syscall {}", other);
