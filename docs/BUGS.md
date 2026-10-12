@@ -1,5 +1,38 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.48.0): new wired NIC drivers lack runtime verification (no QEMU model / host)
+
+- **Status:** OPEN — the v2.48.0 NIC expansion (`e1000e`, `virtio-net legacy`,
+  `rtl8169`/8168, AMD PCnet) compiles and lints clean, but the drivers were only
+  verified to build; they were not exercised on real hardware and only partially
+  in QEMU (no `qemu-system-x86_64`/`xorriso` on the development host).
+- **Limits / risks:**
+  1. **rtl8169** has **no QEMU device model** at all, so its descriptor ring,
+     `Cfg9346` lock sequence and `TPPoll.NPQ` kick are unverified at runtime.
+  2. **AMD PCnet** uses the `SSIZE32` init block confirmed against the QEMU
+     source (`BCR20 = 0x0102` → `SWSTYLE = 2`, ring-size exponents in the
+     `rlen`/`tlen` high nibbles); the format is correct on paper but was not run.
+  3. **virtio-net modern** (memory BAR, no `0x1AF4` legacy I/O port) is
+     **deliberately rejected** with a clear log — only the legacy I/O interface
+     is driven.
+  4. The exact device-id tables may still miss specific OEM parts; unrecognised
+     vendor:device pairs log `nic unsupported <vid>:<did> (<reason>)` instead of
+     silently binding the wrong driver.
+- **Workaround:** the log is the source of truth at boot (`nic <kind>
+  <vid>:<did> mac=…` vs `nic unsupported …`); verify a new card by booting the
+  kernel and reading the serial log. Runtime QEMU smoke is pending a host with
+  `qemu-system-x86_64` + `xorriso` installed.
+
+## OPEN (v2.48.0): internet stack is IPv4-only, no TCP/UDP sockets
+
+- **Status:** OPEN — by design; v2.48.0 hardened the existing reachability client
+  (DHCP NAK/renew/rebind, link-change recovery, ageing ARP cache, exponential
+  recheck backoff, static fallback) but did **not** add a socket layer.
+- **Limits:** only DHCP/ARP/ICMP-echo/DNS are implemented; there is no TCP or UDP
+  socket API, so general internet traffic (HTTP, TLS, …) is out of scope for the
+  kernel client. The state machine still reports `no-nic` / `link-only` /
+  `internet` only.
+
 ## RESOLVED (v2.46.0): hang watchdog now tracks real progress (syscalls) + cooperative heartbeat
 
 - **Status:** RESOLVED in v2.46.0 (was OPEN through v2.45.3).

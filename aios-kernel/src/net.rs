@@ -35,6 +35,7 @@ const ICMP_REPLY: u8 = 0;
 const DHCP_MAGIC: [u8; 4] = [99, 130, 83, 99];
 const DHCP_OFFER: u8 = 2;
 const DHCP_ACK: u8 = 5;
+const DHCP_NAK: u8 = 6;
 const DHCP_DISCOVER: u8 = 1;
 const DHCP_REQUEST: u8 = 3;
 const DNS_PORT: u16 = 53;
@@ -54,6 +55,10 @@ const ARP_SLOTS: usize = 8;
 const MAX_DRAIN: usize = 16;
 const RECHECK_TICKS: u64 = 30 * TIMER_HZ;
 const FAIL_RECHECK_TICKS: u64 = 5 * TIMER_HZ;
+/// Upper bound on the exponential reachability-recheck backoff.
+const FAIL_BACKOFF_MAX: u64 = 60 * TIMER_HZ;
+/// ARP cache entry lifetime before it is re-resolved.
+const ARP_TTL: u64 = 300 * TIMER_HZ;
 
 /// High-level link state published to the GUI tray globe.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -164,6 +169,22 @@ enum Phase {
     Bound,
 }
 
+/// Cached IPv4 -> MAC mapping with a timestamp for ageing.
+#[derive(Clone, Copy)]
+struct ArpEntry {
+    ip: [u8; 4],
+    mac: [u8; 6],
+    age: u64,
+}
+
+impl ArpEntry {
+    const EMPTY: ArpEntry = ArpEntry {
+        ip: [0; 4],
+        mac: [0; 6],
+        age: 0,
+    };
+}
+
 static mut NIC: Option<Nic> = None;
 static mut SETTINGS: Settings = Settings::DEFAULT;
 static mut PHASE: Phase = Phase::Idle;
@@ -180,11 +201,21 @@ static mut NEXT_ACTION: u64 = 0;
 static mut BOUND_AT: u64 = 0;
 static mut GOT_OFFER: bool = false;
 static mut GOT_ACK: bool = false;
+static mut GOT_NAK: bool = false;
 static mut GOT_ARP: bool = false;
 static mut GOT_ICMP: bool = false;
 static mut GOT_DNS: bool = false;
 static mut NET_OK: bool = false;
-static mut ARP_TABLE: [([u8; 4], [u8; 6]); ARP_SLOTS] = [([0; 4], [0; 6]); ARP_SLOTS];
+/// `true` once a rebind (broadcast REQUEST) has been issued for the current
+/// renewal so a NAK can drop the lease instead of looping.
+static mut REBINDING: bool = false;
+/// Consecutive failed reachability checks, drives the recheck backoff.
+static mut FAILS: u8 = 0;
+/// Link state sampled on the previous tick (for transition detection).
+static mut LAST_LINK: bool = false;
+/// `false` until the first link sample, so boot does not look like a change.
+static mut LINK_KNOWN: bool = false;
+static mut ARP_TABLE: [ArpEntry; ARP_SLOTS] = [ArpEntry::EMPTY; ARP_SLOTS];
 static mut ARP_COUNT: usize = 0;
 
 fn ticks() -> u64 {
@@ -211,40 +242,62 @@ fn next_seq() -> u16 {
 }
 
 /// Probes the PCI bus for a class-`0x02` controller, initialises the driver
-/// and loads persisted settings from CMOS. Safe to call when no NIC exists —
-/// the Wi-Fi uplink then carries the stack.
+/// and loads persisted settings from CMOS. Every supported wired NIC is tried
+/// in enumeration order so one unrecognised vendor:device pair does not mask a
+/// working adapter behind it. Safe to call when no NIC exists — the Wi-Fi
+/// uplink then carries the stack.
 pub fn init(devices: &[PciDevice]) -> Result<(), &'static str> {
     cmos_load();
-    let dev = devices
+    let mut unsupported: u32 = 0;
+    for dev in devices
         .iter()
-        .find(|d| d.class == CLASS_NETWORK && !d.is_wifi());
-    if let Some(dev) = dev {
-        let nic = unsafe { Nic::init(dev)? };
-        let mac = *nic.mac();
-        let kind = nic.kind_name();
-        unsafe { NIC = Some(nic) };
-        crate::kprintln!(
-            "[serial] [net] nic {} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            kind,
-            mac[0],
-            mac[1],
-            mac[2],
-            mac[3],
-            mac[4],
-            mac[5]
-        );
-        crate::vprintln!(
-            "NET: {} ({})",
-            kind,
-            if read_settings().dhcp {
-                "DHCP"
-            } else {
-                "static"
+        .filter(|d| d.class == CLASS_NETWORK && !d.is_wifi())
+    {
+        match unsafe { Nic::init(dev) } {
+            Ok(nic) => {
+                let mac = *nic.mac();
+                let kind = nic.kind_name();
+                unsafe { NIC = Some(nic) };
+                crate::kprintln!(
+                    "[serial] [net] nic {} {:04x}:{:04x} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    kind,
+                    dev.vendor_id,
+                    dev.device_id,
+                    mac[0],
+                    mac[1],
+                    mac[2],
+                    mac[3],
+                    mac[4],
+                    mac[5]
+                );
+                crate::vprintln!(
+                    "NET: {} ({})",
+                    kind,
+                    if read_settings().dhcp {
+                        "DHCP"
+                    } else {
+                        "static"
+                    }
+                );
+                return Ok(());
             }
-        );
-    } else {
+            Err(e) => {
+                unsupported += 1;
+                crate::kprintln!(
+                    "[serial] [net] nic unsupported {:04x}:{:04x} ({})",
+                    dev.vendor_id,
+                    dev.device_id,
+                    e
+                );
+            }
+        }
+    }
+    if unsupported == 0 {
         crate::kprintln!("[serial] [net] nic: none (wifi uplink only)");
         crate::vprintln!("NET: no wired NIC (wifi uplink)");
+    } else {
+        crate::kprintln!("[serial] [net] nic: none supported (wifi uplink only)");
+        crate::vprintln!("NET: no supported wired NIC (wifi uplink)");
     }
     Ok(())
 }
@@ -254,6 +307,25 @@ pub fn init(devices: &[PciDevice]) -> Result<(), &'static str> {
 pub fn poll() {
     let now = ticks();
     unsafe {
+        let up = link_ok();
+        if *addr_of!(LINK_KNOWN) {
+            if *addr_of!(LAST_LINK) && !up {
+                NET_OK = false;
+                PHASE = Phase::Idle;
+                FAILS = 0;
+                reset_arp();
+                NEXT_ACTION = now + 10;
+                crate::kprintln!("[serial] [net] link down");
+            } else if !*addr_of!(LAST_LINK) && up {
+                NET_OK = false;
+                PHASE = Phase::Idle;
+                NEXT_ACTION = now;
+                crate::kprintln!("[serial] [net] link up");
+            }
+        }
+        *addr_of_mut!(LINK_KNOWN) = true;
+        *addr_of_mut!(LAST_LINK) = up;
+        arp_expire(now);
         drain_rx();
         match PHASE {
             Phase::Idle => step_idle(now),
@@ -638,6 +710,11 @@ unsafe fn handle_dhcp(pkt: &[u8]) {
             *addr_of_mut!(OFFER) = l;
             GOT_ACK = true;
         }
+        Some(DHCP_NAK) => {
+            GOT_OFFER = false;
+            GOT_ACK = false;
+            GOT_NAK = true;
+        }
         _ => {}
     }
 }
@@ -736,11 +813,16 @@ fn dhcp_dns_option(pkt: &[u8]) -> Option<([u8; 4], [u8; 4])> {
 }
 
 fn arp_lookup(ip: [u8; 4]) -> Option<[u8; 6]> {
+    let now = ticks();
     unsafe {
         let table = addr_of!(ARP_TABLE);
         for i in 0..*addr_of!(ARP_COUNT) {
-            if (*table)[i].0 == ip {
-                return Some((*table)[i].1);
+            let e = (*table)[i];
+            if e.ip == ip {
+                if now.wrapping_sub(e.age) <= ARP_TTL {
+                    return Some(e.mac);
+                }
+                return None;
             }
         }
         None
@@ -751,21 +833,38 @@ fn arp_insert(ip: [u8; 4], mac: [u8; 6]) {
     if ip == [0; 4] {
         return;
     }
+    let now = ticks();
     unsafe {
         let table = addr_of_mut!(ARP_TABLE);
         let count = *addr_of!(ARP_COUNT);
         for i in 0..count {
-            if (*table)[i].0 == ip {
-                (*table)[i].1 = mac;
+            if (*table)[i].ip == ip {
+                (*table)[i].mac = mac;
+                (*table)[i].age = now;
                 return;
             }
         }
         if count < ARP_SLOTS {
-            (*table)[count].0 = ip;
-            (*table)[count].1 = mac;
+            (*table)[count] = ArpEntry { ip, mac, age: now };
             *addr_of_mut!(ARP_COUNT) = count + 1;
         }
     }
+}
+
+/// Drops entries older than [`ARP_TTL`] so stale mappings are re-resolved.
+unsafe fn arp_expire(now: u64) {
+    let table = addr_of_mut!(ARP_TABLE);
+    let mut count = *addr_of!(ARP_COUNT);
+    let mut i = 0;
+    while i < count {
+        if now.wrapping_sub((*table)[i].age) > ARP_TTL {
+            (*table)[i] = (*table)[count - 1];
+            count -= 1;
+        } else {
+            i += 1;
+        }
+    }
+    *addr_of_mut!(ARP_COUNT) = count;
 }
 
 fn reset_arp() {
@@ -880,6 +979,7 @@ unsafe fn send_discover(now: u64, deadline_ticks: u64) {
     PHASE = Phase::Discover;
     DEADLINE = now + deadline_ticks;
     TRIES = 0;
+    GOT_NAK = false;
     let xid = XID;
     crate::kprintln!("[serial] [net] dhcp discover xid={:08x}", xid);
 }
@@ -904,6 +1004,10 @@ unsafe fn send_request(now: u64, renew: bool) {
     PHASE = if renew { Phase::Renew } else { Phase::Request };
     DEADLINE = now + 100;
     TRIES = 0;
+    GOT_NAK = false;
+    if !renew {
+        REBINDING = false;
+    }
     crate::kprintln!(
         "[serial] [net] dhcp {} ip={}.{}.{}.{}",
         if renew { "renew" } else { "request" },
@@ -914,6 +1018,54 @@ unsafe fn send_request(now: u64, renew: bool) {
     );
 }
 
+/// Broadcasts a REQUEST carrying the current lease (`ciaddr`) without a server
+/// id — the DHCP `REBIND` step attempted at 7/8 of the lease lifetime.
+unsafe fn send_rebind(now: u64) {
+    let bound = *addr_of!(BOUND);
+    let mut tx = [0u8; 600];
+    let len = build_dhcp(
+        &mut tx,
+        BROADCAST_MAC,
+        DHCP_REQUEST,
+        XID,
+        bound.ip,
+        [0; 4],
+        bound.ip,
+        false,
+    );
+    let _ = uplink_send(&tx[..len]);
+    PHASE = Phase::Renew;
+    DEADLINE = now + 100;
+    TRIES = 0;
+    GOT_NAK = false;
+    REBINDING = true;
+    crate::kprintln!(
+        "[serial] [net] dhcp rebind ip={}.{}.{}.{}",
+        bound.ip[0],
+        bound.ip[1],
+        bound.ip[2],
+        bound.ip[3]
+    );
+}
+
+/// Handles a DHCP NAK: restart discovery for a fresh offer, or (during a
+/// rebind) drop the rejected lease so the stack re-acquires from scratch.
+unsafe fn dhcp_nak(now: u64, phase: Phase) {
+    RETRIES = 0;
+    TRIES = 0;
+    crate::kprintln!("[serial] [net] dhcp nak");
+    if phase == Phase::Renew && !*addr_of!(REBINDING) {
+        send_rebind(now);
+        return;
+    }
+    *addr_of_mut!(BOUND) = Lease::EMPTY;
+    NET_OK = false;
+    REBINDING = false;
+    reset_arp();
+    XID = (now as u32) ^ 0x00C0_FFEE;
+    send_discover(now, 100);
+}
+
 unsafe fn step_dhcp(now: u64) {
     let phase = *addr_of!(PHASE);
     match phase {
@@ -921,6 +1073,10 @@ unsafe fn step_dhcp(now: u64) {
             if *addr_of!(GOT_OFFER) {
                 GOT_OFFER = false;
                 send_request(now, false);
+            } else if *addr_of!(GOT_NAK) {
+                GOT_NAK = false;
+                XID = (now as u32) ^ 0x00C0_FFEE;
+                send_discover(now, 100);
             } else if now > *addr_of!(DEADLINE) {
                 dhcp_timeout(now, phase);
             }
@@ -929,6 +1085,9 @@ unsafe fn step_dhcp(now: u64) {
             if *addr_of!(GOT_ACK) {
                 GOT_ACK = false;
                 bind(now, phase == Phase::Renew);
+            } else if *addr_of!(GOT_NAK) {
+                GOT_NAK = false;
+                dhcp_nak(now, phase);
             } else if now > *addr_of!(DEADLINE) {
                 dhcp_timeout(now, phase);
             }
@@ -940,6 +1099,34 @@ unsafe fn step_dhcp(now: u64) {
 unsafe fn dhcp_timeout(now: u64, phase: Phase) {
     RETRIES = RETRIES.saturating_add(1);
     if RETRIES > 5 {
+        let s = *addr_of!(SETTINGS);
+        if s.ip != [0; 4] {
+            *addr_of_mut!(BOUND) = Lease {
+                ip: s.ip,
+                mask: s.mask,
+                gw: s.gw,
+                dns1: s.dns1,
+                dns2: s.dns2,
+                server: [0; 4],
+                secs: 0,
+            };
+            NET_OK = false;
+            PHASE = Phase::Bound;
+            BOUND_AT = now;
+            NEXT_ACTION = now + 10;
+            RETRIES = 0;
+            FAILS = 0;
+            REBINDING = false;
+            reset_arp();
+            crate::kprintln!(
+                "[serial] [net] dhcp timeout -> static fallback ip={}.{}.{}.{}",
+                s.ip[0],
+                s.ip[1],
+                s.ip[2],
+                s.ip[3]
+            );
+            return;
+        }
         PHASE = Phase::Idle;
         NEXT_ACTION = now + 1000;
         RETRIES = 6;
@@ -979,6 +1166,8 @@ unsafe fn bind(now: u64, renewed: bool) {
     let l = *addr_of!(OFFER);
     *addr_of_mut!(BOUND) = l;
     RETRIES = 0;
+    FAILS = 0;
+    REBINDING = false;
     BOUND_AT = now;
     PHASE = Phase::Bound;
     NEXT_ACTION = now + 10;
@@ -1014,8 +1203,16 @@ unsafe fn step_bound(now: u64) {
     if (*addr_of!(SETTINGS)).dhcp {
         let secs = (*addr_of!(BOUND)).secs;
         if secs > 0 {
+            let elapsed = now.wrapping_sub(*addr_of!(BOUND_AT));
+            let t2 = (secs as u64 * 7 / 8) * TIMER_HZ;
+            if elapsed >= t2 {
+                REBINDING = false;
+                send_rebind(now);
+                return;
+            }
             let t1 = (secs as u64 / 2) * TIMER_HZ;
-            if now.wrapping_sub(*addr_of!(BOUND_AT)) >= t1 {
+            if elapsed >= t1 {
+                REBINDING = false;
                 send_request(now, true);
                 return;
             }
@@ -1118,14 +1315,18 @@ unsafe fn succeed_check(now: u64) {
         crate::kprintln!("[serial] [net] internet ok");
     }
     NET_OK = true;
+    FAILS = 0;
     PHASE = Phase::Bound;
     NEXT_ACTION = now + RECHECK_TICKS;
 }
 
 unsafe fn fail_check(now: u64) {
     NET_OK = false;
+    let f = (*addr_of!(FAILS)).saturating_add(1);
+    FAILS = f;
+    let backoff = (FAIL_RECHECK_TICKS << f.min(5)).min(FAIL_BACKOFF_MAX);
     PHASE = Phase::Bound;
-    NEXT_ACTION = now + FAIL_RECHECK_TICKS;
+    NEXT_ACTION = now + backoff;
 }
 
 fn send_arp_request(target: [u8; 4]) {

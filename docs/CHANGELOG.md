@@ -1,5 +1,52 @@
 # AIOS Development Log
 
+## v2.48.0 — wired NIC expansion (e1000e / virtio-net / rtl8169 / pcnet) and stable-internet hardening (2026-10-12)
+
+### Added
+- **Exact PCI/device-id NIC matching** (`aios-kernel/src/nic.rs`). `Nic::init` no
+  longer dispatches on the vendor id alone (which mis-drove every Intel part as
+  an e1000 and every Realtek part as an rtl8139); the new
+  `driver_kind()` maps vendor **and** device id through explicit tables onto a
+  six-variant `Kind`.
+- **Four new NIC backends** on top of the existing e1000/rtl8139:
+  - `e1000e`/`igb`-class Intel parts reuse the e1000 register core
+    (`Kind::E1000E`).
+  - **virtio-net legacy** (`0x1AF4:0x1000/0x1001`): I/O BAR, feature
+    negotiation (`VIRTIO_NET_F_MAC`), two split virtqueues whose used ring sits
+    at the next 4 KiB boundary, 16 posted RX buffers, blocking TX; a modern
+    memory BAR is rejected honestly.
+  - **Realtek rtl8169/8168/810x**: MMIO descriptor rings (16-byte descriptors,
+    `OWN` in `opts1`), `Cfg9346` unlock/relock, `TPPoll.NPQ` transmit kick, the
+    first memory BAR auto-selected.
+  - **AMD PCnet/PCnet-PCI** (`0x1022:0x2000/0x2001`): 16-bit I/O, `SSIZE32`
+    init block (`BCR20 = 0x0102`) with the ring-size exponents in the
+    `rlen`/`tlen` high nibbles, INIT/`IDON` wait then STRT, `TDMD` kick.
+- **First-supported-NIC selection** (`net::init`): every wired (non-Wi-Fi)
+  controller is tried in enumeration order, so an unrecognised vendor:device
+  pair no longer masks a working adapter behind it; each candidate logs
+  `nic <kind> <vid>:<did> mac=…` or `nic unsupported <vid>:<did> (<reason>)`.
+- **DHCP robustness**: NAK handling (restart discovery, or drop the lease after
+  a rebind NAK), renew at T1 (unicast REQUEST) and rebind at T2 = 7/8 lifetime
+  (broadcast REQUEST without a server id), plus a static-address fallback when
+  DHCP exhausts its retries.
+- **Link-change recovery**: `net::poll` samples the link every tick and, on a
+  down→up or up→down transition, clears `NET_OK`, drops to `Phase::Idle`, resets
+  the ARP cache and restarts acquisition.
+- **ARP cache ageing**: entries carry a timestamp, are stale after `ARP_TTL`
+  (5 min) and are evicted by `arp_expire`; the reachability recheck also backs
+  off exponentially (capped at 60 s) after consecutive failures.
+
+### Changed
+- `Nic` carries `kind`, `qsize` and shared `rx_pos`/`tx_pos` cursors across all
+  six backends; `link_up` is per-driver (`STATUS.LU` / `BMSR` / `PHYstatus`).
+- `net::recheck` and `net::apply` reset the new backoff/rebind state.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean; host `test --no-run` compiles apart from the expected bare-target
+  `E0152`. Runtime NIC verification is limited to the models QEMU provides
+  (e1000, rtl8139, virtio-net, pcnet); there is no rtl8169 model (see BUGS).
+
 ## v2.47.0 — kernel widget set and routed input: text fields, scrollable list, scrollbar, dropdown menu, Widget Lab (2026-10-12)
 
 ### Added

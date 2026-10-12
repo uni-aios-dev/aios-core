@@ -892,9 +892,14 @@ focused) returns to the console/TUI.
   Welcome window itself through the same paths as `Esc`/`X`/`F4`, so a typed
   note still raises the `Confirm` dialog. Plates are window-local: they move
   and resize together with their host window.
-- **Network window (v2.38.34)**: the desktop's networking panel — open it
-  from the tray globe (bottom-right corner of the task bar, green = internet
-  reachable) or the `Net` icon (fourth in the left column). Contents:
+- **Network window (v2.38.34, drivers v2.48.0)**: the desktop's networking panel
+  — open it from the tray globe (bottom-right corner of the task bar, green =
+  internet reachable) or the `Net` icon (fourth in the left column). Since
+  v2.48.0 the wired uplink picks the first **supported** NIC from an exact
+  PCI vendor/device-id table — e1000, e1000e/igb, rtl8139, rtl8169/8168, virtio
+  -net (legacy) and AMD PCnet — and the DHCP client handles NAK/renew/rebind,
+  link-change recovery and ARP-cache ageing, so the address re-acquires itself
+  after a cable replug or lease expiry. Contents:
   - *Mode*: `DHCP` / `Static` buttons pick how the address fields are used
     (status line shows `dhcp` / `static`).
   - *Address fields*: `ip`, `mask`, `gw`, `dns1`, `dns2` — click one to
