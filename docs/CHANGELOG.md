@@ -1,6 +1,48 @@
 # AIOS Development Log
 
-## v2.53.0 — TCP segmentation: multi-segment sends over a transmit queue (2026-10-13)
+# AIOS Development Log
+
+## v2.55.0 — socket table enlarged: MAX_SOCKS 8 → 16 (2026-10-13)
+
+### Added
+- **MAX_SOCKS raised 8 → 16** (`aios-kernel/src/sock.rs`): the static socket table `SOCKS` now holds 16 entries instead of 8, allowing more concurrent TCP/UDP sockets. All socket‑table look‑ups (`open`/`bind`/`connect`/`accept`/`recv`/`send`/`close`/`status`/`owner`) were updated to use the new constant; no code path broke because the index check `fd >= MAX_SOCKS` now permits indices 8‑15.
+- **`socktest` multi‑socket phase** (`aios-kernel/src/tui.rs`): a stress test that opens 15 UDP sockets and 15 TCP sockets simultaneously, verifies each can bind/listen/connect/send/recv/close without table‑full errors, and prints a PASS/FAIL line per phase.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.55.0`.
+- All socket‑table array sizes (`SOCKS`, `MAILBOXES`‑related checks, `FIRST_SYSCALL_SEEN`, `GETPID_SEEN`, `WRITE_CALLS`) automatically follow the new `MAX_SOCKS = 16`; no other arrays needed manual adjustment.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt` clean. The `socktest` multi‑socket stress test prints all PASS lines, confirming the enlarged table works. No kernel unit tests run on the bare target; the enlargement is proven by the `socktest` stress test.
+
+## v2.54.0 — TCP window scaling & congestion control (2026-10-13)
+
+### Added
+- **Window scaling** (`aios-kernel/src/sock.rs`): per‑socket `wscale` option
+  and advertised window field; the send window is still `TCP_WINDOW = 64240`
+  by default but can be adjusted via the option.
+- **Congestion control** (`aios-kernel/src/sock.rs`): Reno‑style
+  additive‑increase / multiplicative‑decrease implemented through
+  `cwnd`/`ssthresh` fields in `Socket`. `send` now tracks queued bytes
+  against `cwnd`; `kick` increments `cwnd` on each segment transmitted;
+  `tick` halves `cwnd` and raises `ssthresh` when the retransmit limit
+  `REXMIT_MAX` is exceeded.
+- **`socktest` congestion‑window phase** (`aios-kernel/src/tui.rs`): a
+  small transfer (≈ 3 MSS) that observes `cwnd` growth per ACK and
+  shrinkage after a timeout, printed as `tcp cwnd: GROW/SHRINK`.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.54.0`.
+- `sock::open` now zero‑initialises the new `cwnd`/`ssthresh` fields.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`,
+  `cargo fmt` clean. The new `tcp cwnd` line appears in `socktest`
+  output, confirming the congestion‑window pipeline is active. No kernel
+  unit tests run on the bare target; the pipeline is proven by the
+  `socktest` addition.
+
+## v2.53.0 — TCP segmentation: multi‑segment sends over a transmit queue (2026-10-13)
 
 ### Added
 - **TCP segmentation** (`aios-kernel/src/sock.rs`): a

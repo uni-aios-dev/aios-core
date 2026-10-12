@@ -28,7 +28,7 @@ use core::ptr::addr_of_mut;
 use crate::net;
 
 /// Maximum number of simultaneously open sockets.
-pub const MAX_SOCKS: usize = 8;
+pub const MAX_SOCKS: usize = 16;
 /// TCP receive ring capacity per socket.
 const TCP_RXCAP: usize = 8192;
 /// Largest payload accepted by [`send`] on a TCP socket (one segment).
@@ -136,6 +136,9 @@ struct Socket {
     sent_at: u64,
     retries: u8,
     time_at: u64,
+    // Congestion control (v2.54.0).
+    cwnd: u32,     // congestion window in bytes (>= 1 MSS)
+    ssthresh: u32, // slow-start threshold
 }
 
 impl Socket {
@@ -169,6 +172,8 @@ impl Socket {
         sent_at: 0,
         retries: 0,
         time_at: 0,
+        cwnd: TCP_MSS as u32,
+        ssthresh: 10 * TCP_MSS as u32,
     };
 }
 
@@ -507,6 +512,8 @@ fn kick(sk: &mut Socket) {
     sk.tx_pending = true;
     sk.retries = 0;
     sk.sent_at = net::now_ticks();
+    // Congestion control (v2.54.0): additive increase after each segment sent
+    sk.cwnd = sk.cwnd.saturating_add(TCP_MSS as u32);
     send_segment(sk, sk.tx_seq, PSH | ACK, &sk.tx_buf[..n]);
 }
 
@@ -551,6 +558,9 @@ pub fn tick(now: u64) {
                         let len = sk.tx_len;
                         send_segment(sk, seq, PSH | ACK, &sk.tx_buf[..len]);
                     } else {
+                        // Congestion control (v2.54.0): multiplicative decrease on timeout
+                        sk.cwnd = sk.ssthresh / 2;
+                        sk.ssthresh = sk.cwnd.max(2 * TCP_MSS as u32);
                         sk.tx_pending = false;
                         sk.state = TcpState::Closed;
                         sk.eof = true;

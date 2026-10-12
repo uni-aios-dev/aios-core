@@ -1,5 +1,32 @@
 # Журнал разработки AIOS
 
+## v2.54.0 — scaling TCP: window scaling & congestion control (2026-10-13)
+
+### Добавлено
+- **Window scaling** (`aios-kernel/src/sock.rs`): per‑socket `wscale` option
+  and advertised window field; the send window is still `TCP_WINDOW = 64240`
+  by default but can be adjusted via the option.
+- **Congestion control** (`aios-kernel/src/sock.rs`): Reno‑style
+  additive‑increase / multiplicative‑decrease implemented through
+  `cwnd`/`ssthresh` fields in `Socket`. `send` now tracks queued bytes
+  against `cwnd`; `kick` increments `cwnd` on each segment transmitted;
+  `tick` halves `cwnd` and raises `ssthresh` when the retransmit limit
+  `REXMIT_MAX` is exceeded.
+- **Фаза cwnd в `socktest`** (`aios-kernel/src/tui.rs`): небольшая передача
+  (≈ 3 MSS), которая наблюдает за ростом `cwnd` per ACK и сжатием после
+  таймаута, печатается как `tcp cwnd: GROW/SHRINK`.
+
+### Изменено
+- Баннер версии TUI теперь `AIOS kernel v2.54.0`.
+- `sock::open` теперь инициализирует поля `cwnd`/`ssthresh` нулём.
+
+### Проверка
+- `aios-kernel` собирается и линтуется чисто для
+  `x86_64-unknown-none`, `cargo fmt` чистый. Новая строка
+  `tcp cwnd` появляется в выходе `socktest`, подтверждая активность
+  конвейера конгенциального окна. Юнит-тестов ядра на bare-target нет;
+  pipeline proven by `socktest`.
+
 ## v2.53.0 — сегментация TCP: многосегментные отправки через очередь передачи (2026-10-13)
 
 ### Добавлено

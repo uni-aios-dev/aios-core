@@ -136,11 +136,25 @@ The v2.38.22 GUI is a first step; a real windowing system needs:
   verification plus a short echo, two new PASS/FAIL
   lines. Known limit: `close` discards un-sent queued
   bytes (the stream truncates at the last transmitted
-  segment). Still open: TCP options/window
-  scaling/congestion control, a larger backlog than
+  segment). Still open: a larger backlog than
   `MAX_SOCKS = 8`, UDP broadcast/multicast, and
   external-NIC verification keeps depending on QEMU NIC
   models.
+- [x] **TCP window scaling & congestion control (v2.54.0)** — sends can now
+  advertise a scaled window and the congestion window (`cwnd`/`ssthresh`)
+  implements Reno‑style additive increase / multiplicative decrease; `kick`
+  grows `cwnd` on each transmitted segment, `tick` shrinks it after a
+  retransmit timeout; `socktest` shows a `tcp cwnd: GROW/SHRINK` line.
+  Known limit: window scaling parameters are still static (no runtime
+  negotiation), and the congestion‑control state is not yet exposed through
+  `SYS_SOCK_STATUS`.
+- [x] **MAX_SOCKS raised 8 → 16 (v2.55.0)** — the static socket table
+  `SOCKS` now holds 16 entries instead of 8, allowing more concurrent
+  TCP/UDP sockets. All socket‑table look‑ups (`open`/`bind`/`connect`/`accept`
+  `/recv`/`send`/`close`/`status`/`owner`) were updated to use the new
+  constant; no code path broke because the index check `fd >= MAX_SOCKS`
+  now permits indices 8‑15. Still open: UDP broadcast/multicast, and
+  external-NIC verification keeps depending on QEMU NIC models.
 - [x] **Restore of closed z-order (v2.38.31)** — a closing window records its logical z-rank (0 = bottom, counted over open windows below its slot) in the new `CLOSED_Z` table and the proof line grows a compatible suffix, `[gui] close <label> (z <rank>)`; both open paths (`spawn` and `spawn_client`, incl. the `present_client` re-spawn) place the window through `place_window` — at the remembered rank when the kind was closed before (logging `[gui] reopen <label> at z <rank>`), on top otherwise (the old behaviour), compacting slot holes into a dense bottom→top sequence on the way. `leave()` clears the table. Also closed the last focus-steal hole: `spawn_client` now honours the v2.38.30 modal gate, so a ring-3 client presenting during a dialog cannot spawn focused underneath it. Verified in QEMU (port 45631): close Uptime via its `X` while it is *not* focused (`(z 1)`), reopen from the desktop icon (`reopen … at z 1`), and the f9 walk proves the restored middle position both serially (`client` → `Welcome` → `Uptime`, old order would be `Welcome` → `client` → `Uptime`) and pixel-wise (client still paints over Uptime's title at (640,340) in f3).
 - [x] **Widget layer: buttons (v2.38.32)** — first increment of the widget set: `Widget::Button` plates with window-local coordinates (so they follow their host through move/resize/maximize) declared in per-kind tables (`widgets_for`, `WELCOME_WIDGETS`: System/Uptime/About/Close on Welcome), painted over the body by `draw_widgets` (`BTN_BG`, lifted to `BAR_ON` while hovered), with hover tracked per cursor move in `WIDGET_HOVER` (topmost-first, frozen under a modal, cleared by `leave()`). `dispatch_click` hit-tests plates before any client event and logs `[gui] widget <host>/<label> click`; `Open` skips the host focus (it would mirror the restored v2.38.31 z-rank) and `CloseHost` funnels through `close_window`, so a typed note still raises the v2.38.30 modal. Verified in QEMU (port 45632): hover pixels (`BAR_ON` vs idle `BTN_BG`), all four click logs in order, `reopen Uptime at z 1` cross-proof, and the Close plate opening/confirming the modal.
 - [ ] **Scalable fonts / layout** — today only the 8x8 PSF ASCII glyphs; add a scalable font with a rendered glyph cache, text wrapping, and window layout theming.
