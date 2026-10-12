@@ -218,15 +218,31 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
     let frame = unsafe { &mut *frame };
     let vector = frame.vector;
     match vector {
-        0 => fatal(frame, "DIVIDE BY ZERO"),
-        6 => fatal(frame, "INVALID OPCODE"),
+        0 => {
+            if frame.cs == crate::gdt::KERNEL_CS as u64 {
+                fatal(frame, "DIVIDE BY ZERO");
+            } else {
+                crate::fault::intercept(frame, crate::fault::FaultCode::DivideError);
+            }
+        }
+        6 => {
+            if frame.cs == crate::gdt::KERNEL_CS as u64 {
+                fatal(frame, "INVALID OPCODE");
+            } else {
+                crate::fault::intercept(frame, crate::fault::FaultCode::InvalidOpcode);
+            }
+        }
         8 => fatal(frame, "DOUBLE FAULT"),
         13 => {
             if crate::thermal::probe_active() {
                 crate::thermal::on_probe_gp(frame);
                 return;
             }
-            fatal(frame, "GENERAL PROTECTION FAULT")
+            if frame.cs == crate::gdt::KERNEL_CS as u64 {
+                fatal(frame, "GENERAL PROTECTION FAULT")
+            } else {
+                crate::fault::intercept(frame, crate::fault::FaultCode::GeneralProtection);
+            }
         }
         14 => page_fault(frame),
         v if (IRQ_BASE as u64..=IRQ_END as u64).contains(&v) => match vector {
@@ -275,7 +291,7 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
     }
 }
 
-fn page_fault(frame: &InterruptFrame) -> ! {
+fn page_fault(frame: &mut InterruptFrame) {
     let cr2 = read_cr2();
     kprintln!(
         "PAGE FAULT: addr={:#x} ip={:#x} err={:#x} cs={:#x} ss={:#x} rsp={:#x} rflags={:#x}",
@@ -303,8 +319,12 @@ fn page_fault(frame: &InterruptFrame) -> ! {
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
         );
+        fatal_with(0x20000000, "PAGE FAULT")
+    } else {
+        // User page faults no longer halt the system: the fault interceptor
+        // freezes the task and the crash dialog decides (Resume/Terminate/Rollback).
+        crate::fault::intercept(frame, crate::fault::FaultCode::PageFault);
     }
-    fatal_with(0x20000000, "PAGE FAULT")
 }
 
 pub fn idt_gate_installed(vector: u64) -> bool {

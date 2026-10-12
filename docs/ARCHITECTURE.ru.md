@@ -436,6 +436,38 @@ Ready → Running → Terminated
 - `SpawnProcess { name, priority, ram_mb }` — создание, возврат PID в виде текста
 - `KillProcess { pid }` — завершение, возврат подтверждения
 - `AdjustPriority { pid, new_priority }` — изменение, возврат нового приоритета
+- `RecoveryDecision { pid, action }` (v2.45.0) — применение решения crash-диалога
+  (`Rollback`/`Terminate`/`Resume`) через `Scheduler::resolve_fault`.
+
+#### Отказоустойчивость и восстановление (v2.45.0)
+
+Вместо глобальной остановки фолтнувшая задача замораживается, снимается снапшот
+(только метаданные) и пользователю предъявляется решение
+`Rollback / Terminate / Resume` — один и тот же контракт в host-рантайме и в
+bare-metal ядре.
+
+- `aios-core::fault` — `FaultKind { Panic, Hang, TaskFault }` (с `name()`),
+  `RecoveryAction { Rollback, Terminate, Resume }` (с `name()`) и
+  `FaultInfo { pid, name, kind, message, timestamp_ms }`. Переносят это две
+  IPC-полезные нагрузки: `Payload::FaultReport(FaultInfo)` и
+  `Payload::RecoveryDecision { pid, action }`
+  (`CommandId::FaultReport = 0x0070`, `CommandId::RecoveryDecision = 0x0071`).
+- `aios-process-mgr::fault` — `run_isolated` выполняет задачу реального потока
+  под `catch_unwind` с тихим thread-local panic-хуком, поэтому паника
+  превращается в `FaultInfo` (`panic_message`, `fault_for`), а не разворачивает
+  планировщик. `TaskSnapshot` снимает метаданные задачи (pid, имя, приоритет,
+  квота RAM, block id, crash count), а `restore_to` её переармирует.
+- `Scheduler` — реальные потоки записывают сообщение паники
+  (`Arc<Mutex<Option<String>>>`), `poll_faults()` сливает упавшие потоки в
+  `fault_queue`, а `resolve_fault(pid, action)` применяет решение: `Rollback`
+  восстанавливает снапшот и возвращает `Ready`, `Terminate` удаляет задачу,
+  `Resume` возвращает в очередь. `check_real_threads` больше не сбрасывает
+  задачу из `Crashed` обратно в `Ready`, а `kill_process` чистит снапшот и
+  записи сбоев.
+- `aios-gui::crash_dialog` — `CrashDialogState` — чистая машина состояний
+  (`present`/`choose`/`take_outcome`/`show`), отделённая от отрисовки; тик
+  потока `GuiRuntime` опрашивает `poll_faults()`, а `App` показывает модальный
+  диалог, резолвя его через `resolve_fault` в следующем `update()`.
 
 ### Движок live-обновлений (`aios-live-update`)
 
@@ -1380,7 +1412,17 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `lapic` — (v2.38.12) драйвер таймера Local APIC, основной аппаратный источник тиков на любой плате: предпочитает x2APIC (IA32_APIC_BASE + расширенный MSR-диапазон), иначе fallback на xAPIC MMIO через `memory::map_mmio`, калибрует `bus_hz` по отсчёту PIT (`bus_hz = lapic_delta * 1_193_182 / pit_delta`) и запускает периодический тик 100 Гц на векторе `0x90`. `active()` кормит режим дашборда (`HW-LAPIC`). Работает вообще без 8259 PIC.
 - `sched` — round-robin по тикам таймера над `MAX_TASKS = 6` кадрами (слот 0 = idle, worker = 1, четыре ring-3 демо-задачи в слотах 2..5). Ring-3 задачи вытесняемы (переключаются по любому аппаратному тику — PIT или LAPIC); ring-0 задачи переключаются только кооперативно через `yield_kernel` (`int 0xfa`), что охраняет предикат `hw_tick`, покрывающий и вектор `0x90`. До v2.38.12 на платах, где legacy PIC не доставлял IRQ0 (маршрутизация через IO-APIC), **прерываний для вытеснения не было** — ring-3 задача без syscall не отдавала CPU никому, останавливая экономику тиков; LAPIC-таймер вернул вытеснение на таких платах, но демо-программы по-прежнему обязаны спать (`SYS_SLEEP`). `idle_loop` по-прежнему обнаруживает отсутствие аппаратных тиков (`IRQ32_SEEN == false`) и синтезирует тактовость 100 Гц опросом счётчика PIT. С v2.38.20 `schedule()` также применяет термальный затвор: пока стоит `thermal::critical()`, ring-3 задачи (`frame.cs == USER_CS`) пропускаются — демо-задачи замирают на горячем кристалле, а задачи ядра и idle продолжают работать, TUI продолжает обновляться.
   - `memory` — ядро paging поверх HHDM Limine (`physical_offset = hhdm.offset`). `translate` обходит активные таблицы страниц (PML4/PDPT/PD/PT, большие страницы), читая физическую память через HHDM; `map_page`/`unmap_page` редактируют таблицы и выделяют кадры для таблиц по требованию, сбрасывая TLB через `invlpg`; `init` строит bump-аллокатор кадров по регионам `MEMMAP_USABLE` Limine, переданным как `MemRegion { start, end }`; `selftest` мапит тестовую страницу, пишет/читает паттерн и проверяет `translate` до и после unmap. `verify_region(virt, bytes)` (v2.38.13) обходит живые таблицы и возвращает `RegionCheck { pages_total, pages_present, pages_writable }`, считая huge-листья по одной записи на 4 КиБ-субстраницу с флагами самого листа — загрузочный путь использует её, чтобы доказать, что весь диапазон VRAM GOP промаплен. `map_mmio(phys, size)` мапит страницы BAR устройств в выделенное окно `0xffffff00_2000_0000` (слот PML4 510) — HHDM покрывает только RAM; `physical_to_virtual(phys)` возвращает HHDM-алиас, используемый для DMA-буферов.
-  - `heap` — куча ядра 4 МиБ (`HEAP_START = 0xffff_ff00_0000_0000`, `HEAP_SIZE = 4 MiB`), замаплена страница за страницей через `memory::map_page`; `#[global_allocator]` free-list аллокатор — first-fit по *адресно-отсортированному* списку свободных: `alloc` сплитит с остатком на исходном адресе (порядок выживает), `dealloc` вставляет по порядку и сливается с **обеими** соседними блоками при смежности (прежнее слияние только с головой списка оставляло соседние фрагменты и вело к OOM на долгих сессиях), под spin-lock; `init_heap` создаёт единый свободный блок, `test_heap` выделяет `Vec`/`String`/`Box` и стресс-цикл из 200 строк, `fragmentation_selftest` (v2.38.33, запускается из `main` сразу за `test_heap`) вырезает 24 × 96 KiB блока, освобождает их в порядке аллокации и заново добывает 1.5 MiB целиком через `try_reserve_exact`, логируя `heap: fragmentation self-test ok` (грепается смоуком) или `FAILED`. GUI backbuffer стоит на `HEAP_START + 4 MiB` — впритык, но без пересечения страниц.
+  - `heap` — куча ядра 4 МиБ (`HEAP_START = 0xffff_ff00_0000_0000`, `HEAP_SIZE = 4 MiB`), замаплена страница за страницей через `memory::map_page`; `#[global_allocator]` free-list аллокатор — first-fit по *адресно-отсортированному* списку свободных: `alloc` сплитит с остатком на исходном адресе (порядок выживает), `dealloc` вставляет по порядку и сливается с **обеими** соседними блоками при смежности (прежнее слияние только с головой списка оставляло соседние фрагменты и вело к OOM на долгих сессиях), под spin-lock; `init_heap` создаёт единый свободный блок, `test_heap` выделяет `Vec`/`String`/`Box` и стресс-цикл из 200 строк,   `fragmentation_selftest` (v2.38.33, запускается из `main` сразу за `test_heap`) вырезает 24 × 96 KiB блока, освобождает их в порядке аллокации и заново добывает 1.5 MiB целиком через `try_reserve_exact`, логируя `heap: fragmentation self-test ok` (грепается смоуком) или `FAILED`. GUI backbuffer стоит на `HEAP_START + 4 MiB` — впритык, но без пересечения страниц.
+- `fault` — (v2.45.0) Перехватчик фолтов Ring 0, ядерный близнец host-функции
+  `run_isolated`. `intercept(frame, kind)` вызывается из обработчиков исключений
+  для **пользовательского** фрейма: снимает `TaskSnapshot` (`pid`, `rip`, `cs`,
+  `rsp`, `rflags`) из `InterruptFrame`, публикует `FaultRecord`
+  (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault }`),
+  замораживает задачу (`sched::freeze_task`) и вызывает `schedule(frame)` для
+  ухода с неё. `peek()`/`pending()` питают GUI-оверлей, а `resolve(Recovery)`
+  применяет `Resume` (`unfreeze_task`), `Terminate` (`remove_task`) или
+  `Rollback` (`restore_task` возвращается в снятый фрейм). Фреймы ядрового
+  контекста по-прежнему идут в `interrupts::fatal_with`.
 - `tui` — интерактивный экранный TUI (v2.38.11 — дашборд только для просмотра;
   **интерактивен с v2.38.19**): **основной экран** — компактная полоса журнала
   загрузки (`console::CONSOLE_TOP_ROWS` = 6 строк) остаётся вверху, а `render()`

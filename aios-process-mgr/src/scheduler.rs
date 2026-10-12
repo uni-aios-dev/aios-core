@@ -1,5 +1,7 @@
+use crate::fault::{fault_for, run_isolated, TaskSnapshot};
 use crate::task::{Priority, Process, ProcessGroup, ProcessId, ProcessState, ProcessTimer};
 use aios_core::error::{AIOSException, Result};
+use aios_core::fault::{FaultInfo, FaultKind, RecoveryAction};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -44,6 +46,9 @@ struct RealThread {
     /// Desired CPU affinity, shared with the spawned thread so it can pin
     /// itself without affecting the scheduler thread.
     affinity: Arc<Mutex<Vec<usize>>>,
+    /// Set by the task thread when its payload panicked (via the fault
+    /// interceptor); polled by [`Scheduler::poll_faults`].
+    panic: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +90,10 @@ pub struct Scheduler {
     jitter_log: Vec<JitterEntry>,
     max_jitter_entries: usize,
     real_threads: HashMap<ProcessId, RealThread>,
+    /// Faults waiting for a recovery decision (frozen tasks).
+    fault_queue: Vec<FaultInfo>,
+    /// Pre-run metadata snapshots keyed by pid, used by rollback recovery.
+    snapshots: HashMap<ProcessId, TaskSnapshot>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -120,6 +129,8 @@ impl Scheduler {
             jitter_log: Vec::new(),
             max_jitter_entries: 1000,
             real_threads: HashMap::new(),
+            fault_queue: Vec::new(),
+            snapshots: HashMap::new(),
         }
     }
 
@@ -317,6 +328,12 @@ impl Scheduler {
         let susp_for_thread = susp_arc.clone();
         let affinity_slot: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
         let affinity_for_thread = affinity_slot.clone();
+
+        // The fault interceptor catches panics in the payload and records the
+        // message; `poll_faults` later freezes the task and raises a FaultInfo.
+        let panic_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let panic_for_thread = panic_slot.clone();
+
         let handle = builder
             .spawn(move || loop {
                 if term_flag.should_stop() {
@@ -333,10 +350,16 @@ impl Scheduler {
                         let _ = crate::cpu_affinity::set_current_thread_affinity(&cores);
                     }
                 }
-                f(
-                    TerminateFlag(term_for_thread.clone()),
-                    SuspendFlag(susp_for_thread.clone()),
-                );
+                if let Some(message) = run_isolated(|| {
+                    f(
+                        TerminateFlag(term_for_thread.clone()),
+                        SuspendFlag(susp_for_thread.clone()),
+                    );
+                }) {
+                    if let Ok(mut slot) = panic_for_thread.lock() {
+                        *slot = Some(message);
+                    }
+                }
                 break;
             })
             .map_err(|e| AIOSException::SchedulerError(format!("Failed to spawn thread: {}", e)))?;
@@ -345,6 +368,7 @@ impl Scheduler {
 
         let process = Process::new(pid, name.to_string(), priority, ram_mb)
             .with_max_restarts(self.max_crash_restarts);
+        self.snapshots.insert(pid, TaskSnapshot::capture(&process));
         self.processes.insert(pid, process);
         self.priority_queues.entry(priority).or_default().push(pid);
         self.used_ram_mb += ram_mb;
@@ -358,6 +382,7 @@ impl Scheduler {
                 terminate: term_arc,
                 suspend: susp_arc,
                 affinity: affinity_slot,
+                panic: panic_slot,
             },
         );
 
@@ -413,6 +438,9 @@ impl Scheduler {
                 let _ = handle.join();
             }
         }
+
+        self.snapshots.remove(&pid);
+        self.fault_queue.retain(|f| f.pid != pid.0);
 
         let mut process = self
             .processes
@@ -555,6 +583,114 @@ impl Scheduler {
             .get(&pid)
             .map(|p| p.state == ProcessState::Crashed && p.crash_count < p.max_restarts)
             .unwrap_or(false)
+    }
+
+    /// Collect panics recorded by the fault interceptor, freeze the affected
+    /// tasks (mark them `Crashed` and remove the finished OS thread), and
+    /// queue a [`FaultInfo`] for each. Returns the list of newly raised
+    /// faults; the caller is expected to forward them to the recovery dialog.
+    pub fn poll_faults(&mut self) -> Vec<FaultInfo> {
+        let mut found: Vec<(ProcessId, String)> = Vec::new();
+        for (pid, real) in &self.real_threads {
+            if let Ok(mut slot) = real.panic.lock() {
+                if let Some(message) = slot.take() {
+                    found.push((*pid, message));
+                }
+            }
+        }
+        let mut raised = Vec::new();
+        for (pid, message) in found {
+            if let Some(mut real) = self.real_threads.remove(&pid) {
+                if let Some(handle) = real.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            let info = match self.processes.get(&pid) {
+                Some(process) => fault_for(process, FaultKind::Panic, message),
+                None => FaultInfo::new(
+                    pid.0,
+                    String::from("unknown"),
+                    FaultKind::Panic,
+                    message,
+                    now_ms(),
+                ),
+            };
+            if let Some(process) = self.processes.get_mut(&pid) {
+                process.crash_count += 1;
+                process.state = ProcessState::Crashed;
+                let event = CrashEvent {
+                    pid,
+                    name: process.name.clone(),
+                    timestamp: info.timestamp_ms,
+                    crash_count: process.crash_count,
+                };
+                self.crash_log.push(event);
+                log::warn!("Scheduler: Process {} faulted: {}", pid, info.message);
+            }
+            self.fault_queue.push(info.clone());
+            raised.push(info);
+        }
+        raised
+    }
+
+    /// All faults waiting for a recovery decision.
+    pub fn fault_queue(&self) -> &[FaultInfo] {
+        &self.fault_queue
+    }
+
+    /// True while `pid` has a pending fault report.
+    pub fn has_pending_fault(&self, pid: ProcessId) -> bool {
+        self.fault_queue.iter().any(|f| f.pid == pid.0)
+    }
+
+    /// Drain the pending fault queue (e.g. after the UI consumed the reports).
+    pub fn take_faults(&mut self) -> Vec<FaultInfo> {
+        std::mem::take(&mut self.fault_queue)
+    }
+
+    /// The pre-run metadata snapshot of a task, if captured.
+    pub fn task_snapshot(&self, pid: ProcessId) -> Option<&TaskSnapshot> {
+        self.snapshots.get(&pid)
+    }
+
+    /// Apply the user's/policy's [`RecoveryAction`] to a faulted task.
+    ///
+    /// * `Terminate` — kill the task and free its resources.
+    /// * `Resume` — clear the fault and put the task back on the ready queue.
+    /// * `Rollback` — restore the task's pre-run snapshot metadata and resume.
+    pub fn resolve_fault(&mut self, pid: ProcessId, action: RecoveryAction) -> Result<()> {
+        if !self.has_pending_fault(pid) {
+            return Err(AIOSException::ProcessNotFound(pid.0));
+        }
+        self.fault_queue.retain(|f| f.pid != pid.0);
+
+        match action {
+            RecoveryAction::Terminate => {
+                self.kill_process(pid)?;
+            }
+            RecoveryAction::Resume => {
+                let process = self
+                    .processes
+                    .get_mut(&pid)
+                    .ok_or(AIOSException::ProcessNotFound(pid.0))?;
+                process.state = ProcessState::Ready;
+            }
+            RecoveryAction::Rollback => {
+                let snapshot = self
+                    .snapshots
+                    .get(&pid)
+                    .cloned()
+                    .ok_or(AIOSException::ProcessNotFound(pid.0))?;
+                let process = self
+                    .processes
+                    .get_mut(&pid)
+                    .ok_or(AIOSException::ProcessNotFound(pid.0))?;
+                snapshot.restore_to(process);
+                process.state = ProcessState::Ready;
+            }
+        }
+        log::info!("Scheduler: Recovery {} applied to {}", action.name(), pid);
+        Ok(())
     }
 
     pub fn schedule_next(&mut self) -> Option<ProcessId> {
@@ -863,7 +999,7 @@ impl Scheduler {
                 }
             }
             if let Some(proc) = self.processes.get_mut(pid) {
-                if proc.state != ProcessState::Suspended {
+                if matches!(proc.state, ProcessState::Running | ProcessState::Ready) {
                     proc.state = ProcessState::Ready;
                 }
             }
@@ -1675,5 +1811,101 @@ mod tests {
         s.kill_process(pid).unwrap();
         let state = s.get_real_thread_state(pid);
         assert!(state.is_none());
+    }
+
+    #[test]
+    fn test_panicking_real_process_raises_fault() {
+        let mut s = Scheduler::new(256);
+        let pid = s
+            .spawn_real_process("crasher", Priority::Normal, 16, |_t, _s| {
+                panic!("deliberate boom")
+            })
+            .unwrap();
+
+        let raised = wait_for_faults(&mut s);
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].pid, pid.0);
+        assert_eq!(raised[0].message, "deliberate boom");
+        assert_eq!(raised[0].kind, aios_core::fault::FaultKind::Panic);
+        assert_eq!(s.get_process(pid).unwrap().state, ProcessState::Crashed);
+        assert!(!s.is_real_process(pid));
+        assert!(!s.check_real_threads().contains(&pid));
+    }
+
+    #[test]
+    fn test_normal_real_process_raises_no_fault() {
+        let mut s = Scheduler::new(256);
+        s.spawn_real_process("ok", Priority::Normal, 16, |_t, _s| {})
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(s.poll_faults().is_empty());
+        assert!(s.fault_queue().is_empty());
+    }
+
+    #[test]
+    fn test_resolve_fault_resume() {
+        let mut s = Scheduler::new(256);
+        let pid = s
+            .spawn_real_process("resume_me", Priority::Normal, 16, |_, _| {
+                panic!("filthy panic")
+            })
+            .unwrap();
+        wait_for_faults(&mut s);
+        assert!(s.has_pending_fault(pid));
+
+        s.resolve_fault(pid, RecoveryAction::Resume).unwrap();
+        assert!(!s.has_pending_fault(pid));
+        assert_eq!(s.get_process(pid).unwrap().state, ProcessState::Ready);
+    }
+
+    #[test]
+    fn test_resolve_fault_terminate() {
+        let mut s = Scheduler::new(256);
+        let pid = s
+            .spawn_real_process("die", Priority::Normal, 16, |_, _| panic!("bye"))
+            .unwrap();
+        wait_for_faults(&mut s);
+
+        s.resolve_fault(pid, RecoveryAction::Terminate).unwrap();
+        assert_eq!(s.process_count(), 0);
+        assert!(s.task_snapshot(pid).is_none());
+    }
+
+    #[test]
+    fn test_resolve_fault_rollback() {
+        let mut s = Scheduler::new(256);
+        let pid = s
+            .spawn_real_process("rollback_me", Priority::High, 64, |_, _| panic!("oops"))
+            .unwrap();
+        let snap = s.task_snapshot(pid).expect("snapshot captured at spawn");
+        assert_eq!(snap.priority, Priority::High);
+        assert_eq!(snap.crash_count, 0);
+        wait_for_faults(&mut s);
+
+        assert_eq!(s.get_process(pid).unwrap().crash_count, 1);
+        s.resolve_fault(pid, RecoveryAction::Rollback).unwrap();
+        let p = s.get_process(pid).unwrap();
+        assert_eq!(p.state, ProcessState::Ready);
+        assert_eq!(p.priority, Priority::High);
+        assert_eq!(p.crash_count, 0);
+    }
+
+    #[test]
+    fn test_resolve_fault_unknown_pid_errors() {
+        let mut s = Scheduler::new(256);
+        let err = s.resolve_fault(ProcessId::new(12345), RecoveryAction::Resume);
+        assert!(err.is_err());
+    }
+
+    fn wait_for_faults(s: &mut Scheduler) -> Vec<aios_core::fault::FaultInfo> {
+        for _ in 0..100 {
+            let raised = s.poll_faults();
+            if !raised.is_empty() {
+                return raised;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        s.poll_faults()
     }
 }

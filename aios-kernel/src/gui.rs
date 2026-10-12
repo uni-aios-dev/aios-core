@@ -75,6 +75,21 @@ const DLG_OK_W: usize = 96;
 const DLG_CANCEL_X: usize = 232;
 const DLG_CANCEL_W: usize = 128;
 
+/// Interactive crash dialog (fault recovery, Ring 0): fixed size, centered on
+/// the desktop above every window; three plates resolve the frozen task.
+const CDLG_W: usize = 464;
+const CDLG_H: usize = 176;
+/// Top of the recovery button row, measured from the dialog's top edge.
+const CDLG_BTN_Y: usize = 136;
+const CDLG_BTN_H: usize = 26;
+/// `Rollback` / `Terminate` / `Resume` plates, 12 px gaps.
+const CDLG_RB_X: usize = 16;
+const CDLG_RB_W: usize = 136;
+const CDLG_TM_X: usize = 164;
+const CDLG_TM_W: usize = 136;
+const CDLG_RS_X: usize = 312;
+const CDLG_RS_W: usize = 136;
+
 /// Task Manager body layout (window-local, v2.38.35): the column-header strip
 /// sits right under the title bar, rows follow on the 16 px grid, and the
 /// count/selection lines fill the gap above the End Task / Switch To plates
@@ -122,6 +137,10 @@ const BTN_BG: Color = 0x00_28_30_50;
 const BAR_MIN: Color = 0x00_0a_0e_1c;
 const TEXT: Color = 0x00_d0_d0_e0;
 const TEXT_DIM: Color = 0x00_80_90_b0;
+/// Crash dialog (fault recovery) accents: error-red title bar and a hot
+/// warning-color task line.
+const TITLE_CRASH: Color = 0x00_b0_40_40;
+const TEXT_HOT: Color = 0x00_ff_c0_80;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -267,6 +286,9 @@ static mut CUR_Y: usize = 0;
 static mut CUR_VIS: bool = false;
 static mut LAST_BTNS: u8 = 0;
 static mut DRAG: Option<(WinKind, Drag)> = None;
+/// Raises a "shown/logged" edge marker for the crash dialog: falls when the
+/// pending fault is resolved so the next fault opens it again.
+static mut CRASH_SEEN: bool = false;
 /// Active modal confirm dialog: the window it closes on confirm, paired with
 /// its serial label. While `Some` every focus/spawn/keyboard/mouse dispatch
 /// path is gated (v2.38.30 focus-steal prevention) until the dialog is
@@ -884,6 +906,99 @@ fn find_kind(kind: WinKind) -> Option<usize> {
         .find(|&i| unsafe { (*core::ptr::addr_of!(WINS))[i].map(|w| w.kind == kind) == Some(true) })
 }
 
+/// Window of the interactive crash dialog: center of the desktop, sized with
+/// the CDLG_* block.
+fn crash_pos(fb: &Framebuffer) -> (usize, usize) {
+    ((fb.width() - CDLG_W) / 2, (fb.height() - CDLG_H) / 2)
+}
+
+/// Polls the fault interceptor for a pending recovery: opens (logs + dirty) on
+/// the rising edge and repaints on the falling edge so the dialog and its
+/// aftermath clear from the desktop. Called every idle-loop iteration.
+pub fn poll_crash() {
+    let pending = crate::fault::pending();
+    let seen = unsafe {
+        #[allow(static_mut_refs)]
+        {
+            let s = core::ptr::addr_of!(CRASH_SEEN).read();
+            if pending != s {
+                *core::ptr::addr_of_mut!(CRASH_SEEN) = pending;
+            }
+            s
+        }
+    };
+    if pending && !seen {
+        dirty_all();
+        if let Some(record) = crate::fault::peek() {
+            let snap = &record.snapshot;
+            crate::vprintln!(
+                "[gui] crash dialog: pid {} {} at rip={:#x} rsp={:#x}",
+                snap.pid,
+                record.kind.name(),
+                snap.rip,
+                snap.rsp
+            );
+            crate::kprintln!("[serial] [gui] crash dialog open pid {}", snap.pid);
+        }
+    } else if !pending && seen {
+        dirty_all();
+    }
+}
+
+/// Cursor position of the crash dialog buttons; used by both mouse routing and
+/// unit-testable geometry.
+fn crash_btn_rects(fb: &Framebuffer) -> ((usize, usize), (usize, usize), (usize, usize)) {
+    let (dx, dy) = crash_pos(fb);
+    let ry = dy + CDLG_BTN_Y;
+    (
+        (dx + CDLG_RB_X, ry),
+        (dx + CDLG_TM_X, ry),
+        (dx + CDLG_RS_X, ry),
+    )
+}
+
+/// Mouse routing while the crash dialog is up: only the three recovery plates
+/// act; every other press is blocked (the desktop and windows keep their
+/// focus). Matches [`draw_crash_dialog`].
+fn crash_click(fb: &Framebuffer, x: usize, y: usize) {
+    if !crate::fault::pending() {
+        return;
+    }
+    let ((rx, ry), (tx, ty), (sx, sy)) = crash_btn_rects(fb);
+    let hit =
+        |bx: usize, bw: usize, by: usize| x >= bx && x < bx + bw && y >= by && y < by + CDLG_BTN_H;
+    if hit(rx, CDLG_RB_W, ry) {
+        crate::fault::resolve(crate::fault::Recovery::Rollback);
+    } else if hit(tx, CDLG_TM_W, ty) {
+        crate::fault::resolve(crate::fault::Recovery::Terminate);
+    } else if hit(sx, CDLG_RS_W, sy) {
+        crate::fault::resolve(crate::fault::Recovery::Resume);
+    } else {
+        crate::kprintln!("[gui] crash dialog blocks click ({},{})", x, y);
+    }
+}
+
+/// Keyboard routing while the crash dialog is up: `Enter` resumes, `R` rolls
+/// back, `T` terminates, everything else is consumed and logged.
+fn crash_key(sc: u8) -> bool {
+    let resume = sc == 0x1C
+        || crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'s'));
+    if resume {
+        crate::fault::resolve(crate::fault::Recovery::Resume);
+        return true;
+    }
+    if crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'r')) {
+        crate::fault::resolve(crate::fault::Recovery::Rollback);
+        return true;
+    }
+    if crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'t')) {
+        crate::fault::resolve(crate::fault::Recovery::Terminate);
+        return true;
+    }
+    crate::kprintln!("[gui] crash dialog blocks scancode {:#04x}", sc);
+    true
+}
+
 /// Toggles the window between its saved geometry and a full-desktop maximize
 /// (the desktop minus the task bar). Log line carries the resulting size.
 fn toggle_maximize(kind: WinKind) {
@@ -1415,6 +1530,10 @@ pub fn handle_scancode(sc: u8) -> bool {
     if !active() {
         return false;
     }
+    // The interactive crash dialog owns the keyboard until resolved.
+    if crate::fault::pending() {
+        return crash_key(sc);
+    }
     // Modal dialog owns the keyboard until it is resolved.
     if modal_active() {
         return modal_key(sc);
@@ -1726,7 +1845,9 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
         if down != (prev & 0x01 != 0) {
             *core::ptr::addr_of_mut!(LAST_BTNS) = buttons;
             if down {
-                if modal_active() {
+                if crate::fault::pending() {
+                    crash_click(fb, nx, ny);
+                } else if modal_active() {
                     modal_click(fb, nx, ny);
                 } else {
                     dispatch_click(fb, nx, ny);
@@ -2421,6 +2542,13 @@ pub fn render() {
             draw_modal(target, kind, title);
         }
     }
+    // The interactive crash dialog paints above everything, modal included.
+    if crate::fault::pending() {
+        let (cx, cy) = crash_pos(target);
+        if full || rect_overlaps(&d, cx, cy, CDLG_W, CDLG_H) {
+            draw_crash_dialog(target);
+        }
+    }
     unsafe {
         if *core::ptr::addr_of!(CUR_VIS)
             && (full
@@ -2881,6 +3009,109 @@ fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
     }
     modal_btn_label(fb, "OK", x + DLG_OK_X, ry, DLG_OK_W, BAR_ON);
     modal_btn_label(fb, "Cancel", x + DLG_CANCEL_X, ry, DLG_CANCEL_W, BTN_BG);
+}
+
+/// Draws the interactive crash dialog over the desktop (above every window and
+/// the confirm modal). Three recovery plates mirror [`crash_key`] /
+/// [`crash_click`]; the faulting task stays frozen until one is chosen.
+fn draw_crash_dialog(fb: &Framebuffer) {
+    let (x, y) = crash_pos(fb);
+    let max = x + CDLG_W - 6;
+    let (vx, vy) = (x as i32, y as i32);
+    unsafe {
+        vector::shadow_round(
+            fb,
+            vx,
+            vy,
+            CDLG_W as i32,
+            CDLG_H as i32,
+            WIN_R,
+            6,
+            110,
+            0x00_00_03_07,
+        );
+        vector::fill_round(
+            fb,
+            vx,
+            vy,
+            CDLG_W as i32,
+            CDLG_H as i32,
+            WIN_R,
+            vector::ALL,
+            WIN_BG,
+        );
+        vector::fill_round(
+            fb,
+            vx,
+            vy,
+            CDLG_W as i32,
+            TITLE_H as i32,
+            WIN_R,
+            vector::TOP,
+            TITLE_CRASH,
+        );
+    }
+    tui::draw_text(fb, x + 6, y + 1, "Task Error", TEXT, TITLE_CRASH, max);
+    let mut ly = y + TITLE_H + 8;
+    let (task_line, snap_line, hint_line) = match crate::fault::peek() {
+        Some(record) => {
+            let snap = &record.snapshot;
+            (
+                format!("pid {} faulted: {}", snap.pid, record.kind.name()),
+                format!(
+                    "snap rip={:#x} rsp={:#x} cs={:#x}",
+                    snap.rip, snap.rsp, snap.cs
+                ),
+                "R = Rollback   T = Terminate   Enter/S = Resume",
+            )
+        }
+        None => (
+            String::from("fault in an unknown task"),
+            String::from("waiting for record..."),
+            "R = Rollback   T = Terminate   Enter/S = Resume",
+        ),
+    };
+    tui::draw_text(fb, x + 12, ly, &task_line, TEXT_HOT, WIN_BG, max);
+    ly += console::GLYPH_H + 6;
+    tui::draw_text(fb, x + 12, ly, &snap_line, TEXT, WIN_BG, max);
+    ly += console::GLYPH_H + 6;
+    tui::draw_text(fb, x + 12, ly, hint_line, TEXT_DIM, WIN_BG, max);
+    let ((rx, ry), (tx, ty), (sx, sy)) = crash_btn_rects(fb);
+    unsafe {
+        vector::fill_round(
+            fb,
+            rx as i32,
+            ry as i32,
+            CDLG_RB_W as i32,
+            CDLG_BTN_H as i32,
+            4,
+            vector::ALL,
+            BAR_ON,
+        );
+        vector::fill_round(
+            fb,
+            tx as i32,
+            ty as i32,
+            CDLG_TM_W as i32,
+            CDLG_BTN_H as i32,
+            4,
+            vector::ALL,
+            BTN_BG,
+        );
+        vector::fill_round(
+            fb,
+            sx as i32,
+            sy as i32,
+            CDLG_RS_W as i32,
+            CDLG_BTN_H as i32,
+            4,
+            vector::ALL,
+            BAR_ON,
+        );
+    }
+    modal_btn_label(fb, "Rollback", rx, ry, CDLG_RB_W, BAR_ON);
+    modal_btn_label(fb, "Terminate", tx, ty, CDLG_TM_W, BTN_BG);
+    modal_btn_label(fb, "Resume", sx, sy, CDLG_RS_W, BAR_ON);
 }
 
 /// Centers a button label inside its plate (v2.38.30 dialog buttons).

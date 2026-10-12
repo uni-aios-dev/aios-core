@@ -1,5 +1,28 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.45.0): fault recovery is metadata-only and cannot rescue ring-0 faults
+
+- **Status:** OPEN — known limits of the v2.45.0 fault-tolerance system, by
+  design; not a regression.
+- **Limits:**
+  1. A `TaskSnapshot` carries metadata only (pid, name, priority, RAM quota,
+     block id, crash count) — **no memory image**. `Rollback` therefore resumes
+     the task's lifecycle, it does not rewind heap/stack state; a task that
+     mutated shared state before faulting is not bit-identically restored. The
+     kernel-side `TaskSnapshot` stores the trap frame (`rip`/`cs`/`rsp`/
+     `rflags`) and re-enters at the fault boundary for the same reason.
+  2. **Ring-0 faults still halt the kernel.** A `#PF`/`#GP`/`#UD`/`#DE` with
+     `cs == KERNEL_CS` (kernel thread or idle context) has no resumable user
+     boundary and takes the existing `fatal` path — only ring-3 tasks are
+     rescued. A double fault (`#DF`, vector 8) always halts.
+  3. The kernel crash dialog is **single-slot**: one frozen task at a time, and
+     later faults overwrite the pending record.
+- **Workaround / notes:** on the host runtime use `restart` semantics for
+  memory-sensitive tasks instead of `Rollback`; the recursion-safe `run_isolated`
+  quiet panic hook keeps the log clean. Kernel smoke tests remain limited to
+  build + clippy because neither `qemu-system-x86_64` nor `xorriso` is present
+  on the development host.
+
 ## RESOLVED (v2.43.0): native browser panicked with "GTK has not been initialized" (second step after v2.42.0)
 
 - **Status:** RESOLVED in v2.43.0.

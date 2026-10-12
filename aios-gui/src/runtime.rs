@@ -199,6 +199,14 @@ impl GuiRuntime {
             let Ok(mut scheduler) = tick.lock() else {
                 break;
             };
+            let raised = scheduler.poll_faults();
+            if !raised.is_empty() {
+                log::warn!(
+                    "GUI runtime: {}/{} real task(s) faulted",
+                    raised.len(),
+                    raised.len()
+                );
+            }
             scheduler.tick();
         }));
 

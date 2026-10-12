@@ -423,3 +423,71 @@ pub fn yield_kernel() {
         core::arch::asm!("int 0xfa", options(nostack));
     }
 }
+
+/// Freeze a task for fault recovery: its `sleep_until` is pinned to u64::MAX
+/// so the selection loop skips it forever until a recovery action runs.
+pub fn freeze_task(pid: u32) {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return;
+    }
+    let t = tasks();
+    if t[idx].present {
+        t[idx].sleep_until = u64::MAX;
+    }
+}
+
+/// Unfreeze a previously frozen task (Resume / Rollback aftermath).
+pub fn unfreeze_task(pid: u32) {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return;
+    }
+    let t = tasks();
+    if t[idx].present {
+        t[idx].sleep_until = 0;
+    }
+}
+
+/// Remove a task entirely (Terminate recovery action).
+pub fn remove_task(pid: u32) {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return;
+    }
+    let t = tasks();
+    if t[idx].present {
+        crate::vprintln!("[sched] task {} removed by recovery", pid);
+        crate::kprintln!("[serial] [sched] task {} removed by recovery", pid);
+        t[idx].present = false;
+        t[idx].valid_frame = false;
+        t[idx].sleep_until = 0;
+        unsafe {
+            #[allow(static_mut_refs)]
+            if CURRENT == idx as isize {
+                CURRENT = -1;
+            }
+        }
+    }
+}
+
+/// Restore a frozen task's saved fault-boundary state (Rollback recovery
+/// action): writes the snapshot's `rip`/`cs`/`rsp`/`rflags` back into the
+/// task frame so a resume re-enters at the fault point, then unfreezes.
+pub fn restore_task(pid: u32, snapshot: crate::fault::TaskSnapshot) {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_TASKS {
+        return;
+    }
+    let t = tasks();
+    if t[idx].present {
+        t[idx].frame.rip = snapshot.rip;
+        t[idx].frame.cs = snapshot.cs;
+        t[idx].frame.rsp = snapshot.rsp;
+        t[idx].frame.rflags = snapshot.rflags;
+        t[idx].valid_frame = true;
+        t[idx].sleep_until = 0;
+        crate::vprintln!("[sched] task {} rolled back", pid);
+        crate::kprintln!("[serial] [sched] task {} rolled back", pid);
+    }
+}

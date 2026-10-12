@@ -84,6 +84,29 @@ pub fn handle_process_command(
             }
         }
 
+        cmd if cmd == CommandId::RecoveryDecision as u16 => {
+            if let Payload::RecoveryDecision { pid, action } = packet.payload {
+                match scheduler.resolve_fault(ProcessId::new(pid), action) {
+                    Ok(()) => Ok(Some(IpcPacket::response_ok(
+                        0,
+                        packet.header.source_block,
+                        packet.header.packet_id,
+                        Payload::Text(format!("/{} applied", action.name())),
+                    ))),
+                    Err(e) => Ok(Some(IpcPacket::response_err(
+                        0,
+                        packet.header.source_block,
+                        packet.header.packet_id,
+                        e.to_string(),
+                    ))),
+                }
+            } else {
+                Err(AIOSException::InvalidPayload(
+                    "RecoveryDecision requires RecoveryDecision payload".into(),
+                ))
+            }
+        }
+
         _ => Err(AIOSException::IPCError(format!(
             "Unknown process command 0x{:04X}",
             packet.header.command_id
@@ -150,5 +173,39 @@ mod tests {
         let resp = handle_process_command(&mut sched, &pkt).unwrap().unwrap();
         assert!(matches!(resp.payload, Payload::Text(_)));
         assert_eq!(sched.get_process(pid).unwrap().priority, Priority::Critical);
+    }
+
+    #[test]
+    fn test_recovery_decision_via_ipc() {
+        let mut sched = make_scheduler();
+        let pid = sched
+            .spawn_real_process("ipc_crasher", Priority::Normal, 16, |_, _| {
+                panic!("ipc boom")
+            })
+            .unwrap();
+        for _ in 0..100 {
+            if !sched.poll_faults().is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(sched.has_pending_fault(pid));
+
+        let pkt = IpcPacket::new(
+            0,
+            3,
+            CommandId::RecoveryDecision,
+            Payload::RecoveryDecision {
+                pid: pid.0,
+                action: aios_core::fault::RecoveryAction::Resume,
+            },
+        );
+        let resp = handle_process_command(&mut sched, &pkt).unwrap().unwrap();
+        assert!(matches!(resp.payload, Payload::Text(_)));
+        assert!(!sched.has_pending_fault(pid));
+        assert_eq!(
+            sched.get_process(pid).unwrap().state,
+            crate::task::ProcessState::Ready
+        );
     }
 }

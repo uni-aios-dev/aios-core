@@ -1,5 +1,50 @@
 # AIOS Development Log
 
+## v2.45.0 — fault tolerance & recovery: per-task isolation + interactive crash dialog (2026-10-12)
+
+### Added
+- **Shared fault contract (`aios-core::fault`).** `FaultKind` (`Panic` / `Hang` /
+  `TaskFault`), `RecoveryAction` (`Rollback` / `Terminate` / `Resume`) and
+  `FaultInfo { pid, name, kind, message, timestamp_ms }` (with `kind.name()`),
+  plus two IPC payload variants `Payload::FaultReport(FaultInfo)` /
+  `Payload::RecoveryDecision { pid, action }` (`CommandId::FaultReport = 0x0070`,
+  `CommandId::RecoveryDecision = 0x0071`), so the host runtime and the
+  bare-metal kernel speak one recovery vocabulary.
+- **Host-side task isolation (`aios-process-mgr`).** Real OS-thread tasks run
+  inside `fault::run_isolated` (`catch_unwind` + a quiet thread-local panic
+  hook), so a panicking task is captured as a `TaskSnapshot` (metadata only:
+  pid, name, priority, RAM quota, block id, crash count) instead of taking the
+  scheduler down. `Scheduler` gains a fault queue (`poll_faults`,
+  `has_pending_fault`, `take_faults`), `task_snapshot`, and
+  `resolve_fault(pid, action)` — Rollback restores the snapshot and requeues
+  `Ready`, Terminate kills, Resume requeues. `process_control.rs` also applies a
+  `RecoveryDecision` arriving over IPC.
+- **Interactive crash dialog in the GUI (`aios-gui`).** `CrashDialogState`
+  (`crash_dialog.rs`) is a pure state machine kept separate from rendering; the
+  `GuiRuntime` tick thread polls `poll_faults()` and the dashboard presents a
+  modal `Rollback / Terminate / Resume` dialog that resolves through
+  `resolve_fault`.
+- **Ring-0 fault interceptor + crash overlay in the bare-metal kernel
+  (`aios-kernel`).** `fault.rs` captures an `InterruptFrame` snapshot of a
+  faulting ring-3 task, freezes it (`sched::freeze_task`, `sleep_until =
+  u64::MAX`) and awaits a decision; `sched` gains `unfreeze_task` /
+  `remove_task` / `restore_task`. The IDT handlers for `#DE` (0), `#UD` (6),
+  `#GP` (13) and `#PF` (14) route **user** frames to the interceptor instead of
+  `fatal` (ring-0 faults still halt). The GUI desktop paints a centered
+  `Task Error` overlay with `Rollback / Terminate / Resume` plates plus `R` /
+  `T` / `Enter` keys, wired through `gui::poll_crash` in the idle loop.
+
+### Changed
+- Kernel `page_fault` now returns normally for user frames (routing to the
+  interceptor) and keeps the ring-0 `fatal` path with the 16-byte instruction
+  dump; `scheduler::check_real_threads` no longer clears a `Crashed` task back
+  to `Ready`, and `kill_process` prunes its snapshot/fault entries.
+
+### Verification
+- `aios-core` 34 tests, `aios-process-mgr` 86 tests (all new fault tests
+  included) and `aios-gui` 22 tests pass; `aios-kernel` builds and lints clean
+  for `x86_64-unknown-none` (`cargo build` + `cargo clippy`, zero warnings).
+
 ## v2.44.0 — embedded JS engine: ES modules + host-backed fetch/XMLHttpRequest (2026-10-12)
 
 ### Added

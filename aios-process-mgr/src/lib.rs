@@ -1,4 +1,5 @@
 pub mod cpu_affinity;
+pub mod fault;
 pub mod priority_inheritance;
 pub mod process_control;
 pub mod process_metrics;

@@ -7,6 +7,7 @@ mod acpi;
 mod ahci;
 mod console;
 mod ec;
+mod fault;
 mod font8x8;
 mod framebuffer;
 mod gdt;
@@ -959,6 +960,7 @@ pub fn idle_loop() -> ! {
                 last_sensor_render = ticks;
             }
             if gui::active() {
+                gui::poll_crash();
                 let gate = (interrupts::TIMER_HZ / 60).max(1);
                 if ticks - last_gui_render >= gate {
                     gui::render();

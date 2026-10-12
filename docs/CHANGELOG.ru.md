@@ -1,5 +1,51 @@
 # Журнал разработки AIOS
 
+## v2.45.0 — отказоустойчивость и восстановление: изоляция задач + интерактивный crash-диалог (2026-10-12)
+
+### Добавлено
+- **Общий контракт сбоев (`aios-core::fault`).** `FaultKind` (`Panic` / `Hang` /
+  `TaskFault`), `RecoveryAction` (`Rollback` / `Terminate` / `Resume`) и
+  `FaultInfo { pid, name, kind, message, timestamp_ms }` (с `kind.name()`),
+  плюс два IPC-варианта полезной нагрузки `Payload::FaultReport(FaultInfo)` /
+  `Payload::RecoveryDecision { pid, action }` (`CommandId::FaultReport = 0x0070`,
+  `CommandId::RecoveryDecision = 0x0071`) — так host-рантайм и bare-metal ядро
+  говорят на одном словаре восстановления.
+- **Host-изоляция задач (`aios-process-mgr`).** Реальные OS-потоки задач
+  выполняются внутри `fault::run_isolated` (`catch_unwind` + тихий
+  thread-local хук паники), поэтому падающая задача фиксируется как
+  `TaskSnapshot` (только метаданные: pid, имя, приоритет, квота RAM, block id,
+  crash count), а не роняет планировщик. У `Scheduler` появились очередь сбоев
+  (`poll_faults`, `has_pending_fault`, `take_faults`), `task_snapshot` и
+  `resolve_fault(pid, action)` — Rollback восстанавливает снапшот и возвращает
+  `Ready`, Terminate убивает, Resume возвращает в очередь. `process_control.rs`
+  также применяет `RecoveryDecision`, приходящее по IPC.
+- **Интерактивный crash-диалог в GUI (`aios-gui`).** `CrashDialogState`
+  (`crash_dialog.rs`) — чистая машина состояний, отделённая от отрисовки; тик
+  потока `GuiRuntime` опрашивает `poll_faults()`, а дашборд показывает модальный
+  диалог `Rollback / Terminate / Resume`, резолвя его через `resolve_fault`.
+- **Перехватчик фолтов Ring 0 + crash-оверлей в bare-metal ядре
+  (`aios-kernel`).** `fault.rs` снимает снапшот `InterruptFrame` фолтнувшей
+  ring-3 задачи, замораживает её (`sched::freeze_task`, `sleep_until =
+  u64::MAX`) и ждёт решения; в `sched` добавлены `unfreeze_task` / `remove_task`
+  / `restore_task`. Обработчики IDT для `#DE` (0), `#UD` (6), `#GP` (13) и
+  `#PF` (14) направляют **пользовательские** фреймы в перехватчик вместо
+  `fatal` (фолты ring 0 по-прежнему останавливают ядро). Десктоп GUI рисует
+  по-центру оверлей `Task Error` с кнопками `Rollback / Terminate / Resume` и
+  клавишами `R` / `T` / `Enter`, подключённый через `gui::poll_crash` в
+  idle-цикле.
+
+### Изменено
+- Ядерный `page_fault` теперь штатно возвращает управление для пользовательских
+  фреймов (направляя их в перехватчик) и сохраняет путь `fatal` для ring 0 с
+  16-байтовым дампом инструкций; `scheduler::check_real_threads` больше не
+  сбрасывает задачу из `Crashed` обратно в `Ready`, а `kill_process` чистит её
+  снапшот и записи сбоев.
+
+### Верификация
+- Проходят 34 теста `aios-core`, 86 тестов `aios-process-mgr` (включая новые
+  тесты сбоев) и 22 теста `aios-gui`; `aios-kernel` собирается и линтуется чисто
+  для `x86_64-unknown-none` (`cargo build` + `cargo clippy`, ноль предупреждений).
+
 ## v2.44.0 — встроенный JS-движок: ES-модули + host-backed fetch/XMLHttpRequest (2026-10-12)
 
 ### Добавлено

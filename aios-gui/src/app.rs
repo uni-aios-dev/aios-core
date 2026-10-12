@@ -1,3 +1,4 @@
+use crate::crash_dialog::CrashDialogState;
 use crate::runtime::GuiRuntime;
 use crate::tabs;
 use crate::theme::AiosTheme;
@@ -162,6 +163,10 @@ pub struct AiosApp {
 
     pub uptime_secs: u64,
 
+    /// Interactive crash dialog state: surfaced when the scheduler freezes a
+    /// faulted task, decisions are applied to the runtime's scheduler.
+    pub crash: CrashDialogState,
+
     pub ai_config: aios_llm::LlmConfig,
     pub ai_input: String,
     pub ai_output: Vec<String>,
@@ -290,6 +295,7 @@ impl AiosApp {
             #[cfg(feature = "webview")]
             pending_browser_error: Arc::new(Mutex::new(None)),
             uptime_secs: 0,
+            crash: CrashDialogState::new(),
             ai_config: aios_llm::default_config(),
             ai_input: String::new(),
             ai_output: Vec::new(),
@@ -373,6 +379,12 @@ impl AiosApp {
                 .collect();
             let (used, _total) = scheduler.ram_usage();
             self.ram_used = used;
+            for fault in scheduler.fault_queue() {
+                self.crash.present(fault.clone());
+                if self.crash.is_open() {
+                    break;
+                }
+            }
         }
         self.watchdog_state = match self.runtime.watchdog.lock().map(|w| w.state()) {
             Ok(aios_watchdog::watchdog::WatchdogState::Monitoring) => 0,
@@ -380,6 +392,32 @@ impl AiosApp {
             Ok(aios_watchdog::watchdog::WatchdogState::Recovering) => 2,
             _ => 3,
         };
+    }
+
+    /// Ship a dialog decision to the scheduler as an IPC `RecoveryDecision`
+    /// (both directly and through the bus, so the round trip is exercised).
+    fn apply_crash_outcome(&mut self) {
+        let Some(outcome) = self.crash.take_outcome() else {
+            return;
+        };
+        let pid = aios_process_mgr::task::ProcessId::new(outcome.pid);
+        let result = {
+            let Ok(mut scheduler) = self.runtime.scheduler.lock() else {
+                return;
+            };
+            scheduler.resolve_fault(pid, outcome.action)
+        };
+        match result {
+            Ok(()) => self.add_log(format!(
+                "Crash dialog: {} applied to {}",
+                outcome.action.name(),
+                outcome.pid
+            )),
+            Err(e) => self.add_log(format!(
+                "Crash dialog: recovery for {} failed: {}",
+                outcome.pid, e
+            )),
+        }
     }
 
     /// Refresh Wi-Fi / battery / thermal snapshot at most every 2 seconds.
@@ -1862,6 +1900,9 @@ impl eframe::App for AiosApp {
                 8 => tabs::hardware::show(ui, self, &theme),
                 _ => tabs::overview::show(ui, self, &theme),
             });
+
+        self.crash.show(ctx);
+        self.apply_crash_outcome();
 
         let fm_active = self.selected_tab == 7 && self.fm_input.is_none();
         let fm_side = self.fm.as_ref().map(|fm| fm.active_side());

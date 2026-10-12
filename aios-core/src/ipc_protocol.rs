@@ -70,6 +70,13 @@ pub enum Payload {
     },
     ClusterStatus,
     ClusterStatusReply(Vec<ClusterProcessInfo>),
+    /// Ring 0 -> Ring 3: a task faulted and has been frozen pending a decision.
+    FaultReport(crate::fault::FaultInfo),
+    /// Ring 3 -> Ring 0: the recovery dialog's answer for a faulted task.
+    RecoveryDecision {
+        pid: u64,
+        action: crate::fault::RecoveryAction,
+    },
     Custom(String, Vec<u8>),
 }
 
@@ -120,6 +127,8 @@ pub enum CommandId {
     ClusterSpawn = 0x0060,
     ClusterKill = 0x0061,
     ClusterStatus = 0x0062,
+    FaultReport = 0x0070,
+    RecoveryDecision = 0x0071,
     Custom = 0x00FF,
 }
 

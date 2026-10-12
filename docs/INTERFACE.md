@@ -821,6 +821,25 @@ focused) returns to the console/TUI.
   `[gui] modal close <label> confirmed`; `Esc` / `Cancel` logs
   `[gui] modal close <label> canceled` and the typed text stays. Closing a
   window with an empty note never shows the dialog.
+- **Crash recovery dialog (v2.45.0)**: when a ring-3 task faults
+  (divide error, invalid opcode, general protection or page fault) the kernel no
+  longer halts — the task is frozen and a `Task Error` overlay opens over the
+  desktop (above windows and the confirm dialog) showing `pid <n> faulted:
+  <reason>` and the captured `snap rip=… rsp=… cs=…`. Resolve it by clicking a
+  plate or pressing a key:
+  | Key | Action |
+  |-----|--------|
+  | `R` | **Rollback** — restore the task's captured frame and resume |
+  | `T` | **Terminate** — remove the task from the scheduler |
+  | `Enter` / `S` | **Resume** — ignore the fault and requeue the task |
+
+  While the overlay is up it owns the keyboard and mouse (other keys log
+  `[gui] crash dialog blocks scancode 0x..`, clicks outside the plates log
+  `[gui] crash dialog blocks click (x,y)`). Opening logs
+  `[gui] crash dialog open pid <n>`; resolutions log `[fault] pid <n>
+  <rollback|terminate|resume>`. Only ring-3 tasks are rescued: a fault in
+  kernel context (or a double fault) still halts. See `BUGS.md` (OPEN v2.45.0)
+  for the metadata-only snapshot limitation.
 - **Restore of closed z-order (v2.38.31)**: a window remembers its place in
   the stack when it closes. Reopening it — desktop icon, task-bar button, or
   a ring-3 client presenting again — puts it back at that spot *between* its
