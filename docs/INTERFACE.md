@@ -654,7 +654,7 @@ input.
 | 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
 | 4 | IPC | total send/recv, per-task mailbox occupancy |
 | 5 | Storage | AHCI/NVMe controller + LBA-read state (`none`/`error`/`ready`/`ready+rw`), MMIO window bytes used |
-| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `wifi`, `wifi sim`, `wifi real`) |
+| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `faults`, `wifi`, `wifi sim`, `wifi real`) |
 | 7 | About | version banner, controls help |
 
 ### Input
@@ -676,6 +676,10 @@ input.
 - `wifi` (status), `wifi sim` (arm the simulated test radio) and `wifi real`
   (back to the honest real mode) control which radio the Network window's
   `Scan`/`Connect` use — the default is **real** (v2.38.36).
+- `faults` (v2.45.2) prints the fault-recovery aggregate — `total`, `resume`,
+  `terminate`, `rollback` counters — then one line per record in the ring
+  (`pid N <kind> (crash #k) rip=… hash=…`), oldest first, plus a `(dialog
+  pending …)` marker while a task awaits a decision.
 - Keys consumed by the TUI are kept out of the console echo; unconsumed keys
   still print `[key] …` / `usb key …` to the console and serial as before.
 

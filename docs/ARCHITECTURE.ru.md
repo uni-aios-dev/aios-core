@@ -1427,8 +1427,9 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   `state_hash`). Пер-задачный **бюджет сбоев** (`MAX_FAULTS_PER_TASK = 3`)
   запирает диалог на Terminate при его исчерпании; каждое решение уходит в
   ограниченное кольцо истории (`FAULT_HISTORY_LEN = 8`) с агрегатами
-  `fault_total()` / `resolution_count()`. Фреймы ядрового контекста
-  по-прежнему идут в `interrupts::fatal_with`.
+  `fault_total()` / `resolution_count()`, а `history_records()` (копия кольца от
+  старой к новой) питает shell-команду `faults` (v2.45.2). Фреймы ядрового
+  контекста по-прежнему идут в `interrupts::fatal_with`.
 - `tui` — интерактивный экранный TUI (v2.38.11 — дашборд только для просмотра;
   **интерактивен с v2.38.19**): **основной экран** — компактная полоса журнала
   загрузки (`console::CONSOLE_TOP_ROWS` = 6 строк) остаётся вверху, а `render()`

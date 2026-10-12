@@ -1,5 +1,28 @@
 # AIOS Development Log
 
+## v2.45.2 — kernel shell `faults`: fault history ring diagnostics (2026-10-12)
+
+### Added
+- **Shell command `faults`** (`aios-kernel/src/tui.rs`). Prints the recovery
+  aggregate (`total`, `resume`, `terminate`, `rollback` counters from
+  `fault_total()` / `resolution_count()`), then one line per record of the
+  bounded `FAULT_HISTORY_LEN = 8` ring — `pid N <kind> (crash #k)
+  rip=… hash=…`, oldest first — via the new public
+  `fault::history_records()`. While a task awaits a decision a `(dialog
+  pending …)` marker is appended. Listed in the Shell help and the tab
+  overview.
+
+### Changed
+- `HISTORY_ITEMS` counter (capped at `FAULT_HISTORY_LEN`) tracks how many
+  records are actually in the ring, so `history_records()` walks only the
+  filled slots in chronological order instead of scanning `None` gaps.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. `history_ring_caps_and_counts` now also asserts the oldest-first
+  ordering of `history_records()` (type-checked via the host test-compile
+  pass; bare-target `test` crate still unsupported, per kernel policy).
+
 ## v2.45.1 — kernel fault recovery: state hash, fault budget, history ring (2026-10-12)
 
 ### Added

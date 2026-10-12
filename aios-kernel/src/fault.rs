@@ -140,6 +140,7 @@ static mut FAULT: Option<FaultRecord> = None;
 static mut CRASH_COUNTS: [u8; MAX_TASKS] = [0; MAX_TASKS];
 static mut HISTORY: [Option<FaultRecord>; FAULT_HISTORY_LEN] = [None; FAULT_HISTORY_LEN];
 static mut HISTORY_NEXT: usize = 0;
+static mut HISTORY_ITEMS: usize = 0;
 static mut FAULT_TOTAL: u64 = 0;
 static mut RESOLUTIONS: [u64; 3] = [0; 3];
 
@@ -150,7 +151,7 @@ fn counters() -> &'static mut [u8; MAX_TASKS] {
     }
 }
 
-fn history() -> &'static mut [Option<FaultRecord>; FAULT_HISTORY_LEN] {
+fn ring() -> &'static mut [Option<FaultRecord>; FAULT_HISTORY_LEN] {
     unsafe {
         #[allow(static_mut_refs)]
         &mut *core::ptr::addr_of_mut!(HISTORY)
@@ -247,6 +248,22 @@ pub fn resolution_count(action: Recovery) -> u64 {
     unsafe { core::ptr::addr_of!(RESOLUTIONS).read()[action as usize] }
 }
 
+/// Copy of the resolved-fault history ring, oldest first (diagnostics; backs
+/// the shell `faults` command). Capped at [`FAULT_HISTORY_LEN`] entries.
+pub fn history_records() -> alloc::vec::Vec<FaultRecord> {
+    let h = ring();
+    let next = unsafe { core::ptr::addr_of!(HISTORY_NEXT).read() };
+    let items = unsafe { core::ptr::addr_of!(HISTORY_ITEMS).read() };
+    let oldest = (next + FAULT_HISTORY_LEN - items) % FAULT_HISTORY_LEN;
+    let mut out = alloc::vec::Vec::new();
+    for k in 0..items {
+        if let Some(rec) = h[(oldest + k) % FAULT_HISTORY_LEN] {
+            out.push(rec);
+        }
+    }
+    out
+}
+
 /// Apply the crash dialog's decision to the frozen task. Non-Terminate
 /// decisions are ignored once the task is over its fault budget, so a
 /// defective task must be Terminated instead of looping the dialog.
@@ -316,10 +333,12 @@ pub fn resolve(action: Recovery) {
         }
     }
     unsafe {
-        let h = history();
+        let h = ring();
         let idx = core::ptr::addr_of!(HISTORY_NEXT).read();
         h[idx] = Some(record);
         *core::ptr::addr_of_mut!(HISTORY_NEXT) = (idx + 1) % FAULT_HISTORY_LEN;
+        *core::ptr::addr_of_mut!(HISTORY_ITEMS) =
+            (core::ptr::addr_of!(HISTORY_ITEMS).read() + 1).min(FAULT_HISTORY_LEN);
         (*core::ptr::addr_of_mut!(FAULT_TOTAL)) += 1;
         (*core::ptr::addr_of_mut!(RESOLUTIONS))[action as usize] += 1;
     }
@@ -339,6 +358,7 @@ pub fn resolve(action: Recovery) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[cfg(test)]
     fn pin(record: FaultRecord) {
@@ -449,6 +469,9 @@ mod tests {
     #[test]
     fn history_ring_caps_and_counts() {
         FAULT_PENDING.store(false, Ordering::Relaxed);
+        let total_before = fault_total();
+        let term_before = resolution_count(Recovery::Terminate);
+        let next_before = unsafe { core::ptr::addr_of!(HISTORY_NEXT).read() };
         for pid in 1..=(FAULT_HISTORY_LEN + 2) {
             pin(FaultRecord {
                 snapshot: snap(pid as u32, 0x1000 + pid as u64),
@@ -458,13 +481,29 @@ mod tests {
             resolve(Recovery::Terminate);
             counters()[pid] = 0;
         }
-        assert_eq!(fault_total(), (FAULT_HISTORY_LEN + 2) as u64);
+        assert_eq!(fault_total(), total_before + (FAULT_HISTORY_LEN + 2) as u64);
         assert_eq!(
             resolution_count(Recovery::Terminate),
-            (FAULT_HISTORY_LEN + 2) as u64
+            term_before + (FAULT_HISTORY_LEN + 2) as u64
         );
-        let tail = unsafe { core::ptr::addr_of!(HISTORY_NEXT).read() };
-        assert_eq!(tail, 2, "history head wraps at FAULT_HISTORY_LEN");
+        let next = unsafe { core::ptr::addr_of!(HISTORY_NEXT).read() };
+        assert_eq!(
+            next,
+            (next_before + FAULT_HISTORY_LEN + 2) % FAULT_HISTORY_LEN,
+            "history head advances modulo FAULT_HISTORY_LEN"
+        );
+        let recs = history_records();
+        assert_eq!(
+            recs.len(),
+            FAULT_HISTORY_LEN,
+            "ring caps at FAULT_HISTORY_LEN"
+        );
+        let pids: Vec<u32> = recs.iter().map(|r| r.snapshot.pid).collect();
+        assert_eq!(
+            &pids[FAULT_HISTORY_LEN - 2..],
+            &[9, 10],
+            "newest two pushes land at the tail, oldest first"
+        );
     }
 
     #[test]

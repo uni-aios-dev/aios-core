@@ -65,6 +65,8 @@
 
 - [x] **Kernel fault recovery hardening (v2.45.1)**: `TaskSnapshot` gained the spec-mandated `state_hash` (FNV-1a of the register bundle, re-verified by Rollback → `state verified|mismatch` serial line); a per-task fault budget (`MAX_FAULTS_PER_TASK = 3`) locks the crash dialog to Terminate-only once exceeded (dimmed Rollback/Resume plates, blocked `R`/`S`/`Enter`, `counters()[pid]` reset on terminate) so a defective task cannot loop the dialog; every resolution lands in a bounded `FAULT_HISTORY_LEN = 8` ring with `fault_total()` / `resolution_count()` aggregates printed as `[fault] totals faults=N resume=N terminate=N rollback=N`. Dialog now shows `(crash #N/3)` and the state hash. Kernel build+clippy clean; new `#[cfg(test)]` cases cover hash stability/sensitivity, budget-forced terminate, history wrap, resolution counters.
 
+- [x] **`faults` shell command (v2.45.2)**: `/init` kernel shell gained `faults` — prints the recovery aggregate (`total`/`resume`/`terminate`/`rollback`) followed by one line per record of the bounded history ring (`pid N <kind> (crash #k) rip=… hash=…`, oldest first) via the new public `fault::history_records()`, plus a `(dialog pending …)` marker while a task awaits a decision. `HISTORY_ITEMS` (capped at `FAULT_HISTORY_LEN`) tracks filled slots so the walk skips `None` gaps; the ring test now also asserts oldest-first ordering.
+
 ## GUI Roadmap (full-fledged desktop, backlog)
 
 The v2.38.22 GUI is a first step; a real windowing system needs:

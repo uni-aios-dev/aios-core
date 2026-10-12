@@ -1432,7 +1432,9 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   (`MAX_FAULTS_PER_TASK = 3`) locks the dialog to Terminate once exceeded; every
   resolution is pushed into a bounded history ring
   (`FAULT_HISTORY_LEN = 8`) with `fault_total()` / `resolution_count()`
-  aggregates. Kernel-context frames still take `interrupts::fatal_with`.
+  aggregates, and `history_records()` (oldest-first copy of the ring) backs the
+  shell `faults` command (v2.45.2). Kernel-context frames still take
+  `interrupts::fatal_with`.
 - `tui` — interactive on-screen TUI (v2.38.11, view-only dashboard; **interactive
   since v2.38.19**): the TUI is the **primary screen** — a compact boot-log strip
   (`console::CONSOLE_TOP_ROWS` = 6 rows) stays on top and `render()` paints the

@@ -186,6 +186,7 @@ fn run_command(cmd: &str) -> Vec<String> {
             "  echo TEXT  echo text".to_string(),
             "  gui        enter windowed GUI mode".to_string(),
             "  tui        leave GUI, return to this console".to_string(),
+            "  faults     fault history + recovery statistics".to_string(),
             "  wifi       radio mode + Wi-Fi card status".to_string(),
             "  wifi sim   enable the test radio (3 sim APs)".to_string(),
             "  wifi real  real radio only (card, no sim)".to_string(),
@@ -219,6 +220,30 @@ fn run_command(cmd: &str) -> Vec<String> {
         "tui" => {
             crate::gui::leave();
             vec!["returned to the console/TUI".to_string()]
+        }
+        "faults" => {
+            let mut lines = vec![format!(
+                "faults total={} resume={} terminate={} rollback={}",
+                crate::fault::fault_total(),
+                crate::fault::resolution_count(crate::fault::Recovery::Resume),
+                crate::fault::resolution_count(crate::fault::Recovery::Terminate),
+                crate::fault::resolution_count(crate::fault::Recovery::Rollback)
+            )];
+            for rec in crate::fault::history_records() {
+                let s = &rec.snapshot;
+                lines.push(format!(
+                    "  pid {} {} (crash #{}) rip={:#x} hash={:#x}",
+                    s.pid,
+                    rec.kind.name(),
+                    rec.count,
+                    s.rip,
+                    s.state_hash
+                ));
+            }
+            if crate::fault::pending() {
+                lines.push("  (dialog pending: a task awaits a recovery decision)".to_string());
+            }
+            lines
         }
         "wifi" => {
             let mut cb = [0u8; 32];
