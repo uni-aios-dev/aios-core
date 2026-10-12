@@ -1,5 +1,38 @@
 # AIOS Development Log
 
+## v2.53.0 — TCP segmentation: multi-segment sends over a transmit queue (2026-10-13)
+
+### Added
+- **TCP segmentation** (`aios-kernel/src/sock.rs`): a
+  per-socket transmit queue (`TX_QCAP = 8 KiB`, ring with
+  `tx_q_head`/`tx_q_len`) now backs `send`. A payload larger
+  than `TCP_MSS` is accepted whole, queued, and handed to the
+  wire as MSS-sized segments by the new `kick` — one segment
+  in flight at a time (stop-and-wait *over the queue*):
+  `send` kicks the first segment, and every ACK that completes
+  the in-flight segment (now compared against the segment end
+  `tx_seq + tx_len`, since `snd_nxt` runs ahead of the wire
+  once a backlog exists) kicks the next. The receive ring grew
+  `TCP_RXCAP` 2048 → 8192 so a full queue can be reassembled.
+  `send` returns the byte count *accepted into the queue*
+  (partial when the queue is nearly full).
+- **Bulk phase of `socktest`** (`aios-kernel/src/tui.rs`): a
+  3000-byte patterned transfer (3 segments: 1460 + 1460 + 80)
+  client→server with reassembly verification, plus a short
+  `bulk-ok` echo — two new PASS/FAIL lines per run.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.53.0`.
+- `send` no longer refuses a call while a segment is in flight
+  (it queues instead); a zero-length TCP send now emits no
+  segment.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`,
+  `cargo fmt` clean. No kernel unit tests run on the bare target;
+  the pipeline is proven by `socktest`'s `tcp bulk`/`tcp bulk echo`
+  lines over the loopback ring (no NIC needed).
+
 ## v2.52.0 — ring-3 TCP: the socket demo echoes over `listen`/`accept` (2026-10-12)
 
 ### Added

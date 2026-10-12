@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.52.0";
+pub(crate) const VERSION: &str = "AIOS kernel v2.53.0";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -455,9 +455,11 @@ fn cmd_http(rest: &str) -> Vec<String> {
 }
 
 /// `socktest` — loopback self-test of the kernel socket layer over the bound
-/// IP: a two-way UDP exchange and a complete TCP connect/accept/echo/close,
-/// so both directions and the listen path are verified without external
-/// traffic. Prints one PASS/FAIL line per phase.
+/// IP: a two-way UDP exchange, a complete TCP connect/accept/echo/close
+/// and a segmented 3000-byte bulk transfer (three MSS-sized segments over
+/// the transmit queue), so both directions, the listen path and the
+/// segmentation pipeline are verified without external traffic. Prints one
+/// PASS/FAIL line per phase.
 fn cmd_socktest() -> Vec<String> {
     let Some(our) = crate::net::lease() else {
         return vec!["socktest: no ip bound (dhcp/static first)".to_string()];
@@ -580,6 +582,61 @@ fn cmd_socktest() -> Vec<String> {
                 echoed,
                 req.len(),
                 if echoed == req.len() && buf[..echoed] == req[..] {
+                    "PASS"
+                } else {
+                    "FAIL"
+                }
+            ));
+        }
+        // -- TCP bulk transfer (segmentation, v2.53.0) --
+        const BULK: usize = 3000;
+        let mut big = [0u8; BULK];
+        let mut rb = [0u8; BULK];
+        for (i, b) in big.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let sent = crate::sock::send(c, &big);
+        let mut got = 0;
+        for _ in 0..500 {
+            crate::net::poll();
+            if got < BULK {
+                if let Some(n) = crate::sock::recv(cfd, &mut rb[got..]) {
+                    if n > 0 {
+                        got += n;
+                    }
+                }
+            }
+            if got >= BULK {
+                break;
+            }
+            crate::interrupts::delay_ms(10);
+        }
+        let bulk_ok = sent == Some(BULK) && got == BULK && big[..BULK] == rb[..BULK];
+        lines.push(format!(
+            "tcp bulk: {}/{} bytes -> {}",
+            got,
+            BULK,
+            if bulk_ok { "PASS" } else { "FAIL" }
+        ));
+        if bulk_ok {
+            let reply = b"bulk-ok";
+            let _ = crate::sock::send(cfd, reply);
+            let mut back = 0;
+            for _ in 0..50 {
+                crate::net::poll();
+                if let Some(n) = crate::sock::recv(c, &mut buf) {
+                    if n > 0 {
+                        back = n;
+                        break;
+                    }
+                }
+                crate::interrupts::delay_ms(10);
+            }
+            lines.push(format!(
+                "tcp bulk echo: {}/{} bytes -> {}",
+                back,
+                reply.len(),
+                if back == reply.len() && buf[..back] == reply[..] {
                     "PASS"
                 } else {
                     "FAIL"

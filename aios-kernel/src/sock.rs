@@ -10,15 +10,18 @@
 //! ARP cache and falls back to broadcast, so the sockets share routing/ARP with
 //! the DHCP/DNS probe client.
 //!
-//! The TCP side is deliberately small: one outstanding segment (stop-and-wait),
-//! no window scaling or options, a 2 KiB receive ring and a 1 KiB transmit
-//! buffer per socket. Since v2.50.0 it covers both directions — a minimal
-//! **client** (active open) and a minimal **server** ([`listen`] + [`accept`]
-//! with a per-listener child created at the SYN-ACK and handed out once the
-//! three-way handshake completes). It is enough for a request/response exchange
-//! such as a plain HTTP GET or a tiny echo server; it is not a general
-//! streaming server. UDP sockets queue up to [`UDP_SLOTS`] datagrams with their
-//! source address for `recv`.
+//! The TCP side is deliberately small: sends larger than one segment
+//! are queued per socket and segmented into MSS-sized chunks with one
+//! segment in flight at a time (stop-and-wait over the queue, since
+//! v2.53.0), no window scaling or options, an 8 KiB receive ring and
+//! an 8 KiB transmit queue per socket. Since v2.50.0 it covers both
+//! directions — a minimal **client** (active open) and a minimal
+//! **server** ([`listen`] + [`accept`] with a per-listener child
+//! created at the SYN-ACK and handed out once the three-way handshake
+//! completes). It is enough for a request/response exchange such as a
+//! plain HTTP GET or a small echo server; it is not a general
+//! streaming server. UDP sockets queue up to [`UDP_SLOTS`] datagrams
+//! with their source address for `recv`.
 
 use core::ptr::addr_of_mut;
 
@@ -27,9 +30,11 @@ use crate::net;
 /// Maximum number of simultaneously open sockets.
 pub const MAX_SOCKS: usize = 8;
 /// TCP receive ring capacity per socket.
-const TCP_RXCAP: usize = 2048;
+const TCP_RXCAP: usize = 8192;
 /// Largest payload accepted by [`send`] on a TCP socket (one segment).
 const TCP_MSS: usize = 1460;
+/// Transmit queue capacity per TCP socket (segmentation backlog).
+const TX_QCAP: usize = 8192;
 /// Largest UDP datagram payload accepted by [`send`].
 const UDP_MTU: usize = 1024;
 /// Queued inbound datagrams per UDP socket.
@@ -123,6 +128,11 @@ struct Socket {
     tx_len: usize,
     tx_seq: u32,
     tx_buf: [u8; TCP_MSS],
+    /// Segmentation backlog (v2.53.0): bytes accepted by [`send`] but
+    /// not yet handed to a segment, read from `tx_q_head`.
+    tx_q_head: usize,
+    tx_q_len: usize,
+    tx_q: [u8; TX_QCAP],
     sent_at: u64,
     retries: u8,
     time_at: u64,
@@ -153,6 +163,9 @@ impl Socket {
         tx_len: 0,
         tx_seq: 0,
         tx_buf: [0; TCP_MSS],
+        tx_q_head: 0,
+        tx_q_len: 0,
+        tx_q: [0; TX_QCAP],
         sent_at: 0,
         retries: 0,
         time_at: 0,
@@ -372,18 +385,21 @@ pub fn send(fd: usize, data: &[u8]) -> Option<usize> {
                 Some(n)
             }
             Kind::Tcp => {
-                if sk.state != TcpState::Established || sk.tx_pending {
+                if sk.state != TcpState::Established {
                     return None;
                 }
-                let n = data.len().min(TCP_MSS);
-                sk.tx_buf[..n].copy_from_slice(&data[..n]);
-                sk.tx_len = n;
-                sk.tx_seq = sk.snd_nxt;
-                sk.snd_nxt = sk.snd_nxt.wrapping_add(n as u32);
-                sk.tx_pending = true;
-                sk.retries = 0;
-                sk.sent_at = net::now_ticks();
-                send_segment(sk, sk.tx_seq, PSH | ACK, &sk.tx_buf[..n]);
+                let free = TX_QCAP - sk.tx_q_len;
+                if free == 0 {
+                    return None;
+                }
+                let n = data.len().min(free);
+                let mut w = (sk.tx_q_head + sk.tx_q_len) % TX_QCAP;
+                for b in &data[..n] {
+                    sk.tx_q[w] = *b;
+                    w = (w + 1) % TX_QCAP;
+                }
+                sk.tx_q_len += n;
+                kick(sk);
                 Some(n)
             }
         }
@@ -467,6 +483,31 @@ pub fn close(fd: usize) {
         }
         sk.used = false;
     }
+}
+
+/// Hands the next queued segment to the wire (v2.53.0). Does
+/// nothing while a segment is still in flight or the backlog
+/// is empty; called by [`send`] and after every ACK that
+/// completes the in-flight segment.
+fn kick(sk: &mut Socket) {
+    if sk.tx_pending || sk.tx_q_len == 0 {
+        return;
+    }
+    let n = sk.tx_q_len.min(TCP_MSS);
+    let mut r = sk.tx_q_head;
+    for i in 0..n {
+        sk.tx_buf[i] = sk.tx_q[r];
+        r = (r + 1) % TX_QCAP;
+    }
+    sk.tx_q_head = r;
+    sk.tx_q_len -= n;
+    sk.tx_len = n;
+    sk.tx_seq = sk.snd_nxt;
+    sk.snd_nxt = sk.snd_nxt.wrapping_add(n as u32);
+    sk.tx_pending = true;
+    sk.retries = 0;
+    sk.sent_at = net::now_ticks();
+    send_segment(sk, sk.tx_seq, PSH | ACK, &sk.tx_buf[..n]);
 }
 
 /// Advances TCP retransmit and time-wait timers; called each tick.
@@ -624,9 +665,11 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
             _ => {}
         }
         if flags & ACK != 0 {
-            if sk.tx_pending && ack == sk.snd_nxt {
+            let seg_end = sk.tx_seq.wrapping_add(sk.tx_len as u32);
+            if sk.tx_pending && ack == seg_end {
                 sk.tx_pending = false;
                 sk.snd_una = ack;
+                kick(sk);
             }
             match sk.state {
                 TcpState::FinWait1 => sk.state = TcpState::FinWait2,
