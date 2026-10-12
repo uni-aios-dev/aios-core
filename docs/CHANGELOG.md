@@ -1,5 +1,47 @@
 # AIOS Development Log
 
+## v2.50.0 — TCP server side (`listen`/`accept`) + loopback + `socktest` self-test (2026-10-12)
+
+### Added
+- **TCP server support** (`aios-kernel/src/sock.rs`). `listen(fd)` turns a bound
+  TCP socket into a passive `Listen` endpoint; an inbound SYN (no ACK) allocates
+  a **child** slot in `SynRecv` (`parent` links it to the listener), answers
+  with a SYN-ACK and retransmits it (4 tries, 50-tick spacing) — the client's
+  final ACK promotes the child to `Established`, and `accept(fd)` hands the next
+  established child out (resetting `parent` so it becomes independent). Closing a
+  listener frees it and every un-`accept`ed child. The handshake runs entirely
+  inside the `SYS_SOCKET` table so `MAX_SOCKS = 8` always bounds the backlog.
+  New status code `6 = listening` (`SYS_SOCK_STATUS`).
+- **Loopback path** (`aios-kernel/src/net.rs`). `emit_ipv4` routes frames
+  addressed to the bound IP or `127.0.0.1` into a `16 × 1472` byte ring
+  (`LOOPQ`); `net::poll` drains it via `drain_loopback` after real RX, feeding
+  `sock::deliver_tcp`/`deliver_udp`. Deferring the delivery avoids re-entering
+  the socket state while the sending socket still borrows it, and lets kernel
+  servers and clients talk on one machine without a NIC.
+- **`SYS_SOCK_LISTEN` (16)** and **`SYS_SOCK_ACCEPT` (17)**
+  (`aios-kernel/src/syscalls.rs`), both gated on socket ownership like the rest
+  of the family; `accept` returns `u64::MAX` until a handshake has completed.
+- **Shell self-test `socktest`** (`aios-kernel/src/tui.rs`): over the bound IP it
+  drives a two-way UDP exchange (fixed server+client ports, peer-filtered
+  replies) and a full TCP lifecycle — `bind`+`listen`+`connect`, the three-way
+  handshake, `accept`, a client→server request, an echoed reply, and cleanup —
+  printing one `PASS`/`FAIL` line per phase. This gives the socket layer
+  runtime verification that does not depend on QEMU NIC models or external
+  traffic. `udp`/`http` shell commands keep working unchanged.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.50.0`.
+- `sock::connect` refuses to re-arm a listening socket; `deliver_tcp` handles
+  passive open before the established-connection match (a listener has no peer
+  5-tuple of its own).
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. No kernel unit tests run on the bare target; the layer is exercised by
+  the `socktest` shell command (loopback) and manually via `udp`/`http` on a
+  QEMU NIC. The external-HTTP path still depends on the NIC models QEMU provides
+  (see BUGS).
+
 ## v2.49.0 — kernel IPv4 socket layer: UDP endpoint + minimal TCP + `SYS_SOCK_*` syscalls (2026-10-12)
 
 ### Added

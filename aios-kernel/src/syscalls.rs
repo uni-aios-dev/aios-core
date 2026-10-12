@@ -19,10 +19,11 @@
 //! recovery traffic (the freestanding twin of the host `FaultReport` IPC).
 //!
 //! Networking (v2.49.0) adds the `SYS_SOCK_*` family — open/bind/connect/send/
-//! recv/close/status over the kernel IPv4 socket layer [`crate::sock`]. Every
-//! buffer argument is a user virtual address copied byte-by-byte through
-//! [`crate::memory::translate`], and each operation is gated on socket
-//! ownership (`pid`) so one task cannot touch another's descriptors.
+//! recv/close/status over the kernel IPv4 socket layer [`crate::sock`], with
+//! `listen`/`accept` (server side) since v2.50.0. Every buffer argument is a
+//! user virtual address copied byte-by-byte through [`crate::memory::translate`],
+//! and each operation is gated on socket ownership (`pid`) so one task cannot
+//! touch another's descriptors.
 
 use alloc::string::String;
 use core::ptr::addr_of_mut;
@@ -65,8 +66,13 @@ pub const SYS_SOCK_RECV: u64 = 13;
 /// Close a socket: `rdi = fd`. TCP sends a FIN; a second call frees the slot.
 pub const SYS_SOCK_CLOSE: u64 = 14;
 /// Lifecycle code of `fd` (1 connecting, 2 open, 3 closing, 4 closed,
-/// 5 time-wait): `rdi = fd`. Returns `rax = code`.
+/// 5 time-wait, 6 listening): `rdi = fd`. Returns `rax = code`.
 pub const SYS_SOCK_STATUS: u64 = 15;
+/// Start listening on a bound TCP socket: `rdi = fd`. Returns `rax = 1|0`.
+pub const SYS_SOCK_LISTEN: u64 = 16;
+/// Hand out the next established connection of the listener at `rdi = fd`.
+/// Returns `rax = child fd`, or `u64::MAX` when none has completed yet.
+pub const SYS_SOCK_ACCEPT: u64 = 17;
 
 /// Scratch buffer for `SYS_SOCK_SEND`/`SYS_SOCK_RECV` user copies.
 const SOCK_IO_CAP: usize = 1600;
@@ -390,6 +396,26 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         }
         SYS_SOCK_STATUS => {
             frame.rax = sock::status(frame.rdi as usize) as u64;
+        }
+        SYS_SOCK_LISTEN => {
+            let fd = frame.rdi as usize;
+            let ok = sock_owned(pid, fd) && sock::listen(fd);
+            frame.rax = ok as u64;
+        }
+        SYS_SOCK_ACCEPT => {
+            let fd = frame.rdi as usize;
+            if !sock_owned(pid, fd) {
+                frame.rax = u64::MAX;
+            } else {
+                match sock::accept(fd) {
+                    Some(cfd) => {
+                        vprintln!("[sock] fd {} accept -> {}", fd, cfd);
+                        kprintln!("[serial] [sock] fd {} accept -> {}", fd, cfd);
+                        frame.rax = cfd as u64;
+                    }
+                    None => frame.rax = u64::MAX,
+                }
+            }
         }
         other => {
             vprintln!("[sysc] unknown syscall {} from pid {}", other, pid);

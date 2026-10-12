@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.49.0";
+pub(crate) const VERSION: &str = "AIOS kernel v2.50.0";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -192,6 +192,7 @@ fn run_command(cmd: &str) -> Vec<String> {
             "  wifi real  real radio only (card, no sim)".to_string(),
             "  udp A.B.C.D PORT TEXT  send a UDP datagram, show the reply".to_string(),
             "  http A.B.C.D PORT [HOST]  TCP GET / and print the response".to_string(),
+            "  socktest  loopback UDP+TCP self-test over the bound IP".to_string(),
         ],
         "tabs" => vec![
             "1 System  2 Sched  3 USB  4 IPC".to_string(),
@@ -292,6 +293,8 @@ fn run_command(cmd: &str) -> Vec<String> {
                 cmd_udp(rest)
             } else if let Some(rest) = cmd.strip_prefix("http ") {
                 cmd_http(rest)
+            } else if cmd == "socktest" {
+                cmd_socktest()
             } else {
                 vec!["unknown command, type help".to_string()]
             }
@@ -447,6 +450,149 @@ fn cmd_http(rest: &str) -> Vec<String> {
         if !trimmed.is_empty() {
             lines.push(trimmed.chars().take(60).collect());
         }
+    }
+    lines
+}
+
+/// `socktest` — loopback self-test of the kernel socket layer over the bound
+/// IP: a two-way UDP exchange and a complete TCP connect/accept/echo/close,
+/// so both directions and the listen path are verified without external
+/// traffic. Prints one PASS/FAIL line per phase.
+fn cmd_socktest() -> Vec<String> {
+    let Some(our) = crate::net::lease() else {
+        return vec!["socktest: no ip bound (dhcp/static first)".to_string()];
+    };
+    let ip = our.ip;
+    let pid = sched::current_pid();
+    let mut lines = vec![format!("socktest over {}", ip_str(ip))];
+    let mut buf = [0u8; 512];
+    const UDP_SRV: u16 = 40_000;
+    const UDP_CLI: u16 = 40_001;
+    const TCP_SRV: u16 = 40_002;
+
+    // -- UDP round trip --
+    let udp_srv = crate::sock::open(pid, crate::sock::Kind::Udp);
+    let udp_cli = crate::sock::open(pid, crate::sock::Kind::Udp);
+    if let (Some(s), Some(c)) = (udp_srv, udp_cli) {
+        let ok_bind = crate::sock::bind(s, UDP_SRV) && crate::sock::bind(c, UDP_CLI);
+        let ok_con = crate::sock::connect(c, ip, UDP_SRV);
+        let pkt = b"udp-ping";
+        let sent = crate::sock::send(c, pkt);
+        let mut got = 0;
+        for _ in 0..50 {
+            crate::net::poll();
+            if let Some(n) = crate::sock::recv(s, &mut buf) {
+                if n > 0 {
+                    got = n;
+                    break;
+                }
+            }
+            crate::interrupts::delay_ms(10);
+        }
+        let verified =
+            ok_bind && ok_con && sent.is_some() && got == pkt.len() && buf[..got] == pkt[..];
+        lines.push(format!(
+            "udp: {}/{} bytes -> {}",
+            got,
+            pkt.len(),
+            if verified { "PASS" } else { "FAIL" }
+        ));
+        if verified && crate::sock::connect(s, ip, UDP_CLI) {
+            let _ = crate::sock::send(s, &buf[..got]);
+            for _ in 0..50 {
+                crate::net::poll();
+                if let Some(n) = crate::sock::recv(c, &mut buf) {
+                    if n > 0 {
+                        lines.push(format!(
+                            "udp: echo {} bytes {}",
+                            n,
+                            if buf[..n] == pkt[..] { "PASS" } else { "FAIL" }
+                        ));
+                        break;
+                    }
+                }
+                crate::interrupts::delay_ms(10);
+            }
+        }
+        crate::sock::close(s);
+        crate::sock::close(c);
+    } else {
+        lines.push("udp: socket table full - FAIL".to_string());
+    }
+
+    // -- TCP accept + echo --
+    let tcp_srv = crate::sock::open(pid, crate::sock::Kind::Tcp);
+    let tcp_cli = crate::sock::open(pid, crate::sock::Kind::Tcp);
+    if let (Some(s), Some(c)) = (tcp_srv, tcp_cli) {
+        let ok = crate::sock::bind(s, TCP_SRV)
+            && crate::sock::listen(s)
+            && crate::sock::connect(c, ip, TCP_SRV);
+        let mut child = None;
+        for _ in 0..200 {
+            crate::net::poll();
+            if let Some(cfd) = crate::sock::accept(s) {
+                child = Some(cfd);
+                break;
+            }
+            crate::interrupts::delay_ms(10);
+        }
+        let Some(cfd) = child else {
+            lines.push("tcp: connect/accept timeout - FAIL".to_string());
+            crate::sock::close(c);
+            crate::sock::close(s);
+            return lines;
+        };
+        let req = b"tcp-req";
+        let sent = crate::sock::send(c, req);
+        let mut got = 0;
+        for _ in 0..50 {
+            crate::net::poll();
+            if let Some(n) = crate::sock::recv(cfd, &mut buf) {
+                if n > 0 {
+                    got = n;
+                    break;
+                }
+            }
+            crate::interrupts::delay_ms(10);
+        }
+        let verified = ok && sent == Some(req.len()) && got == req.len() && buf[..got] == req[..];
+        lines.push(format!(
+            "tcp req: {}/{} bytes -> {}",
+            got,
+            req.len(),
+            if verified { "PASS" } else { "FAIL" }
+        ));
+        if verified {
+            let _ = crate::sock::send(cfd, &buf[..got]);
+            let mut echoed = 0;
+            for _ in 0..50 {
+                crate::net::poll();
+                if let Some(n) = crate::sock::recv(c, &mut buf) {
+                    if n > 0 {
+                        echoed = n;
+                        break;
+                    }
+                }
+                crate::interrupts::delay_ms(10);
+            }
+            lines.push(format!(
+                "tcp echo: {}/{} bytes -> {}",
+                echoed,
+                req.len(),
+                if echoed == req.len() && buf[..echoed] == req[..] {
+                    "PASS"
+                } else {
+                    "FAIL"
+                }
+            ));
+        }
+        crate::sock::close(cfd);
+        crate::sock::close(cfd);
+        crate::sock::close(c);
+        crate::sock::close(c);
+        crate::sock::close(s);
+    } else {
+        lines.push("tcp: socket table full - FAIL".to_string());
     }
     lines
 }

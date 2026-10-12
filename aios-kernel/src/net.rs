@@ -219,6 +219,16 @@ static mut LINK_KNOWN: bool = false;
 static mut ARP_TABLE: [ArpEntry; ARP_SLOTS] = [ArpEntry::EMPTY; ARP_SLOTS];
 static mut ARP_COUNT: usize = 0;
 
+/// Largest deferred loopback L4 payload (TCP MSS / UDP MTU + headers both fit).
+const LOOP_L4MAX: usize = 1472;
+/// Loopback ring capacity (frames emitted to the local IP before the next poll).
+const LOOP_SLOTS: usize = 16;
+static mut LOOP_PROTO: [u8; LOOP_SLOTS] = [0; LOOP_SLOTS];
+static mut LOOP_LEN: [usize; LOOP_SLOTS] = [0; LOOP_SLOTS];
+static mut LOOP_DATA: [[u8; LOOP_L4MAX]; LOOP_SLOTS] = [[0; LOOP_L4MAX]; LOOP_SLOTS];
+static mut LOOP_HEAD: usize = 0;
+static mut LOOP_COUNT: usize = 0;
+
 fn ticks() -> u64 {
     TICKS.load(core::sync::atomic::Ordering::Relaxed)
 }
@@ -333,6 +343,7 @@ pub fn poll() {
         *addr_of_mut!(LAST_LINK) = up;
         arp_expire(now);
         drain_rx();
+        drain_loopback();
         crate::sock::tick(now);
         match PHASE {
             Phase::Idle => step_idle(now),
@@ -604,6 +615,30 @@ pub(crate) fn emit_ipv4(dst: [u8; 4], proto: u8, l4: &[u8]) -> Result<(), &'stat
     if l4.len() + 20 > 1480 {
         return Err("net: l4 too large");
     }
+    let our = bound_ip();
+    if our != [0; 4] && (dst == our || dst == [127, 0, 0, 1]) {
+        // Loopback: queue the frame for local delivery on the next [`poll`]
+        // (drained by `drain_loopback`) without touching the NIC. Deferring the
+        // delivery avoids re-entering the socket state while the sending socket
+        // still borrows it, and lets kernel servers and clients talk to each
+        // other on one machine (the `socktest` self-test runs on this path).
+        unsafe {
+            let head = *addr_of!(LOOP_HEAD);
+            let count = *addr_of!(LOOP_COUNT);
+            let idx = (head + count) % LOOP_SLOTS;
+            let n = l4.len().min(LOOP_L4MAX);
+            (*addr_of_mut!(LOOP_PROTO))[idx] = proto;
+            (*addr_of_mut!(LOOP_LEN))[idx] = n;
+            let slot = &mut (*addr_of_mut!(LOOP_DATA))[idx];
+            slot[..n].copy_from_slice(&l4[..n]);
+            if count < LOOP_SLOTS {
+                *addr_of_mut!(LOOP_COUNT) = count + 1;
+            } else {
+                *addr_of_mut!(LOOP_HEAD) = (head + 1) % LOOP_SLOTS;
+            }
+        }
+        return Ok(());
+    }
     let hop = next_hop(dst);
     let dst_mac = arp_lookup(hop).unwrap_or(BROADCAST_MAC);
     let mut tx = [0u8; 1514];
@@ -639,6 +674,28 @@ unsafe fn drain_rx() {
             break;
         };
         handle_frame(&buf[..len]);
+    }
+}
+
+/// Delivers frames queued by [`emit_ipv4`] to the local socket layer (loopback).
+/// Runs after real RX each poll; a delivery may enqueue further responses,
+/// which this loop keeps consuming until the queue is empty.
+unsafe fn drain_loopback() {
+    while *addr_of!(LOOP_COUNT) > 0 {
+        let idx = *addr_of!(LOOP_HEAD);
+        let proto = *addr_of!(LOOP_PROTO[idx]);
+        let len = *addr_of!(LOOP_LEN[idx]);
+        let data = *addr_of!(LOOP_DATA[idx]);
+        *addr_of_mut!(LOOP_HEAD) = (*addr_of!(LOOP_HEAD) + 1) % LOOP_SLOTS;
+        *addr_of_mut!(LOOP_COUNT) = *addr_of!(LOOP_COUNT) - 1;
+        let src = read_bound().ip;
+        if proto == PROTO_TCP && len >= 20 {
+            crate::sock::deliver_tcp(src, &data[..len]);
+        } else if proto == PROTO_UDP && len >= 8 {
+            let sport = u16::from_be_bytes([data[0], data[1]]);
+            let dport = u16::from_be_bytes([data[2], data[3]]);
+            crate::sock::deliver_udp(src, sport, dport, &data[8..len]);
+        }
     }
 }
 

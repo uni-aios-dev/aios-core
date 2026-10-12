@@ -654,7 +654,7 @@ input.
 | 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
 | 4 | IPC | total send/recv, per-task mailbox occupancy |
 | 5 | Storage | AHCI/NVMe controller + LBA-read state (`none`/`error`/`ready`/`ready+rw`), MMIO window bytes used |
-| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `faults`, `wifi`, `wifi sim`, `wifi real`, `udp …`, `http …`) |
+| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `faults`, `wifi`, `wifi sim`, `wifi real`, `udp …`, `http …`, `socktest`) |
 | 7 | About | version banner, controls help |
 
 ### Input
@@ -682,6 +682,11 @@ input.
   opens a TCP connection, issues `GET / HTTP/1.0`, and prints the byte count,
   the status line and a short body preview. Both require a bound IP (`dhcp`/
   `static` first) and drive the socket layer through the `SYS_SOCK_*` syscalls.
+- `socktest` (v2.50.0) runs a loopback self-test over the bound IP without any
+  NIC traffic: a two-way UDP exchange plus a full TCP `listen`/`connect`/
+  `accept`/request/echo/close lifecycle, printing one `PASS`/`FAIL` line per
+  phase — runtime verification of the socket layer (both directions, handshake
+  and FIN) that works without QEMU NIC models.
 - `faults` (v2.45.2, queue v2.45.4, events v2.46.0) prints the fault-recovery
   aggregate — `total`, `resume`, `terminate`, `rollback`, `queued`, `events`
   counters — then one line

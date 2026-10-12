@@ -34,21 +34,26 @@
 - **Residual (see the next OPEN entry):** the TCP side is intentionally minimal
   and has runtime-verification gaps — tracked separately.
 
-## OPEN (v2.49.0): socket layer is minimal and manually-verified only
+## OPEN (v2.50.0): socket layer is minimal and partially manually-verified
 
 - **Status:** OPEN — by design scope + verification gap; not a regression.
 - **Limits:**
-  1. **TCP is active-open only**: no `listen`/`accept`, no TCP options or window
-     scaling, a fixed `TCP_WINDOW = 64240`, and stop-and-wait (no congestion
-     control / fast retransmit). A server-side socket is out of scope.
+  1. **TCP is intentionally thin**: a fixed `TCP_WINDOW = 64240`, stop-and-wait
+     (no congestion control / fast retransmit), no TCP options / window scaling,
+     and a backlog bounded by `MAX_SOCKS = 8` (each SYN allocates a child slot
+     until `accept`). Server (`listen`/`accept`) and client (active open) sides
+     both exist since v2.50.0; the in-kernel `socktest` shells exercise them over
+     loopback.
   2. **UDP** has no broadcast/multicast send and no per-packet error reporting.
   3. **No kernel unit tests** (the bare `x86_64-unknown-none` target has no `test`
-     harness), so the layer is exercised only manually from the TUI shell
-     (`udp`/`http`) on a QEMU NIC.
-  4. The HTTP path inherits the v2.48.0 NIC verification gap (only the NIC models
-     QEMU provides; no `rtl8169` model).
-- **Workaround:** exercise the layer from the Shell tab (`udp`/`http`) and read
-  the serial log (`[serial] [sock] …`).
+     harness), so the layer is run via the `socktest` shell self-test (loopback
+     UDP round trip + TCP connect/accept/echo/close) — automated, NIC-free — and
+     manually over a QEMU NIC with `udp`/`http`.
+  4. The external-HTTP path still inherits the v2.48.0 NIC verification gap (only
+     the NIC models QEMU provides; no `rtl8169` model; loopback needs no NIC).
+- **Workaround:** run `socktest` from the Shell tab for a no-NIC check, or
+  exercise the external path with `udp`/`http` over a QEMU NIC and read the
+  serial log (`[serial] [sock] …`).
 
 ## RESOLVED (v2.46.0): hang watchdog now tracks real progress (syscalls) + cooperative heartbeat
 

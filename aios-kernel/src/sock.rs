@@ -10,12 +10,15 @@
 //! ARP cache and falls back to broadcast, so the sockets share routing/ARP with
 //! the DHCP/DNS probe client.
 //!
-//! The TCP side is deliberately small: an active-open client with a single
-//! outstanding segment (stop-and-wait), no window scaling or options, a 2 KiB
-//! receive ring and a 1 KiB transmit buffer per socket. It is enough for a
-//! request/response exchange such as a plain HTTP GET; it is not a general
-//! server. UDP sockets queue up to [`UDP_SLOTS`] datagrams with their source
-//! address for `recv`.
+//! The TCP side is deliberately small: one outstanding segment (stop-and-wait),
+//! no window scaling or options, a 2 KiB receive ring and a 1 KiB transmit
+//! buffer per socket. Since v2.50.0 it covers both directions — a minimal
+//! **client** (active open) and a minimal **server** ([`listen`] + [`accept`]
+//! with a per-listener child created at the SYN-ACK and handed out once the
+//! three-way handshake completes). It is enough for a request/response exchange
+//! such as a plain HTTP GET or a tiny echo server; it is not a general
+//! streaming server. UDP sockets queue up to [`UDP_SLOTS`] datagrams with their
+//! source address for `recv`.
 
 use core::ptr::addr_of_mut;
 
@@ -53,6 +56,10 @@ pub enum Kind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TcpState {
     Closed,
+    /// Server endpoint awaiting an inbound SYN (created by `listen`).
+    Listen,
+    /// Server handshake in progress: SYN-ACK sent, awaiting the client ACK.
+    SynRecv,
     SynSent,
     Established,
     CloseWait,
@@ -102,6 +109,9 @@ struct Socket {
     udp_rx: [UdpDgram; UDP_SLOTS],
     // TCP connection.
     state: TcpState,
+    /// Listener descriptor that created this child connection (`usize::MAX`
+    /// for sockets opened directly). Accepted children reset it.
+    parent: usize,
     iss: u32,
     snd_una: u32,
     snd_nxt: u32,
@@ -131,6 +141,7 @@ impl Socket {
         udp_len: 0,
         udp_rx: [UdpDgram::EMPTY; UDP_SLOTS],
         state: TcpState::Closed,
+        parent: usize::MAX,
         iss: 0,
         snd_una: 0,
         snd_nxt: 0,
@@ -210,6 +221,54 @@ pub fn bind(fd: usize, port: u16) -> bool {
     }
 }
 
+/// Turns a bound TCP socket into a passive endpoint awaiting inbound SYNs.
+/// Only plain, unconnected TCP sockets may listen.
+pub fn listen(fd: usize) -> bool {
+    unsafe {
+        match get_mut(fd) {
+            Some(sk) => {
+                if sk.kind != Kind::Tcp {
+                    return false;
+                }
+                sk.state = TcpState::Listen;
+                sk.eof = false;
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Hands out the next established connection accepted by the listener at
+/// `fd`. Returns the child descriptor, or `None` when the socket is not a
+/// listener or no handshake has finished yet.
+pub fn accept(fd: usize) -> Option<usize> {
+    unsafe {
+        #[allow(static_mut_refs)]
+        let arr = &mut *addr_of_mut!(SOCKS);
+        let listener = arr.get(fd)?;
+        if !listener.used || listener.kind != Kind::Tcp || listener.state != TcpState::Listen {
+            return None;
+        }
+        let mut found = None;
+        for (i, sk) in arr.iter().enumerate() {
+            if sk.used
+                && sk.kind == Kind::Tcp
+                && sk.parent == fd
+                && sk.state == TcpState::Established
+            {
+                found = Some(i);
+                break;
+            }
+        }
+        if let Some(i) = found {
+            let child = &mut arr[i];
+            child.parent = usize::MAX;
+        }
+        found
+    }
+}
+
 /// Sets the peer address. For UDP this merely arms [`send`]; for TCP it starts
 /// the three-way handshake (SYN) and requires a bound IPv4 address.
 pub fn connect(fd: usize, ip: [u8; 4], port: u16) -> bool {
@@ -224,6 +283,9 @@ pub fn connect(fd: usize, ip: [u8; 4], port: u16) -> bool {
         if sk.kind == Kind::Udp {
             sk.state = TcpState::Established;
             return true;
+        }
+        if sk.state == TcpState::Listen {
+            return false;
         }
         if net::bound_ip() == [0; 4] {
             return false;
@@ -256,7 +318,8 @@ pub fn status(fd: usize) -> u8 {
                 Kind::Udp => 2,
                 Kind::Tcp => match sk.state {
                     TcpState::Closed => 4,
-                    TcpState::SynSent => 1,
+                    TcpState::Listen => 6,
+                    TcpState::SynSent | TcpState::SynRecv => 1,
                     TcpState::Established => 2,
                     TcpState::CloseWait
                     | TcpState::FinWait1
@@ -365,28 +428,42 @@ pub fn recv(fd: usize, out: &mut [u8]) -> Option<usize> {
 /// (or a second `close` reclaims it immediately); UDP frees the slot at once.
 pub fn close(fd: usize) {
     unsafe {
-        let sk = match get_mut(fd) {
-            Some(s) => s,
-            None => return,
+        let arr = &mut *addr_of_mut!(SOCKS);
+        let (is_tcp, state) = match arr.get(fd) {
+            Some(s) if s.used => (s.kind == Kind::Tcp, s.state),
+            _ => return,
         };
-        if sk.kind == Kind::Tcp {
-            match sk.state {
-                TcpState::Established => {
-                    let seq = sk.snd_nxt;
-                    sk.snd_nxt = sk.snd_nxt.wrapping_add(1);
-                    sk.state = TcpState::FinWait1;
-                    send_segment(sk, seq, FIN | ACK, &[]);
-                    return;
+        if !is_tcp {
+            arr[fd].used = false;
+            return;
+        }
+        // Closing a listener drops it and every child it handed out.
+        if state == TcpState::Listen {
+            for child in arr.iter_mut() {
+                if child.used && child.parent == fd {
+                    child.used = false;
                 }
-                TcpState::CloseWait => {
-                    let seq = sk.snd_nxt;
-                    sk.snd_nxt = sk.snd_nxt.wrapping_add(1);
-                    sk.state = TcpState::LastAck;
-                    send_segment(sk, seq, FIN | ACK, &[]);
-                    return;
-                }
-                _ => {}
             }
+            arr[fd].used = false;
+            return;
+        }
+        let sk = &mut arr[fd];
+        match sk.state {
+            TcpState::Established => {
+                let seq = sk.snd_nxt;
+                sk.snd_nxt = sk.snd_nxt.wrapping_add(1);
+                sk.state = TcpState::FinWait1;
+                send_segment(sk, seq, FIN | ACK, &[]);
+                return;
+            }
+            TcpState::CloseWait => {
+                let seq = sk.snd_nxt;
+                sk.snd_nxt = sk.snd_nxt.wrapping_add(1);
+                sk.state = TcpState::LastAck;
+                send_segment(sk, seq, FIN | ACK, &[]);
+                return;
+            }
+            _ => {}
         }
         sk.used = false;
     }
@@ -410,6 +487,17 @@ pub fn tick(now: u64) {
                     } else {
                         sk.state = TcpState::Closed;
                         sk.eof = true;
+                    }
+                }
+            }
+            TcpState::SynRecv => {
+                if now.wrapping_sub(sk.sent_at) >= REXMIT_TICKS {
+                    if sk.retries < REXMIT_MAX {
+                        sk.retries += 1;
+                        sk.sent_at = now;
+                        send_segment(sk, sk.iss, SYN | ACK, &[]);
+                    } else {
+                        sk.used = false;
                     }
                 }
             }
@@ -483,6 +571,19 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
 
     #[allow(static_mut_refs)]
     let arr = unsafe { &mut *addr_of_mut!(SOCKS) };
+
+    // Passive open: an inbound SYN for a listener starts a new child. This
+    // must run before the established-connection match, because a listener has
+    // no peer 5-tuple of its own.
+    if flags & SYN != 0 && flags & ACK == 0 {
+        for (fd, sk) in arr.iter().enumerate() {
+            if sk.used && sk.kind == Kind::Tcp && sk.state == TcpState::Listen && sk.port == dport {
+                spawn_child(fd, arr, src, sport, seq);
+                return;
+            }
+        }
+    }
+
     for sk in arr.iter_mut() {
         if !sk.used
             || sk.kind != Kind::Tcp
@@ -508,6 +609,16 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
                     send_segment(sk, sk.snd_nxt, ACK, &[]);
                 }
                 return;
+            }
+            TcpState::SynRecv => {
+                // Final ACK completes the server handshake; fall through to
+                // the shared data/ACK handling once established.
+                if flags & ACK != 0 && ack == sk.snd_nxt {
+                    sk.snd_una = ack;
+                    sk.state = TcpState::Established;
+                } else {
+                    return;
+                }
             }
             TcpState::Closed => return,
             _ => {}
@@ -545,6 +656,40 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
         }
         return;
     }
+}
+
+/// Allocates a free slot as a server-side connection for the listener at
+/// `listener`, answers the SYN with a SYN-ACK and remembers the client's
+/// 5-tuple so its final ACK lands on this child. Drops the SYN when the table
+/// is full.
+fn spawn_child(listener: usize, arr: &mut [Socket], src: [u8; 4], sport: u16, seq: u32) {
+    let (pid, port) = {
+        let l = &arr[listener];
+        (l.pid, l.port)
+    };
+    let Some(n) = arr.iter().position(|s| !s.used) else {
+        return;
+    };
+    let now = net::now_ticks();
+    let iss = seed(now, n);
+    let c = &mut arr[n];
+    *c = Socket::EMPTY;
+    c.used = true;
+    c.kind = Kind::Tcp;
+    c.pid = pid;
+    c.port = port;
+    c.rip = src;
+    c.rport = sport;
+    c.parent = listener;
+    c.iss = iss;
+    c.snd_una = iss;
+    c.snd_nxt = iss.wrapping_add(1);
+    c.rcv_nxt = seq.wrapping_add(1);
+    c.state = TcpState::SynRecv;
+    c.retries = 0;
+    c.sent_at = now;
+    net::arp_resolve(src);
+    send_segment(c, iss, SYN | ACK, &[]);
 }
 
 fn append_rx(sk: &mut Socket, data: &[u8]) -> bool {
