@@ -779,7 +779,10 @@ explicitly a first step:
   under the pointer after a focus shuffle.
 - **One instance per window kind** — `MAX_WINS = 8` static slots, z-order
   shuffles slots; multi-instance apps (two Welcome windows) are not supported.
-- No widgets, no scalable font, no UTF-8 text input beyond ASCII, no clipboard.
+- The widget set now covers buttons and, since v2.47.0, text fields, lists,
+  scrollbars and dropdown menus (all keyed off a single global form on the demo
+  *Widget Lab*); still no scalable font, no UTF-8 text input beyond ASCII, no
+  clipboard, and no per-window form store.
 
 Watch: typing is ASCII-only (PSF 8x8 glyph path). Non-ASCII input lands as '?'
 

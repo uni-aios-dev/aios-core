@@ -1,5 +1,40 @@
 # AIOS Development Log
 
+## v2.47.0 — kernel widget set and routed input: text fields, scrollable list, scrollbar, dropdown menu, Widget Lab (2026-10-12)
+
+### Added
+- **Generic widget set** (`aios-kernel/src/gui.rs`). The `Widget` enum grows
+  beyond `Button` with four new variants shared by every host window:
+  `TextField` (editable single-line box), `List` (scrollable item column),
+  `Scrollbar` (a track bound to a list id) and `Menu` (a plate that opens a
+  dropdown). `widget_rect()` gives any variant its window-local box, so
+  hit-testing (`widget_index_at`, `hover_widget`) and painting (`draw_widgets`)
+  work uniformly across all kinds.
+- **`WinKind::Widgets` — the Widget Lab** demo window (460×300): two text
+  fields, a ten-row palette list with a bound scrollbar, an `Edit` dropdown and
+  a `Close` button. It is the first built-in host that exercises the non-button
+  variants end to end (icon, task-bar slot, title, glyph, launch/focus).
+- **Routed keyboard input** (`widget_key`). Keys are delivered to the focused
+  host before the global shortcuts: `Tab` cycles widget focus, `Backspace`
+  edits the focused field, `Enter` activates (fields acknowledge, the list picks
+  the selected label), printable keys type into a field or move the list
+  selection with `n`/`p`, and `Escape` dismisses an open dropdown.
+- **Dropdown mouse routing** (`lab_dropdown_click`): an open menu swallows its
+  item clicks before ordinary hit-testing, a click on the plate toggles it, and
+  a click elsewhere dismisses it and falls through.
+
+### Changed
+- `widget_click` takes the hosting `&Window` and the click `y`, dispatching the
+  new variants (field focus, list row select, scrollbar jump, menu toggle).
+- The icon column, `kind_rank`, task-bar slot range and all `WinKind` matches
+  gained the `Widgets` rank (6; clients shift to 7+id).
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean; host `test --no-run` compiles apart from the expected bare-target
+  `E0152`. No new `#[cfg(test)]` cases — the widget routing is TUI-driven, per
+  the existing GUI test policy.
+
 ## v2.46.0 — full-CPU-frame recovery: register-complete snapshots, Resume integrity gate, progress-aware watchdog, kernel fault feed (2026-10-12)
 
 ### Added

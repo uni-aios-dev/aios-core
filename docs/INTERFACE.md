@@ -695,7 +695,7 @@ focused) returns to the console/TUI.
 - **Desktop layout** (v2.38.39): washed dark-blue background (a touch lighter
   at the top), rounded 104×56 icon tiles with an accent pill, per-app vector
   glyphs (sliders / clock face / info circle / wireframe globe / stacked
-  bars) and centered labels, bottom task bar with a vertical wash and a top
+  bars / widget grid) and centered labels, bottom task bar with a vertical wash and a top
   hairline, one rounded plate per open window plus the link-state globe — a
   circle with ring, meridian and equator inside a recessed pill — at the far
   right.
@@ -713,6 +713,9 @@ focused) returns to the console/TUI.
     v2.38.34 section below).
   - *Task Manager* — the open-window list with End Task / Switch To
     (open via the *Tasks* icon; see the v2.38.35 section below).
+  - *Widget Lab* — the widget-set demo: two text fields, a scrollable list
+    with its scrollbar, an `Edit` dropdown and a `Close` button
+    (open via the *Widgets* icon; see the v2.47.0 section below).
 - **Input**:
   - Mouse: click an icon to open (or focus) that window; click a window body or
     task-bar button to focus; drag a title bar to move (clamped to the bounds);
@@ -722,7 +725,10 @@ focused) returns to the console/TUI.
   - Keyboard: `Tab` cycles window focus; `Esc` closes the focused window and,
     with no windows left, returns to the TUI; printable keys (incl. after
     `Enter`) type into the focused window; function keys are hotkeys
-    (v2.38.29 — see below).
+    (v2.38.29 — see below). When a Widget Lab window is focused the keys are
+    routed into its focused widget instead — `Tab` cycles the widget focus,
+    `Backspace` edits, `Enter` activates and printable keys type (v2.47.0 —
+    see below).
 - **Behaviour**: one instance per window kind; the arrow composites last. While
   the GUI is active the kernel log (`vprintln!`) and heartbeat pause — the
   desktop owns the screen; serial logging keeps running so `[serial] tick …`
@@ -952,6 +958,30 @@ focused) returns to the console/TUI.
   - Serial proof: `[gui] open Task Manager` (every window open now logs
     `[gui] open <label>`), `[gui] widget Task Manager/End Task click`,
     `[gui] widget Task Manager/Switch To click`.
+- **Widget set / Widget Lab (v2.47.0)**: the widget layer grows past buttons
+  into a generic set shared by every host — **text fields**, a **scrollable
+  list** with a bound **scrollbar** and a **dropdown menu** — and the focused
+  host now receives keyboard input (routed *before* the global shortcuts).
+  The demo host is the *Widget Lab* window (460×300), open from the
+  `Widgets` icon (sixth in the left column). Contents:
+  - *Fields*: `name` and `note` — click one (or `Tab` to it) to focus, then
+    type; empty fields show a dim placeholder, focused fields get a lit
+    border and a caret, `Backspace` deletes.
+  - *List*: ten palette rows (five visible) with a scrollbar at its right;
+    click a row to select it (the selected row highlights, brighter when the
+    list is focused), or focus the list and move with `n`/`p`; `Enter` picks
+    the selected label into the header status line. Clicking the scrollbar
+    jumps the scroll proportionally.
+  - *Menu*: the `Edit` plate opens a dropdown (`Clear name` / `Clear note` /
+    `Reset list` / `Close`); hovering lights a row, clicking one runs it —
+    the three edits update the demo form, `Close` closes the window.
+  - *Close* button: closes the Lab through the normal path (a typed note
+    still raises the `Confirm` dialog).
+  - Press `Escape` to dismiss an open dropdown without closing the window.
+  - Serial proof: `[gui] widget Widget Lab/field <n> focus`,
+    `[gui] widget Widget Lab/list row <n> click`,
+    `[gui] widget Widget Lab/menu open|close`,
+    `[gui] widget Widget Lab/menu item <n> click`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

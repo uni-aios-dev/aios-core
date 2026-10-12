@@ -156,6 +156,10 @@ enum WinKind {
     /// Task Manager (v2.38.35): the Windows-style list of open windows with
     /// an End Task / Switch To button pair acting on the selected row.
     Tasks,
+    /// Widget Lab (v2.47.0): a demo host for the generic widget set — editable
+    /// text fields, a scrollable list with a scrollbar and a dropdown menu —
+    /// proving keyboard/mouse routing into the focused window's widgets.
+    Widgets,
     /// A window owned by a ring-3 task; the id indexes [`CLIENTS`], whose
     /// buffer the window composites on every repaint.
     Client(u8),
@@ -232,6 +236,61 @@ enum Widget {
         /// Click behaviour (after the serial proof line).
         action: WidgetAction,
     },
+    /// Editable single-line text field (v2.47.0): click to focus, then type.
+    /// `id` addresses the field in the host window's form store; the caption
+    /// is drawn by the host body, not the widget.
+    TextField {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        /// Form-store slot addressing the field's buffer.
+        id: u8,
+    },
+    /// Scrollable single-column item list (v2.47.0). `id` addresses the list
+    /// selection/scroll state; `items` are the static rows.
+    List {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        id: u8,
+        items: &'static [&'static str],
+    },
+    /// Vertical scrollbar bound to a list (v2.47.0): a track with a thumb
+    /// positioned by the list's scroll offset; clicking jumps proportionally.
+    Scrollbar {
+        x: usize,
+        y: usize,
+        h: usize,
+        /// The [`Widget::List`] whose scroll this bar drives.
+        list_id: u8,
+    },
+    /// Dropdown menu (v2.47.0): a plate that opens [`Menu::items`] below it;
+    /// picking a row runs [`WidgetAction::Menu`] with the picked index.
+    Menu {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        id: u8,
+        label: &'static str,
+        items: &'static [&'static str],
+    },
+}
+
+/// Width of a [`Widget::Scrollbar`] track in pixels.
+const SCROLLBAR_W: usize = 12;
+
+/// Window-local bounding box `(x, y, w, h)` of any widget variant.
+fn widget_rect(wg: &Widget) -> (usize, usize, usize, usize) {
+    match *wg {
+        Widget::Button { x, y, w, h, .. }
+        | Widget::TextField { x, y, w, h, .. }
+        | Widget::List { x, y, w, h, .. }
+        | Widget::Menu { x, y, w, h, .. } => (x, y, w, h),
+        Widget::Scrollbar { x, y, h, .. } => (x, y, SCROLLBAR_W, h),
+    }
 }
 
 /// What a widget click does.
@@ -533,6 +592,7 @@ fn win_title(kind: WinKind) -> &'static str {
         WinKind::About => "About",
         WinKind::Network => "Network",
         WinKind::Tasks => "Task Manager",
+        WinKind::Widgets => "Widget Lab",
         WinKind::Client(_) => "ring3 client",
     }
 }
@@ -709,6 +769,13 @@ fn spawn(kind: WinKind) {
         h = 248;
         x = 460.min(fb_w.saturating_sub(w + 8));
         y = 140.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
+    }
+    if kind == WinKind::Widgets {
+        w = 460;
+        h = 300;
+        x = 500.min(fb_w.saturating_sub(w + 8));
+        y = 120.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
+        lab_form_load();
     }
     unsafe {
         let wins = &mut *core::ptr::addr_of_mut!(WINS);
@@ -1150,7 +1217,8 @@ fn kind_rank(kind: WinKind) -> u8 {
         WinKind::About => 3,
         WinKind::Network => 4,
         WinKind::Tasks => 5,
-        WinKind::Client(id) => 6 + id,
+        WinKind::Widgets => 6,
+        WinKind::Client(id) => 7 + id,
     }
 }
 
@@ -1161,7 +1229,7 @@ fn kind_rank(kind: WinKind) -> u8 {
 fn taskbar_slots() -> [usize; MAX_WINS] {
     let mut out = [usize::MAX; MAX_WINS];
     let mut n = 0usize;
-    for rank in 0u8..(6 + MAX_CLIENTS as u8) {
+    for rank in 0u8..(7 + MAX_CLIENTS as u8) {
         for i in 0..MAX_WINS {
             let hit = unsafe {
                 (*core::ptr::addr_of!(WINS))[i].map(|w| kind_rank(w.kind) == rank) == Some(true)
@@ -1573,6 +1641,12 @@ pub fn handle_scancode(sc: u8) -> bool {
     if net_key(sc) {
         return true;
     }
+    // The focused Widget Lab window routes keys into its focused widget
+    // (v2.47.0): Tab cycles focus, Backspace edits, Enter activates, printable
+    // keys type, and Escape dismisses an open dropdown.
+    if widget_key(sc) {
+        return true;
+    }
     match sc {
         0x01 => {
             if let Some(i) = focused_idx() {
@@ -1948,6 +2022,7 @@ fn hit_icon(x: usize, y: usize) -> Option<WinKind> {
         (WinKind::About, 20, 176),
         (WinKind::Network, 20, 244),
         (WinKind::Tasks, 20, 312),
+        (WinKind::Widgets, 20, 380),
     ];
     for (kind, ix, iy) in icons {
         if x >= ix && x < ix + ICON_W && y >= iy && y < iy + ICON_H {
@@ -2175,6 +2250,417 @@ static TASK_WIDGETS: [Widget; 2] = [
     },
 ];
 
+/// Widget Lab list rows (v2.47.0): ten palette names the list scrolls through.
+static LAB_ITEMS: [&str; 10] = [
+    "Crimson", "Amber", "Lime", "Teal", "Azure", "Indigo", "Violet", "Magenta", "Slate", "Ivory",
+];
+
+/// Widget Lab menu rows (v2.47.0): picking one runs its index as a command.
+static LAB_MENU: [&str; 4] = ["Clear name", "Clear note", "Reset list", "Close"];
+
+/// Widget table of the Widget Lab window (v2.47.0): two editable text fields, a
+/// scrollable list with a bound scrollbar, a dropdown menu and a close button —
+/// the first host that exercises the non-button widget variants and routed
+/// keyboard input. Laid out for the 460x300 window: captions at 30/54, fields
+/// at 48/72, the list at 100 (5 rows) with its bar at x=312, and the action row
+/// at 192.
+static LAB_WIDGETS: [Widget; 6] = [
+    Widget::TextField {
+        x: 8,
+        y: 48,
+        w: 300,
+        h: 16,
+        id: 0,
+    },
+    Widget::TextField {
+        x: 8,
+        y: 72,
+        w: 300,
+        h: 16,
+        id: 1,
+    },
+    Widget::List {
+        x: 8,
+        y: 100,
+        w: 300,
+        h: 82,
+        id: 2,
+        items: &LAB_ITEMS,
+    },
+    Widget::Scrollbar {
+        x: 312,
+        y: 100,
+        h: 82,
+        list_id: 2,
+    },
+    Widget::Menu {
+        x: 8,
+        y: 192,
+        w: 110,
+        h: 20,
+        id: 3,
+        label: "Edit",
+        items: &LAB_MENU,
+    },
+    Widget::Button {
+        x: 124,
+        y: 192,
+        w: 96,
+        h: 20,
+        label: "Close",
+        action: WidgetAction::CloseHost,
+    },
+];
+
+/// Widget Lab text-field capacity in bytes (ASCII, no terminator).
+const LAB_FIELD_CAP: usize = 48;
+/// Widget Lab text-field count (name, note).
+const LAB_FIELD_N: usize = 2;
+/// Widget Lab "nothing" sentinel for `focus`/`menu`.
+const LAB_NO: u8 = 0xFF;
+/// Visible rows of the Widget Lab list.
+const LAB_ROWS: usize = 5;
+
+/// Editable state of the Widget Lab (v2.47.0). Follows the Network window's
+/// `NET_DRAFT` pattern: one global form reloaded when the window opens, with
+/// `focus`/`menu` naming the widget that owns the keyboard. The routing
+/// ([`widget_key`]) is generic — it dispatches to whichever host is focused —
+/// while the backing store remains demo-specific; a per-window store shared by
+/// every host is the planned follow-up.
+struct LabForm {
+    /// Text buffers for field ids `0..LAB_FIELD_N`.
+    fields: [[u8; LAB_FIELD_CAP]; LAB_FIELD_N],
+    /// Used length of each field buffer.
+    lens: [u8; LAB_FIELD_N],
+    /// Widget id owning the keyboard, or [`LAB_NO`].
+    focus: u8,
+    /// Open menu id, or [`LAB_NO`].
+    menu: u8,
+    /// Selected list row.
+    sel: u8,
+    /// First visible list row.
+    scroll: u8,
+    /// Status line shown beside the header.
+    msg: [u8; 20],
+    /// Used length of `msg`.
+    msg_len: u8,
+}
+
+static mut LAB_FORM: LabForm = LabForm {
+    fields: [[0; LAB_FIELD_CAP]; LAB_FIELD_N],
+    lens: [0; LAB_FIELD_N],
+    focus: LAB_NO,
+    menu: LAB_NO,
+    sel: 0,
+    scroll: 0,
+    msg: [0; 20],
+    msg_len: 0,
+};
+
+/// Resets the Widget Lab form to its defaults; called when the window opens.
+fn lab_form_load() {
+    let f = lab_form();
+    for b in f.fields.iter_mut() {
+        for c in b.iter_mut() {
+            *c = 0;
+        }
+    }
+    f.lens = [0; LAB_FIELD_N];
+    f.focus = 0;
+    f.menu = LAB_NO;
+    f.sel = 0;
+    f.scroll = 0;
+    lab_msg("ready");
+}
+
+/// Mutable handle to the Widget Lab form (single-threaded GUI global).
+fn lab_form() -> &'static mut LabForm {
+    unsafe { &mut *core::ptr::addr_of_mut!(LAB_FORM) }
+}
+
+/// Sets the Widget Lab status line (ASCII, truncated to the buffer).
+fn lab_msg(s: &str) {
+    let f = lab_form();
+    let n = s.len().min(f.msg.len());
+    f.msg[..n].copy_from_slice(&s.as_bytes()[..n]);
+    f.msg_len = n as u8;
+}
+
+/// Focused Widget Lab widget id, or [`LAB_NO`].
+fn lab_focus() -> u8 {
+    lab_form().focus
+}
+
+/// Open Widget Lab menu id, or [`LAB_NO`].
+fn lab_menu() -> u8 {
+    lab_form().menu
+}
+
+/// Advances the Widget Lab keyboard focus across the two fields then the list.
+fn lab_focus_cycle() {
+    let f = lab_form();
+    f.focus = match f.focus {
+        0 => 1,
+        1 => 2,
+        _ => 0,
+    };
+}
+
+/// Deletes the last character of the focused text field, if any.
+fn lab_backspace() {
+    let f = lab_form();
+    let id = f.focus as usize;
+    if id < LAB_FIELD_N && f.lens[id] > 0 {
+        f.lens[id] -= 1;
+        f.fields[id][f.lens[id] as usize] = 0;
+    }
+}
+
+/// Activates the focused widget: a text field acknowledges, the list picks the
+/// selected row's label into the status line.
+fn lab_enter() {
+    let row = {
+        let f = lab_form();
+        if f.focus as usize == 2 {
+            Some(f.sel as usize)
+        } else if (f.focus as usize) < LAB_FIELD_N {
+            lab_msg("ok");
+            None
+        } else {
+            None
+        }
+    };
+    if let Some(row) = row {
+        if row < LAB_ITEMS.len() {
+            lab_msg(LAB_ITEMS[row]);
+        }
+    }
+}
+
+/// Routes a printable character to the focused widget. Text fields append up to
+/// `LAB_FIELD_CAP`; the list uses `n`/`p` to move the selection and keeps it
+/// visible.
+fn lab_type(c: u8) {
+    let f = lab_form();
+    let id = f.focus as usize;
+    if id < LAB_FIELD_N {
+        let len = f.lens[id] as usize;
+        if len < LAB_FIELD_CAP {
+            f.fields[id][len] = c;
+            f.lens[id] += 1;
+        }
+        return;
+    }
+    if id == 2 {
+        let count = LAB_ITEMS.len();
+        let sel = match c {
+            b'n' => (f.sel as usize + 1).min(count.saturating_sub(1)),
+            b'p' => (f.sel as usize).saturating_sub(1),
+            _ => return,
+        };
+        f.sel = sel as u8;
+        if sel < f.scroll as usize {
+            f.scroll = sel as u8;
+        } else if sel >= f.scroll as usize + LAB_ROWS {
+            f.scroll = (sel + 1 - LAB_ROWS) as u8;
+        }
+    }
+}
+
+/// Runs a picked menu row (v2.47.0): indices edit the demo form, `3` closes
+/// the host window.
+fn lab_menu_pick(index: usize) {
+    crate::kprintln!("[gui] widget Widget Lab/menu item {} click", index);
+    match index {
+        0 => {
+            let f = lab_form();
+            f.lens[0] = 0;
+            f.fields[0] = [0; LAB_FIELD_CAP];
+            lab_msg("name cleared");
+        }
+        1 => {
+            let f = lab_form();
+            f.lens[1] = 0;
+            f.fields[1] = [0; LAB_FIELD_CAP];
+            lab_msg("note cleared");
+        }
+        2 => {
+            let f = lab_form();
+            f.sel = 0;
+            f.scroll = 0;
+            lab_msg("list reset");
+        }
+        3 => {
+            if let Some(i) = find_kind(WinKind::Widgets) {
+                close_window(i);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Selects the list row under a click and focuses the list.
+fn lab_list_click(win: &Window, wy: usize, wh: usize, id: u8, items: &[&str], y: usize) {
+    let ay = win.y + wy;
+    if y < ay || y >= ay + wh {
+        return;
+    }
+    let row = {
+        let f = lab_form();
+        let row = f.scroll as usize + (y - ay) / MENU_ROW_H;
+        if row < items.len() {
+            f.sel = row as u8;
+        }
+        f.focus = id;
+        row
+    };
+    lab_msg("list");
+    crate::kprintln!(
+        "[gui] widget {}/list row {} click",
+        win_label(win.kind, win.title),
+        row
+    );
+    dirty_kind(win.kind);
+}
+
+/// Jumps the list scroll proportionally to a click on its scrollbar.
+fn lab_scroll_click(win: &Window, wy: usize, wh: usize, y: usize) {
+    let count = LAB_ITEMS.len();
+    let max_scroll = count.saturating_sub(LAB_ROWS);
+    if max_scroll == 0 {
+        return;
+    }
+    let ay = win.y + wy;
+    let rel = y.saturating_sub(ay).min(wh.saturating_sub(1));
+    let scroll = (rel * max_scroll + wh / 2) / wh.max(1);
+    let end = (scroll + LAB_ROWS - 1).min(count - 1);
+    let f = lab_form();
+    f.scroll = scroll as u8;
+    if (f.sel as usize) < scroll {
+        f.sel = scroll as u8;
+    } else if (f.sel as usize) > end {
+        f.sel = end as u8;
+    }
+    lab_msg("scroll");
+    dirty_kind(win.kind);
+}
+
+/// Handles a click while a Widget Lab menu is open. Returns `true` when the
+/// click was consumed by the dropdown; a click on the menu plate returns
+/// `false` so the normal widget path toggles it, and a click elsewhere dismisses
+/// the menu and falls through.
+fn lab_dropdown_click(x: usize, y: usize) -> bool {
+    let menu_id = lab_menu();
+    if menu_id == LAB_NO {
+        return false;
+    }
+    let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
+    let Some(win) = wins.iter().flatten().find(|w| w.kind == WinKind::Widgets) else {
+        lab_form().menu = LAB_NO;
+        return false;
+    };
+    let mut hit_item = None;
+    let mut on_plate = false;
+    for wg in LAB_WIDGETS.iter() {
+        if let Widget::Menu {
+            x: wx,
+            y: wy,
+            w: ww,
+            h: wh,
+            id,
+            items,
+            ..
+        } = *wg
+        {
+            if id != menu_id {
+                continue;
+            }
+            let ax = win.x + wx;
+            let ay = win.y + wy;
+            if y >= ay + wh {
+                let dw = menu_dropdown_w(items).max(ww);
+                if y < ay + wh + items.len() * MENU_ROW_H && x >= ax && x < ax + dw {
+                    hit_item = Some((y - (ay + wh)) / MENU_ROW_H);
+                }
+            }
+            if x >= ax && x < ax + ww && y >= ay && y < ay + wh {
+                on_plate = true;
+            }
+        }
+    }
+    if let Some(k) = hit_item {
+        lab_menu_pick(k);
+        lab_form().menu = LAB_NO;
+        dirty_kind(WinKind::Widgets);
+        return true;
+    }
+    if on_plate {
+        return false;
+    }
+    lab_form().menu = LAB_NO;
+    dirty_kind(WinKind::Widgets);
+    false
+}
+
+/// Routes a key to the Widgets host's focused widget (v2.47.0): menu dismissal,
+/// Tab field cycling, Backspace editing, Enter activation and printable typing.
+/// Returns `true` when the key was consumed by the Widget Lab.
+fn widget_key(sc: u8) -> bool {
+    let Some(i) = focused_idx() else {
+        return false;
+    };
+    let is_lab = unsafe {
+        (*core::ptr::addr_of!(WINS))[i]
+            .as_ref()
+            .is_some_and(|w| w.kind == WinKind::Widgets)
+    };
+    if !is_lab {
+        return false;
+    }
+    if lab_menu() != LAB_NO {
+        if sc == 0x01 {
+            lab_form().menu = LAB_NO;
+            dirty_kind(WinKind::Widgets);
+            return true;
+        }
+        lab_form().menu = LAB_NO;
+    }
+    let consumed = match sc {
+        0x0F => {
+            lab_focus_cycle();
+            true
+        }
+        0x0E => {
+            lab_backspace();
+            true
+        }
+        0x1C => {
+            lab_enter();
+            true
+        }
+        _ => {
+            let Some(c) = crate::interrupts::scancode_to_char(sc) else {
+                return false;
+            };
+            if c.is_control() {
+                return false;
+            }
+            lab_type(c as u8);
+            true
+        }
+    };
+    if consumed {
+        dirty_kind(WinKind::Widgets);
+    }
+    consumed
+}
+
+/// Dropdown pixel width of a menu: the widest row plus padding.
+fn menu_dropdown_w(items: &[&str]) -> usize {
+    let max = items.iter().map(|s| s.len()).max().unwrap_or(1);
+    max * console::GLYPH_W + 12
+}
+
 /// Widget table of a window kind; clients and built-ins without a demo table
 /// get an empty slice.
 fn widgets_for(kind: WinKind) -> &'static [Widget] {
@@ -2184,6 +2670,8 @@ fn widgets_for(kind: WinKind) -> &'static [Widget] {
         &NETWORK_WIDGETS
     } else if kind == WinKind::Tasks {
         &TASK_WIDGETS
+    } else if kind == WinKind::Widgets {
+        &LAB_WIDGETS
     } else {
         &[]
     }
@@ -2192,13 +2680,7 @@ fn widgets_for(kind: WinKind) -> &'static [Widget] {
 /// Index of the widget of `win` under the absolute point `(x, y)`, if any.
 fn widget_index_at(win: &Window, x: usize, y: usize) -> Option<usize> {
     widgets_for(win.kind).iter().position(|wg| {
-        let Widget::Button {
-            x: bx,
-            y: by,
-            w: bw,
-            h: bh,
-            ..
-        } = *wg;
+        let (bx, by, bw, bh) = widget_rect(wg);
         x >= win.x + bx && x < win.x + bx + bw && y >= win.y + by && y < win.y + by + bh
     })
 }
@@ -2230,6 +2712,18 @@ fn hover_widget(x: usize, y: usize) -> Option<(WinKind, usize)> {
 /// windows whose highlight state changed, so hovering a plate repaints it.
 /// While a modal dialog is up no body widget may light up.
 fn update_widget_hover() {
+    // A Widget Lab dropdown highlights the row under the cursor, but the
+    // dropdown is not a widget rect; while a menu is open, refresh the host on
+    // any cursor move inside it so the highlight tracks live (v2.47.0).
+    if !modal_active() && lab_menu() != LAB_NO {
+        let (x, y) = unsafe { (*core::ptr::addr_of!(CUR_X), *core::ptr::addr_of!(CUR_Y)) };
+        let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
+        if let Some(win) = wins.iter().flatten().find(|w| w.kind == WinKind::Widgets) {
+            if x >= win.x && x < win.x + win.w && y >= win.y && y < win.y + win.h {
+                dirty_kind(WinKind::Widgets);
+            }
+        }
+    }
     let new = if modal_active() {
         None
     } else {
@@ -2259,28 +2753,68 @@ fn update_widget_hover() {
 /// close the hosting window through [`close_window`] (modal gate included).
 /// The host index may have gone stale after [`focus_window`], so the action
 /// resolves the target window by its [`WinKind`] instead.
-fn widget_click(host: WinKind, host_label: &str, wg: Widget) {
-    let Widget::Button { label, action, .. } = wg;
-    crate::kprintln!("[gui] widget {}/{} click", host_label, label);
-    match action {
-        WidgetAction::Open(kind) => open_or_focus(kind),
-        WidgetAction::CloseHost => {
-            if let Some(i) = find_kind(host) {
-                close_window(i);
+fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
+    let host = win.kind;
+    match wg {
+        Widget::Button { label, action, .. } => {
+            crate::kprintln!("[gui] widget {}/{} click", host_label, label);
+            match action {
+                WidgetAction::Open(kind) => open_or_focus(kind),
+                WidgetAction::CloseHost => {
+                    if let Some(i) = find_kind(host) {
+                        close_window(i);
+                    }
+                }
+                WidgetAction::Net(btn) => {
+                    net_button(btn);
+                    dirty_kind(host);
+                }
+                WidgetAction::NetField(f) => {
+                    unsafe {
+                        (*core::ptr::addr_of_mut!(NET_DRAFT)).focus = f;
+                    }
+                    dirty_kind(host);
+                }
+                WidgetAction::Task(TaskBtn::End) => task_end(),
+                WidgetAction::Task(TaskBtn::Switch) => task_switch(),
             }
         }
-        WidgetAction::Net(btn) => {
-            net_button(btn);
-            dirty_kind(host);
-        }
-        WidgetAction::NetField(f) => {
-            unsafe {
-                (*core::ptr::addr_of_mut!(NET_DRAFT)).focus = f;
+        Widget::TextField { id, .. } => {
+            if host == WinKind::Widgets {
+                crate::kprintln!("[gui] widget {}/field {} focus", host_label, id);
+                lab_form().focus = id;
+                lab_msg("field");
+                dirty_kind(host);
             }
-            dirty_kind(host);
         }
-        WidgetAction::Task(TaskBtn::End) => task_end(),
-        WidgetAction::Task(TaskBtn::Switch) => task_switch(),
+        Widget::List {
+            y: wy,
+            h: wh,
+            id,
+            items,
+            ..
+        } => {
+            if host == WinKind::Widgets {
+                lab_list_click(win, wy, wh, id, items, y);
+            }
+        }
+        Widget::Scrollbar { y: wy, h: wh, .. } => {
+            if host == WinKind::Widgets {
+                lab_scroll_click(win, wy, wh, y);
+            }
+        }
+        Widget::Menu { id, .. } => {
+            if host == WinKind::Widgets {
+                let open = lab_menu() == id;
+                lab_form().menu = if open { LAB_NO } else { id };
+                crate::kprintln!(
+                    "[gui] widget {}/menu {}",
+                    host_label,
+                    if open { "close" } else { "open" }
+                );
+                dirty_kind(host);
+            }
+        }
     }
 }
 
@@ -2300,54 +2834,205 @@ fn dirty_kind(kind: WinKind) {
 fn draw_widgets(fb: &Framebuffer, win: &Window) {
     let hover = unsafe { *core::ptr::addr_of!(WIDGET_HOVER) };
     for (wi, wg) in widgets_for(win.kind).iter().enumerate() {
-        let Widget::Button {
-            x,
-            y,
-            w,
-            h,
-            label,
-            action,
-        } = *wg;
-        let (ax, ay) = (win.x + x, win.y + y);
-        if let WidgetAction::NetField(field) = action {
-            let focused = win.kind == WinKind::Network
-                && unsafe { (*core::ptr::addr_of!(NET_DRAFT)).focus } == field;
-            let border = if focused {
-                BAR_ON
-            } else if hover == Some((win.kind, wi)) {
-                TEXT
-            } else {
-                TEXT_DIM
-            };
-            unsafe {
-                fb.fill_rect(ax, ay, w, 1, border);
-                fb.fill_rect(ax, ay + h - 1, w, 1, border);
-                fb.fill_rect(ax, ay, 1, h, border);
-                fb.fill_rect(ax + w - 1, ay, 1, h, border);
+        match *wg {
+            Widget::TextField { x, y, w, h, id } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                let focused = win.kind == WinKind::Widgets && lab_focus() == id;
+                draw_field_box(fb, ax, ay, w, h, focused, hover == Some((win.kind, wi)));
+                if win.kind == WinKind::Widgets {
+                    let (val, len) = {
+                        let f = lab_form();
+                        let i = id as usize;
+                        if i < LAB_FIELD_N {
+                            (
+                                core::str::from_utf8(&f.fields[i][..f.lens[i] as usize])
+                                    .unwrap_or(""),
+                                f.lens[i] as usize,
+                            )
+                        } else {
+                            ("", 0)
+                        }
+                    };
+                    let ty = ay + (h - console::GLYPH_H) / 2;
+                    if len == 0 {
+                        let hint = if id == 0 { "name" } else { "note" };
+                        tui::draw_text(fb, ax + 4, ty, hint, TEXT_DIM, NET_BOX_BG, ax + w - 4);
+                    } else {
+                        tui::draw_text(fb, ax + 4, ty, val, TEXT, NET_BOX_BG, ax + w - 4);
+                    }
+                    if focused {
+                        let cx = ax + 4 + len * console::GLYPH_W;
+                        if cx + 2 < ax + w {
+                            unsafe {
+                                fb.fill_rect(cx, ay + 2, 2, h.saturating_sub(4), BAR_ON);
+                            }
+                        }
+                    }
+                }
             }
-            continue;
+            Widget::List {
+                x,
+                y,
+                w,
+                h,
+                id,
+                items,
+            } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                if win.kind == WinKind::Widgets {
+                    draw_lab_list(fb, ax, ay, w, h, id, items);
+                }
+            }
+            Widget::Scrollbar { x, y, h, list_id } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                if win.kind == WinKind::Widgets {
+                    draw_lab_scrollbar(fb, ax, ay, h, list_id);
+                }
+            }
+            Widget::Menu {
+                x,
+                y,
+                w,
+                h,
+                id,
+                label,
+                items,
+            } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                let open = win.kind == WinKind::Widgets && lab_menu() == id;
+                let plate = if open || hover == Some((win.kind, wi)) {
+                    BAR_ON
+                } else {
+                    BTN_BG
+                };
+                draw_plate(fb, ax, ay, w, h, label, plate);
+                // A small down triangle at the right end signals a dropdown.
+                unsafe {
+                    let tx = ax + w - 12;
+                    let ty = ay + h / 2;
+                    for row in 0..3 {
+                        fb.fill_rect(tx + row, ty, 5 - 2 * row, 1, TEXT);
+                    }
+                }
+                if open {
+                    let dw = menu_dropdown_w(items).max(w);
+                    let (cx, cy) =
+                        unsafe { (*core::ptr::addr_of!(CUR_X), *core::ptr::addr_of!(CUR_Y)) };
+                    for (k, item) in items.iter().enumerate() {
+                        let iy = ay + h + k * MENU_ROW_H;
+                        let ihover = cx >= ax && cx < ax + dw && cy >= iy && cy < iy + MENU_ROW_H;
+                        let bg = if ihover { BAR_ON } else { BTN_BG };
+                        unsafe {
+                            fb.fill_rect(ax, iy, dw, MENU_ROW_H, bg);
+                            fb.fill_rect(ax, iy, dw, 1, vector::mix(bg, TEXT_DIM, 120));
+                        }
+                        tui::draw_text(
+                            fb,
+                            ax + 4,
+                            iy + (MENU_ROW_H - console::GLYPH_H) / 2,
+                            item,
+                            TEXT,
+                            bg,
+                            (ax + dw).min(fb.width()),
+                        );
+                    }
+                }
+            }
+            Widget::Button {
+                x,
+                y,
+                w,
+                h,
+                label,
+                action,
+            } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                if let WidgetAction::NetField(field) = action {
+                    let focused = win.kind == WinKind::Network
+                        && unsafe { (*core::ptr::addr_of!(NET_DRAFT)).focus } == field;
+                    let border = if focused {
+                        BAR_ON
+                    } else if hover == Some((win.kind, wi)) {
+                        TEXT
+                    } else {
+                        TEXT_DIM
+                    };
+                    draw_edge_box(fb, ax, ay, w, h, border);
+                    continue;
+                }
+                let plate = if hover == Some((win.kind, wi)) {
+                    BAR_ON
+                } else {
+                    BTN_BG
+                };
+                draw_plate(fb, ax, ay, w, h, label, plate);
+            }
         }
-        let plate = if hover == Some((win.kind, wi)) {
-            BAR_ON
-        } else {
-            BTN_BG
-        };
-        unsafe {
-            vector::fill_round(
-                fb,
-                ax as i32,
-                ay as i32,
-                w as i32,
-                h as i32,
-                4,
-                vector::ALL,
-                plate,
-            );
-        }
-        let tx = ax + w.saturating_sub(label.len() * console::GLYPH_W) / 2;
-        let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
-        tui::draw_text(fb, tx, ty, label, TEXT, plate, (ax + w).min(fb.width()));
     }
+}
+
+/// Height of one dropdown-menu row in pixels.
+const MENU_ROW_H: usize = 16;
+
+/// Paints a rounded button/menu plate with centered label text.
+fn draw_plate(
+    fb: &Framebuffer,
+    ax: usize,
+    ay: usize,
+    w: usize,
+    h: usize,
+    label: &str,
+    plate: Color,
+) {
+    unsafe {
+        vector::fill_round(
+            fb,
+            ax as i32,
+            ay as i32,
+            w as i32,
+            h as i32,
+            4,
+            vector::ALL,
+            plate,
+        );
+    }
+    let tx = ax + w.saturating_sub(label.len() * console::GLYPH_W) / 2;
+    let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
+    tui::draw_text(fb, tx, ty, label, TEXT, plate, (ax + w).min(fb.width()));
+}
+
+/// Paints a 1px rectangular border in `border`.
+fn draw_edge_box(fb: &Framebuffer, ax: usize, ay: usize, w: usize, h: usize, border: Color) {
+    unsafe {
+        fb.fill_rect(ax, ay, w, 1, border);
+        fb.fill_rect(ax, ay + h - 1, w, 1, border);
+        fb.fill_rect(ax, ay, 1, h, border);
+        fb.fill_rect(ax + w - 1, ay, 1, h, border);
+    }
+}
+
+/// Paints a text-field box: a filled [`NET_BOX_BG`] surface with a border that
+/// is [`BAR_ON`] when focused, [`TEXT`] when hovered, [`TEXT_DIM`] otherwise.
+fn draw_field_box(
+    fb: &Framebuffer,
+    ax: usize,
+    ay: usize,
+    w: usize,
+    h: usize,
+    focused: bool,
+    hovered: bool,
+) {
+    unsafe {
+        fb.fill_rect(ax, ay, w, h, NET_BOX_BG);
+    }
+    let border = if focused {
+        BAR_ON
+    } else if hovered {
+        TEXT
+    } else {
+        TEXT_DIM
+    };
+    draw_edge_box(fb, ax, ay, w, h, border);
 }
 
 /// Serial proof line for a finished resize drag: final geometry of the
@@ -2385,6 +3070,11 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
             }
         }
         spawn(kind);
+        return;
+    }
+    // An open Widget Lab dropdown swallows its item clicks before ordinary
+    // hit-testing; the menu plate itself falls through to toggle normally.
+    if lab_dropdown_click(x, y) {
         return;
     }
     let mut hit_any = false;
@@ -2455,7 +3145,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                     ) {
                         focus_window(i);
                     }
-                    widget_click(kind, &label, wg);
+                    widget_click(win, &label, wg, y);
                     hit_any = true;
                     break;
                 }
@@ -2639,6 +3329,7 @@ fn icon_label(kind: WinKind) -> &'static str {
         WinKind::About => "About",
         WinKind::Network => "Net",
         WinKind::Tasks => "Tasks",
+        WinKind::Widgets => "Widgets",
         WinKind::Client(_) => "ring3",
     }
 }
@@ -2650,6 +3341,7 @@ fn draw_icons(fb: &Framebuffer, clip: &Rect) {
         (WinKind::About, 20, 176),
         (WinKind::Network, 20, 244),
         (WinKind::Tasks, 20, 312),
+        (WinKind::Widgets, 20, 380),
     ];
     for (kind, ix, iy) in icons {
         if !rect_overlaps(clip, ix, iy, ICON_W, ICON_H) {
@@ -2738,6 +3430,12 @@ fn draw_icon_glyph(fb: &Framebuffer, kind: WinKind, cx: i32, cy: i32) {
                     let c = if row == 0 { ICON_ACC } else { dim };
                     vector::fill_round(fb, cx - w / 2, cy - 8 + row, w, 3, 1, vector::ALL, c);
                 }
+            }
+            WinKind::Widgets => {
+                for (gx, gy) in [(-8i32, -8i32), (0, -8), (-8, 0), (0, 0)] {
+                    vector::fill_round(fb, cx + gx, cy + gy, 6, 6, 1, vector::ALL, ICON_ACC);
+                }
+                vector::fill_round(fb, cx - 8, cy + 8, 16, 3, 1, vector::ALL, dim);
             }
             _ => {}
         }
@@ -2940,6 +3638,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::About => draw_about(fb, win.x + 8, &mut y, max_px),
         WinKind::Network => draw_network(fb, win, max_px),
         WinKind::Tasks => draw_tasks(fb, win, max_px),
+        WinKind::Widgets => draw_lab(fb, win, max_px),
         WinKind::Client(_) => draw_client(fb, win),
     }
     draw_widgets(fb, win);
@@ -3718,6 +4417,108 @@ fn net_key(sc: u8) -> bool {
 /// field captions and values (the widget layer draws their borders), the
 /// Wi-Fi status line and up to three scan rows. Everything clips at
 /// `max_px`, i.e. the window's own right edge.
+/// Body painter of the Widget Lab (v2.47.0): the header, the hint/status lines.
+/// The field frames, list, scrollbar and menu are painted afterwards by
+/// [`draw_widgets`], and each field draws its own value and caret.
+fn draw_lab(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let x = win.x + 8;
+    let at = |y: usize, s: &str, fg: Color| {
+        tui::draw_text(fb, x, win.y + y, s, fg, WIN_BG, max_px);
+    };
+    at(TITLE_H + 8, "Widget Lab", TEXT);
+    at(278, "Tab focus  n/p list  enter pick", TEXT_DIM);
+    if lab_menu() == LAB_NO {
+        let f = lab_form();
+        if f.msg_len > 0 {
+            let m = core::str::from_utf8(&f.msg[..f.msg_len as usize]).unwrap_or("");
+            tui::draw_text(
+                fb,
+                win.x + 200,
+                win.y + TITLE_H + 8,
+                m,
+                TEXT,
+                WIN_BG,
+                max_px,
+            );
+        }
+    }
+}
+
+/// Paints the Widget Lab list: a sunken box with the visible rows, the selected
+/// row highlighted, at most `LAB_ROWS` at a time from the scroll offset.
+fn draw_lab_list(
+    fb: &Framebuffer,
+    ax: usize,
+    ay: usize,
+    w: usize,
+    h: usize,
+    id: u8,
+    items: &[&str],
+) {
+    unsafe {
+        fb.fill_rect(ax, ay, w, h, NET_BOX_BG);
+    }
+    draw_edge_box(fb, ax, ay, w, h, TEXT_DIM);
+    let (focused, scroll, sel) = {
+        let f = lab_form();
+        (f.focus == id, f.scroll as usize, f.sel as usize)
+    };
+    let rows = h.saturating_sub(2) / MENU_ROW_H;
+    for r in 0..rows {
+        let idx = scroll + r;
+        let Some(item) = items.get(idx) else {
+            break;
+        };
+        let ry = ay + 1 + r * MENU_ROW_H;
+        let bg = if idx == sel {
+            if focused {
+                BAR_ON
+            } else {
+                vector::mix(NET_BOX_BG, BAR_ON, 128)
+            }
+        } else {
+            NET_BOX_BG
+        };
+        unsafe {
+            fb.fill_rect(ax + 1, ry, w.saturating_sub(2), MENU_ROW_H, bg);
+        }
+        let fg = if idx == sel { TEXT } else { TEXT_DIM };
+        tui::draw_text(
+            fb,
+            ax + 4,
+            ry + (MENU_ROW_H - console::GLYPH_H) / 2,
+            item,
+            fg,
+            bg,
+            (ax + w).saturating_sub(2),
+        );
+    }
+}
+
+/// Paints the Widget Lab scrollbar: a track with a thumb sized by the visible
+/// fraction and positioned by the bound list's scroll offset.
+fn draw_lab_scrollbar(fb: &Framebuffer, ax: usize, ay: usize, h: usize, list_id: u8) {
+    unsafe {
+        fb.fill_rect(ax, ay, SCROLLBAR_W, h, NET_BOX_BG);
+    }
+    draw_edge_box(fb, ax, ay, SCROLLBAR_W, h, TEXT_DIM);
+    let _ = list_id;
+    let count = LAB_ITEMS.len();
+    let max_scroll = count.saturating_sub(LAB_ROWS);
+    let track = h.saturating_sub(2);
+    if track == 0 {
+        return;
+    }
+    let thumb = (track * LAB_ROWS / count.max(1)).clamp(4, track);
+    let pos = (track - thumb)
+        .saturating_mul(lab_form().scroll as usize)
+        .checked_div(max_scroll)
+        .unwrap_or(0);
+    unsafe {
+        fb.fill_rect(ax + 2, ay + 1 + pos, SCROLLBAR_W - 4, thumb, BAR_ON);
+    }
+}
+
 fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     let x = win.x + 8;
     let d = unsafe { *core::ptr::addr_of!(NET_DRAFT) };
