@@ -223,11 +223,12 @@ fn run_command(cmd: &str) -> Vec<String> {
         }
         "faults" => {
             let mut lines = vec![format!(
-                "faults total={} resume={} terminate={} rollback={}",
+                "faults total={} resume={} terminate={} rollback={} queued={}",
                 crate::fault::fault_total(),
                 crate::fault::resolution_count(crate::fault::Recovery::Resume),
                 crate::fault::resolution_count(crate::fault::Recovery::Terminate),
-                crate::fault::resolution_count(crate::fault::Recovery::Rollback)
+                crate::fault::resolution_count(crate::fault::Recovery::Rollback),
+                crate::fault::queued()
             )];
             for rec in crate::fault::history_records() {
                 let s = &rec.snapshot;
@@ -238,6 +239,16 @@ fn run_command(cmd: &str) -> Vec<String> {
                     rec.count,
                     s.rip,
                     s.state_hash
+                ));
+            }
+            for rec in crate::fault::pending_records() {
+                let s = &rec.snapshot;
+                lines.push(format!(
+                    "  queued: pid {} {} (crash #{}) rip={:#x}",
+                    s.pid,
+                    rec.kind.name(),
+                    rec.count,
+                    s.rip
                 ));
             }
             if crate::fault::pending() {

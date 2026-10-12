@@ -10,8 +10,11 @@
 //! drawn by the windowed GUI over the desktop — answers with **Resume**
 //! (unfreeze, ignore), **Terminate** (remove the task) or **Rollback**
 //! (restore the captured `rip`/`rsp`/segment/frame, verified against the
-//! stored state hash, and unfreeze). Every fault is also pushed to a bounded
-//! [`FaultRecord`] history ring with resolution statistics.
+//! Faults and hangs are enqueued in a bounded **system fault queue**
+//! ([`FAULT_QUEUE_LEN`]): several tasks may be frozen at once, and the crash
+//! dialog resolves them oldest-first, advancing to the next record without
+//! closing. Every resolution is also pushed to a bounded [`FaultRecord`]
+//! history ring with resolution statistics.
 //!
 //! A per-task **fault budget** guards against fault loops: a task that fails
 //! more than [`MAX_FAULTS_PER_TASK`] times can no longer be Resumed or
@@ -29,10 +32,10 @@
 //! Kernel-context faults (ring 0, including the idle context) still halt the
 //! system: their stack is not a resumable user boundary.
 //!
-//! All state is global and single-slot for the pending decision: this kernel
-//! schedules one CPU, and one dialog is shown at a time. Reads/writes happen
-//! from the interrupt path and the idle context, never concurrently (interrupt
-//! gates disable nesting).
+//! All state is global and single-CPU: the scheduler runs one task at a time,
+//! and one dialog is shown at a time (the front of the queue). Reads/writes
+//! happen from the interrupt path and the idle context, never concurrently
+//! (interrupt gates disable nesting).
 
 use crate::interrupts::InterruptFrame;
 use crate::sched::MAX_TASKS;
@@ -45,6 +48,13 @@ pub const MAX_FAULTS_PER_TASK: u8 = 3;
 
 /// Depth of the bounded fault history ring (diagnostics).
 pub const FAULT_HISTORY_LEN: usize = 8;
+
+/// Depth of the pending **system fault queue**. Faults and hangs are enqueued
+/// oldest-first and the crash dialog resolves the front; a task is frozen while
+/// its record waits. One slot per task is enough (at most `MAX_TASKS - 1` user
+/// tasks can be frozen at once), so a full queue can only be reached
+/// transiently and never in practice.
+pub const FAULT_QUEUE_LEN: usize = MAX_TASKS;
 
 /// The CPU exception that froze the task (message source for the dialog).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -148,7 +158,11 @@ impl Recovery {
 }
 
 static FAULT_PENDING: AtomicBool = AtomicBool::new(false);
-static mut FAULT: Option<FaultRecord> = None;
+/// The pending system fault queue (FIFO): faults/hangs awaiting a decision.
+/// `QUEUE_HEAD` is the front (what the dialog shows), `QUEUE_LEN` the depth.
+static mut FAULT_QUEUE: [Option<FaultRecord>; FAULT_QUEUE_LEN] = [None; FAULT_QUEUE_LEN];
+static mut QUEUE_HEAD: usize = 0;
+static mut QUEUE_LEN: usize = 0;
 static mut CRASH_COUNTS: [u8; MAX_TASKS] = [0; MAX_TASKS];
 static mut HISTORY: [Option<FaultRecord>; FAULT_HISTORY_LEN] = [None; FAULT_HISTORY_LEN];
 static mut HISTORY_NEXT: usize = 0;
@@ -160,6 +174,13 @@ fn counters() -> &'static mut [u8; MAX_TASKS] {
     unsafe {
         #[allow(static_mut_refs)]
         &mut *core::ptr::addr_of_mut!(CRASH_COUNTS)
+    }
+}
+
+fn queue() -> &'static mut [Option<FaultRecord>; FAULT_QUEUE_LEN] {
+    unsafe {
+        #[allow(static_mut_refs)]
+        &mut *core::ptr::addr_of_mut!(FAULT_QUEUE)
     }
 }
 
@@ -183,11 +204,22 @@ fn publish(pid: u32, kind: FaultCode, snapshot: TaskSnapshot) -> u8 {
         c[slot]
     };
     unsafe {
-        *core::ptr::addr_of_mut!(FAULT) = Some(FaultRecord {
+        let len = core::ptr::addr_of!(QUEUE_LEN).read();
+        if len >= FAULT_QUEUE_LEN {
+            crate::vprintln!(
+                "[fault] queue full, dropping {} for pid {}",
+                kind.name(),
+                pid
+            );
+            return count;
+        }
+        let head = core::ptr::addr_of!(QUEUE_HEAD).read();
+        queue()[(head + len) % FAULT_QUEUE_LEN] = Some(FaultRecord {
             snapshot,
             kind,
             count,
         });
+        *core::ptr::addr_of_mut!(QUEUE_LEN) = len + 1;
         FAULT_PENDING.store(true, Ordering::Relaxed);
     }
     count
@@ -265,17 +297,43 @@ pub fn pending() -> bool {
     FAULT_PENDING.load(Ordering::Relaxed)
 }
 
-/// Copy of the pending fault record, if any.
+/// Copy of the front fault record awaiting a decision, if any (what the crash
+/// dialog shows).
 pub fn peek() -> Option<FaultRecord> {
-    unsafe { core::ptr::addr_of!(FAULT).read_volatile() }
+    unsafe {
+        if core::ptr::addr_of!(QUEUE_LEN).read() == 0 {
+            return None;
+        }
+        let head = core::ptr::addr_of!(QUEUE_HEAD).read();
+        queue()[head]
+    }
 }
 
-/// Clear the pending fault record.
-fn clear() {
+/// How many fault/hang records are queued and awaiting a decision.
+pub fn queued() -> usize {
+    unsafe { core::ptr::addr_of!(QUEUE_LEN).read() }
+}
+
+/// Remove the front record after it has been resolved. Leaves the next queued
+/// fault pending (the dialog advances without closing), or clears the pending
+/// flag once the queue drains.
+fn pop_front() {
     unsafe {
-        *core::ptr::addr_of_mut!(FAULT) = None;
+        let len = core::ptr::addr_of!(QUEUE_LEN).read();
+        if len == 0 {
+            return;
+        }
+        let head = core::ptr::addr_of!(QUEUE_HEAD).read();
+        queue()[head] = None;
+        let remaining = len - 1;
+        *core::ptr::addr_of_mut!(QUEUE_LEN) = remaining;
+        if remaining == 0 {
+            *core::ptr::addr_of_mut!(QUEUE_HEAD) = 0;
+            FAULT_PENDING.store(false, Ordering::Relaxed);
+        } else {
+            *core::ptr::addr_of_mut!(QUEUE_HEAD) = (head + 1) % FAULT_QUEUE_LEN;
+        }
     }
-    FAULT_PENDING.store(false, Ordering::Relaxed);
 }
 
 /// The fault record still awaiting a decision has exhausted its budget: the
@@ -308,6 +366,21 @@ pub fn history_records() -> alloc::vec::Vec<FaultRecord> {
     let mut out = alloc::vec::Vec::new();
     for k in 0..items {
         if let Some(rec) = h[(oldest + k) % FAULT_HISTORY_LEN] {
+            out.push(rec);
+        }
+    }
+    out
+}
+
+/// Copy of the pending system fault queue, oldest first (diagnostics; backs the
+/// shell `faults` command). Up to [`FAULT_QUEUE_LEN`] entries.
+pub fn pending_records() -> alloc::vec::Vec<FaultRecord> {
+    let q = queue();
+    let head = unsafe { core::ptr::addr_of!(QUEUE_HEAD).read() };
+    let len = unsafe { core::ptr::addr_of!(QUEUE_LEN).read() };
+    let mut out = alloc::vec::Vec::new();
+    for k in 0..len {
+        if let Some(rec) = q[(head + k) % FAULT_QUEUE_LEN] {
             out.push(rec);
         }
     }
@@ -399,7 +472,21 @@ pub fn resolve(action: Recovery) {
         resolution_count(Recovery::Terminate),
         resolution_count(Recovery::Rollback)
     );
-    clear();
+    pop_front();
+    if let Some(next) = peek() {
+        crate::vprintln!(
+            "[fault] queue: pid {} {} next ({} queued)",
+            next.snapshot.pid,
+            next.kind.name(),
+            queued()
+        );
+        crate::kprintln!(
+            "[serial] [fault] queue: pid {} {} next ({} queued)",
+            next.snapshot.pid,
+            next.kind.name(),
+            queued()
+        );
+    }
 }
 
 /// Assert-fault helper for tests: the interceptor itself runs in interrupt
@@ -413,7 +500,10 @@ mod tests {
     #[cfg(test)]
     fn pin(record: FaultRecord) {
         unsafe {
-            *core::ptr::addr_of_mut!(FAULT) = Some(record);
+            *core::ptr::addr_of_mut!(QUEUE_HEAD) = 0;
+            *core::ptr::addr_of_mut!(QUEUE_LEN) = 0;
+            queue()[0] = Some(record);
+            *core::ptr::addr_of_mut!(QUEUE_LEN) = 1;
         }
         FAULT_PENDING.store(true, Ordering::Relaxed);
     }
@@ -579,6 +669,30 @@ mod tests {
         resolve(Recovery::Terminate);
         assert!(!pending(), "terminate resolves the hang");
         counters()[5] = 0;
+    }
+
+    #[test]
+    fn queue_preserves_order_and_drains() {
+        FAULT_PENDING.store(false, Ordering::Relaxed);
+        unsafe {
+            *core::ptr::addr_of_mut!(QUEUE_HEAD) = 0;
+            *core::ptr::addr_of_mut!(QUEUE_LEN) = 0;
+        }
+        counters()[1] = 0;
+        counters()[2] = 0;
+        publish(1, FaultCode::DivideError, snap(1, 0x1111));
+        publish(2, FaultCode::PageFault, snap(2, 0x2222));
+        assert_eq!(queued(), 2, "both faults queue");
+        assert_eq!(peek().expect("front present").snapshot.pid, 1);
+        resolve(Recovery::Terminate);
+        assert!(pending(), "a queued fault keeps the gate open");
+        assert_eq!(peek().expect("next present").snapshot.pid, 2);
+        assert_eq!(queued(), 1);
+        resolve(Recovery::Terminate);
+        assert_eq!(queued(), 0);
+        assert!(!pending(), "the gate clears once the queue drains");
+        counters()[1] = 0;
+        counters()[2] = 0;
     }
 
     #[test]

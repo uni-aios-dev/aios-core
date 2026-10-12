@@ -69,6 +69,8 @@
 
 - [x] **Kernel hang watchdog (v2.45.3)**: the spec's "hang detection" item. `schedule()`'s outgoing-context refresh tracks per-slot `STALL_SINCE`/`STALL_RIP`; a ring-3 task whose saved `rip` is unchanged for `HANG_WATCHDOG_TICKS` (10 s) with no pending decision is handed to the new `fault::record_hang`, which publishes `FaultCode::Hang` and freezes it — the crash dialog titles it `Task Hung` (`pid N hung: hang (crash #k/3)`), the record joins the history ring (`faults` lists it) and charges the same fault budget. Bookkeeping resets on spawn/remove/rollback/resume. `intercept`/`record_hang` share a `publish` helper. Kernel build+clippy clean; new `hang_record_publishes_and_resolves` test + `Hang` name test. Known heuristic limitation recorded in BUGS (v2.45.3).
 
+- [x] **System fault queue (v2.45.4)**: the spec's "fault queue / system queue" item, and the fix for BUGS OPEN v2.45.0 #3 (single-slot). `Option<FaultRecord>` became a bounded FIFO (`FAULT_QUEUE_LEN = MAX_TASKS`, `QUEUE_HEAD`/`QUEUE_LEN`); `publish` enqueues, `peek()` returns the front, `resolve()` pops it and the next record becomes current without closing the dialog (GUI handlers `dirty_all()`; serial `[fault] queue: pid N <kind> next (K queued)`). New `queued()`/`pending_records()`; the `faults` command reports `queued=N` + `queued:` lines and the dialog appends `(+N more queued)`. The hang watchdog now enqueues behind an existing fault instead of being suppressed. Kernel build+clippy clean; new `queue_preserves_order_and_drains` test; existing tests retargeted to the queue.
+
 ## GUI Roadmap (full-fledged desktop, backlog)
 
 The v2.38.22 GUI is a first step; a real windowing system needs:

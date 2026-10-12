@@ -30,8 +30,11 @@
      `cs == KERNEL_CS` (kernel thread or idle context) has no resumable user
      boundary and takes the existing `fatal` path — only ring-3 tasks are
      rescued. A double fault (`#DF`, vector 8) always halts.
-  3. The kernel crash dialog is **single-slot**: one frozen task at a time, and
-     later faults overwrite the pending record.
+  3. The kernel crash dialog is **one task at a time**: it shows the front of
+     the system fault queue. Since v2.45.4 the queue is bounded but multi-slot
+     (`FAULT_QUEUE_LEN`), so several faults/hangs can wait and the dialog
+     advances to the next on each resolution; a full queue drops new records
+     with `[fault] queue full`.
 - **Workaround / notes:** on the host runtime use `restart` semantics for
   memory-sensitive tasks instead of `Rollback`; the recursion-safe `run_isolated`
   quiet panic hook keeps the log clean. Kernel smoke tests remain limited to

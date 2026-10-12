@@ -676,9 +676,10 @@ input.
 - `wifi` (status), `wifi sim` (arm the simulated test radio) and `wifi real`
   (back to the honest real mode) control which radio the Network window's
   `Scan`/`Connect` use — the default is **real** (v2.38.36).
-- `faults` (v2.45.2) prints the fault-recovery aggregate — `total`, `resume`,
-  `terminate`, `rollback` counters — then one line per record in the ring
-  (`pid N <kind> (crash #k) rip=… hash=…`), oldest first, plus a `(dialog
+- `faults` (v2.45.2, queue v2.45.4) prints the fault-recovery aggregate —
+  `total`, `resume`, `terminate`, `rollback`, `queued` counters — then one line
+  per resolved record in the ring (`pid N <kind> (crash #k) rip=… hash=…`,
+  oldest first), a `queued:` line per still-pending fault, and a `(dialog
   pending …)` marker while a task awaits a decision.
 - Keys consumed by the TUI are kept out of the console echo; unconsumed keys
   still print `[key] …` / `usb key …` to the console and serial as before.
@@ -854,8 +855,12 @@ focused) returns to the console/TUI.
   `[gui] crash dialog open pid <n>`; resolutions log `[fault] pid <n>
   <rollback|terminate|resume>` followed by a totals line
   `[fault] totals faults=N resume=N terminate=N rollback=N`. Only ring-3 tasks
-  are rescued: a fault in kernel context (or a double fault) still halts. See
-  `BUGS.md` (OPEN v2.45.0) for the metadata-only snapshot limitation.
+  are rescued: a fault in kernel context (or a double fault) still halts. Since
+  v2.45.4 multiple faults/hangs may be pending at once in the **system fault
+  queue**: the dialog shows the oldest and, when more are waiting, appends
+  `(+N more queued)` to the task line; resolving one advances to the next (logged
+  `[fault] queue: pid <n> <kind> next (K queued)`) without the dialog closing.
+  See `BUGS.md` (OPEN v2.45.0) for the metadata-only snapshot limitation.
 - **Restore of closed z-order (v2.38.31)**: a window remembers its place in
   the stack when it closes. Reopening it — desktop icon, task-bar button, or
   a ring-3 client presenting again — puts it back at that spot *between* its

@@ -973,14 +973,17 @@ fn crash_click(fb: &Framebuffer, x: usize, y: usize) {
             crate::kprintln!("[gui] crash dialog blocks rollback click: over fault budget");
         } else {
             crate::fault::resolve(crate::fault::Recovery::Rollback);
+            dirty_all();
         }
     } else if hit(tx, CDLG_TM_W, ty) {
         crate::fault::resolve(crate::fault::Recovery::Terminate);
+        dirty_all();
     } else if hit(sx, CDLG_RS_W, sy) {
         if budget_locked {
             crate::kprintln!("[gui] crash dialog blocks resume click: over fault budget");
         } else {
             crate::fault::resolve(crate::fault::Recovery::Resume);
+            dirty_all();
         }
     } else {
         crate::kprintln!("[gui] crash dialog blocks click ({},{})", x, y);
@@ -999,6 +1002,7 @@ fn crash_key(sc: u8) -> bool {
             crate::kprintln!("[gui] crash dialog blocks resume: over fault budget");
         } else {
             crate::fault::resolve(crate::fault::Recovery::Resume);
+            dirty_all();
         }
         return true;
     }
@@ -1007,11 +1011,13 @@ fn crash_key(sc: u8) -> bool {
             crate::kprintln!("[gui] crash dialog blocks rollback: over fault budget");
         } else {
             crate::fault::resolve(crate::fault::Recovery::Rollback);
+            dirty_all();
         }
         return true;
     }
     if crate::interrupts::scancode_to_char(sc).is_some_and(|c| c.eq_ignore_ascii_case(&'t')) {
         crate::fault::resolve(crate::fault::Recovery::Terminate);
+        dirty_all();
         return true;
     }
     crate::kprintln!("[gui] crash dialog blocks scancode {:#04x}", sc);
@@ -3114,6 +3120,14 @@ fn draw_crash_dialog(fb: &Framebuffer) {
                 "R = Rollback   T = Terminate   Enter/S = Resume"
             },
         ),
+    };
+    let task_line = {
+        let q = crate::fault::queued();
+        if q > 1 {
+            format!("{}   (+{} more queued)", task_line, q - 1)
+        } else {
+            task_line
+        }
     };
     tui::draw_text(fb, x + 12, ly, &task_line, TEXT_HOT, WIN_BG, max);
     ly += console::GLYPH_H + 6;

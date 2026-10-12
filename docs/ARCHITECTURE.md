@@ -1422,16 +1422,18 @@ A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Lim
   twin of the host `run_isolated`. `intercept(frame, kind)` is called from the
   exception handlers for a **user** frame: it captures a `TaskSnapshot`
   (`pid`, `rip`, `cs`, `rsp`, `rflags`, `state_hash` — the latter an FNV-1a hash
-  of the register bundle), publishes a `FaultRecord`
+  of the register bundle), enqueues a `FaultRecord`
   (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault,
-  Hang }`, `count =` nth fault of the pid), freezes the task
+  Hang }`, `count =` nth fault of the pid) into the bounded **system fault
+  queue** (`FAULT_QUEUE_LEN = MAX_TASKS`, FIFO), freezes the task
   (`sched::freeze_task`) and calls `schedule(frame)` to switch away.
-  `peek()`/`pending()` feed the GUI overlay and `resolve(Recovery)` applies
-  `Resume` (`unfreeze_task`), `Terminate` (`remove_task`) or `Rollback`
-  (`restore_task` re-enters at the captured frame, re-verifying the
-  `state_hash`). A per-task **fault budget** (`MAX_FAULTS_PER_TASK = 3`) locks
-  the dialog to Terminate once exceeded; every resolution is pushed into a
-  bounded history ring (`FAULT_HISTORY_LEN = 8`) with `fault_total()` /
+  `peek()`/`queued()` feed the GUI overlay (which resolves the front,
+  oldest-first) and `resolve(Recovery)` applies `Resume` (`unfreeze_task`),
+  `Terminate` (`remove_task`) or `Rollback` (`restore_task` re-enters at the
+  captured frame, re-verifying the `state_hash`), then pops the front — the next
+  queued record becomes current without closing the dialog. A per-task **fault
+  budget** (`MAX_FAULTS_PER_TASK = 3`) locks the dialog to Terminate once
+  exceeded; every resolution is pushed into a bounded history ring (`FAULT_HISTORY_LEN = 8`) with `fault_total()` /
   `resolution_count()` aggregates, and `history_records()` (oldest-first copy of
   the ring) backs the shell `faults` command (v2.45.2). Since v2.45.3
   `record_hang(snapshot)` is the **hang watchdog** entry — the scheduler calls

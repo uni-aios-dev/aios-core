@@ -357,11 +357,11 @@ pub fn schedule(frame: &mut InterruptFrame) {
             saved.ss = frame.ss;
             saved.rflags = frame.rflags;
             // Hang watchdog: a ring-3 task whose rip has not moved for
-            // HANG_WATCHDOG_TICKS is declared hung unless another task already
-            // awaits a recovery decision. Freezing here is safe — the task is
-            // current, so no other executor holds its slot, and the rotation
-            // below simply skips the now-frozen slot.
-            if frame.cs == USER_CS as u64 && !crate::fault::pending() {
+            // HANG_WATCHDOG_TICKS is declared hung. The fault queue keeps it
+            // behind any decision already awaiting input; freezing here is safe
+            // — the task is current, so no other executor holds its slot, and
+            // the rotation below simply skips the now-frozen slot.
+            if frame.cs == USER_CS as u64 {
                 let slot = cur as usize;
                 if stall_rip()[slot] != saved.rip {
                     stall_rip()[slot] = saved.rip;

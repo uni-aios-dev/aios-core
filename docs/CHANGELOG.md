@@ -1,5 +1,37 @@
 # AIOS Development Log
 
+## v2.45.4 — system fault queue: multiple frozen tasks, dialog resolves them in order (2026-10-12)
+
+### Added
+- **Bounded system fault queue** (`aios-kernel/src/fault.rs`, spec item
+  "fault queue / system queue"). Replaces the single-slot `Option<FaultRecord>`
+  with a FIFO of `FAULT_QUEUE_LEN = MAX_TASKS` records (`QUEUE_HEAD`/`QUEUE_LEN`
+  over `[Option<FaultRecord>; N]`). `publish` enqueues (never overwrites);
+  `peek()` returns the front, `pending()` stays true while the queue is
+  non-empty, `resolve()` applies to the front and pops it. Several tasks may now
+  be frozen at once and are surfaced oldest-first.
+- `queued()` and `pending_records()` (oldest-first copy of the queue). The
+  kernel shell `faults` command reports `queued=N` and a `queued:` line per
+  pending record; the crash dialog appends `(+N more queued)` to the task line,
+  so an operator sees the backlog and resolves it one task at a time.
+
+### Changed
+- `resolve()` pops the front instead of clearing a single slot; when more
+  records remain it logs `[fault] queue: pid N <kind> next (K queued)` and the
+  dialog stays open (the GUI handlers call `dirty_all()` so the next record
+  repaints immediately).
+- The scheduler hang watchdog no longer suppresses detection while a decision is
+  pending — a hang now enqueues behind an existing fault.
+- `intercept` and `record_hang` share `publish` unchanged; only its storage
+  moved to the queue.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. New `#[cfg(test)]` case `queue_preserves_order_and_drains` (FIFO order,
+  depth, gate open until drained); the existing pin/round-trip tests were
+  retargeted to the queue harness (host test-compile pass; bare-target `test`
+  crate still unsupported, per kernel policy).
+
 ## v2.45.3 — hang watchdog: stalled ring-3 tasks join the crash dialog (2026-10-12)
 
 ### Added

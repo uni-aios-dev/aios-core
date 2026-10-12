@@ -1417,14 +1417,19 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
   близнец host-функции `run_isolated`. `intercept(frame, kind)` вызывается из
   обработчиков исключений для **пользовательского** фрейма: снимает
   `TaskSnapshot` (`pid`, `rip`, `cs`, `rsp`, `rflags`, `state_hash` — последний
-  это FNV-1a-хэш набора регистров) из `InterruptFrame`, публикует `FaultRecord`
+  это FNV-1a-хэш набора регистров) из `InterruptFrame`, ставит в очередь
+  `FaultRecord`
   (`FaultCode { DivideError, InvalidOpcode, GeneralProtection, PageFault, Hang }`,
-  `count =` номер сбоя данного pid), замораживает задачу
+  `count =` номер сбоя данного pid) в **системную очередь фолтов**
+  (`FAULT_QUEUE_LEN = MAX_TASKS`, FIFO), замораживает задачу
   (`sched::freeze_task`) и вызывает `schedule(frame)` для ухода с неё.
-  `peek()`/`pending()` питают GUI-оверлей, а `resolve(Recovery)` применяет
+  `peek()`/`queued()` питают GUI-оверлей (он разрешает начало, от старой к
+  новой), а `resolve(Recovery)` применяет
   `Resume` (`unfreeze_task`), `Terminate` (`remove_task`) или `Rollback`
   (`restore_task` возвращается в снятый фрейм с повторной проверкой
-  `state_hash`). Пер-задачный **бюджет сбоев** (`MAX_FAULTS_PER_TASK = 3`)
+  `state_hash`), затем выталкивает начало — следующая запись очереди становится
+  текущей без закрытия диалога. Пер-задачный **бюджет сбоев**
+  (`MAX_FAULTS_PER_TASK = 3`)
   запирает диалог на Terminate при его исчерпании; каждое решение уходит в
   ограниченное кольцо истории (`FAULT_HISTORY_LEN = 8`) с агрегатами
   `fault_total()` / `resolution_count()`, а `history_records()` (копия кольца от
