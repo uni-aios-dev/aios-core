@@ -1,5 +1,20 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.45.3): hang watchdog is a heuristic (rip-stability), not true progress tracking
+
+- **Status:** OPEN — a known limitation of the v2.45.3 hang detector, by design.
+- **Limit:** the kernel declares a ring-3 task hung when its saved instruction
+  pointer is unchanged for `HANG_WATCHDOG_TICKS` (10 s). A legitimate
+  compute-bound task that spends >10 s executing basically the same instruction
+  (e.g. a single-instruction busy loop) could false-positive. The window is
+  generous and the demo tasks' bounded buffer-fill loops move their `rip`
+  constantly, so this never fires in practice today.
+- **Mitigation:** the detection is non-destructive — it only opens the
+  operator-driven `Task Hung` dialog; choosing **Resume** unfreezes the task and
+  resets its 10 s window (`sched::unfreeze_task`), and the per-task fault budget
+  caps repeated re-flagging at 3. A future revision could track a true progress
+  counter (syscalls/sleeps) instead of raw `rip`.
+
 ## OPEN (v2.45.0): fault recovery is metadata-only and cannot rescue ring-0 faults
 
 - **Status:** OPEN — known limits of the v2.45.0 fault-tolerance system, by

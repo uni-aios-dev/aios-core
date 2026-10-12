@@ -825,13 +825,19 @@ focused) returns to the console/TUI.
   `[gui] modal close <label> confirmed`; `Esc` / `Cancel` logs
   `[gui] modal close <label> canceled` and the typed text stays. Closing a
   window with an empty note never shows the dialog.
-- **Crash recovery dialog (v2.45.0, budget v2.45.1)**: when a ring-3 task faults
+- **Crash recovery dialog (v2.45.0, budget v2.45.1, hang v2.45.3)**: when a
+  ring-3 task faults
   (divide error, invalid opcode, general protection or page fault) the kernel no
   longer halts — the task is frozen and a `Task Error` overlay opens over the
   desktop (above windows and the confirm dialog) showing `pid <n> faulted:
   <reason> (crash #N/3)` and the captured
   `snap rip=… rsp=… hash=0x…` (the hash is the snapshot's FNV-1a state-hash,
-  re-verified by Rollback). Resolve it by clicking a plate or pressing a key:
+  re-verified by Rollback). Since v2.45.3 the same overlay also catches a
+  **hang**: a ring-3 task whose instruction pointer does not change for 10 s
+  (no syscall, sleep or progress) is frozen by the scheduler watchdog, the
+  title reads `Task Hung`, and the line reads `pid <n> hung: hang (crash #N/3)`;
+  the serial log shows `[hang] pid <n> stalled at rip=… frozen`. Resolve it by
+  clicking a plate or pressing a key:
   | Key | Action |
   |-----|--------|
   | `R` | **Rollback** — restore the task's captured frame and resume |

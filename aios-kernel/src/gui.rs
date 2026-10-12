@@ -3070,7 +3070,16 @@ fn draw_crash_dialog(fb: &Framebuffer) {
             TITLE_CRASH,
         );
     }
-    tui::draw_text(fb, x + 6, y + 1, "Task Error", TEXT, TITLE_CRASH, max);
+    let hang = matches!(crate::fault::peek(), Some(r) if r.kind == crate::fault::FaultCode::Hang);
+    tui::draw_text(
+        fb,
+        x + 6,
+        y + 1,
+        if hang { "Task Hung" } else { "Task Error" },
+        TEXT,
+        TITLE_CRASH,
+        max,
+    );
     let mut ly = y + TITLE_H + 8;
     let budget_locked = crate::fault::over_budget_current();
     let (task_line, snap_line, hint_line) = match crate::fault::peek() {
@@ -3078,8 +3087,9 @@ fn draw_crash_dialog(fb: &Framebuffer) {
             let snap = &record.snapshot;
             (
                 format!(
-                    "pid {} faulted: {} (crash #{}/{})",
+                    "pid {} {}: {} (crash #{}/{})",
                     snap.pid,
+                    if hang { "hung" } else { "faulted" },
                     record.kind.name(),
                     record.count,
                     crate::fault::MAX_FAULTS_PER_TASK

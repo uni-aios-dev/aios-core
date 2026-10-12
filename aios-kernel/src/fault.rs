@@ -18,6 +18,14 @@
 //! Rolled back — the dialog locks to Terminate only, so a defective task
 //! cannot pin the desktop in an endless crash/resume cycle.
 //!
+//! The **hang watchdog** ([`record_hang`], triggered by the scheduler) is the
+//! spec-mandated companion to exception interception: a ring-3 task whose
+//! saved `rip` does not change for [`crate::sched::HANG_WATCHDOG_TICKS`] is
+//! declared hung — no syscall, sleep or progress — and frozen through the same
+//! dialog. Hangs charge the same per-task budget (the operator may Resume a
+//! busy-work task or Terminate a true spinner), rollback restores the recorded
+//! stall point.
+//!
 //! Kernel-context faults (ring 0, including the idle context) still halt the
 //! system: their stack is not a resumable user boundary.
 //!
@@ -50,6 +58,9 @@ pub enum FaultCode {
     GeneralProtection = 13,
     /// Vector 14 — page fault (unmapped/protected access).
     PageFault = 14,
+    /// Not a CPU exception: the scheduler watchdog detected a ring-3 task
+    /// whose rip did not change for [`crate::sched::HANG_WATCHDOG_TICKS`].
+    Hang = 0x20,
 }
 
 impl FaultCode {
@@ -60,6 +71,7 @@ impl FaultCode {
             FaultCode::InvalidOpcode => "invalid opcode",
             FaultCode::GeneralProtection => "general protection fault",
             FaultCode::PageFault => "page fault",
+            FaultCode::Hang => "hang",
         }
     }
 }
@@ -158,6 +170,29 @@ fn ring() -> &'static mut [Option<FaultRecord>; FAULT_HISTORY_LEN] {
     }
 }
 
+/// Publish a pending fault record and charge the task's crash counter.
+///
+/// Shared by the exception interceptor and the scheduler hang watchdog; the
+/// caller keeps its own logging/freeze/switch responsibilities (interrupt
+/// context vs. scheduler context differ).
+fn publish(pid: u32, kind: FaultCode, snapshot: TaskSnapshot) -> u8 {
+    let count = {
+        let slot = pid as usize;
+        let c = counters();
+        c[slot] = c[slot].saturating_add(1);
+        c[slot]
+    };
+    unsafe {
+        *core::ptr::addr_of_mut!(FAULT) = Some(FaultRecord {
+            snapshot,
+            kind,
+            count,
+        });
+        FAULT_PENDING.store(true, Ordering::Relaxed);
+    }
+    count
+}
+
 /// Freeze the faulting current task and publish its fault record, then switch
 /// away from it so the recovery dialog (running in the idle context) can make
 /// a decision. `fatal` for ring-0 faults.
@@ -168,20 +203,18 @@ pub fn intercept(frame: &mut InterruptFrame, kind: FaultCode) {
         crate::interrupts::fatal_with(0x7000_0000 + kind as u32, kind.name());
     }
     let pid = crate::sched::current_pid();
-    let count = {
-        let slot = pid as usize;
-        let c = counters();
-        c[slot] = c[slot].saturating_add(1);
-        c[slot]
-    };
-    let snapshot = TaskSnapshot {
+    let count = publish(
         pid,
-        rip: frame.rip,
-        cs: frame.cs,
-        rsp: frame.rsp,
-        rflags: frame.rflags,
-        state_hash: TaskSnapshot::state_hash(pid, frame.rip, frame.cs, frame.rsp, frame.rflags),
-    };
+        kind,
+        TaskSnapshot {
+            pid,
+            rip: frame.rip,
+            cs: frame.cs,
+            rsp: frame.rsp,
+            rflags: frame.rflags,
+            state_hash: TaskSnapshot::state_hash(pid, frame.rip, frame.cs, frame.rsp, frame.rflags),
+        },
+    );
     crate::vprintln!(
         "[fault] pid {} {} at rip={:#x} (crash #{}/{}) -> frozen, awaiting recovery",
         pid,
@@ -198,16 +231,33 @@ pub fn intercept(frame: &mut InterruptFrame, kind: FaultCode) {
         count,
         MAX_FAULTS_PER_TASK
     );
-    unsafe {
-        *core::ptr::addr_of_mut!(FAULT) = Some(FaultRecord {
-            snapshot,
-            kind,
-            count,
-        });
-        FAULT_PENDING.store(true, Ordering::Relaxed);
-    }
     crate::sched::freeze_task(pid);
     crate::sched::schedule(frame);
+}
+
+/// Hang-watchdog entry: publish a stall record for `pid` from the snapshot the
+/// scheduler built from the task's last preemption frame, and freeze the task.
+/// Unlike [`intercept`] this runs *inside* `schedule()`, so it must not call
+/// `schedule` again — the ongoing rotation simply skips the now-frozen task
+/// and the crash dialog raises in the idle context.
+pub fn record_hang(snapshot: TaskSnapshot) {
+    let pid = snapshot.pid;
+    let count = publish(pid, FaultCode::Hang, snapshot);
+    crate::vprintln!(
+        "[hang] pid {} stalled at rip={:#x} (crash #{}/{}) -> frozen, awaiting recovery",
+        pid,
+        snapshot.rip,
+        count,
+        MAX_FAULTS_PER_TASK
+    );
+    crate::kprintln!(
+        "[serial] [hang] pid {} stalled at rip={:#x} frozen (crash #{}/{})",
+        pid,
+        snapshot.rip,
+        count,
+        MAX_FAULTS_PER_TASK
+    );
+    crate::sched::freeze_task(pid);
 }
 
 /// True while a fault awaits a recovery decision (crash dialog gate).
@@ -388,6 +438,7 @@ mod tests {
         );
         assert_eq!(FaultCode::DivideError.name(), "divide error");
         assert_eq!(FaultCode::InvalidOpcode.name(), "invalid opcode");
+        assert_eq!(FaultCode::Hang.name(), "hang");
     }
 
     #[test]
@@ -504,6 +555,30 @@ mod tests {
             &[9, 10],
             "newest two pushes land at the tail, oldest first"
         );
+    }
+
+    #[test]
+    fn hang_record_publishes_and_resolves() {
+        FAULT_PENDING.store(false, Ordering::Relaxed);
+        counters()[5] = 0;
+        let snapshot = TaskSnapshot {
+            pid: 5,
+            rip: 0x2340,
+            cs: 0x1b,
+            rsp: 0x9fff,
+            rflags: 0x202,
+            state_hash: TaskSnapshot::state_hash(5, 0x2340, 0x1b, 0x9fff, 0x202),
+        };
+        record_hang(snapshot);
+        assert!(pending(), "a detected hang opens the recovery gate");
+        let rec = peek().expect("hang published a record");
+        assert_eq!(rec.kind, FaultCode::Hang);
+        assert_eq!(rec.snapshot.pid, 5);
+        assert_eq!(rec.snapshot.rip, 0x2340);
+        assert_eq!(rec.count, 1);
+        resolve(Recovery::Terminate);
+        assert!(!pending(), "terminate resolves the hang");
+        counters()[5] = 0;
     }
 
     #[test]

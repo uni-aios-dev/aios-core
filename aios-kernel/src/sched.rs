@@ -18,6 +18,11 @@
 //! passes it is woken in place. With every user task asleep the rotation
 //! naturally falls back to task slot 0 (the idle context), which is logged as
 //! `[sched] idle`.
+//!
+//! Since v2.45.3 the outgoing-context refresh also runs the **hang watchdog**:
+//! it records when each ring-3 task's saved `rip` last changed and hands a task
+//! stalled for [`HANG_WATCHDOG_TICKS`] to `fault::record_hang` (freeze + crash
+//! dialog), catching a busy-spin hang that never raises a CPU exception.
 
 use crate::gdt::{KERNEL_CS, USER_CS, USER_DS};
 use crate::interrupts::InterruptFrame;
@@ -40,6 +45,14 @@ extern "C" {
 
 /// Switch cadence: preemption fires 4 times per second.
 const SWITCH_DIVIDER: u64 = TIMER_HZ / 4;
+
+/// Hang watchdog: a ring-3 task whose saved `rip` stays unchanged for this
+/// many ticks (wall clock) is declared hung — the scheduler freezes it and
+/// raises the crash dialog (Terminate/Resume/Rollback), charging the task's
+/// fault budget. Deliberately generous (10 s) so bounded buffer-fill loops in
+/// the demo tasks never false-positive; a true infinite spinner is caught a
+/// few seconds later.
+pub const HANG_WATCHDOG_TICKS: u64 = 10 * TIMER_HZ;
 
 /// One slot is always reserved for the CPU-wide idle task (slot 0).
 pub const MAX_TASKS: usize = 6;
@@ -103,6 +116,13 @@ static mut TASKS: [Task; MAX_TASKS] = [
 static mut CURRENT: isize = -1;
 static mut LAST_SWITCH_TICK: u64 = 0;
 static mut SWITCH_COUNT: u64 = 0;
+/// Hang-watchdog bookkeeping: the tick at which each slot's saved `rip` last
+/// changed (0 = never observed yet), and the last observed `rip` itself. The
+/// watchdog compares the refreshed task rip against these each preemption; a
+/// ring-3 task that stalls on one rip for [`HANG_WATCHDOG_TICKS`] is declared
+/// hung and frozen through the crash dialog.
+static mut STALL_SINCE: [u64; MAX_TASKS] = [0; MAX_TASKS];
+static mut STALL_RIP: [u64; MAX_TASKS] = [0; MAX_TASKS];
 /// True until <code>kernel_main</code> hands off to <code>idle_loop</code>.
 ///
 /// While set, schedule() refuses to capture or switch the boot context (slot
@@ -145,6 +165,26 @@ fn tasks() -> &'static mut [Task; MAX_TASKS] {
         #[allow(static_mut_refs)]
         &mut *core::ptr::addr_of_mut!(TASKS)
     }
+}
+
+fn stall_since() -> &'static mut [u64; MAX_TASKS] {
+    unsafe {
+        #[allow(static_mut_refs)]
+        &mut *core::ptr::addr_of_mut!(STALL_SINCE)
+    }
+}
+
+fn stall_rip() -> &'static mut [u64; MAX_TASKS] {
+    unsafe {
+        #[allow(static_mut_refs)]
+        &mut *core::ptr::addr_of_mut!(STALL_RIP)
+    }
+}
+
+/// Reset the hang-watchdog bookkeeping for a slot (spawn/remove/restore).
+fn reset_stall(slot: usize, now: u64) {
+    stall_since()[slot] = now;
+    stall_rip()[slot] = 0;
 }
 
 pub fn init() {
@@ -191,11 +231,13 @@ pub fn spawn_user(entry: u64, stack_top: u64, arg1: u64, arg2: u64) -> Option<us
 
 fn spawn_with(fill: impl FnOnce(&mut InterruptFrame)) -> Option<usize> {
     let t = tasks();
+    let now = TICKS.load(Ordering::Relaxed);
     for (slot, task) in t.iter_mut().enumerate().skip(1) {
         if !task.present {
             fill(&mut task.frame);
             task.present = true;
             task.valid_frame = true;
+            reset_stall(slot, now);
             return Some(slot);
         }
     }
@@ -314,6 +356,34 @@ pub fn schedule(frame: &mut InterruptFrame) {
             saved.cs = frame.cs;
             saved.ss = frame.ss;
             saved.rflags = frame.rflags;
+            // Hang watchdog: a ring-3 task whose rip has not moved for
+            // HANG_WATCHDOG_TICKS is declared hung unless another task already
+            // awaits a recovery decision. Freezing here is safe — the task is
+            // current, so no other executor holds its slot, and the rotation
+            // below simply skips the now-frozen slot.
+            if frame.cs == USER_CS as u64 && !crate::fault::pending() {
+                let slot = cur as usize;
+                if stall_rip()[slot] != saved.rip {
+                    stall_rip()[slot] = saved.rip;
+                    stall_since()[slot] = ticks;
+                } else if ticks.wrapping_sub(stall_since()[slot]) >= HANG_WATCHDOG_TICKS {
+                    crate::fault::record_hang(crate::fault::TaskSnapshot {
+                        pid: slot as u32,
+                        rip: saved.rip,
+                        cs: saved.cs,
+                        rsp: saved.rsp,
+                        rflags: saved.rflags,
+                        state_hash: crate::fault::TaskSnapshot::state_hash(
+                            slot as u32,
+                            saved.rip,
+                            saved.cs,
+                            saved.rsp,
+                            saved.rflags,
+                        ),
+                    });
+                    stall_since()[slot] = ticks;
+                }
+            }
         }
     }
 
@@ -437,7 +507,9 @@ pub fn freeze_task(pid: u32) {
     }
 }
 
-/// Unfreeze a previously frozen task (Resume / Rollback aftermath).
+/// Unfreeze a previously frozen task (Resume / Rollback aftermath). Resets the
+/// hang clock so a resumed task gets a fresh watchdog window instead of being
+/// re-flagged on its very next preemption.
 pub fn unfreeze_task(pid: u32) {
     let idx = pid as usize;
     if idx == 0 || idx >= MAX_TASKS {
@@ -446,6 +518,7 @@ pub fn unfreeze_task(pid: u32) {
     let t = tasks();
     if t[idx].present {
         t[idx].sleep_until = 0;
+        reset_stall(idx, TICKS.load(Ordering::Relaxed));
     }
 }
 
@@ -462,6 +535,7 @@ pub fn remove_task(pid: u32) {
         t[idx].present = false;
         t[idx].valid_frame = false;
         t[idx].sleep_until = 0;
+        reset_stall(idx, 0);
         unsafe {
             #[allow(static_mut_refs)]
             if CURRENT == idx as isize {
@@ -487,6 +561,7 @@ pub fn restore_task(pid: u32, snapshot: crate::fault::TaskSnapshot) {
         t[idx].frame.rflags = snapshot.rflags;
         t[idx].valid_frame = true;
         t[idx].sleep_until = 0;
+        reset_stall(idx, TICKS.load(Ordering::Relaxed));
         crate::vprintln!("[sched] task {} rolled back", pid);
         crate::kprintln!("[serial] [sched] task {} rolled back", pid);
     }

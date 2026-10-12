@@ -1,5 +1,39 @@
 # AIOS Development Log
 
+## v2.45.3 — hang watchdog: stalled ring-3 tasks join the crash dialog (2026-10-12)
+
+### Added
+- **Kernel hang watchdog** (`aios-kernel/src/sched.rs` +
+  `fault::record_hang`). The outgoing-context refresh in `schedule()` now tracks,
+  per slot, the wall-clock tick at which a ring-3 task's saved `rip` last changed
+  (`STALL_SINCE`/`STALL_RIP`). A task whose `rip` is unchanged for
+  `HANG_WATCHDOG_TICKS` (10 s) with no other decision pending is handed to
+  `fault::record_hang`, which publishes a `FaultCode::Hang` record and freezes
+  the task — no CPU exception required.
+- **`FaultCode::Hang`** variant (`name() == "hang"`). The crash dialog titles a
+  hang `Task Hung` (vs. `Task Error`) and reads `pid N hung: hang (crash #k/3)`;
+  `record_hang` logs `[hang] pid N stalled at rip=… frozen` /
+  `[serial] [hang] pid N stalled at rip=… frozen`, and the record flows through
+  the same history ring (so the shell `faults` command lists it) and the same
+  per-task fault budget (Resume/Rollback ignored once over budget, Terminate
+  forced).
+- Hang bookkeeping is reset on spawn (`spawn_with`), terminate (`remove_task`),
+  rollback (`restore_task`) and resume (`unfreeze_task`), so a recovered task
+  always gets a fresh 10 s window instead of being re-flagged immediately.
+
+### Changed
+- `intercept` and `record_hang` now share a private `publish(pid, kind,
+  snapshot)` helper (counter charge + pending record); `intercept` keeps its
+  `schedule(frame)` call, `record_hang` must not re-schedule (it already runs
+  inside `schedule`).
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. New `#[cfg(test)]` case `hang_record_publishes_and_resolves` plus the
+  extended `code_names_are_stable` (type-checked via the host test-compile pass;
+  bare-target `test` crate still unsupported, per kernel policy). 10 s window
+  chosen so bounded buffer-fill loops in the ring-3 demos never false-positive.
+
 ## v2.45.2 — kernel shell `faults`: fault history ring diagnostics (2026-10-12)
 
 ### Added

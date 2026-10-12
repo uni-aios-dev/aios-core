@@ -67,6 +67,8 @@
 
 - [x] **`faults` shell command (v2.45.2)**: `/init` kernel shell gained `faults` — prints the recovery aggregate (`total`/`resume`/`terminate`/`rollback`) followed by one line per record of the bounded history ring (`pid N <kind> (crash #k) rip=… hash=…`, oldest first) via the new public `fault::history_records()`, plus a `(dialog pending …)` marker while a task awaits a decision. `HISTORY_ITEMS` (capped at `FAULT_HISTORY_LEN`) tracks filled slots so the walk skips `None` gaps; the ring test now also asserts oldest-first ordering.
 
+- [x] **Kernel hang watchdog (v2.45.3)**: the spec's "hang detection" item. `schedule()`'s outgoing-context refresh tracks per-slot `STALL_SINCE`/`STALL_RIP`; a ring-3 task whose saved `rip` is unchanged for `HANG_WATCHDOG_TICKS` (10 s) with no pending decision is handed to the new `fault::record_hang`, which publishes `FaultCode::Hang` and freezes it — the crash dialog titles it `Task Hung` (`pid N hung: hang (crash #k/3)`), the record joins the history ring (`faults` lists it) and charges the same fault budget. Bookkeeping resets on spawn/remove/rollback/resume. `intercept`/`record_hang` share a `publish` helper. Kernel build+clippy clean; new `hang_record_publishes_and_resolves` test + `Hang` name test. Known heuristic limitation recorded in BUGS (v2.45.3).
+
 ## GUI Roadmap (full-fledged desktop, backlog)
 
 The v2.38.22 GUI is a first step; a real windowing system needs:
