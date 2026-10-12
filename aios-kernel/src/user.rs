@@ -1,6 +1,6 @@
-//! Ring-3 demo programs and their memory setup (Milestones 3-5).
+//! Ring-3 demo programs and their memory setup (Milestones 3-5, sockets v2.51.0).
 //!
-//! Four tiny user programs are copied into freshly mapped user pages and
+//! Five tiny user programs are copied into freshly mapped user pages and
 //! entered through the scheduler's fabricated ring-3 frames:
 //!
 //! - program A (slot 2): sends its counter to slot 3, drains its inbox, then
@@ -13,7 +13,13 @@
 //!   via `SYS_GUI` every 6 ticks; each cycle it also drains one input event
 //!   (`SYS_GUI` GET_EVENT) — a key turns the fill red, a body click turns it
 //!   green, echoed back through `SYS_WRITE` (visible only while the GUI
-//!   desktop owns the screen).
+//!   desktop owns the screen);
+//! - program E (slot 6, v2.51.0): the ring-3 socket client — two UDP sockets
+//!   bound to fixed local ports play a loopback ping-pong over the bound IP
+//!   (`SYS_SOCK_ADDR` first), sending `ring3` from client to server and `ack!`
+//!   back, printing `sock-e ok` once a round trip has completed. It proves the
+//!   *userspace* face of the socket layer: every `SYS_SOCK_*` call runs from
+//!   ring 3 over `int 0x80` into the kernel `sock` table and the loopback ring.
 //!
 //! `SYS_SEND` target ids are *scheduler slot ids* (slots 2/3/4 — the kernel
 //! worker owns slot 1); `SLOT_*` constants document the mapping. A and B form
@@ -22,20 +28,24 @@
 //!
 //! Every program starts by calling `SYS_SLEEP` (20 ticks) so the whole
 //! userspace is briefly asleep at boot — the scheduler must fall back to the
-//! idle context (`[sched] idle`) and wake the four as their deadlines pass,
+//! idle context (`[sched] idle`) and wake the five as their deadlines pass,
 //! proving sleep, wake and idle fallback in one QEMU run.
 
 use alloc::vec::Vec;
 
 use crate::memory;
 use crate::sched;
-use crate::syscalls::{SYS_GETPID, SYS_GUI, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_WRITE};
+use crate::syscalls::{
+    SYS_GETPID, SYS_GUI, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_SOCKET, SYS_SOCK_ADDR, SYS_SOCK_BIND,
+    SYS_SOCK_CONNECT, SYS_SOCK_RECV, SYS_SOCK_SEND, SYS_WRITE,
+};
 use crate::{kprintln, vprintln};
 
 pub const PID_A: u32 = 1;
 pub const PID_B: u32 = 2;
 pub const PID_C: u32 = 3;
 pub const PID_D: u32 = 4;
+pub const PID_E: u32 = 5;
 
 /// Runtime slot ids seen by `current_pid()`/`SYS_*` calls. The kernel worker
 /// takes slot 1, then the demo tasks are spawned A → B → C, so they land on
@@ -69,6 +79,17 @@ const GUI_COLOR_STEP: u64 = 0x00_11_2a_44;
 const GUI_KEY_COLOR: u64 = 0x00_C0_40_40;
 /// Fill colour the demo switches to on a click event (green-ish).
 const GUI_CLICK_COLOR: u64 = 0x00_40_C0_40;
+
+/// Ring-3 socket demo (pid 5): local port of the client socket.
+const SOCK_CLI_PORT: u64 = 40_110;
+/// Ring-3 socket demo (pid 5): local port of the server socket.
+const SOCK_SRV_PORT: u64 = 40_111;
+/// Ring-3 socket demo (pid 5): receive buffer length used by `SYS_SOCK_RECV`.
+const SOCK_BUF_LEN: u64 = 16;
+/// Ring-3 socket demo (pid 5): expected length of the inbound `ring3` datagram.
+const SOCK_REQ_LEN: u64 = 5;
+/// Ring-3 socket demo (pid 5): expected length of the inbound `ack!` datagram.
+const SOCK_REPLY_LEN: u64 = 4;
 
 /// Tiny x86-64 emitter used to build the raw-machine-code demo programs.
 ///
@@ -178,6 +199,54 @@ impl Asm {
     /// `cmp ecx, imm8` (83 F9 imm8) — compares the event type.
     fn cmp_ecx_imm8(&mut self, v: u8) {
         self.buf.extend_from_slice(&[0x83, 0xF9, v]);
+    }
+
+    /// `mov ebx, eax` (89 C3) — the socket demo keeps its IP snapshot in ebx,
+    /// which the kernel gate preserves across `int 0x80`.
+    fn mov_ebx_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x89, 0xC3]);
+    }
+
+    /// `mov esi, ebx` (89 DE) — the connect target IP into the syscall arg.
+    fn mov_esi_ebx(&mut self) {
+        self.buf.extend_from_slice(&[0x89, 0xDE]);
+    }
+
+    /// `mov edi, r8d` (44 89 C7) — the client fd into the syscall arg register.
+    fn mov_edi_r8d(&mut self) {
+        self.buf.extend_from_slice(&[0x44, 0x89, 0xC7]);
+    }
+
+    /// `mov edi, r9d` (44 89 CF) — the server fd into the syscall arg register.
+    fn mov_edi_r9d(&mut self) {
+        self.buf.extend_from_slice(&[0x44, 0x89, 0xCF]);
+    }
+
+    /// `mov r8d, eax` (41 89 C0) — persist the client fd across syscalls.
+    fn mov_r8d_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x41, 0x89, 0xC0]);
+    }
+
+    /// `mov r9d, eax` (41 89 C1) — persist the server fd across syscalls.
+    fn mov_r9d_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x41, 0x89, 0xC1]);
+    }
+
+    /// `cmp eax, imm8` (83 F8 imm8) — compares a `SYS_SOCK_RECV` length result.
+    fn cmp_eax_imm8(&mut self, v: u8) {
+        self.buf.extend_from_slice(&[0x83, 0xF8, v]);
+    }
+
+    /// `mov edx, imm32` (BA imm32) — a raw port/length literal into `rdx`.
+    fn mov_edx_imm(&mut self, v: u64) {
+        self.buf.push(0xBA);
+        self.imm32(v);
+    }
+
+    /// `mov esi, imm32` (BE imm32) — a raw literal into `esi` (bind port).
+    fn mov_esi_imm(&mut self, v: u64) {
+        self.buf.push(0xBE);
+        self.imm32(v);
     }
 
     /// `jz rel8` forward placeholder; patch with [`Self::patch_rel8`].
@@ -478,12 +547,157 @@ fn build_pid4() -> Vec<u8> {
     a.finish(PID_D)
 }
 
+/// Ring-3 socket client (pid 5, v2.51.0): a userspace loopback ping-pong over
+/// the `SYS_SOCK_*` family. Two UDP sockets on fixed local ports talk to each
+/// other through the kernel socket table and the loopback ring:
+/// `SYS_SOCK_ADDR` waits for a bound IPv4 (0 while the link is down),
+/// connect(client → server port) + `SYS_SOCK_SEND "ring3"`, a length-gated
+/// `SYS_SOCK_RECV`, then the reverse leg (`ack!`) and a `SYS_WRITE` verdict.
+/// Fds live in r8d/r9d (survive `int 0x80`), the IP snapshot in ebx; esi/edx
+/// are per-call syscall arguments. Any failed handshake step retries after a
+/// short sleep so the demo never spins.
+fn build_pid5() -> Vec<u8> {
+    let mut a = Asm::new();
+
+    // boot sleep, matching the other tasks
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(BOOT_SLEEP_TICKS);
+    a.int80();
+
+    // open both UDP sockets and keep the fds in r8d (client) / r9d (server)
+    a.mov_edi(0);
+    a.mov_eax(SYS_SOCKET);
+    a.int80();
+    a.mov_r8d_eax();
+    a.mov_edi(0);
+    a.mov_eax(SYS_SOCKET);
+    a.int80();
+    a.mov_r9d_eax();
+
+    // fixed local ports so the loopback 5-tuples are stable
+    a.mov_edi_r8d();
+    a.mov_esi_imm(SOCK_CLI_PORT);
+    a.mov_eax(SYS_SOCK_BIND);
+    a.int80();
+    a.mov_edi_r9d();
+    a.mov_esi_imm(SOCK_SRV_PORT);
+    a.mov_eax(SYS_SOCK_BIND);
+    a.int80();
+
+    let start = a.buf.len();
+
+    // wait for an address (link down -> SYS_SOCK_ADDR returns 0), then snapshot it in ebx
+    a.mov_eax(SYS_SOCK_ADDR);
+    a.int80();
+    a.mov_ebx_eax();
+    a.test_rax_rax();
+    let jz_no_ip = a.jz_fwd();
+
+    // leg 1: client sends "ring3" to the server's local port
+    a.mov_edi_r8d();
+    a.mov_esi_ebx();
+    a.mov_edx_imm(SOCK_SRV_PORT);
+    a.mov_eax(SYS_SOCK_CONNECT);
+    a.int80();
+    a.test_rax_rax();
+    let jz_cfail = a.jz_fwd();
+    a.mov_edi_r8d();
+    a.mov_esi_placeholder(0);
+    a.mov_edx_imm(SOCK_REQ_LEN);
+    a.mov_eax(SYS_SOCK_SEND);
+    a.int80();
+    a.test_rax_rax();
+    let jz_sfail = a.jz_fwd();
+
+    // server leg: wait until exactly 5 syscall-bytes arrive (the "ring3" datagram)
+    let rw1 = a.buf.len();
+    a.mov_edi_r9d();
+    let dbuf = a.mov_esi_abs();
+    a.mov_edx_imm(SOCK_BUF_LEN);
+    a.mov_eax(SYS_SOCK_RECV);
+    a.int80();
+    a.cmp_eax_imm8(SOCK_REQ_LEN as u8);
+    let je_got1 = a.je_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(rw1);
+    a.patch_rel8(je_got1);
+
+    // leg 2: the server replies "ack!" to the client's local port
+    a.mov_edi_r9d();
+    a.mov_esi_ebx();
+    a.mov_edx_imm(SOCK_CLI_PORT);
+    a.mov_eax(SYS_SOCK_CONNECT);
+    a.int80();
+    a.test_rax_rax();
+    let jz_srvfail = a.jz_fwd();
+    a.mov_edi_r9d();
+    a.mov_esi_placeholder(1);
+    a.mov_edx_imm(SOCK_REPLY_LEN);
+    a.mov_eax(SYS_SOCK_SEND);
+    a.int80();
+    a.test_rax_rax();
+    let jz_srvsfail = a.jz_fwd();
+
+    // client leg: wait until exactly 4 syscall-bytes arrive (the "ack!" datagram)
+    let rw2 = a.buf.len();
+    a.mov_edi_r8d();
+    let dbuf2 = a.mov_esi_abs();
+    a.mov_edx_imm(SOCK_BUF_LEN);
+    a.mov_eax(SYS_SOCK_RECV);
+    a.int80();
+    a.cmp_eax_imm8(SOCK_REPLY_LEN as u8);
+    let je_got2 = a.je_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(rw2);
+    a.patch_rel8(je_got2);
+
+    // round trip done: verdict, pace, repeat
+    a.mov_esi_placeholder(2);
+    a.mov_eax(SYS_WRITE);
+    a.int80();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(60);
+    a.int80();
+    a.patch_rel8(jz_no_ip);
+    a.patch_rel8(jz_cfail);
+    a.patch_rel8(jz_sfail);
+    a.patch_rel8(jz_srvfail);
+    a.patch_rel8(jz_srvsfail);
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(20);
+    a.int80();
+    a.jmp_back(start);
+
+    // ---- data section (offsets resolved after the layout is final) ----
+    a.string(b"ring3");
+    a.string(b"ack!");
+    a.string(b"sock-e ok");
+    let dbuf_off = a.buf.len();
+    for _ in 0..(SOCK_BUF_LEN / 4) {
+        a.data_u32(0);
+    }
+    let dbuf2_off = a.buf.len();
+    for _ in 0..(SOCK_BUF_LEN / 4) {
+        a.data_u32(0);
+    }
+
+    let base = CODE_BASE + PID_E as u64 * REGION_STRIDE;
+    a.patch_imm32(dbuf, (base + dbuf_off as u64) as u32);
+    a.patch_imm32(dbuf2, (base + dbuf2_off as u64) as u32);
+    a.finish(PID_E)
+}
+
 fn spawn_one(pid: u32) -> Result<(), &'static str> {
     let code = match pid {
         PID_A => build_pid1(),
         PID_B => build_pid2(),
         PID_C => build_pid3(),
         PID_D => build_pid4(),
+        PID_E => build_pid5(),
         _ => return Err("user: unknown pid"),
     };
     let code_va = CODE_BASE + pid as u64 * REGION_STRIDE;
@@ -532,15 +746,16 @@ fn spawn_one(pid: u32) -> Result<(), &'static str> {
 /// Map + register the demo tasks.
 ///
 /// Spawn order fixes the scheduler slot assignment (worker owns slot 1):
-/// A = slot 2, B = slot 3, C = slot 4, D (the GUI client) = slot 5. The
-/// `SLOT_*` SEND/RCV targets above depend on this exact order, so it must not
-/// change.
+/// A = slot 2, B = slot 3, C = slot 4, D (the GUI client) = slot 5,
+/// E (the socket client) = slot 6. The `SLOT_*` SEND/RCV targets above depend
+/// on this exact order, so it must not change.
 pub fn init() -> Result<(), &'static str> {
     spawn_one(PID_A)?;
     spawn_one(PID_B)?;
     spawn_one(PID_C)?;
     spawn_one(PID_D)?;
-    vprintln!("Milestone 3-5 userspace armed: four ring-3 tasks");
-    kprintln!("[serial] [user] four ring-3 tasks armed (A/B/C + GUI client)");
+    spawn_one(PID_E)?;
+    vprintln!("Milestone 3-5 userspace armed: five ring-3 tasks");
+    kprintln!("[serial] [user] five ring-3 tasks armed (A/B/C + GUI + sock client)");
     Ok(())
 }

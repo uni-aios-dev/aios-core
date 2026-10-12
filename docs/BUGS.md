@@ -47,13 +47,15 @@
   2. **UDP** has no broadcast/multicast send and no per-packet error reporting.
   3. **No kernel unit tests** (the bare `x86_64-unknown-none` target has no `test`
      harness), so the layer is run via the `socktest` shell self-test (loopback
-     UDP round trip + TCP connect/accept/echo/close) — automated, NIC-free — and
-     manually over a QEMU NIC with `udp`/`http`.
+     UDP round trip + TCP connect/accept/echo/close) and — since v2.51.0 — the
+     ring-3 demo task's loopback UDP ping-pong: both are automated and NIC-free.
+     The external path is exercised manually with `udp`/`http` over a QEMU NIC.
   4. The external-HTTP path still inherits the v2.48.0 NIC verification gap (only
      the NIC models QEMU provides; no `rtl8169` model; loopback needs no NIC).
-- **Workaround:** run `socktest` from the Shell tab for a no-NIC check, or
-  exercise the external path with `udp`/`http` over a QEMU NIC and read the
-  serial log (`[serial] [sock] …`).
+- **Workaround:** run `socktest` from the Shell tab for a no-NIC check (UDP +
+  TCP over loopback), watch the ring-3 demo task's `sock-e ok` for the
+  userspace path, or exercise the external path with `udp`/`http` over a QEMU
+  NIC and read the serial log (`[serial] [sock] …`).
 
 ## RESOLVED (v2.46.0): hang watchdog now tracks real progress (syscalls) + cooperative heartbeat
 

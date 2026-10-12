@@ -58,8 +58,10 @@ const SWITCH_DIVIDER: u64 = TIMER_HZ / 4;
 /// making progress even when preemption keeps sampling the same `rip`.
 pub const HANG_WATCHDOG_TICKS: u64 = 10 * TIMER_HZ;
 
-/// One slot is always reserved for the CPU-wide idle task (slot 0).
-pub const MAX_TASKS: usize = 6;
+/// One slot is always reserved for the CPU-wide idle task (slot 0); the kernel
+/// worker takes slot 1 and the ring-3 demo tasks slots 2..N-1. Raised to 7 in
+/// v2.51.0 for the fifth demo task (the ring-3 socket ping-pong client).
+pub const MAX_TASKS: usize = 7;
 
 #[derive(Clone, Copy)]
 struct Task {
@@ -108,6 +110,7 @@ impl Task {
 }
 
 static mut TASKS: [Task; MAX_TASKS] = [
+    Task::empty(),
     Task::empty(),
     Task::empty(),
     Task::empty(),

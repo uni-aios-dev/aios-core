@@ -1,5 +1,40 @@
 # AIOS Development Log
 
+## v2.51.0 — ring-3 sockets: userspace loopback ping-pong over `SYS_SOCK_*` (2026-10-12)
+
+### Added
+- **`SYS_SOCK_ADDR` (id 18)** (`aios-kernel/src/syscalls.rs`) — returns the
+  machine's bound IPv4 packed big-endian in the low 32 bits (`0` while the
+  link has no address). Before this, ring-3 had no way to learn its own IP —
+  which it needs to reach the loopback peer target. `MAX_PID` raised 6 → 7.
+- **Fifth ring-3 demo task, program E** (`aios-kernel/src/user.rs`, pid 5,
+  slot 6): the first *userspace* consumer of the socket layer. It opens two
+  UDP sockets (`SYS_SOCKET`), binds them to fixed local ports 40110/40111
+  (`SYS_SOCK_BIND`), waits for an address (`SYS_SOCK_ADDR`), then runs a
+  loopback ping-pong: connect client→server + `SYS_SOCK_SEND "ring3"`, a
+  length-gated `SYS_SOCK_RECV` (5 bytes), the reverse leg (`"ack!"`, 4 bytes)
+  and a `SYS_WRITE` verdict `sock-e ok`. Every syscall runs on the raw
+  `int 0x80` gate with fds kept in r8d/r9d and the IP snapshot in ebx (all
+  preserved through the kernel gate); failed handshake steps retry after a
+  short sleep instead of spinning.
+- **`MAX_TASKS` 6 → 7** (`aios-kernel/src/sched.rs`) to seat the fifth demo
+  task (worker = slot 1, demos = slots 2..6); the scheduler, fault-queue and
+  mailbox arrays grow accordingly.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.51.0`.
+- The socket layer is now exercised from both sides of the ring boundary: the
+  `[sock]` serial lines and `sock-e ok` prove the full vertical slice
+  (ring-3 → `int 0x80` → kernel `sock` table → loopback → kernel socket →
+  `int 0x80` → ring-3), complementing the ring-0 `socktest` and the shell
+  `udp`/`http` clients.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. No kernel unit tests run on the bare target; the new path is proven
+  by the demo task's bookkeeping (`[sock] fd … `, `sock-e ok`) once a QEMU
+  link has a bound IP, and the external-NIC caveats stay tracked in BUGS.
+
 ## v2.50.0 — TCP server side (`listen`/`accept`) + loopback + `socktest` self-test (2026-10-12)
 
 ### Added

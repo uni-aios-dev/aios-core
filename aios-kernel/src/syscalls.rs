@@ -28,7 +28,7 @@
 use alloc::string::String;
 use core::ptr::addr_of_mut;
 
-use crate::{kprintln, sock, vprintln};
+use crate::{kprintln, net, sock, vprintln};
 
 pub const SYS_SEND: u64 = 1;
 pub const SYS_RECV: u64 = 2;
@@ -46,7 +46,7 @@ pub const SYS_PING: u64 = 7;
 /// and `rdx = kind | (count << 32)`.
 pub const SYS_FAULT_POLL: u64 = 8;
 
-// --- IPv4 socket layer (v2.49.0) ------------------------------------------
+// --- IPv4 socket layer (v2.49.0, self-address v2.51.0) ---------------------
 /// Open a socket: `rdi = kind` (0 UDP, 1 TCP). Returns `rax = fd`, or
 /// `u64::MAX` when the table is full.
 pub const SYS_SOCKET: u64 = 9;
@@ -73,6 +73,11 @@ pub const SYS_SOCK_LISTEN: u64 = 16;
 /// Hand out the next established connection of the listener at `rdi = fd`.
 /// Returns `rax = child fd`, or `u64::MAX` when none has completed yet.
 pub const SYS_SOCK_ACCEPT: u64 = 17;
+/// Own IPv4 address packed big-endian in the low 32 bits (same layout as
+/// `SYS_SOCK_CONNECT`), or `0` when the link has no address yet (v2.51.0).
+/// `rdi` is ignored. The only way a ring-3 program can learn its own address —
+/// needed to reach itself over loopback.
+pub const SYS_SOCK_ADDR: u64 = 18;
 
 /// Scratch buffer for `SYS_SOCK_SEND`/`SYS_SOCK_RECV` user copies.
 const SOCK_IO_CAP: usize = 1600;
@@ -85,8 +90,10 @@ const SYS_STR_CAP: usize = 64;
 /// busy producer cannot flood the console proof lines.
 const WRITE_LOG_EVERY: u64 = 32;
 
-/// Highest task id reachable through the syscall gate.
-pub const MAX_PID: usize = 6;
+/// Highest task id reachable through the syscall gate. Raised to 7 in v2.51.0
+/// for the fifth ring-3 demo task (slot 6); the mailbox arrays keep slot 0
+/// unused so index 0 stays an invalid mailbox target.
+pub const MAX_PID: usize = 7;
 const MAILBOX_DEPTH: usize = 16;
 
 /// `SYS_SEND`/`SYS_RECV` console+serial lines are emitted every
@@ -127,6 +134,7 @@ impl Mailbox {
 }
 
 static mut MAILBOXES: [Mailbox; MAX_PID] = [
+    Mailbox::new(),
     Mailbox::new(),
     Mailbox::new(),
     Mailbox::new(),
@@ -416,6 +424,10 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
                     None => frame.rax = u64::MAX,
                 }
             }
+        }
+        SYS_SOCK_ADDR => {
+            let ip = net::bound_ip();
+            frame.rax = u32::from_be_bytes(ip) as u64;
         }
         other => {
             vprintln!("[sysc] unknown syscall {} from pid {}", other, pid);
