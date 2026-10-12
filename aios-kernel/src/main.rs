@@ -27,6 +27,7 @@ mod ps2;
 mod psf;
 mod sched;
 mod serial;
+mod sock;
 mod syscalls;
 mod thermal;
 mod tui;

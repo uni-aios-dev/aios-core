@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.40.0";
+pub(crate) const VERSION: &str = "AIOS kernel v2.49.0";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -190,6 +190,8 @@ fn run_command(cmd: &str) -> Vec<String> {
             "  wifi       radio mode + Wi-Fi card status".to_string(),
             "  wifi sim   enable the test radio (3 sim APs)".to_string(),
             "  wifi real  real radio only (card, no sim)".to_string(),
+            "  udp A.B.C.D PORT TEXT  send a UDP datagram, show the reply".to_string(),
+            "  http A.B.C.D PORT [HOST]  TCP GET / and print the response".to_string(),
         ],
         "tabs" => vec![
             "1 System  2 Sched  3 USB  4 IPC".to_string(),
@@ -286,11 +288,167 @@ fn run_command(cmd: &str) -> Vec<String> {
                 vec![String::new()]
             } else if let Some(text) = cmd.strip_prefix("echo ") {
                 vec![text.to_string()]
+            } else if let Some(rest) = cmd.strip_prefix("udp ") {
+                cmd_udp(rest)
+            } else if let Some(rest) = cmd.strip_prefix("http ") {
+                cmd_http(rest)
             } else {
                 vec!["unknown command, type help".to_string()]
             }
         }
     }
+}
+
+/// Parses `A.B.C.D PORT [rest]` from a shell command tail.
+fn parse_target(rest: &str) -> Option<([u8; 4], u16, String)> {
+    let mut it = rest.trim().splitn(3, ' ');
+    let ip = parse_ip(it.next()?)?;
+    let port = it.next()?.parse::<u16>().ok()?;
+    let tail = it.next().unwrap_or("").to_string();
+    Some((ip, port, tail))
+}
+
+/// Parses a dotted-quad IPv4 address.
+fn parse_ip(s: &str) -> Option<[u8; 4]> {
+    let mut oct = [0u8; 4];
+    let mut n = 0;
+    for part in s.split('.') {
+        if n >= 4 {
+            return None;
+        }
+        oct[n] = part.parse().ok()?;
+        n += 1;
+    }
+    if n == 4 {
+        Some(oct)
+    } else {
+        None
+    }
+}
+
+fn ip_str(ip: [u8; 4]) -> String {
+    format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+}
+
+/// `udp A.B.C.D PORT TEXT` — sends one datagram and waits up to ~2 s for a
+/// reply, printing the first 60 bytes of it.
+fn cmd_udp(rest: &str) -> Vec<String> {
+    let Some((ip, port, msg)) = parse_target(rest) else {
+        return vec!["usage: udp A.B.C.D PORT TEXT".to_string()];
+    };
+    if crate::net::lease().is_none() {
+        return vec!["no ip bound (dhcp/static first)".to_string()];
+    }
+    let pid = sched::current_pid();
+    let Some(fd) = crate::sock::open(pid, crate::sock::Kind::Udp) else {
+        return vec!["socket table full".to_string()];
+    };
+    crate::sock::connect(fd, ip, port);
+    let sent = crate::sock::send(fd, msg.as_bytes()).unwrap_or(0);
+    let mut lines = vec![format!("udp {}:{} sent {} bytes", ip_str(ip), port, sent)];
+    let mut buf = [0u8; 512];
+    let mut got = false;
+    for _ in 0..200 {
+        crate::net::poll();
+        if let Some(n) = crate::sock::recv(fd, &mut buf) {
+            if n > 0 {
+                let shown = String::from_utf8_lossy(&buf[..n.min(60)]).into_owned();
+                lines.push(format!("reply {} bytes: {}", n, shown));
+                got = true;
+                break;
+            }
+        }
+        crate::interrupts::delay_ms(10);
+    }
+    if !got {
+        lines.push("no reply (timeout)".to_string());
+    }
+    crate::sock::close(fd);
+    lines
+}
+
+/// `http A.B.C.D PORT [HOST]` — connects over TCP, issues `GET / HTTP/1.0` and
+/// prints the status line plus a short body preview.
+fn cmd_http(rest: &str) -> Vec<String> {
+    let Some((ip, port, host)) = parse_target(rest) else {
+        return vec!["usage: http A.B.C.D PORT [HOST]".to_string()];
+    };
+    if crate::net::lease().is_none() {
+        return vec!["no ip bound (dhcp/static first)".to_string()];
+    }
+    let host = if host.is_empty() { ip_str(ip) } else { host };
+    let pid = sched::current_pid();
+    let Some(fd) = crate::sock::open(pid, crate::sock::Kind::Tcp) else {
+        return vec!["socket table full".to_string()];
+    };
+    if !crate::sock::connect(fd, ip, port) {
+        crate::sock::close(fd);
+        return vec![format!(
+            "tcp connect {}:{} failed to start",
+            ip_str(ip),
+            port
+        )];
+    }
+    for _ in 0..100 {
+        crate::net::poll();
+        if crate::sock::status(fd) == 2 {
+            break;
+        }
+        crate::interrupts::delay_ms(10);
+    }
+    if crate::sock::status(fd) != 2 {
+        let st = crate::sock::status(fd);
+        crate::sock::close(fd);
+        return vec![format!(
+            "tcp connect {}:{} failed (status {})",
+            ip_str(ip),
+            port,
+            st
+        )];
+    }
+    let req = format!(
+        "GET / HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        host
+    );
+    let mut sent = false;
+    for _ in 0..200 {
+        if crate::sock::send(fd, req.as_bytes()).is_some() {
+            sent = true;
+            break;
+        }
+        crate::net::poll();
+        crate::interrupts::delay_ms(10);
+    }
+    if !sent {
+        crate::sock::close(fd);
+        return vec!["tcp send failed".to_string()];
+    }
+    let mut body = Vec::new();
+    let mut buf = [0u8; 1024];
+    for _ in 0..500 {
+        crate::net::poll();
+        match crate::sock::recv(fd, &mut buf) {
+            Some(0) => break,
+            Some(n) => {
+                body.extend_from_slice(&buf[..n]);
+                if body.len() > 4096 {
+                    break;
+                }
+            }
+            None => {}
+        }
+        crate::interrupts::delay_ms(10);
+    }
+    crate::sock::close(fd);
+    let mut lines = vec![format!("http {}:{} {} bytes", ip_str(ip), port, body.len())];
+    for chunk in body.split(|&b| b == b'\n').take(8) {
+        let text = String::from_utf8_lossy(chunk);
+        let trimmed = text.trim_end_matches('\r');
+        if !trimmed.is_empty() {
+            lines.push(trimmed.chars().take(60).collect());
+        }
+    }
+    lines
 }
 
 /// Feeds one make-code to the interactive TUI. Returns `true` when the TUI

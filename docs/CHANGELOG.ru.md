@@ -1,5 +1,53 @@
 # Журнал разработки AIOS
 
+## v2.49.0 — сокетный слой IPv4 в ядре: UDP-эндпоинт + минимальный TCP + syscall'ы `SYS_SOCK_*` (2026-10-12)
+
+### Добавлено
+- **Сокетный слой ядра** (`aios-kernel/src/sock.rs`). Фиксированная таблица из
+  `MAX_SOCKS = 8` дескрипторов (`static mut SOCKS`), каждый — либо
+  connectionless **UDP**-эндпоинт, либо минимальный **TCP**-сокет. API:
+  `open(pid, kind)` / `bind(fd, port)` / `connect(fd, ip, port)` /
+  `send(fd, data)` / `recv(fd, buf)` / `close(fd)` / `status(fd)`, а также
+  входящие хуки `deliver_udp` / `deliver_tcp` (питаются из `net`) и
+  `tick(now)` (таймеры ретрансмита и `TIME_WAIT`).
+  - **UDP**: кольцо из 3 дейтаграмм (MTU 1024), матчинг по локальному
+    привязанному порту; если `connect` задал пира, ответ принимается только с
+    этого `ip:port`. Эфемерные порты выделяются из диапазона `49152..60000`.
+  - **TCP active-open**: `Closed` → `SynSent` → `Established` →
+    `CloseWait`/`FinWait1`/`FinWait2`/`LastAck` → `TimeWait`. Схема
+    stop-and-wait с RX-кольцом 2048 байт и одним TX-буфером 1460 байт
+    (`TCP_MSS`), 4 ретрансмита с интервалом 50 тиков, фиксированное окно
+    `TCP_WINDOW = 64240`, без опций / window scaling / контроля перегрузки
+    (задокументированные границы).
+- **Вспомогательные функции маршрутизации/диспетчеризации `net`**
+  (`aios-kernel/src/net.rs`), на которые опирается сокетный слой:
+  `now_ticks()`, `bound_ip()`, `next_hop(dst)`, `arp_resolve`,
+  `emit_ipv4(dst, proto, l4)`, `l4_checksum(src, dst, proto, data)` и
+  `PROTO_TCP`. `handle_ipv4` теперь направляет `PROTO_TCP` в
+  `sock::deliver_tcp`, а `handle_udp` питает `sock::deliver_udp`; `net::poll`
+  тикает `sock::tick`.
+- **Syscall'ы `SYS_SOCK_*`** (`aios-kernel/src/syscalls.rs`, id 9–15):
+  `SYS_SOCKET` (9), `SYS_SOCK_BIND` (10), `SYS_SOCK_CONNECT` (11),
+  `SYS_SOCK_SEND` (12), `SYS_SOCK_RECV` (13), `SYS_SOCK_CLOSE` (14),
+  `SYS_SOCK_STATUS` (15). Буферы — это пользовательские виртуальные адреса,
+  копируемые побайтово через `memory::translate` (ошибочный указатель не может
+  уронить ядро), и каждая операция проверяет владение сокетом
+  (`sock::owner(fd) == pid`). `recv` возвращает число байт, `0` в конце потока
+  (TCP FIN) либо `u64::MAX`, когда данных нет.
+- **Shell-команды** (`aios-kernel/src/tui.rs`): `udp A.B.C.D PORT TEXT` шлёт
+  дейтаграмму и печатает первые 60 байт ответа (≈2 с), `http A.B.C.D PORT
+  [HOST]` открывает TCP-соединение, отправляет `GET / HTTP/1.0` и печатает
+  строку статуса и короткий предпросмотр тела.
+
+### Изменено
+- Баннер версии TUI теперь `AIOS kernel v2.49.0`.
+
+### Проверка
+- `aios-kernel` собирается и проходит линт чисто для `x86_64-unknown-none`,
+  `cargo fmt` чисто. Юнит-тесты ядра на bare-target не запускаются; сокетный
+  слой проверяется вручную из shell TUI (`udp`/`http`) на NIC в QEMU. Путь HTTP
+  ограничен моделями NIC, которые даёт QEMU (см. BUGS).
+
 ## v2.48.0 — расширение проводных NIC (e1000e / virtio-net / rtl8169 / pcnet) и укрепление стабильного интернета (2026-10-12)
 
 ### Добавлено

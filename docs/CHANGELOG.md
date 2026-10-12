@@ -1,5 +1,50 @@
 # AIOS Development Log
 
+## v2.49.0 — kernel IPv4 socket layer: UDP endpoint + minimal TCP + `SYS_SOCK_*` syscalls (2026-10-12)
+
+### Added
+- **Kernel socket layer** (`aios-kernel/src/sock.rs`). A fixed table of
+  `MAX_SOCKS = 8` descriptors (`static mut SOCKS`), each either a
+  connectionless **UDP** endpoint or a minimal **TCP** socket. The API is
+  `open(pid, kind)` / `bind(fd, port)` / `connect(fd, ip, port)` /
+  `send(fd, data)` / `recv(fd, buf)` / `close(fd)` / `status(fd)`, with the
+  inbound hooks `deliver_udp` / `deliver_tcp` (fed by `net`) and `tick(now)`
+  (retransmit + `TIME_WAIT` timers).
+  - **UDP**: a 3-slot datagram ring (MTU 1024) matched on the bound local port;
+    when `connect` has set the peer, a reply is accepted only from that
+    `ip:port`. Ephemeral ports are allocated from `49152..60000`.
+  - **TCP active-open**: `Closed` → `SynSent` → `Established` →
+    `CloseWait`/`FinWait1`/`FinWait2`/`LastAck` → `TimeWait`. Stop-and-wait
+    with a 2048-byte RX ring and one 1460-byte (`TCP_MSS`) TX buffer, 4
+    retransmits at 50-tick spacing, a fixed advertised `TCP_WINDOW = 64240`,
+    and no options / window scaling / congestion control (documented scope).
+- **`net` routing/dispatch helpers** (`aios-kernel/src/net.rs`) that the socket
+  layer builds on: `now_ticks()`, `bound_ip()`, `next_hop(dst)`, `arp_resolve`,
+  `emit_ipv4(dst, proto, l4)`, `l4_checksum(src, dst, proto, data)` and
+  `PROTO_TCP`. `handle_ipv4` now dispatches `PROTO_TCP` to `sock::deliver_tcp`
+  and `handle_udp` feeds `sock::deliver_udp`; `net::poll` ticks `sock::tick`.
+- **`SYS_SOCK_*` syscalls** (`aios-kernel/src/syscalls.rs`, ids 9–15):
+  `SYS_SOCKET` (9), `SYS_SOCK_BIND` (10), `SYS_SOCK_CONNECT` (11),
+  `SYS_SOCK_SEND` (12), `SYS_SOCK_RECV` (13), `SYS_SOCK_CLOSE` (14),
+  `SYS_SOCK_STATUS` (15). Buffers are user virtual addresses copied byte-by-byte
+  through `memory::translate` (a bogus pointer cannot fault the kernel), and
+  every op is gated on socket ownership (`sock::owner(fd) == pid`). `recv`
+  returns the byte count, `0` at end-of-stream (TCP FIN), or `u64::MAX` when
+  nothing is available.
+- **Shell commands** (`aios-kernel/src/tui.rs`): `udp A.B.C.D PORT TEXT` sends a
+  datagram and prints the first 60 bytes of any reply (≈2 s), `http A.B.C.D PORT
+  [HOST]` opens a TCP connection, issues `GET / HTTP/1.0`, and prints the status
+  line plus a short body preview.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.49.0`.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt`
+  clean. No kernel unit tests run on the bare target; the socket layer is
+  exercised manually from the TUI shell (`udp`/`http`) on a QEMU NIC. The HTTP
+  path is limited by the NIC models QEMU provides (see BUGS).
+
 ## v2.48.0 — wired NIC expansion (e1000e / virtio-net / rtl8169 / pcnet) and stable-internet hardening (2026-10-12)
 
 ### Added

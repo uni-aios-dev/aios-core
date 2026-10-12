@@ -654,7 +654,7 @@ input.
 | 3 | USB | xHCI controller state, keyboard report counter + last scancode, mouse report counter + buttons/dx/dy |
 | 4 | IPC | total send/recv, per-task mailbox occupancy |
 | 5 | Storage | AHCI/NVMe controller + LBA-read state (`none`/`error`/`ready`/`ready+rw`), MMIO window bytes used |
-| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `faults`, `wifi`, `wifi sim`, `wifi real`) |
+| 6 | Shell | in-kernel command shell (`help`, `tabs`, `info`, `ver`, `clear`, `echo …`, `gui`, `tui`, `faults`, `wifi`, `wifi sim`, `wifi real`, `udp …`, `http …`) |
 | 7 | About | version banner, controls help |
 
 ### Input
@@ -676,6 +676,12 @@ input.
 - `wifi` (status), `wifi sim` (arm the simulated test radio) and `wifi real`
   (back to the honest real mode) control which radio the Network window's
   `Scan`/`Connect` use — the default is **real** (v2.38.36).
+- `udp A.B.C.D PORT TEXT` (v2.49.0) opens a UDP socket, sends `TEXT` to the
+  target and waits up to ~2 s for a reply, printing `sent N bytes` and the first
+  60 bytes of the response (or `no reply (timeout)`). `http A.B.C.D PORT [HOST]`
+  opens a TCP connection, issues `GET / HTTP/1.0`, and prints the byte count,
+  the status line and a short body preview. Both require a bound IP (`dhcp`/
+  `static` first) and drive the socket layer through the `SYS_SOCK_*` syscalls.
 - `faults` (v2.45.2, queue v2.45.4, events v2.46.0) prints the fault-recovery
   aggregate — `total`, `resume`, `terminate`, `rollback`, `queued`, `events`
   counters — then one line

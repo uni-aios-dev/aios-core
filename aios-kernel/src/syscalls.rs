@@ -17,10 +17,17 @@
 //! flagging a long compute loop, and `SYS_FAULT_POLL`, which drains the bounded
 //! kernel fault event ring so a ring-3 monitor can observe the kernel's
 //! recovery traffic (the freestanding twin of the host `FaultReport` IPC).
+//!
+//! Networking (v2.49.0) adds the `SYS_SOCK_*` family — open/bind/connect/send/
+//! recv/close/status over the kernel IPv4 socket layer [`crate::sock`]. Every
+//! buffer argument is a user virtual address copied byte-by-byte through
+//! [`crate::memory::translate`], and each operation is gated on socket
+//! ownership (`pid`) so one task cannot touch another's descriptors.
 
 use alloc::string::String;
+use core::ptr::addr_of_mut;
 
-use crate::{kprintln, vprintln};
+use crate::{kprintln, sock, vprintln};
 
 pub const SYS_SEND: u64 = 1;
 pub const SYS_RECV: u64 = 2;
@@ -37,6 +44,32 @@ pub const SYS_PING: u64 = 7;
 /// `rax = pid` (or `u64::MAX` when the ring is empty), `rcx = faulting rip`,
 /// and `rdx = kind | (count << 32)`.
 pub const SYS_FAULT_POLL: u64 = 8;
+
+// --- IPv4 socket layer (v2.49.0) ------------------------------------------
+/// Open a socket: `rdi = kind` (0 UDP, 1 TCP). Returns `rax = fd`, or
+/// `u64::MAX` when the table is full.
+pub const SYS_SOCKET: u64 = 9;
+/// Bind a fixed local port: `rdi = fd`, `rsi = port`. Returns `rax = 1|0`.
+pub const SYS_SOCK_BIND: u64 = 10;
+/// Set the peer / start a TCP connect: `rdi = fd`, `rsi = IPv4` packed
+/// big-endian in the low 32 bits (`a<<24|b<<16|c<<8|d`), `rdx = port`.
+/// Returns `rax = 1|0`.
+pub const SYS_SOCK_CONNECT: u64 = 11;
+/// Send to the connected peer: `rdi = fd`, `rsi = user ptr`, `rdx = len`.
+/// Returns `rax = bytes accepted`, or `u64::MAX` when busy/unconnected.
+pub const SYS_SOCK_SEND: u64 = 12;
+/// Receive: `rdi = fd`, `rsi = user ptr`, `rdx = len`. Returns `rax = bytes`
+/// (`> 0`), `0` at end-of-stream (TCP FIN), or `u64::MAX` when nothing is
+/// available yet.
+pub const SYS_SOCK_RECV: u64 = 13;
+/// Close a socket: `rdi = fd`. TCP sends a FIN; a second call frees the slot.
+pub const SYS_SOCK_CLOSE: u64 = 14;
+/// Lifecycle code of `fd` (1 connecting, 2 open, 3 closing, 4 closed,
+/// 5 time-wait): `rdi = fd`. Returns `rax = code`.
+pub const SYS_SOCK_STATUS: u64 = 15;
+
+/// Scratch buffer for `SYS_SOCK_SEND`/`SYS_SOCK_RECV` user copies.
+const SOCK_IO_CAP: usize = 1600;
 
 /// Maximum number of user string bytes a single `SYS_WRITE` copies into the
 /// kernel console (a hard cap against runaway pointers).
@@ -254,6 +287,110 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
                 frame.rax = u64::MAX;
             }
         },
+        SYS_SOCKET => {
+            let kind = if frame.rdi == 1 {
+                sock::Kind::Tcp
+            } else {
+                sock::Kind::Udp
+            };
+            match sock::open(pid, kind) {
+                Some(fd) => {
+                    vprintln!(
+                        "[sock] pid {} open {} fd {}",
+                        pid,
+                        if frame.rdi == 1 { "tcp" } else { "udp" },
+                        fd
+                    );
+                    kprintln!(
+                        "[serial] [sock] pid {} open {} fd {}",
+                        pid,
+                        if frame.rdi == 1 { "tcp" } else { "udp" },
+                        fd
+                    );
+                    frame.rax = fd as u64;
+                }
+                None => frame.rax = u64::MAX,
+            }
+        }
+        SYS_SOCK_BIND => {
+            let fd = frame.rdi as usize;
+            let ok = sock_owned(pid, fd) && sock::bind(fd, frame.rsi as u16);
+            frame.rax = ok as u64;
+        }
+        SYS_SOCK_CONNECT => {
+            let fd = frame.rdi as usize;
+            let ip = (frame.rsi as u32).to_be_bytes();
+            let port = frame.rdx as u16;
+            let ok = sock_owned(pid, fd) && sock::connect(fd, ip, port);
+            if ok {
+                vprintln!(
+                    "[sock] fd {} connect {}.{}.{}.{}:{}",
+                    fd,
+                    ip[0],
+                    ip[1],
+                    ip[2],
+                    ip[3],
+                    port
+                );
+                kprintln!(
+                    "[serial] [sock] fd {} connect {}.{}.{}.{}:{}",
+                    fd,
+                    ip[0],
+                    ip[1],
+                    ip[2],
+                    ip[3],
+                    port
+                );
+            }
+            frame.rax = ok as u64;
+        }
+        SYS_SOCK_SEND => {
+            let fd = frame.rdi as usize;
+            if !sock_owned(pid, fd) {
+                frame.rax = u64::MAX;
+            } else {
+                let cap = (frame.rdx as usize).min(SOCK_IO_CAP);
+                let buf = unsafe { &mut *addr_of_mut!(SOCK_IO) };
+                let n = user_read(frame.rsi, &mut buf[..cap]);
+                match sock::send(fd, &buf[..n]) {
+                    Some(w) => {
+                        vprintln!("[sock] fd {} send {} bytes", fd, w);
+                        kprintln!("[serial] [sock] fd {} send {} bytes", fd, w);
+                        frame.rax = w as u64;
+                    }
+                    None => frame.rax = u64::MAX,
+                }
+            }
+        }
+        SYS_SOCK_RECV => {
+            let fd = frame.rdi as usize;
+            if !sock_owned(pid, fd) {
+                frame.rax = u64::MAX;
+            } else {
+                let cap = (frame.rdx as usize).min(SOCK_IO_CAP);
+                let buf = unsafe { &mut *addr_of_mut!(SOCK_IO) };
+                match sock::recv(fd, &mut buf[..cap]) {
+                    Some(0) => frame.rax = 0,
+                    Some(n) => {
+                        let w = user_write(frame.rsi, &buf[..n]);
+                        vprintln!("[sock] fd {} recv {} bytes", fd, w);
+                        kprintln!("[serial] [sock] fd {} recv {} bytes", fd, w);
+                        frame.rax = w as u64;
+                    }
+                    None => frame.rax = u64::MAX,
+                }
+            }
+        }
+        SYS_SOCK_CLOSE => {
+            let fd = frame.rdi as usize;
+            if sock_owned(pid, fd) {
+                sock::close(fd);
+            }
+            frame.rax = 0;
+        }
+        SYS_SOCK_STATUS => {
+            frame.rax = sock::status(frame.rdi as usize) as u64;
+        }
         other => {
             vprintln!("[sysc] unknown syscall {} from pid {}", other, pid);
             kprintln!("[serial] [sysc] unknown syscall {}", other);
@@ -314,6 +451,43 @@ fn write_calls(pid: u32) -> u64 {
 
 /// Scratch buffer reused by `SYS_WRITE` (never read past `SYS_STR_CAP`).
 static mut USER_STR_BUF: [u8; SYS_STR_CAP] = [0; SYS_STR_CAP];
+
+/// Scratch buffer reused by `SYS_SOCK_SEND`/`SYS_SOCK_RECV` user copies.
+static mut SOCK_IO: [u8; SOCK_IO_CAP] = [0; SOCK_IO_CAP];
+
+/// `true` when `fd` is a live socket owned by `pid` (guards every socket op).
+fn sock_owned(pid: u32, fd: usize) -> bool {
+    sock::owner(fd) == pid && pid != 0
+}
+
+/// Copies up to `out.len()` bytes from the user pointer `ptr` into `out`,
+/// validating every byte's virtual address so a bogus pointer cannot fault the
+/// kernel. Returns the number of bytes actually read.
+fn user_read(ptr: u64, out: &mut [u8]) -> usize {
+    let mut n = 0;
+    while n < out.len() {
+        if crate::memory::translate(ptr + n as u64).is_none() {
+            break;
+        }
+        out[n] = unsafe { core::ptr::read_volatile((ptr + n as u64) as *const u8) };
+        n += 1;
+    }
+    n
+}
+
+/// Copies `src` to the user pointer `ptr`, validating every byte's virtual
+/// address. Returns the number of bytes actually written.
+fn user_write(ptr: u64, src: &[u8]) -> usize {
+    let mut n = 0;
+    while n < src.len() {
+        if crate::memory::translate(ptr + n as u64).is_none() {
+            break;
+        }
+        unsafe { core::ptr::write_volatile((ptr + n as u64) as *mut u8, src[n]) };
+        n += 1;
+    }
+    n
+}
 
 /// Copies the user string at `frame.rsi` into the kernel console.
 ///

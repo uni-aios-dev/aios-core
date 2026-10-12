@@ -23,15 +23,32 @@
   kernel and reading the serial log. Runtime QEMU smoke is pending a host with
   `qemu-system-x86_64` + `xorriso` installed.
 
-## OPEN (v2.48.0): internet stack is IPv4-only, no TCP/UDP sockets
+## RESOLVED (v2.49.0): kernel gained a UDP/TCP socket layer (was OPEN v2.48.0)
 
-- **Status:** OPEN — by design; v2.48.0 hardened the existing reachability client
-  (DHCP NAK/renew/rebind, link-change recovery, ageing ARP cache, exponential
-  recheck backoff, static fallback) but did **not** add a socket layer.
-- **Limits:** only DHCP/ARP/ICMP-echo/DNS are implemented; there is no TCP or UDP
-  socket API, so general internet traffic (HTTP, TLS, …) is out of scope for the
-  kernel client. The state machine still reports `no-nic` / `link-only` /
-  `internet` only.
+- **Status:** RESOLVED in v2.49.0 (was OPEN through v2.48.0). The v2.48.0 entry
+  "internet stack is IPv4-only, no TCP/UDP sockets" is now closed by the new
+  `aios-kernel/src/sock.rs` socket layer + `SYS_SOCK_*` syscalls.
+- **Fix:** a UDP endpoint (connectionless, 3-slot datagram ring) and a minimal
+  TCP active-open socket now expose `open`/`bind`/`connect`/`send`/`recv`/`close`
+  to ring-3, so TCP-based traffic (HTTP, …) is reachable from the kernel client.
+- **Residual (see the next OPEN entry):** the TCP side is intentionally minimal
+  and has runtime-verification gaps — tracked separately.
+
+## OPEN (v2.49.0): socket layer is minimal and manually-verified only
+
+- **Status:** OPEN — by design scope + verification gap; not a regression.
+- **Limits:**
+  1. **TCP is active-open only**: no `listen`/`accept`, no TCP options or window
+     scaling, a fixed `TCP_WINDOW = 64240`, and stop-and-wait (no congestion
+     control / fast retransmit). A server-side socket is out of scope.
+  2. **UDP** has no broadcast/multicast send and no per-packet error reporting.
+  3. **No kernel unit tests** (the bare `x86_64-unknown-none` target has no `test`
+     harness), so the layer is exercised only manually from the TUI shell
+     (`udp`/`http`) on a QEMU NIC.
+  4. The HTTP path inherits the v2.48.0 NIC verification gap (only the NIC models
+     QEMU provides; no `rtl8169` model).
+- **Workaround:** exercise the layer from the Shell tab (`udp`/`http`) and read
+  the serial log (`[serial] [sock] …`).
 
 ## RESOLVED (v2.46.0): hang watchdog now tracks real progress (syscalls) + cooperative heartbeat
 

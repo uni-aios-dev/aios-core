@@ -29,6 +29,7 @@ use core::ptr::{addr_of, addr_of_mut};
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_ARP: u16 = 0x0806;
 const PROTO_ICMP: u8 = 1;
+const PROTO_TCP: u8 = 6;
 const PROTO_UDP: u8 = 17;
 const ICMP_ECHO: u8 = 8;
 const ICMP_REPLY: u8 = 0;
@@ -222,6 +223,11 @@ fn ticks() -> u64 {
     TICKS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// Current tick count (10 ms units), for the socket timers.
+pub(crate) fn now_ticks() -> u64 {
+    ticks()
+}
+
 fn read_settings() -> Settings {
     unsafe { *addr_of!(SETTINGS) }
 }
@@ -327,6 +333,7 @@ pub fn poll() {
         *addr_of_mut!(LAST_LINK) = up;
         arp_expire(now);
         drain_rx();
+        crate::sock::tick(now);
         match PHASE {
             Phase::Idle => step_idle(now),
             Phase::Discover | Phase::Request | Phase::Renew => step_dhcp(now),
@@ -553,6 +560,68 @@ fn current_ip() -> [u8; 4] {
     read_bound().ip
 }
 
+/// Source IPv4 address currently bound to the uplink (socket peer checks).
+pub(crate) fn bound_ip() -> [u8; 4] {
+    read_bound().ip
+}
+
+/// Resolves the next-hop IPv4 address for `dst`: the destination itself when it
+/// is on-link (same subnet as the bound address), otherwise the default
+/// gateway. Falls back to `dst` when no mask/gateway is configured.
+pub(crate) fn next_hop(dst: [u8; 4]) -> [u8; 4] {
+    let b = read_bound();
+    if !b.bound() {
+        return dst;
+    }
+    let mask = u32::from_be_bytes(b.mask);
+    if mask == 0 {
+        return if b.gw != [0; 4] { b.gw } else { dst };
+    }
+    let on_link = (u32::from_be_bytes(dst) & mask) == (u32::from_be_bytes(b.ip) & mask);
+    if on_link {
+        dst
+    } else if b.gw != [0; 4] {
+        b.gw
+    } else {
+        dst
+    }
+}
+
+/// Issues an ARP request for the next hop toward `dst` when the mapping is not
+/// cached yet, so a subsequent [`emit_ipv4`] can resolve the destination MAC.
+pub(crate) fn arp_resolve(dst: [u8; 4]) {
+    let hop = next_hop(dst);
+    if hop != [0; 4] && hop != BROADCAST_IP && arp_lookup(hop).is_none() {
+        send_arp_request(hop);
+    }
+}
+
+/// Builds and transmits a complete IPv4 frame carrying `l4` bytes at
+/// `proto` (UDP/TCP/ICMP). The destination MAC is resolved through the ARP
+/// cache (next hop first) with a broadcast fallback, mirroring the probe path.
+/// The caller supplies a fully-formed L4 payload (header + data, checksummed).
+pub(crate) fn emit_ipv4(dst: [u8; 4], proto: u8, l4: &[u8]) -> Result<(), &'static str> {
+    if l4.len() + 20 > 1480 {
+        return Err("net: l4 too large");
+    }
+    let hop = next_hop(dst);
+    let dst_mac = arp_lookup(hop).unwrap_or(BROADCAST_MAC);
+    let mut tx = [0u8; 1514];
+    start_frame(&mut tx, dst_mac, dst, proto, l4.len());
+    tx[34..34 + l4.len()].copy_from_slice(l4);
+    uplink_send(&tx[..14 + 20 + l4.len()])
+}
+
+/// Internet checksum over the IPv4 TCP/UDP pseudo-header plus `data`, ready to
+/// write into the transport checksum field (already complemented).
+pub(crate) fn l4_checksum(src: [u8; 4], dst: [u8; 4], proto: u8, data: &[u8]) -> u16 {
+    let mut sum = csum_add(0, &src);
+    sum = csum_add(sum, &dst);
+    sum += u32::from(proto) + data.len() as u32;
+    sum = csum_add(sum, data);
+    csum_finish(sum)
+}
+
 unsafe fn drain_rx() {
     let mut buf = [0u8; nic::FRAME_MAX];
     for _ in 0..MAX_DRAIN {
@@ -634,6 +703,7 @@ unsafe fn handle_ipv4(frame: &[u8]) {
         return;
     }
     let proto = frame[23];
+    let src = [frame[26], frame[27], frame[28], frame[29]];
     let dst = [frame[30], frame[31], frame[32], frame[33]];
     let l4 = 14 + ihl;
     match proto {
@@ -649,12 +719,17 @@ unsafe fn handle_ipv4(frame: &[u8]) {
                 }
             }
         }
-        PROTO_UDP => handle_udp(frame, l4),
+        PROTO_TCP => {
+            if frame.len() >= l4 + 20 {
+                crate::sock::deliver_tcp(src, &frame[l4..]);
+            }
+        }
+        PROTO_UDP => handle_udp(frame, l4, src),
         _ => {}
     }
 }
 
-unsafe fn handle_udp(frame: &[u8], l4: usize) {
+unsafe fn handle_udp(frame: &[u8], l4: usize, src: [u8; 4]) {
     if frame.len() < l4 + 8 {
         return;
     }
@@ -674,6 +749,8 @@ unsafe fn handle_udp(frame: &[u8], l4: usize) {
         handle_dhcp(payload);
     } else if sport == DNS_PORT && dport == DNS_SRC_PORT {
         handle_dns(payload);
+    } else {
+        crate::sock::deliver_udp(src, sport, dport, payload);
     }
 }
 
@@ -812,7 +889,7 @@ fn dhcp_dns_option(pkt: &[u8]) -> Option<([u8; 4], [u8; 4])> {
     }
 }
 
-fn arp_lookup(ip: [u8; 4]) -> Option<[u8; 6]> {
+pub(crate) fn arp_lookup(ip: [u8; 4]) -> Option<[u8; 6]> {
     let now = ticks();
     unsafe {
         let table = addr_of!(ARP_TABLE);
