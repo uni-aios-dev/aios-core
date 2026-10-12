@@ -103,6 +103,24 @@ The v2.38.22 GUI is a first step; a real windowing system needs:
   socket → gate → ring-3. Still open: TCP options/window scaling/congestion
   control, a larger backlog than `MAX_SOCKS = 8`, UDP broadcast/multicast, and
   external-NIC verification keeps depending on QEMU NIC models.
+- [x] **Ring-3 TCP over loopback (v2.52.0)** — the socket demo's
+  second leg proves the *stream* side from userspace: program E
+  opens two TCP sockets (fixed local ports 40112/40113), listens
+  on the server side (`SYS_SOCK_LISTEN`), connects the client
+  (`SYS_SOCK_CONNECT` to the `SYS_SOCK_ADDR` snapshot), waits for
+  `SYS_SOCK_ACCEPT` to hand out the handshake-promoted child (fds
+  persist in r12d/r13d/r14d across the gate), echoes `tcp` (3
+  bytes) client→child and `ok` (2 bytes) child→client with
+  length-gated `SYS_SOCK_RECV` waits, prints `sock-t ok`, and
+  reclaims the child with a **double** `SYS_SOCK_CLOSE` (the
+  first only sends a FIN and parks the slot in `FinWait2`; the
+  second reclaims it immediately) so the `MAX_SOCKS = 8` table
+  never leaks a slot across rounds. The layer is now exercised
+  from ring-3 in both directions — datagram and stream —
+  complementing the ring-0 `socktest`. Still open: TCP
+  options/window scaling/congestion control, a larger backlog than
+  `MAX_SOCKS = 8`, UDP broadcast/multicast, and external-NIC
+  verification keeps depending on QEMU NIC models.
 - [x] **Restore of closed z-order (v2.38.31)** — a closing window records its logical z-rank (0 = bottom, counted over open windows below its slot) in the new `CLOSED_Z` table and the proof line grows a compatible suffix, `[gui] close <label> (z <rank>)`; both open paths (`spawn` and `spawn_client`, incl. the `present_client` re-spawn) place the window through `place_window` — at the remembered rank when the kind was closed before (logging `[gui] reopen <label> at z <rank>`), on top otherwise (the old behaviour), compacting slot holes into a dense bottom→top sequence on the way. `leave()` clears the table. Also closed the last focus-steal hole: `spawn_client` now honours the v2.38.30 modal gate, so a ring-3 client presenting during a dialog cannot spawn focused underneath it. Verified in QEMU (port 45631): close Uptime via its `X` while it is *not* focused (`(z 1)`), reopen from the desktop icon (`reopen … at z 1`), and the f9 walk proves the restored middle position both serially (`client` → `Welcome` → `Uptime`, old order would be `Welcome` → `client` → `Uptime`) and pixel-wise (client still paints over Uptime's title at (640,340) in f3).
 - [x] **Widget layer: buttons (v2.38.32)** — first increment of the widget set: `Widget::Button` plates with window-local coordinates (so they follow their host through move/resize/maximize) declared in per-kind tables (`widgets_for`, `WELCOME_WIDGETS`: System/Uptime/About/Close on Welcome), painted over the body by `draw_widgets` (`BTN_BG`, lifted to `BAR_ON` while hovered), with hover tracked per cursor move in `WIDGET_HOVER` (topmost-first, frozen under a modal, cleared by `leave()`). `dispatch_click` hit-tests plates before any client event and logs `[gui] widget <host>/<label> click`; `Open` skips the host focus (it would mirror the restored v2.38.31 z-rank) and `CloseHost` funnels through `close_window`, so a typed note still raises the v2.38.30 modal. Verified in QEMU (port 45632): hover pixels (`BAR_ON` vs idle `BTN_BG`), all four click logs in order, `reopen Uptime at z 1` cross-proof, and the Close plate opening/confirming the modal.
 - [ ] **Scalable fonts / layout** — today only the 8x8 PSF ASCII glyphs; add a scalable font with a rendered glyph cache, text wrapping, and window layout theming.

@@ -1,5 +1,38 @@
 # AIOS Development Log
 
+## v2.52.0 — ring-3 TCP: the socket demo echoes over `listen`/`accept` (2026-10-12)
+
+### Added
+- **TCP leg of the ring-3 socket demo** (`aios-kernel/src/user.rs`,
+  program E): alongside the UDP ping-pong, the task now opens two
+  **TCP** sockets (fixed local ports 40112/40113), `SYS_SOCK_LISTEN`s
+  on the server side, `SYS_SOCK_CONNECT`s the client, waits for
+  `SYS_SOCK_ACCEPT` to hand out the promoted child, echoes `tcp` (3
+  bytes) client→child and `ok` (2 bytes) child→client — both legs
+  length-gated `SYS_SOCK_RECV` waits — and prints a second verdict
+  `sock-t ok`. The child is freed with a **double** `SYS_SOCK_CLOSE`
+  (the first only sends a FIN and leaves the slot in `FinWait2`; the
+  second reclaims it immediately), so every round returns its
+  transient slot to the `MAX_SOCKS = 8` table.
+- New x86 emitters for the TCP registers: fds persist in **r12d
+  (client) / r13d (listener) / r14d (accepted child)** — all
+  preserved across `int 0x80` like r8d/r9d — plus `jne rel8`
+  for the retry loops.
+
+### Changed
+- The TUI version banner is now `AIOS kernel v2.52.0`.
+- The socket layer is now exercised from ring-3 in **both**
+  directions: datagram (UDP) and stream (TCP) — the `[sock]` serial
+  lines plus `sock-e ok` / `sock-t ok` prove the whole vertical slice
+  twice per round, complementing the ring-0 `socktest`.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`,
+  `cargo fmt` clean. No kernel unit tests run on the bare target;
+  the new path is proven by the demo task's bookkeeping
+  (`[sock] fd … accept -> …`, `sock-t ok`) once a QEMU link has a
+  bound IP, and the external-NIC caveats stay tracked in BUGS.
+
 ## v2.51.0 — ring-3 sockets: userspace loopback ping-pong over `SYS_SOCK_*` (2026-10-12)
 
 ### Added

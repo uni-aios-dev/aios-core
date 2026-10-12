@@ -17,9 +17,12 @@
 //! - program E (slot 6, v2.51.0): the ring-3 socket client — two UDP sockets
 //!   bound to fixed local ports play a loopback ping-pong over the bound IP
 //!   (`SYS_SOCK_ADDR` first), sending `ring3` from client to server and `ack!`
-//!   back, printing `sock-e ok` once a round trip has completed. It proves the
-//!   *userspace* face of the socket layer: every `SYS_SOCK_*` call runs from
-//!   ring 3 over `int 0x80` into the kernel `sock` table and the loopback ring.
+//!   back, printing `sock-e ok` once a round trip has completed. Since v2.52.0
+//!   a second (TCP) leg follows: a TCP client connects to a listening socket,
+//!   the accepted child echoes `tcp`/`ok` and is then closed, printing
+//!   `sock-t ok`. It proves the *userspace* face of the socket layer: every
+//!   `SYS_SOCK_*` call runs from ring 3 over `int 0x80` into the kernel `sock`
+//!   table and the loopback ring.
 //!
 //! `SYS_SEND` target ids are *scheduler slot ids* (slots 2/3/4 — the kernel
 //! worker owns slot 1); `SLOT_*` constants document the mapping. A and B form
@@ -36,8 +39,9 @@ use alloc::vec::Vec;
 use crate::memory;
 use crate::sched;
 use crate::syscalls::{
-    SYS_GETPID, SYS_GUI, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_SOCKET, SYS_SOCK_ADDR, SYS_SOCK_BIND,
-    SYS_SOCK_CONNECT, SYS_SOCK_RECV, SYS_SOCK_SEND, SYS_WRITE,
+    SYS_GETPID, SYS_GUI, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_SOCKET, SYS_SOCK_ACCEPT, SYS_SOCK_ADDR,
+    SYS_SOCK_BIND, SYS_SOCK_CLOSE, SYS_SOCK_CONNECT, SYS_SOCK_LISTEN, SYS_SOCK_RECV, SYS_SOCK_SEND,
+    SYS_WRITE,
 };
 use crate::{kprintln, vprintln};
 
@@ -90,6 +94,14 @@ const SOCK_BUF_LEN: u64 = 16;
 const SOCK_REQ_LEN: u64 = 5;
 /// Ring-3 socket demo (pid 5): expected length of the inbound `ack!` datagram.
 const SOCK_REPLY_LEN: u64 = 4;
+/// Ring-3 socket demo (pid 5): local port of the TCP client socket.
+const SOCK_TCP_CLI_PORT: u64 = 40_112;
+/// Ring-3 socket demo (pid 5): local port of the TCP listener socket.
+const SOCK_TCP_SRV_PORT: u64 = 40_113;
+/// Ring-3 socket demo (pid 5): expected length of the inbound `tcp` segment.
+const SOCK_TCP_MSG_LEN: u64 = 3;
+/// Ring-3 socket demo (pid 5): expected length of the inbound `ok` segment.
+const SOCK_TCP_REPLY_LEN: u64 = 2;
 
 /// Tiny x86-64 emitter used to build the raw-machine-code demo programs.
 ///
@@ -230,6 +242,43 @@ impl Asm {
     /// `mov r9d, eax` (41 89 C1) — persist the server fd across syscalls.
     fn mov_r9d_eax(&mut self) {
         self.buf.extend_from_slice(&[0x41, 0x89, 0xC1]);
+    }
+
+    /// `mov r12d, eax` (41 89 C4) — persist the TCP client fd across syscalls.
+    fn mov_r12d_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x41, 0x89, 0xC4]);
+    }
+
+    /// `mov r13d, eax` (41 89 C5) — persist the TCP listener fd across syscalls.
+    fn mov_r13d_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x41, 0x89, 0xC5]);
+    }
+
+    /// `mov r14d, eax` (41 89 C6) — persist the accepted child fd.
+    fn mov_r14d_eax(&mut self) {
+        self.buf.extend_from_slice(&[0x41, 0x89, 0xC6]);
+    }
+
+    /// `mov edi, r12d` (44 89 E7) — the TCP client fd into the syscall arg.
+    fn mov_edi_r12d(&mut self) {
+        self.buf.extend_from_slice(&[0x44, 0x89, 0xE7]);
+    }
+
+    /// `mov edi, r13d` (44 89 EF) — the TCP listener fd into the syscall arg.
+    fn mov_edi_r13d(&mut self) {
+        self.buf.extend_from_slice(&[0x44, 0x89, 0xEF]);
+    }
+
+    /// `mov edi, r14d` (44 89 F7) — the accepted child fd into the syscall arg.
+    fn mov_edi_r14d(&mut self) {
+        self.buf.extend_from_slice(&[0x44, 0x89, 0xF7]);
+    }
+
+    /// `jne rel8` forward placeholder; patch with [`Self::patch_rel8`].
+    fn jne_fwd(&mut self) -> usize {
+        let at = self.buf.len();
+        self.buf.extend_from_slice(&[0x75, 0x00]);
+        at
     }
 
     /// `cmp eax, imm8` (83 F8 imm8) — compares a `SYS_SOCK_RECV` length result.
@@ -547,15 +596,19 @@ fn build_pid4() -> Vec<u8> {
     a.finish(PID_D)
 }
 
-/// Ring-3 socket client (pid 5, v2.51.0): a userspace loopback ping-pong over
-/// the `SYS_SOCK_*` family. Two UDP sockets on fixed local ports talk to each
-/// other through the kernel socket table and the loopback ring:
-/// `SYS_SOCK_ADDR` waits for a bound IPv4 (0 while the link is down),
-/// connect(client → server port) + `SYS_SOCK_SEND "ring3"`, a length-gated
-/// `SYS_SOCK_RECV`, then the reverse leg (`ack!`) and a `SYS_WRITE` verdict.
-/// Fds live in r8d/r9d (survive `int 0x80`), the IP snapshot in ebx; esi/edx
-/// are per-call syscall arguments. Any failed handshake step retries after a
-/// short sleep so the demo never spins.
+/// Ring-3 socket client (pid 5): a userspace loopback round over the `SYS_SOCK_*`
+/// family. Two UDP sockets on fixed local ports talk to each other through the
+/// kernel socket table and the loopback ring: `SYS_SOCK_ADDR` waits for a bound
+/// IPv4 (0 while the link is down), connect(client → server port) +
+/// `SYS_SOCK_SEND "ring3"`, a length-gated `SYS_SOCK_RECV`, then the reverse UDP
+/// leg (`ack!`). Since v2.52.0 a **TCP round** follows: a TCP client connects to
+/// a listening TCP socket, the listener hands out the accepted child and the
+/// pair echo `tcp`/`ok`, then `SYS_SOCK_CLOSE` frees the child (the persistent
+/// client/listener fds stay open across rounds). `SYS_WRITE` prints `sock-e ok`
+/// / `sock-t ok`. Fds live in r8d/r9d (UDP) and r12d/r13d/r14d (TCP — client /
+/// listener / accepted child, all surviving `int 0x80`), the IP snapshot in ebx;
+/// esi/edx are per-call syscall arguments. Any failed handshake step retries
+/// after a short sleep so the demo never spins.
 fn build_pid5() -> Vec<u8> {
     let mut a = Asm::new();
 
@@ -582,6 +635,27 @@ fn build_pid5() -> Vec<u8> {
     a.mov_edi_r9d();
     a.mov_esi_imm(SOCK_SRV_PORT);
     a.mov_eax(SYS_SOCK_BIND);
+    a.int80();
+
+    // open the TCP sockets and keep the fds in r12d (client) / r13d (listener)
+    a.mov_edi(1);
+    a.mov_eax(SYS_SOCKET);
+    a.int80();
+    a.mov_r12d_eax();
+    a.mov_edi(1);
+    a.mov_eax(SYS_SOCKET);
+    a.int80();
+    a.mov_r13d_eax();
+    a.mov_edi_r12d();
+    a.mov_esi_imm(SOCK_TCP_CLI_PORT);
+    a.mov_eax(SYS_SOCK_BIND);
+    a.int80();
+    a.mov_edi_r13d();
+    a.mov_esi_imm(SOCK_TCP_SRV_PORT);
+    a.mov_eax(SYS_SOCK_BIND);
+    a.int80();
+    a.mov_edi_r13d();
+    a.mov_eax(SYS_SOCK_LISTEN);
     a.int80();
 
     let start = a.buf.len();
@@ -655,9 +729,114 @@ fn build_pid5() -> Vec<u8> {
     a.jmp_back(rw2);
     a.patch_rel8(je_got2);
 
-    // round trip done: verdict, pace, repeat
+    // round trip done (UDP): verdict
     a.mov_esi_placeholder(2);
     a.mov_eax(SYS_WRITE);
+    a.int80();
+
+    // ---- TCP round (v2.52.0): listen/connect/accept/echo over loopback ----
+    // connect the TCP client to the listener's port, retrying until the SYN goes out
+    let tconn = a.buf.len();
+    a.mov_edi_r12d();
+    a.mov_esi_ebx();
+    a.mov_edx_imm(SOCK_TCP_SRV_PORT);
+    a.mov_eax(SYS_SOCK_CONNECT);
+    a.int80();
+    a.test_rax_rax();
+    let jne_tconn = a.jne_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(tconn);
+    a.patch_rel8(jne_tconn);
+
+    // accept the listener until the handshake promotes a child (u64::MAX otherwise)
+    let tacc = a.buf.len();
+    a.mov_edi_r13d();
+    a.mov_eax(SYS_SOCK_ACCEPT);
+    a.int80();
+    a.cmp_eax_imm8(0xFF);
+    let jne_tacc = a.jne_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(tacc);
+    a.patch_rel8(jne_tacc);
+    a.mov_r14d_eax();
+
+    // client -> server: "tcp"
+    let ts1 = a.buf.len();
+    a.mov_edi_r12d();
+    a.mov_esi_placeholder(4);
+    a.mov_edx_imm(SOCK_TCP_MSG_LEN);
+    a.mov_eax(SYS_SOCK_SEND);
+    a.int80();
+    a.test_rax_rax();
+    let jne_ts1 = a.jne_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(ts1);
+    a.patch_rel8(jne_ts1);
+
+    // child: wait until exactly 3 bytes arrive
+    let rw_t1 = a.buf.len();
+    a.mov_edi_r14d();
+    let dbuf3 = a.mov_esi_abs();
+    a.mov_edx_imm(SOCK_BUF_LEN);
+    a.mov_eax(SYS_SOCK_RECV);
+    a.int80();
+    a.cmp_eax_imm8(SOCK_TCP_MSG_LEN as u8);
+    let je_gt1 = a.je_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(rw_t1);
+    a.patch_rel8(je_gt1);
+
+    // child -> client: "ok"
+    let ts2 = a.buf.len();
+    a.mov_edi_r14d();
+    a.mov_esi_placeholder(5);
+    a.mov_edx_imm(SOCK_TCP_REPLY_LEN);
+    a.mov_eax(SYS_SOCK_SEND);
+    a.int80();
+    a.test_rax_rax();
+    let jne_ts2 = a.jne_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(ts2);
+    a.patch_rel8(jne_ts2);
+
+    // client: wait until exactly 2 bytes arrive
+    let rw_t2 = a.buf.len();
+    a.mov_edi_r12d();
+    let dbuf4 = a.mov_esi_abs();
+    a.mov_edx_imm(SOCK_BUF_LEN);
+    a.mov_eax(SYS_SOCK_RECV);
+    a.int80();
+    a.cmp_eax_imm8(SOCK_TCP_REPLY_LEN as u8);
+    let je_gt2 = a.je_fwd();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(1);
+    a.int80();
+    a.jmp_back(rw_t2);
+    a.patch_rel8(je_gt2);
+
+    // TCP round done: verdict, then free the accepted child. The
+    // first `SYS_SOCK_CLOSE` sends a FIN (the slot lingers in
+    // FinWait2 until the peer's FIN); the second one reclaims the
+    // slot immediately, so every round returns its transient child
+    // to the socket table.
+    a.mov_esi_placeholder(3);
+    a.mov_eax(SYS_WRITE);
+    a.int80();
+    a.mov_edi_r14d();
+    a.mov_eax(SYS_SOCK_CLOSE);
+    a.int80();
+    a.mov_edi_r14d();
+    a.mov_eax(SYS_SOCK_CLOSE);
     a.int80();
     a.mov_eax(SYS_SLEEP);
     a.mov_edi(60);
@@ -676,6 +855,9 @@ fn build_pid5() -> Vec<u8> {
     a.string(b"ring3");
     a.string(b"ack!");
     a.string(b"sock-e ok");
+    a.string(b"sock-t ok");
+    a.string(b"tcp");
+    a.string(b"ok");
     let dbuf_off = a.buf.len();
     for _ in 0..(SOCK_BUF_LEN / 4) {
         a.data_u32(0);
@@ -684,10 +866,20 @@ fn build_pid5() -> Vec<u8> {
     for _ in 0..(SOCK_BUF_LEN / 4) {
         a.data_u32(0);
     }
+    let dbuf3_off = a.buf.len();
+    for _ in 0..(SOCK_BUF_LEN / 4) {
+        a.data_u32(0);
+    }
+    let dbuf4_off = a.buf.len();
+    for _ in 0..(SOCK_BUF_LEN / 4) {
+        a.data_u32(0);
+    }
 
     let base = CODE_BASE + PID_E as u64 * REGION_STRIDE;
     a.patch_imm32(dbuf, (base + dbuf_off as u64) as u32);
     a.patch_imm32(dbuf2, (base + dbuf2_off as u64) as u32);
+    a.patch_imm32(dbuf3, (base + dbuf3_off as u64) as u32);
+    a.patch_imm32(dbuf4, (base + dbuf4_off as u64) as u32);
     a.finish(PID_E)
 }
 
