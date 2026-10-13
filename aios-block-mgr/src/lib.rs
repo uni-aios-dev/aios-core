@@ -1,4 +1,5 @@
 pub mod dependency;
+pub mod factory;
 pub mod hot_reload;
 pub mod loader;
 pub mod marketplace;

@@ -1,5 +1,23 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.57.0): WebAssembly disk blocks are executed but not yet IPC-routed; base set is fixed at build time
+
+- **Status:** OPEN — known scope limit of the v2.57.0 hybrid block loader, not a regression.
+- **Limits / risks:**
+  1. Disk `.wasm` blocks are discovered, executed one-by-one through `BlockExecutor`
+     (`init`/`start`) and kept resident, but **no `MessageRouter` handler is
+     registered for them**: `call_block_func` / IPC dispatch to a WebAssembly
+     block is not reachable yet. Only the compiled-in base blocks
+     (`hal`, `browser`, `net_settings`) are serviced over IPC.
+  2. `.bin` / placeholder payloads that do not start with the WebAssembly magic
+     (`\0asm`) are registered only (`registered_only`) and never executed.
+  3. The compiled-in base set is fixed at build time (`aios/src/blocks.rs`); there
+     are no per-block Cargo features yet, so every build carries
+     `hal` + `browser` + `net_settings`.
+- **Workaround:** treat the base set as the IPC-serviced tier and disk blocks as
+  the loaded/resident tier; drive disk blocks through their WASM exports directly
+  until the router bridge lands (see TODO "Block loader follow-ups").
+
 ## OPEN (v2.48.0): new wired NIC drivers lack runtime verification (no QEMU model / host)
 
 - **Status:** OPEN — the v2.48.0 NIC expansion (`e1000e`, `virtio-net legacy`,

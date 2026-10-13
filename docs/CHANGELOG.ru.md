@@ -1,5 +1,45 @@
 # Журнал разработки AIOS
 
+## v2.57.0 — Гибридная поблочная загрузка: фабрика базовых блоков + дисковые блоки, выбираемые установщиком (2026-10-14)
+
+### Добавлено
+- **Фабрика нативных блоков** (`aios-block-mgr/src/factory.rs`): `BlockFactory`
+  (name/version/`create(id)`) и `BlockFactoryRegistry` (register/get/names/
+  `instantiate`). Реестр — единственный источник истины для вкомпилированного
+  *базового набора*; дубликаты имён отвергаются с `BlockAlreadyRegistered`.
+- **Единый загрузчик блоков** (`aios/src/blocks.rs`): `base_factories()`
+  регистрирует вкомпилированные фабрики (hal, browser, net_settings);
+  `register_base_blocks()` создаёт каждый блок, регистрирует его в
+  `BlockRegistry` и подключает обработчик в `MessageRouter` — точно так же, как
+  для дискового блока; `load_disk_blocks()` обнаруживает блоки и исполняет
+  каждый настоящий WebAssembly-модуль поблочно через `BlockExecutor`.
+- **Выбор блоков в установщике**: `live/blocks.conf` (выбор по умолчанию:
+  `all`/`none`/список имён), каталог `live/blocks/`, новый шаг `aios-install`,
+  который копирует выбранные `{name}_{version}.wasm|.bin` (+ sidecar `.json`) в
+  `/blocks` целевой системы и записывает выбор в `/etc/aios/blocks.conf`;
+  `live/build.sh` кладёт каталог в `/usr/share/aios/blocks`, а конфигурацию по
+  умолчанию — в `/etc/aios/blocks.conf`.
+- **Сводка на вкладке Blocks** (`aios/src/tui/ui.rs`): вкладка Blocks теперь
+  печатает строку `base [...] | disk [...] | failed N | live N` из отчёта
+  загрузчика, полученного при загрузке.
+
+### Изменено
+- Конвейер загрузки (`aios/src/orchestrator.rs`): заглушки-бинарники
+  `hal`/`browser`/`net_settings` заменены на реальные блоки из фабрики; `hal`
+  теперь настоящий `HalBlock`, подключённый к роутеру. Только `ipc_bus`/
+  `scheduler` остаются плейсхолдерами ради топологии. `OrchestratorState`
+  получил `base_blocks`, `disk_blocks` и `executor` (executor хранится живым,
+  чтобы дисковые блоки оставались загруженными).
+- Обнаружение на диске различает нагрузки по сигнатуре WebAssembly (`\0asm`):
+  настоящие модули исполняются, `.bin`/плейсхолдеры только регистрируются и
+  попадают в отчёт как `registered_only`.
+
+### Проверка
+- `aios-block-mgr`: 82 теста зелёные (5 новых тестов фабрики). `aios`: 19 тестов
+  зелёные (5 новых тестов загрузчика, включая исполнение собранного вручную
+  wasm-модуля и пропуск не-wasm `.bin`). `cargo clippy -p aios-block-mgr -p aios`
+  без предупреждений, `cargo fmt` чисто.
+
 ## v2.56.0 — UDP broadcast & multicast: веерная доставка (2026-10-13)
 
 ### Добавлено

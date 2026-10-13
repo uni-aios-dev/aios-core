@@ -96,6 +96,12 @@ cp "$W/aios-gui-bin" "$W/rootfs/usr/local/bin/aios-gui"
 cp "/work/aios-install" "$W/rootfs/usr/local/bin/aios-install"
 cp "/work/aios-launch" "$W/rootfs/usr/local/bin/aios-launch"
 chmod +x "$W/rootfs/usr/local/bin/aios" "$W/rootfs/usr/local/bin/aios-gui" "$W/rootfs/usr/local/bin/aios-install" "$W/rootfs/usr/local/bin/aios-launch"
+
+# Optional block catalog + default selection consumed by aios-install.
+mkdir -p "$W/rootfs/usr/share/aios/blocks" "$W/rootfs/etc/aios"
+cp -a "/work/blocks/." "$W/rootfs/usr/share/aios/blocks/" 2>/dev/null || true
+cp "/work/blocks.conf" "$W/rootfs/etc/aios/blocks.conf"
+
 cp "/work/inittab" "$W/rootfs/etc/inittab"
 cp "/work/rcS" "$W/rootfs/etc/init.d/rcS"
 chmod +x "$W/rootfs/etc/init.d/rcS"

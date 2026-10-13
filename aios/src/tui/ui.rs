@@ -492,6 +492,50 @@ fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
             ListItem::new(Line::from(Span::styled(base, style)))
         })
         .collect();
+
+    // Base + disk summary straight from the boot-time loader report.
+    let base_desc: Vec<String> = state
+        .base_blocks
+        .iter()
+        .map(|b| format!("{}:{} v{}", b.id, b.name, b.version))
+        .collect();
+    let disk_desc: Vec<String> = state
+        .disk_blocks
+        .loaded
+        .iter()
+        .map(|d| {
+            format!(
+                "{}:{} v{} ({})",
+                d.id,
+                d.name,
+                d.version,
+                d.functions_called.join("+")
+            )
+        })
+        .collect();
+    let summary = format!(
+        "base [{}] | disk [{}] | failed {} | live {}",
+        if base_desc.is_empty() {
+            "none".to_string()
+        } else {
+            base_desc.join(", ")
+        },
+        if disk_desc.is_empty() {
+            "none".to_string()
+        } else {
+            disk_desc.join(", ")
+        },
+        state.disk_blocks.failed_count(),
+        state.executor.executed_count(),
+    );
+    block_items.insert(
+        0,
+        ListItem::new(Line::from(Span::styled(
+            summary,
+            Style::default().fg(Color::Cyan),
+        ))),
+    );
+
     if block_items.is_empty() {
         block_items.push(ListItem::new(Line::from("No blocks loaded.")));
     }
@@ -1093,6 +1137,7 @@ mod render_smoke_tests {
     use aios_core::block::BlockId;
     use aios_process_mgr::scheduler::Scheduler;
     use aios_security::access_control::AccessControlLayer;
+    use aios_wasm::executor::BlockExecutor;
     use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -1165,6 +1210,9 @@ mod render_smoke_tests {
             bridge,
             router: MessageRouter::new(),
             net_block_id: BlockId::new(100),
+            base_blocks: Vec::new(),
+            disk_blocks: crate::blocks::DiskBlockReport::default(),
+            executor: BlockExecutor::with_default_config().unwrap(),
             safe_mode: true,
             start_time: Instant::now(),
             bridge_running: Arc::new(AtomicBool::new(false)),

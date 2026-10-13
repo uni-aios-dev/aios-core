@@ -18,7 +18,7 @@
   <a href="https://github.com/uni-aios-dev/aios-core"><img src="https://img.shields.io/github/stars/uni-aios-dev/aios-core?style=flat&logo=github" alt="Stars"></a>
   <a href="https://github.com/uni-aios-dev/aios-core/discussions"><img src="https://img.shields.io/badge/discussions-online-brightgreen" alt="Discussions"></a>
   <br>
-  <img src="https://img.shields.io/badge/tests-708/708-passing-brightgreen" alt="Tests 708/708">
+  <img src="https://img.shields.io/badge/tests-1564/1564-passing-brightgreen" alt="Tests 1564/1564">
   <img src="https://img.shields.io/badge/clippy-0%20warnings-brightgreen" alt="Clippy 0 warnings">
   <img src="https://img.shields.io/badge/WASI-preview2-9cf" alt="WASI preview2">
 </p>
@@ -102,7 +102,7 @@ cd aios-core
 # Build unified binary
 cargo build --release --bin aios
 
-# Run tests (708+)
+# Run tests (1564+)
 cargo test --workspace
 ```
 
@@ -336,7 +336,7 @@ aiosctl install my-block
 
 ```
 Крейтов:      40+
-Тестов:       708+ (все проходят)
+Тестов:       1564+ (все проходят)
 Clippy:       0 предупреждений
 Rust:         Edition 2021
 WASM:         Wasmtime 47, WASI preview2

@@ -88,6 +88,88 @@ tar cf - --exclude=proc --exclude=sys --exclude=dev --exclude=run --exclude=mnt 
          --exclude='var/cache' --exclude='var/run' . | tar xf - -C /mnt/target
 step "system copied"
 
+# ---------------------------------------------------------------------------
+# Optional block set selected at install time.
+#
+# The live media carries a block catalog; the compiled-in base set (hal,
+# browser, net_settings, ipc_bus, scheduler) is part of the kernel binary and
+# is not listed here. The chosen subset is copied into the installed system's
+# /blocks directory, which the kernel reads through AIOS_BLOCKS_DIR. The final
+# selection is recorded in /etc/aios/blocks.conf on the target.
+# ---------------------------------------------------------------------------
+BLOCK_CATALOG=/usr/share/aios/blocks
+BLOCK_DEFAULT_CONF=/etc/aios/blocks.conf
+TARGET_BLOCKS=/mnt/target/blocks
+TARGET_BLOCK_CONF=/mnt/target/etc/aios/blocks.conf
+
+install_blocks() {
+  mkdir -p "$TARGET_BLOCKS" "$(dirname "$TARGET_BLOCK_CONF")"
+
+  if [ ! -d "$BLOCK_CATALOG" ]; then
+    step "no block catalog at $BLOCK_CATALOG; base set only"
+    return 0
+  fi
+
+  available=$(cd "$BLOCK_CATALOG" 2>/dev/null && for f in *.wasm *.bin; do
+    [ -e "$f" ] || continue
+    b=${f%.*}
+    printf '%s\n' "${b%%_*}"
+  done | sort -u | tr '\n' ' ')
+
+  if [ -z "$available" ]; then
+    step "block catalog empty; base set only"
+    return 0
+  fi
+
+  default_sel="all"
+  if [ -f "$BLOCK_DEFAULT_CONF" ]; then
+    d=$(grep -v '^[[:space:]]*#' "$BLOCK_DEFAULT_CONF" 2>/dev/null | tr '\n' ' ')
+    [ -n "$d" ] && default_sel="$d"
+  fi
+
+  if [ "$AUTO" = "1" ]; then
+    selection="$default_sel"
+  else
+    echo ""
+    echo "Available blocks: $available"
+    echo -n "Blocks to install [all/none/name ...] (default: $default_sel): "
+    read selection
+    [ -n "$selection" ] || selection="$default_sel"
+  fi
+
+  case "$selection" in
+    all)  names="$available" ;;
+    none) names="" ;;
+    *)    names="$selection" ;;
+  esac
+
+  installed=""
+  for n in $names; do
+    got=0
+    for f in "$BLOCK_CATALOG/${n}"_*.wasm "$BLOCK_CATALOG/${n}"_*.bin; do
+      [ -e "$f" ] || continue
+      cp -f "$f" "$TARGET_BLOCKS/"
+      side="${f%.*}.json"
+      [ -f "$side" ] && cp -f "$side" "$TARGET_BLOCKS/"
+      got=$((got + 1))
+    done
+    if [ "$got" -gt 0 ]; then
+      installed="$installed $n"
+    else
+      echo "-- WARNING: block '$n' not found in catalog"
+    fi
+  done
+
+  {
+    echo "# Written by aios-install. Blocks installed into /blocks."
+    for n in $installed; do echo "$n"; done
+  } > "$TARGET_BLOCK_CONF"
+
+  step "blocks installed:${installed:- none}"
+}
+
+install_blocks
+
 echo "Installing GRUB..."
 if [ -f /usr/sbin/grub-install ]; then
   echo "-- grub-install found in PATH: $(command -v grub-install)"

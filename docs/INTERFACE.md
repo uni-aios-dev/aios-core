@@ -9,7 +9,8 @@ The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight i
   2. **AIOS Installer** — boots the same initramfs with `rdinit=/installer`; the installer auto-runs
 - Inside the TUI press `Esc`/`q` to exit to the shell prompt `#`. The system is read-only; only `/tmp`, `/run`, `/var/log` are writable (tmpfs). Changes do not persist across reboots.
 - Network: DHCP is attempted on all ethernet/wifi interfaces at boot (see the TUI Network tab for the assigned address).
-- The **AIOS Installer** entry lists the disks, asks for the target (e.g. `sda`), requires confirmation `YES`, then partitions the disk (GPT: 1 MiB BIOS boot + 512 MiB EFI + ext4 root), copies the system, and installs GRUB (BIOS i386-pc + UEFI x86_64 EFI removable). Reboot after the success message.
+- The **AIOS Installer** entry lists the disks, asks for the target (e.g. `sda`), requires confirmation `YES`, then partitions the disk (GPT: 1 MiB BIOS boot + 512 MiB EFI + ext4 root), copies the system, asks which optional **blocks** to install (see below), and installs GRUB (BIOS i386-pc + UEFI x86_64 EFI removable). Reboot after the success message.
+- **Block selection at install time:** the installer reads a block catalog from `/usr/share/aios/blocks` and a default selection from `/etc/aios/blocks.conf` (`all`, `none`, or a name list). It prompts `Blocks to install [all/none/name ...]` (Enter takes the default), copies the chosen `{name}_{version}.wasm|.bin` (+ sidecar `.json`) into the installed system's `/blocks`, and records the final list in `/etc/aios/blocks.conf` on the target. Those are the blocks the kernel loads at boot (`AIOS_BLOCKS_DIR`); the compiled-in base set (`hal`, `browser`, `net_settings`, `ipc_bus`, `scheduler`) is always present and is not listed. In automated installs (`aios.yes`/`AUTO=1`) the default selection is used without prompting.
 - Automated install: pass `aios.target=<dev>` and `aios.yes` on the kernel command line to skip the interactive prompts (used for unattended/scripted installs). `aios.verbose` additionally dumps the final partition table.
 - The installer writes a timestamped **install journal** to `/aios-install.log` on the target root partition (every step up to `AIOS INSTALL COMPLETE`), so any failure of a physical install is readable after booting the target again. If the target root partition already carries the AIOS label, an interactive install asks `Type YES to FORCE reinstall` before wiping.
 
@@ -185,6 +186,8 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 
 The block store fetches blocks from three kinds of sources: GitHub (`github:owner/repo`), a local directory (`local:path`) and an HTTP update service (`http://host:port`). Installations land in `AIOS_BLOCKS_DIR` as `{name}_{version}.wasm` + sidecar JSON; updates are backed up (`.bak`) and auto-rollback on failure.
 
+The kernel loads two kinds of block at boot: the compiled-in **base set** (`hal`, `browser`, `net_settings` — built into the binary through the block factory) and **disk blocks** discovered under `AIOS_BLOCKS_DIR` and executed block by block. Store-installed blocks therefore appear in the same `Blocks & Svc` tab as the base set; the loader summary line there reports `base`/`disk`/`failed`/`live` counts.
+
 | Command | Arguments | Description |
 |---------|-----------|-------------|
 | `store list` | — | List installed blocks (newest version per name) |
@@ -245,7 +248,7 @@ On narrow windows the status bar text clips at the right edge (Far/MC behaviour)
 | # | Tab | Content |
 |---|-----|---------|
 | 1 | System & HW | CPU, RAM, OS/kernel, GPU, AI Tier, RAM gauge, **Hardware Inspector** |
-| 2 | Blocks & Svc | Block list (select/restart/unload/load) + process list |
+| 2 | Blocks & Svc | Block list (select/restart/unload/load) + a `base [...] / disk [...] / failed / live` loader summary + process list |
 | 3 | AI Console | LLM chat with slash commands |
 | 4 | Studio Bridge | Bridge server status, URL, REST/WebSocket endpoints |
 | 5 | Network & Store | Network settings (IPC) + installed block store |

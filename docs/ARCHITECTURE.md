@@ -275,6 +275,20 @@ Classification is deterministic based on hardware flags. Any single missing requ
 - `capabilities: Option<Vec<String>>` — capability names to assign (e.g., `CAP_NET_BIND`)
 - `ttl_ms: Option<u64>` — capability token TTL (default: 3600000ms)
 
+#### Factory (`factory.rs`)
+
+`BlockFactory` — constructs a compiled-in (native) block, the "base set" half of
+the hybrid loader:
+- `name()` / `version()` — registry key and manifest version
+- `create(id)` → `Box<dyn StatefulBlock>` — builds the block bound to its `BlockId`
+
+`BlockFactoryRegistry` — ordered catalog of factories:
+- `register(factory)` — rejects duplicate names with `BlockAlreadyRegistered`
+- `get(name)` / `contains(name)` / `names()` / `len()` / `is_empty()`
+- `instantiate(name, id)` → `Box<dyn StatefulBlock>` — `BlockNotFound` when missing
+
+Concrete factories live in the consumer (`aios/src/blocks.rs`), keeping this crate free of block-specific dependencies.
+
 #### Router (`router.rs`)
 
 `MessageRouter` — Dispatches IPC packets to block handlers:
@@ -611,7 +625,7 @@ Startup sequence:
 2. Parse `--safe-mode` (and `--bridge-port`) into `AppConfig`
 3. `HardwareProfile::detect()` — detect real hardware
 4. `AiTier::from_profile()` — classify AI capability, log the tier at boot
-5. Create `BlockRegistry` — register core blocks, boot-discover disk blocks from `AIOS_BLOCKS_DIR` **unless safe mode**, wire the browser block into the `MessageRouter`
+5. Create `BlockRegistry` — wire the compiled-in **base set** through the block factory (`hal`, `browser`, `net_settings`) into the `MessageRouter`, then discover + execute disk blocks from `AIOS_BLOCKS_DIR` **unless safe mode** (`blocks::register_base_blocks` / `blocks::load_disk_blocks`)
 6. Create `Scheduler` — spawn 3 processes (ai_orchestrator, io_handler, health_monitor)
 7. Create `Watchdog` — start heartbeat thread in background
 8. Create `EmbeddedContextStore` + `TelemetryStore` — for system telemetry
@@ -623,9 +637,18 @@ Startup sequence:
 
 Keybindings: `q`/`Ctrl+C`=Quit, `1-7`/`Alt+1-7`=Tab (Alt works while typing in Shell/URL/AI/net input), `Tab`/`F1`/`?`=next tab/help, `W`=Launch GUI dashboard, `Space`=pause event log, Blocks: `r`=restart `k`=unload `l`=load, Web: `g`/`Enter`/`j`/`k`/`o`/`u`/`d`/`PageUp`/`PageDown`/`b`/`B`/`n`/`Esc`, Network: `n`=edit config `g`=show JSON `s`=refresh store, ↑/↓=Shell history
 
+### Hybrid Block Loader (`aios/src/blocks.rs`)
+
+The kernel is block-oriented end to end: everything above the scheduler is a *block*, and the only difference is where the code comes from.
+
+- **Base set (compiled-in):** `base_factories()` builds a `BlockFactoryRegistry` (`aios-block-mgr::factory`) holding one `BlockFactory` per compiled-in block (`hal`, `browser`, `net_settings`). `register_base_blocks()` instantiates each factory, registers the block in the `BlockRegistry` (`native:<name>:<version>` payload) and wires its `handle_message` into the `MessageRouter`. The base blocks are real `StatefulBlock`s, so they are dispatched over IPC exactly like a disk block — `hal` is now a live `HalBlock`, not a placeholder.
+- **Disk set (installer-chosen):** `load_disk_blocks()` calls `BlockRegistry::boot_discover` on `AIOS_BLOCKS_DIR`, then executes every discovered payload whose first bytes are the WebAssembly magic (`\0asm`) through the `BlockExecutor` (`init`/`start` bring-up), one block at a time. `.bin` / placeholder payloads are registered only and reported as `registered_only`. Only the blocks the installer copied into `/blocks` are present at boot, so bring-up cost tracks the installed set.
+- `BlockExecutor` is kept alive in `OrchestratorState` so executed disk blocks stay resident; base blocks live inside their router handlers.
+- `ipc_bus` and `scheduler` remain topology-only placeholders: they appear in the dependency graph but are not serviced over IPC.
+
 ### Safe Mode
 
-`--safe-mode` boots a minimal, recoverable kernel: third-party disk blocks are not discovered and the bridge server is not started; the header shows `SAFE MODE`. Core blocks, scheduler, watchdog, LLM engine, TUI and Shell remain available.
+`--safe-mode` boots a minimal, recoverable kernel: disk blocks are not discovered or executed (compiled-in base blocks only) and the bridge server is not started; the header shows `SAFE MODE`. Core blocks, scheduler, watchdog, LLM engine, TUI and Shell remain available.
 
 ### Native WebView Browser (`aios-webview`)
 
@@ -1037,10 +1060,10 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ## Testing Architecture
 
-- **Unit tests**: 708 tests embedded in source files under `#[cfg(test)] mod tests`
+- **Unit tests**: 1347 tests embedded in source files under `#[cfg(test)] mod tests`
 - **Integration tests**: 28 tests in `tests/integration_test.rs`
 - **Stress tests**: 11 tests in `tests/stress_test.rs`
-- **Total**: 708 tests, all passing, zero clippy warnings
+- **Total**: 1564 tests, all passing, zero clippy warnings
 
 **Speed test thresholds**:
 - Debug mode: < 50us (unoptimized)
@@ -1307,7 +1330,7 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 1. Hardware probe (CPU, RAM, GPU, OS)
 2. Initialize IPC bus (SharedIpcBus)
 3. Create Scheduler with RAM-aware config
-4. Initialize BlockRegistry — register core blocks (hal, ipc_bus, scheduler, browser), boot-discover `AIOS_BLOCKS_DIR` (default `./blocks`), register the browser IPC handler in the `MessageRouter`
+4. Initialize BlockRegistry — wire the compiled-in base set (`hal`, `browser`, `net_settings`) via the block factory into the `MessageRouter`, then discover + execute disk blocks from `AIOS_BLOCKS_DIR` (default `./blocks`) unless safe mode
 5. Setup AccessControl + Watchdog
 6. Initialize LLM Engine (cloud backend by default)
 7. Initialize WASM Executor (BlockExecutor)
@@ -1328,7 +1351,8 @@ The `live/` directory builds a bootable hybrid (BIOS+UEFI) ISO that boots straig
 - `live/sfs-up.sh` — aios-init bring-up script (default mode): loads storage/loop/squashfs/ext4 + GPU (dependency-ordered DRM with fbdev fallbacks) modules, finds `aios.squashfs` on the USB (or a `root=` disk), bind-mounts the Alpine userspace under `/`, starts the network (`rcS`), udev and **X.org on `:0` VT7**
 - `live/rcS` — mount-proc/sys/dev, network DHCP on all ethernet/wifi ifaces, launch AIOS TUI on `tty1`
 - `live/aios-launch` — legacy/installed mode: ensures X is running, exports `DISPLAY=:0` + `AIOS_DATA_DIR=/tmp/.aios`, execs `aios` on `tty1`, restarts on crash, falls back to shell
-- `live/aios-install` — interactive installer: lists disks, targets one (e.g. `sda`), partitions GPT (512 MB EFI + ext4 root), copies system, installs GRUB
+- `live/aios-install` — interactive installer: lists disks, targets one (e.g. `sda`), partitions GPT (512 MB EFI + ext4 root), copies system, selects optional blocks, installs GRUB
+- `live/blocks.conf` + `live/blocks/` — installer block catalog: `live/blocks/` holds optional `{name}_{version}.wasm|.bin` (+ sidecar `.json`) payloads, `live/blocks.conf` is the default selection (`all`/`none`/name list). `aios-install` copies the chosen subset into the target's `/blocks` (read by the kernel via `AIOS_BLOCKS_DIR`) and records the choice in `/etc/aios/blocks.conf`; `live/build.sh` ships the catalog to `/usr/share/aios/blocks`
 - `live/grub.cfg` — GRUB menu: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 s default
 - `live/inittab` — getty-free: `aios-launch` on tty1, askshell on tty2
 
@@ -1759,10 +1783,17 @@ brings up proc/sys, a `tmpfs` `/dev` with busybox `mdev -s`, then `exec`s
    filesystem signatures never block on a confirmation prompt.
 3. `tar` copy of the live rootfs (the initramfs including `boot/vmlinuz` and the
    baked `boot/initramfs.cpio.gz`) onto the target.
-4. GRUB installed for **BIOS** (`--target=i386-pc`) to the target disk and for
+4. optional block selection (`install_blocks`): reads the catalog at
+   `/usr/share/aios/blocks` and the default selection `/etc/aios/blocks.conf`,
+   prompts with `all`/`none`/name list (default taken from the conf; `AUTO=1`
+   uses the default without prompting), copies the chosen
+   `{name}_{version}.wasm|.bin` (+ sidecar `.json`) into the target `/blocks`
+   (the directory the kernel scans via `AIOS_BLOCKS_DIR`) and records the final
+   selection in `/etc/aios/blocks.conf` on the target.
+5. GRUB installed for **BIOS** (`--target=i386-pc`) to the target disk and for
    **UEFI** (`--target=x86_64-efi --removable`) into `/boot/efi`; stderr is captured
    to `grub-err.txt` on the target and `rc` echoed.
-5. `grub.cfg` written with an **unquoted heredoc** so `${DEV}` is shell-expanded to
+6. `grub.cfg` written with an **unquoted heredoc** so `${DEV}` is shell-expanded to
    the real device (`root=/dev/sda3 console=ttyS0`, `initrd /boot/initramfs.cpio.gz`).
 
 The installed disk then boots SeaBIOS/GRUB → kernel → initramfs → `aios-init`

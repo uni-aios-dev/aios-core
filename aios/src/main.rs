@@ -1,3 +1,4 @@
+mod blocks;
 mod hw_probe;
 mod orchestrator;
 mod tui;

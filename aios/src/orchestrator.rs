@@ -1,19 +1,15 @@
+use crate::blocks;
 use crate::hw_probe::{self, HwProfile};
 use aios_block_mgr::registry::BlockRegistry;
 use aios_block_mgr::router::MessageRouter;
 use aios_bridge::server::{start_server, BridgeContext};
-use aios_browser::block::BrowserBlock;
-use aios_browser::types::BrowserConfig;
 use aios_cluster::config::ClusterConfig;
 use aios_cluster::executor::SchedulerProcessExecutor;
 use aios_cluster::scheduler::DistributedScheduler;
 use aios_cluster::transport::TcpClusterTransport;
 use aios_cluster::types::{NodeInfo, NodeMetrics, NodeStatus};
 use aios_core::block::BlockId;
-use aios_core::block::StatefulBlock;
 use aios_llm::{default_config, LlmEngine};
-use aios_net_config::block::NetSettingsBlock;
-use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::Scheduler;
 use aios_security::access_control::AccessControlLayer;
 use aios_wasm::executor::BlockExecutor;
@@ -29,6 +25,12 @@ pub struct OrchestratorState {
     pub bridge: Arc<BridgeContext>,
     pub router: MessageRouter,
     pub net_block_id: BlockId,
+    /// Compiled-in base blocks that were wired at boot.
+    pub base_blocks: Vec<blocks::BaseBlockInfo>,
+    /// Result of the on-disk block phase.
+    pub disk_blocks: blocks::DiskBlockReport,
+    /// Executor that keeps on-disk WebAssembly blocks alive after bring-up.
+    pub executor: BlockExecutor,
     pub safe_mode: bool,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
@@ -96,12 +98,11 @@ pub async fn initialize(
     push_log(&logs, "AIOS: initializing block registry...".into());
     let mut registry = BlockRegistry::new();
 
+    // Infrastructure placeholders: present in the topology so the dependency
+    // graph reflects boot order; they are not serviced over IPC.
     for (name, version, binary) in [
-        ("hal", "1.0.0", &b"hal-native-module"[..]),
         ("ipc_bus", "1.0.0", &b"ipc_bus"[..]),
         ("scheduler", "1.0.0", &b"scheduler"[..]),
-        ("browser", "0.1.0", &b"browser-native"[..]),
-        ("net_settings", "1.0.0", &b"net-settings-native"[..]),
     ] {
         if let Ok(id) = registry.register_block(name, version, binary.to_vec()) {
             let _ = registry.activate_block(id);
@@ -110,60 +111,51 @@ pub async fn initialize(
     registry.set_block_dependencies("ipc_bus", vec!["hal".into()]);
     registry.set_block_dependencies("scheduler", vec!["ipc_bus".into()]);
 
-    let blocks_dir = std::env::var("AIOS_BLOCKS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("blocks"));
-    let disk_results = if config.safe_mode {
-        push_log(
-            &logs,
-            "AIOS SAFE MODE: skipping third-party disk blocks (boot_discover disabled)".into(),
-        );
-        Vec::new()
-    } else {
-        registry.boot_discover(&blocks_dir)
-    };
-    push_log(
-        &logs,
-        format!(
-            "AIOS: registered {} core blocks, discovered {} disk blocks",
-            registry.count() - disk_results.len(),
-            disk_results.len()
-        ),
-    );
-
-    let browser_block_id = registry
-        .find_by_name("browser")
-        .map(|e| e.manifest.id)
-        .unwrap_or(BlockId::new(99));
-    let mut browser_block = BrowserBlock::new(browser_block_id, BrowserConfig::default());
+    // Base set: compiled-in blocks created on demand by the block factory and
+    // wired into the message router exactly like a disk block would be.
     let mut router = MessageRouter::new();
-    router.register_handler(
-        browser_block_id.0,
-        Box::new(move |packet| browser_block.handle_message(packet)),
-    );
+    let base_blocks = blocks::register_base_blocks(&mut registry, &mut router);
     push_log(
         &logs,
-        format!("AIOS: browser block '{}' ready", browser_block_id),
+        format!("AIOS: wired {} base blocks", base_blocks.len()),
     );
 
     let net_block_id = registry
         .find_by_name("net_settings")
         .map(|e| e.manifest.id)
         .unwrap_or(BlockId::new(100));
-    let mut net_block =
-        NetSettingsBlock::with_default_store(net_block_id, NetworkConfig::default());
-    let net_hostname = net_block.config().hostname.clone();
-    let net_port = net_block.config().listen_port;
-    router.register_handler(
-        net_block_id.0,
-        Box::new(move |packet| net_block.handle_message(packet)),
-    );
+
+    push_log(&logs, "AIOS: initializing WASM executor...".into());
+    let mut executor =
+        BlockExecutor::with_default_config().map_err(|e| format!("WASM init failed: {e}"))?;
+
+    // Disk set: only the blocks dropped in by the installer run, block by block.
+    let blocks_dir = std::env::var("AIOS_BLOCKS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("blocks"));
+    let disk_blocks = if config.safe_mode {
+        push_log(
+            &logs,
+            "AIOS SAFE MODE: skipping disk blocks (block discovery disabled)".into(),
+        );
+        blocks::DiskBlockReport::default()
+    } else {
+        let report = blocks::load_disk_blocks(&mut registry, &mut executor, &blocks_dir);
+        push_log(
+            &logs,
+            format!(
+                "AIOS: loaded {} disk blocks ({} registered-only, {} failed) from {:?}",
+                report.loaded_count(),
+                report.registered_only.len(),
+                report.failed_count(),
+                blocks_dir
+            ),
+        );
+        report
+    };
     push_log(
         &logs,
-        format!(
-            "AIOS: net settings block '{}' ready ({}:{})",
-            net_block_id, net_hostname, net_port
-        ),
+        format!("AIOS: block topology — {} blocks total", registry.count()),
     );
 
     push_log(&logs, "AIOS: initializing access control...".into());
@@ -174,16 +166,6 @@ pub async fn initialize(
 
     push_log(&logs, "AIOS: initializing LLM engine...".into());
     let _llm = LlmEngine::from_config(default_config());
-
-    push_log(&logs, "AIOS: initializing WASM executor...".into());
-    let _executor = match BlockExecutor::with_default_config() {
-        Ok(exec) => exec,
-        Err(e) => {
-            push_log(&logs, format!("AIOS WARN: WASM executor init failed: {e}"));
-            push_log(&logs, "AIOS: creating fallback executor...".into());
-            BlockExecutor::with_default_config().map_err(|e| format!("WASM init failed: {e}"))?
-        }
-    };
 
     push_log(&logs, "AIOS: initializing cluster node...".into());
     let cluster = match ClusterConfig::from_env() {
@@ -288,6 +270,9 @@ pub async fn initialize(
         bridge,
         router,
         net_block_id,
+        base_blocks,
+        disk_blocks,
+        executor,
         safe_mode: config.safe_mode,
         start_time: Instant::now(),
         bridge_running,
@@ -299,7 +284,10 @@ pub async fn initialize(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aios_core::block::StatefulBlock;
     use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+    use aios_net_config::block::NetSettingsBlock;
+    use aios_net_config::config::NetworkConfig;
 
     fn build_net_router(dir: &tempfile::TempDir) -> (MessageRouter, BlockId) {
         let mut registry = BlockRegistry::new();

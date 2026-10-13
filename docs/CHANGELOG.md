@@ -2,6 +2,46 @@
 
 # AIOS Development Log
 
+## v2.57.0 — Hybrid block loading: base factory + installer-selected disk blocks (2026-10-14)
+
+### Added
+- **Native block factory** (`aios-block-mgr/src/factory.rs`): `BlockFactory`
+  (name/version/`create(id)`) and `BlockFactoryRegistry` (register/get/names/
+  `instantiate`). The registry is the single source of truth for the compiled-in
+  *base set*; duplicate names are rejected with `BlockAlreadyRegistered`.
+- **Uniform block loader** (`aios/src/blocks.rs`): `base_factories()` registers
+  the compiled-in factories (hal, browser, net_settings);
+  `register_base_blocks()` instantiates each one, registers it in the
+  `BlockRegistry` and wires its handler into the `MessageRouter`, exactly like a
+  disk block; `load_disk_blocks()` discovers blocks and executes every real
+  WebAssembly module block-by-block through the `BlockExecutor`.
+- **Installer block selection**: `live/blocks.conf` (default selection:
+  `all`/`none`/name list), `live/blocks/` catalog, a new `aios-install` step
+  that copies the chosen `{name}_{version}.wasm|.bin` (+ sidecar `.json`) into
+  the target's `/blocks` and records the choice in
+  `/etc/aios/blocks.conf`; `live/build.sh` ships the catalog to
+  `/usr/share/aios/blocks` and the default conf to `/etc/aios/blocks.conf`.
+- **Blocks tab summary** (`aios/src/tui/ui.rs`): the Blocks tab now prints a
+  `base [...] | disk [...] | failed N | live N` line sourced from the boot-time
+  loader report.
+
+### Changed
+- Boot pipeline (`aios/src/orchestrator.rs`): placeholder `hal`/`browser`/
+  `net_settings` binaries are replaced by real factory-built blocks; `hal` is
+  now an actual `HalBlock` wired into the router. Only `ipc_bus`/`scheduler`
+  remain topology-only placeholders. `OrchestratorState` gained `base_blocks`,
+  `disk_blocks` and `executor` (the executor is kept alive so disk blocks stay
+  loaded).
+- Disk discovery distinguishes payloads by the WebAssembly magic (`\0asm`):
+  real modules are executed, `.bin` / placeholder payloads are registered only
+  and reported as `registered_only`.
+
+### Verification
+- `aios-block-mgr`: 82 tests green (5 new factory tests). `aios`: 19 tests green
+  (5 new block-loader tests, incl. executing a hand-assembled wasm module and
+  skipping a non-wasm `.bin`). `cargo clippy -p aios-block-mgr -p aios` zero
+  warnings, `cargo fmt` clean.
+
 ## v2.56.0 — UDP broadcast & multicast fan-out (2026-10-13)
 
 ### Added

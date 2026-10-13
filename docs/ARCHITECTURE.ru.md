@@ -275,6 +275,19 @@ pub struct HardwareProfile {
 - `capabilities: Option<Vec<String>>` — имена capabilities для назначения (например, `CAP_NET_BIND`)
 - `ttl_ms: Option<u64>` — TTL capability-токена (по умолчанию: 3600000мс)
 
+#### Фабрика (`factory.rs`)
+
+`BlockFactory` — создаёт вкомпилированный (нативный) блок, «базовую» половину гибридного загрузчика:
+- `name()` / `version()` — ключ в реестре и версия манифеста
+- `create(id)` → `Box<dyn StatefulBlock>` — создаёт блок, привязанный к его `BlockId`
+
+`BlockFactoryRegistry` — упорядоченный каталог фабрик:
+- `register(factory)` — отвергает дубликаты имён с `BlockAlreadyRegistered`
+- `get(name)` / `contains(name)` / `names()` / `len()` / `is_empty()`
+- `instantiate(name, id)` → `Box<dyn StatefulBlock>` — `BlockNotFound`, если фабрики нет
+
+Конкретные фабрики живут у потребителя (`aios/src/blocks.rs`), поэтому этот крейт не тянет зависимости конкретных блоков.
+
 #### Маршрутизатор (`router.rs`)
 
 `MessageRouter` — маршрутизация IPC-пакетов к обработчикам блоков:
@@ -613,7 +626,7 @@ TUI ядра на базе Ratatui с компоновкой из 7 вкладо
 2. Разбор `--safe-mode` (и `--bridge-port`) в `AppConfig`
 3. `HardwareProfile::detect()` — обнаружение реального оборудования
 4. `AiTier::from_profile()` — классификация AI-возможностей, уровень логируется при загрузке
-5. Создание `BlockRegistry` — регистрация базовых блоков, boot-обнаружение блоков на диске из `AIOS_BLOCKS_DIR` **кроме safe mode**, подключение браузерного блока к `MessageRouter`
+5. Создание `BlockRegistry` — подключение вкомпилированного **базового набора** через фабрику блоков (`hal`, `browser`, `net_settings`) в `MessageRouter`, затем обнаружение + исполнение блоков на диске из `AIOS_BLOCKS_DIR` **кроме safe mode** (`blocks::register_base_blocks` / `blocks::load_disk_blocks`)
 6. Создание `Scheduler` — запуск 3 процессов (ai_orchestrator, io_handler, health_monitor)
 7. Создание `Watchdog` — запуск потока heartbeat в фоне
 8. Создание `EmbeddedContextStore` + `TelemetryStore` — для системной телеметрии
@@ -625,9 +638,18 @@ TUI ядра на базе Ratatui с компоновкой из 7 вкладо
 
 Горячие клавиши: `q`/`Ctrl+C`=Выход, `1-7`/`Alt+1-7`=Вкладка (Alt работает при вводе в Shell/URL/AI/сеть), `Tab`/`F1`/`?`=следующая вкладка/справка, `W`=Запуск дашборда GUI, `Space`=пауза журнала, Blocks: `r`=перезапуск `k`=выгрузка `l`=загрузка, Web: `g`/`Enter`/`j`/`k`/`o`/`u`/`d`/`PageUp`/`PageDown`/`b`/`B`/`n`/`Esc`, Network: `n`=редактор `g`=показать JSON `s`=обновить хранилище, ↑/↓=История Shell
 
+### Гибридный загрузчик блоков (`aios/src/blocks.rs`)
+
+Ядро блочное целиком: всё выше планировщика — это *блок*, и отличается только источник кода.
+
+- **Базовый набор (вкомпилирован):** `base_factories()` строит `BlockFactoryRegistry` (`aios-block-mgr::factory`) с одной `BlockFactory` на каждый вкомпилированный блок (`hal`, `browser`, `net_settings`). `register_base_blocks()` создаёт каждый блок через фабрику, регистрирует его в `BlockRegistry` (payload `native:<name>:<version>`) и подключает его `handle_message` в `MessageRouter`. Базовые блоки — настоящие `StatefulBlock`, поэтому диспетчеризуются по IPC точно так же, как дисковый блок: `hal` теперь живой `HalBlock`, а не заглушка.
+- **Дисковый набор (выбирает установщик):** `load_disk_blocks()` вызывает `BlockRegistry::boot_discover` по `AIOS_BLOCKS_DIR`, затем исполняет каждый обнаруженный payload, начинающийся с сигнатуры WebAssembly (`\0asm`), через `BlockExecutor` (bring-up `init`/`start`), блок за блоком. Payload `.bin`/плейсхолдеры только регистрируются и попадают в отчёт как `registered_only`. При загрузке присутствуют только блоки, скопированные установщиком в `/blocks`, поэтому стоимость bring-up пропорциональна установленному набору.
+- `BlockExecutor` удерживается живым в `OrchestratorState`, чтобы исполненные дисковые блоки оставались резидентными; базовые блоки живут внутри своих обработчиков роутера.
+- `ipc_bus` и `scheduler` остаются плейсхолдерами только ради топологии: они есть в графе зависимостей, но не обслуживаются по IPC.
+
 ### Safe Mode
 
-`--safe-mode` загружает минимальное восстанавливаемое ядро: сторонние блоки с диска не обнаруживаются, мост не запускается; в шапке показывается `SAFE MODE`. Ядро, планировщик, watchdog, LLM-движок, TUI и Shell остаются доступны.
+`--safe-mode` загружает минимальное восстанавливаемое ядро: дисковые блоки не обнаруживаются и не исполняются (только вкомпилированный базовый набор), мост не запускается; в шапке показывается `SAFE MODE`. Ядро, планировщик, watchdog, LLM-движок, TUI и Shell остаются доступны.
 
 ### Нативный браузер WebView (`aios-webview`)
 
@@ -1037,10 +1059,10 @@ User Input (TUI)
 
 ## Архитектура тестирования
 
-- **Модульные тесты**: 708 тестов, встроенных в исходные файлы под `#[cfg(test)] mod tests`
+- **Модульные тесты**: 1347 тестов, встроенных в исходные файлы под `#[cfg(test)] mod tests`
 - **Интеграционные тесты**: 28 тестов в `tests/integration_test.rs`
 - **Стресс-тесты**: 11 тестов в `tests/stress_test.rs`
-- **Итого**: 708 тестов, все проходят, ноль предупреждений clippy
+- **Итого**: 1564 теста, все проходят, ноль предупреждений clippy
 
 **Пороги скорости**:
 - Debug-режим: < 50us (без оптимизации)
@@ -1302,7 +1324,7 @@ User Input (TUI)
 1. Определение оборудования (CPU, RAM, GPU, ОС)
 2. Инициализация IPC-шины (SharedIpcBus)
 3. Создание Scheduler с RAM-ориентированной конфигурацией
-4. Инициализация BlockRegistry — регистрация базовых блоков (hal, ipc_bus, scheduler, browser), boot-обнаружение `AIOS_BLOCKS_DIR` (по умолчанию `./blocks`; пропуск в safe mode), регистрация IPC-обработчика браузерного блока в `MessageRouter`
+4. Инициализация BlockRegistry — подключение вкомпилированного базового набора (`hal`, `browser`, `net_settings`) через фабрику блоков в `MessageRouter`, затем обнаружение + исполнение дисковых блоков из `AIOS_BLOCKS_DIR` (по умолчанию `./blocks`) кроме safe mode
 5. Настройка AccessControl + Watchdog
 6. Инициализация LLM Engine (облачный бэкенд по умолчанию)
 7. Инициализация WASM Executor (BlockExecutor)
@@ -1323,7 +1345,8 @@ User Input (TUI)
 - `live/sfs-up.sh` — скрипт подъёма юзерспейса для режима aios-init (по умолчанию): грузит модули storage/loop/squashfs/ext4 + GPU (DRM в порядке зависимостей с fbdev-фолбэками), находит `aios.squashfs` на флешке (или диск `root=`), bind-монтирует юзерспейс Alpine под `/`, поднимает сеть (`rcS`), eudev и **X.org на `:0` VT7**
 - `live/rcS` — mount proc/sys/dev, DHCP-сеть на всех ethernet/wifi-интерфейсах, запуск TUI AIOS на `tty1`
 - `live/aios-launch` — легаси/установленный режим: при необходимости поднимает X, экспортирует `DISPLAY=:0` + `AIOS_DATA_DIR=/tmp/.aios`, запускает `aios` на `tty1`, перезапуск при падении, откат в шелл
-- `live/aios-install` — интерактивный установщик: список дисков, выбор цели (например `sda`), разметка GPT (512 МБ EFI + ext4 root), копирование системы, установка GRUB
+- `live/aios-install` — интерактивный установщик: список дисков, выбор цели (например `sda`), разметка GPT (512 МБ EFI + ext4 root), копирование системы, выбор опциональных блоков, установка GRUB
+- `live/blocks.conf` + `live/blocks/` — каталог блоков для установщика: `live/blocks/` хранит опциональные payload `{name}_{version}.wasm|.bin` (+ sidecar `.json`), `live/blocks.conf` — выбор по умолчанию (`all`/`none`/список имён). `aios-install` копирует выбранный набор в `/blocks` целевой системы (его читает ядро через `AIOS_BLOCKS_DIR`) и записывает выбор в `/etc/aios/blocks.conf`; `live/build.sh` кладёт каталог в `/usr/share/aios/blocks`
 - `live/grub.cfg` — меню GRUB: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 с по умолчанию
 - `live/inittab` — без getty: `aios-launch` на tty1, askhell на tty2
 
@@ -1751,10 +1774,17 @@ GPU-модуль создаёт его только через DRM-драйве�
    устаревшие сигнатуры ФС никогда не блокируют подтверждением.
 3. `tar`-копия живого rootfs (initramfs, включая `boot/vmlinuz` и встроенный
    `boot/initramfs.cpio.gz`) на целевой диск.
-4. GRUB ставится для **BIOS** (`--target=i386-pc`) на целевой диск и для **UEFI**
+4. выбор опциональных блоков (`install_blocks`): читает каталог
+   `/usr/share/aios/blocks` и выбор по умолчанию `/etc/aios/blocks.conf`,
+   спрашивает `all`/`none`/список имён (по умолчанию берётся из conf; `AUTO=1`
+   использует значение по умолчанию без вопроса), копирует выбранные
+   `{name}_{version}.wasm|.bin` (+ sidecar `.json`) в `/blocks` целевой системы
+   (каталог, который ядро сканирует через `AIOS_BLOCKS_DIR`) и записывает
+   итоговый выбор в `/etc/aios/blocks.conf` на цели.
+5. GRUB ставится для **BIOS** (`--target=i386-pc`) на целевой диск и для **UEFI**
    (`--target=x86_64-efi --removable`) в `/boot/efi`; stderr уходит в `grub-err.txt`
    на целевом диске, `rc` печатается.
-5. `grub.cfg` пишется heredoc **без кавычек**, чтобы `${DEV}` раскрылся шеллом в
+6. `grub.cfg` пишется heredoc **без кавычек**, чтобы `${DEV}` раскрылся шеллом в
    реальное устройство (`root=/dev/sda3 console=ttyS0`,
    `initrd /boot/initramfs.cpio.gz`).
 
