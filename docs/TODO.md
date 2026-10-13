@@ -75,6 +75,8 @@
 
 - [x] **Hybrid block loading — base factory + installer-selected disk blocks (v2.57.0)**: `aios-block-mgr::factory` (`BlockFactory`/`BlockFactoryRegistry`, duplicate-name rejection) + `aios/src/blocks.rs` (`base_factories`, `register_base_blocks`, `load_disk_blocks`, `looks_like_wasm`). Boot wires the compiled-in base set (hal, browser, net_settings via real `StatefulBlock`s) through the factory into the `MessageRouter` and executes disk `.wasm` blocks block-by-block through `BlockExecutor` (`init`/`start`); non-wasm `.bin` payloads are registered only. `OrchestratorState` keeps `base_blocks`, `disk_blocks` and `executor` (kept alive so disk blocks stay resident). Installer block selection: `live/blocks.conf` (default set), `live/blocks/` catalog, `aios-install` copies the chosen subset into the target `/blocks` + records `/etc/aios/blocks.conf`, `live/build.sh` ships the catalog to `/usr/share/aios/blocks`. TUI Blocks tab prints a `base/disk/failed/live` loader summary. (aios-block-mgr 82 tests incl. +5 factory; aios 19 tests incl. +5 loader.)
 
+- [x] **WASM block IPC routing — `handle_message` ABI (v2.58.0)**: `BlockExecutor::dispatch_wasm_packet` / `dispatch_wasm` deliver a bincode `IpcPacket` to an executed disk block and decode the packed `(resp_ptr << 32) | resp_len` reply (`len == 0` → no response). `WasmBlock` gained `has_func`/`memory_size`/`grow_memory`/`write_linear_memory`/`read_linear_memory`, and requests are staged through the optional `aios_alloc` export or host-grown `StoreState::ipc_scratch` that never overlaps the block's data. `load_disk_blocks` registers a `MessageRouter` handler for every block exporting `handle_message` (`DiskBlockInfo.routed`); `OrchestratorState.executor` is now `Arc<Mutex<BlockExecutor>>`. Closes BUGS OPEN v2.57.0 #1. (aios-wasm +4 tests, aios +1.)
+
 ## GUI Roadmap (full-fledged desktop, backlog)
 
 The v2.38.22 GUI is a first step; a real windowing system needs:
@@ -452,7 +454,7 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
 
 ## Planned
 
-- [ ] **Block loader follow-ups (v2.57.0)**: select the compiled-in base set with `base-*` feature flags (per-profile base sets); route WebAssembly disk blocks over IPC (map `IpcPacket` → wasm exports and register a `MessageRouter` handler so `call_block_func` is reachable); surface the loader report in the GUI Blocks tab (parity with the TUI summary line).
+- [ ] **Block loader follow-ups**: select the compiled-in base set with `base-*` feature flags (per-profile base sets); surface the loader report in the GUI Blocks tab (parity with the TUI summary line).
 - [x] **Phase 24 sub-item: Backend workflow execution endpoint** — `POST /api/v1/workflow` batch intent executor in `aios-bridge`
 - [x] **Phase 23: Multi-Mode AI Engine (`aios-llm`) & Hybrid Intent Router — COMPLETE**
   - [x] `aios-llm` crate with unified trait/enum design: LlmConfig, BackendKind, CloudProvider, LlmRequest/Response

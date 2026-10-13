@@ -642,8 +642,8 @@ Keybindings: `q`/`Ctrl+C`=Quit, `1-7`/`Alt+1-7`=Tab (Alt works while typing in S
 The kernel is block-oriented end to end: everything above the scheduler is a *block*, and the only difference is where the code comes from.
 
 - **Base set (compiled-in):** `base_factories()` builds a `BlockFactoryRegistry` (`aios-block-mgr::factory`) holding one `BlockFactory` per compiled-in block (`hal`, `browser`, `net_settings`). `register_base_blocks()` instantiates each factory, registers the block in the `BlockRegistry` (`native:<name>:<version>` payload) and wires its `handle_message` into the `MessageRouter`. The base blocks are real `StatefulBlock`s, so they are dispatched over IPC exactly like a disk block — `hal` is now a live `HalBlock`, not a placeholder.
-- **Disk set (installer-chosen):** `load_disk_blocks()` calls `BlockRegistry::boot_discover` on `AIOS_BLOCKS_DIR`, then executes every discovered payload whose first bytes are the WebAssembly magic (`\0asm`) through the `BlockExecutor` (`init`/`start` bring-up), one block at a time. `.bin` / placeholder payloads are registered only and reported as `registered_only`. Only the blocks the installer copied into `/blocks` are present at boot, so bring-up cost tracks the installed set.
-- `BlockExecutor` is kept alive in `OrchestratorState` so executed disk blocks stay resident; base blocks live inside their router handlers.
+- **Disk set (installer-chosen):** `load_disk_blocks()` calls `BlockRegistry::boot_discover` on `AIOS_BLOCKS_DIR`, then executes every discovered payload whose first bytes are the WebAssembly magic (`\0asm`) through the `BlockExecutor` (`init`/`start` bring-up), one block at a time. A block that exports `handle_message` is additionally wired into the `MessageRouter`, so it is dispatched over IPC exactly like a base block (`DiskBlockInfo.routed` reports this). `.bin` / placeholder payloads are registered only and reported as `registered_only`. Only the blocks the installer copied into `/blocks` are present at boot, so bring-up cost tracks the installed set.
+- `BlockExecutor` is kept alive in `OrchestratorState` as `Arc<Mutex<BlockExecutor>>` (router handlers must be `Send`) so executed disk blocks stay resident and service their IPC traffic; base blocks live inside their router handlers.
 - `ipc_bus` and `scheduler` remain topology-only placeholders: they appear in the dependency graph but are not serviced over IPC.
 
 ### Safe Mode
@@ -920,6 +920,27 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - Instantiate with `SandboxConfig`
 - Call exported functions with typed parameters
 - `MemoryStats`: memory/fuel limits and instantiation status
+- Linear-memory accessors for IPC: `has_func`, `memory_size`, `grow_memory`, `write_linear_memory`, `read_linear_memory`
+
+### IPC Dispatch (`executor.rs`)
+
+`BlockExecutor` bridges disk WebAssembly blocks onto the kernel IPC bus:
+
+- **ABI:** a block that wants to receive packets exports
+  `handle_message(ptr: i32, len: i32) -> i64`. The host stages a
+  bincode-serialized `IpcPacket` in the block's linear memory at `ptr`, calls the
+  export, and interprets the packed `i64` result as `(resp_ptr << 32) | resp_len`;
+  `resp_len == 0` means "no response", otherwise the host reads `resp_len` bytes
+  at `resp_ptr` and bincode-deserializes the reply.
+- `dispatch_wasm_packet(id, &IpcPacket)` / `dispatch_wasm(id, &[u8])` perform the
+  round trip; `has_export` / `routes_ipc` probe the module for the entry point.
+- The request buffer is allocated through the guest's optional `aios_alloc`
+  export when present, otherwise in host-grown memory (`StoreState::ipc_scratch`)
+  that never overlaps the block's own data; `MAX_IPC_REQUEST` / `MAX_IPC_RESPONSE`
+  (4 MiB) bound both directions.
+- The handler registered by `aios/src/blocks.rs` locks the shared executor and
+  calls `dispatch_wasm_packet`, so `call_block_func`-style traffic reaches disk
+  blocks through the same `MessageRouter` as the base set.
 
 ### WASI Filtering (`wasi_filter.rs`)
 
@@ -1060,10 +1081,10 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ## Testing Architecture
 
-- **Unit tests**: 1347 tests embedded in source files under `#[cfg(test)] mod tests`
-- **Integration tests**: 28 tests in `tests/integration_test.rs`
-- **Stress tests**: 11 tests in `tests/stress_test.rs`
-- **Total**: 1564 tests, all passing, zero clippy warnings
+- **Unit tests**: 1351 tests embedded in source files under `#[cfg(test)] mod tests`
+- **Integration tests**: 217 tests across the workspace `tests/` targets (integration, stress, chaos, proptest)
+- **Doc tests**: 1 test in crate documentation
+- **Total**: 1569 tests, all passing, zero clippy warnings
 
 **Speed test thresholds**:
 - Debug mode: < 50us (unoptimized)

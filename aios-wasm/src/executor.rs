@@ -3,9 +3,26 @@ use crate::sandbox::{SandboxConfig, StoreState, WasmBlock, WasmSandbox};
 use aios_block_mgr::registry::BlockRegistry;
 use aios_core::block::BlockId;
 use aios_core::error::{AIOSException, Result};
+use aios_core::ipc_protocol::IpcPacket;
 use std::collections::HashMap;
 use std::path::Path;
 use wasmtime::Store;
+
+/// WebAssembly linear-memory page size in bytes.
+const WASM_PAGE: usize = 64 * 1024;
+
+/// Upper bound on an IPC request staged into guest memory.
+const MAX_IPC_REQUEST: usize = 4 * 1024 * 1024;
+
+/// Upper bound on an IPC response read back from guest memory, guarding against
+/// a corrupt length field.
+const MAX_IPC_RESPONSE: usize = 4 * 1024 * 1024;
+
+/// Exported function a WASM block must provide to receive IPC packets.
+pub const IPC_ENTRY_EXPORT: &str = "handle_message";
+
+/// Optional exported guest allocator used to stage an IPC request.
+pub const IPC_ALLOC_EXPORT: &str = "aios_alloc";
 
 pub struct BlockExecutor {
     sandbox: WasmSandbox,
@@ -133,6 +150,92 @@ impl BlockExecutor {
         block.call_func(store, func_name, args)
     }
 
+    /// Whether an executed block exports `func_name` (e.g. `handle_message`).
+    pub fn has_export(&mut self, id: BlockId, func_name: &str) -> bool {
+        match self.executed.get_mut(&id) {
+            Some((block, store)) => block.has_func(store, func_name),
+            None => false,
+        }
+    }
+
+    /// Whether an executed block can receive IPC packets (exports
+    /// [`IPC_ENTRY_EXPORT`]).
+    pub fn routes_ipc(&mut self, id: BlockId) -> bool {
+        self.has_export(id, IPC_ENTRY_EXPORT)
+    }
+
+    /// Deliver a bincode-serialized [`IpcPacket`] to an executed WASM block and
+    /// deserialize its (optional) response.
+    ///
+    /// This is the WASM twin of [`aios_core::block::StatefulBlock::handle_message`]:
+    /// the kernel's `MessageRouter` maps an incoming packet onto the block's
+    /// exported [`IPC_ENTRY_EXPORT`] function so disk blocks participate in IPC
+    /// exactly like the compiled-in base blocks.
+    pub fn dispatch_wasm_packet(
+        &mut self,
+        id: BlockId,
+        packet: &IpcPacket,
+    ) -> Result<Option<IpcPacket>> {
+        let request = bincode::serialize(packet)
+            .map_err(|e| AIOSException::Generic(format!("WASM IPC serialize: {e}")))?;
+        match self.dispatch_wasm(id, &request)? {
+            None => Ok(None),
+            Some(bytes) => {
+                let packet = bincode::deserialize(&bytes)
+                    .map_err(|e| AIOSException::Generic(format!("WASM IPC deserialize: {e}")))?;
+                Ok(Some(packet))
+            }
+        }
+    }
+
+    /// Stage `request` in the block's linear memory, call its
+    /// [`IPC_ENTRY_EXPORT`] function and read the response back.
+    ///
+    /// The block returns a packed `i64` `(ptr << 32) | len` pointing at a
+    /// bincode-serialized `IpcPacket`; `len == 0` means "no response". The input
+    /// is staged through the guest's `aios_alloc` export when present, otherwise
+    /// in host-grown scratch memory that the block reads but must not own.
+    pub fn dispatch_wasm(&mut self, id: BlockId, request: &[u8]) -> Result<Option<Vec<u8>>> {
+        let (block, store) = self
+            .executed
+            .get_mut(&id)
+            .ok_or_else(|| AIOSException::BlockNotFound(format!("Block {} not executed", id)))?;
+
+        if !block.has_func(store, IPC_ENTRY_EXPORT) {
+            return Err(AIOSException::Generic(format!(
+                "Block '{}' does not export '{}'",
+                block.name(),
+                IPC_ENTRY_EXPORT
+            )));
+        }
+
+        let ptr = stage_request(block, store, request)?;
+        let results = block.call_func(
+            store,
+            IPC_ENTRY_EXPORT,
+            &[
+                wasmtime::Val::I32(ptr as i32),
+                wasmtime::Val::I32(request.len() as i32),
+            ],
+        )?;
+
+        let packed = results.first().and_then(|v| v.i64()).unwrap_or(0) as u64;
+        let resp_len = (packed & 0xFFFF_FFFF) as usize;
+        if resp_len == 0 {
+            return Ok(None);
+        }
+        if resp_len > MAX_IPC_RESPONSE {
+            return Err(AIOSException::Generic(format!(
+                "Block '{}' returned oversized response ({resp_len} bytes)",
+                block.name()
+            )));
+        }
+
+        let resp_ptr = (packed >> 32) as usize;
+        let bytes = block.read_linear_memory(store, resp_ptr, resp_len)?;
+        Ok(Some(bytes))
+    }
+
     pub fn executed_count(&self) -> usize {
         self.executed.len()
     }
@@ -182,6 +285,68 @@ impl BlockExecutor {
     pub fn sandbox(&self) -> &WasmSandbox {
         &self.sandbox
     }
+}
+
+/// Write `request` into the guest's linear memory and return the offset.
+///
+/// Prefers the guest's own `aios_alloc` export; otherwise the request is staged
+/// in host-grown memory (`StoreState::ipc_scratch`), reusing the same buffer
+/// across calls and never overlapping the block's own initial memory.
+fn stage_request(
+    block: &WasmBlock,
+    store: &mut Store<StoreState>,
+    request: &[u8],
+) -> Result<usize> {
+    if block.has_func(store, IPC_ALLOC_EXPORT) {
+        let results = block.call_func(
+            store,
+            IPC_ALLOC_EXPORT,
+            &[wasmtime::Val::I32(request.len() as i32)],
+        )?;
+        let ptr = results.first().and_then(|v| v.i32()).unwrap_or(0);
+        if ptr <= 0 {
+            return Err(AIOSException::Generic(format!(
+                "Block '{}' allocator returned no space for {} bytes",
+                block.name(),
+                request.len()
+            )));
+        }
+        let ptr = ptr as usize;
+        block.write_linear_memory(store, ptr, request)?;
+        return Ok(ptr);
+    }
+
+    if request.len() > MAX_IPC_REQUEST {
+        return Err(AIOSException::Generic(format!(
+            "Block '{}' IPC request ({} bytes) exceeds the {}-byte limit",
+            block.name(),
+            request.len(),
+            MAX_IPC_REQUEST
+        )));
+    }
+
+    let size = block.memory_size(store);
+    if size == 0 {
+        return Err(AIOSException::Generic(format!(
+            "Block '{}' has no exported linear memory for IPC",
+            block.name()
+        )));
+    }
+
+    let mut base = store.data().ipc_scratch;
+    if base == 0 || base + request.len() > size {
+        // Place the buffer in freshly grown memory so it never overlaps the
+        // block's own data, then remember it for subsequent calls.
+        let needed = size + request.len();
+        let pages = (needed - size).div_ceil(WASM_PAGE) as u64;
+        block.grow_memory(store, pages)?;
+        let grown = block.memory_size(store);
+        base = grown - request.len();
+        store.data_mut().ipc_scratch = base;
+    }
+
+    block.write_linear_memory(store, base, request)?;
+    Ok(base)
 }
 
 #[derive(Debug)]
@@ -454,5 +619,144 @@ mod tests {
         let ok_count = results.iter().filter(|r| r.is_ok()).count();
         assert_eq!(ok_count, 1);
         assert_eq!(executor.executed_count(), 1);
+    }
+
+    /// A block that echoes the staged request back as its response, exercising
+    /// the full host→guest→host round trip without a guest allocator.
+    const IPC_ECHO_WAT: &str = r#"
+        (module
+            (memory (export "memory") 1)
+            (func (export "handle_message") (param i32 i32) (result i64)
+                local.get 0
+                i64.extend_i32_u
+                i64.const 32
+                i64.shl
+                local.get 1
+                i64.extend_i32_u
+                i64.or)
+        )
+    "#;
+
+    #[test]
+    fn test_dispatch_wasm_packet_round_trip() {
+        use aios_core::ipc_protocol::{CommandId, Payload};
+
+        let mut registry = BlockRegistry::new();
+        let manifest = BlockLoader::load_from_binary(
+            &mut registry,
+            "echo",
+            "1.0.0",
+            IPC_ECHO_WAT.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let mut executor = BlockExecutor::with_default_config().unwrap();
+        executor
+            .execute_block(&registry, manifest.id, IsolationConfig::default())
+            .unwrap();
+
+        assert!(executor.routes_ipc(manifest.id));
+
+        let packet = IpcPacket::new(
+            1,
+            2,
+            CommandId::Custom,
+            Payload::Custom("ping".into(), vec![1, 2, 3]),
+        );
+        let response = executor
+            .dispatch_wasm_packet(manifest.id, &packet)
+            .unwrap()
+            .unwrap();
+        assert_eq!(response, packet);
+    }
+
+    #[test]
+    fn test_dispatch_wasm_no_response() {
+        use aios_core::ipc_protocol::{CommandId, Payload};
+
+        let wat = r#"
+            (module
+                (memory (export "memory") 1)
+                (func (export "handle_message") (param i32 i32) (result i64)
+                    i64.const 0)
+            )
+        "#;
+        let mut registry = BlockRegistry::new();
+        let manifest = BlockLoader::load_from_binary(
+            &mut registry,
+            "silent",
+            "1.0.0",
+            wat.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let mut executor = BlockExecutor::with_default_config().unwrap();
+        executor
+            .execute_block(&registry, manifest.id, IsolationConfig::default())
+            .unwrap();
+
+        let packet = IpcPacket::new(0, 1, CommandId::Custom, Payload::Custom("x".into(), vec![]));
+        assert!(executor
+            .dispatch_wasm_packet(manifest.id, &packet)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_dispatch_wasm_without_entry_fails() {
+        use aios_core::ipc_protocol::{CommandId, Payload};
+
+        let mut registry = BlockRegistry::new();
+        let manifest =
+            BlockLoader::load_from_binary(&mut registry, "no_entry", "1.0.0", sample_wasm_binary())
+                .unwrap();
+        let mut executor = BlockExecutor::with_default_config().unwrap();
+        executor
+            .execute_block(&registry, manifest.id, IsolationConfig::default())
+            .unwrap();
+
+        assert!(!executor.routes_ipc(manifest.id));
+
+        let packet = IpcPacket::new(0, 1, CommandId::Custom, Payload::Custom("x".into(), vec![]));
+        assert!(executor.dispatch_wasm_packet(manifest.id, &packet).is_err());
+    }
+
+    #[test]
+    fn test_dispatch_wasm_grows_memory_for_large_request() {
+        use aios_core::ipc_protocol::{CommandId, Payload};
+
+        // A block with only the minimum (1 page) of memory still receives a
+        // request larger than a page thanks to host-side memory growth.
+        let wat = r#"
+            (module
+                (memory (export "memory") 1)
+                (func (export "handle_message") (param i32 i32) (result i64)
+                    local.get 0
+                    i64.extend_i32_u
+                    i64.const 32
+                    i64.shl
+                    local.get 1
+                    i64.extend_i32_u
+                    i64.or)
+            )
+        "#;
+        let mut registry = BlockRegistry::new();
+        let manifest = BlockLoader::load_from_binary(
+            &mut registry,
+            "grower",
+            "1.0.0",
+            wat.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let mut executor = BlockExecutor::with_default_config().unwrap();
+        executor
+            .execute_block(&registry, manifest.id, IsolationConfig::default())
+            .unwrap();
+
+        let blob = vec![7u8; 200 * 1024];
+        let packet = IpcPacket::new(0, 1, CommandId::Custom, Payload::Custom("big".into(), blob));
+        let response = executor
+            .dispatch_wasm_packet(manifest.id, &packet)
+            .unwrap()
+            .unwrap();
+        assert_eq!(response, packet);
     }
 }

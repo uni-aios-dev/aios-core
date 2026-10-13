@@ -65,6 +65,8 @@
 
 - [x] **Гибридная поблочная загрузка — фабрика базового набора + дисковые блоки, выбираемые установщиком (v2.57.0)**: `aios-block-mgr::factory` (`BlockFactory`/`BlockFactoryRegistry`, отклонение дубликатов имён) + `aios/src/blocks.rs` (`base_factories`, `register_base_blocks`, `load_disk_blocks`, `looks_like_wasm`). Загрузка подключает вкомпилированный базовый набор (hal, browser, net_settings как настоящие `StatefulBlock`) через фабрику в `MessageRouter` и исполняет дисковые `.wasm`-блоки блок за блоком через `BlockExecutor` (`init`/`start`); не-wasm `.bin` payload только регистрируются. `OrchestratorState` хранит `base_blocks`, `disk_blocks` и `executor` (удерживается живым, чтобы дисковые блоки оставались резидентными). Выбор блоков установщиком: `live/blocks.conf` (набор по умолчанию), каталог `live/blocks/`, `aios-install` копирует выбранный набор в `/blocks` цели и записывает `/etc/aios/blocks.conf`, `live/build.sh` кладёт каталог в `/usr/share/aios/blocks`. Вкладка Blocks в TUI печатает сводку загрузчика `base/disk/failed/live`. (aios-block-mgr 82 теста, вкл. +5 фабрики; aios 19 тестов, вкл. +5 загрузчика.)
 
+- [x] **Маршрутизация wasm-блоков по IPC — ABI `handle_message` (v2.58.0)**: `BlockExecutor::dispatch_wasm_packet` / `dispatch_wasm` доставляют bincode-`IpcPacket` исполненному дисковому блоку и декодируют упакованный ответ `(resp_ptr << 32) | resp_len` (`len == 0` → нет ответа). У `WasmBlock` появились `has_func`/`memory_size`/`grow_memory`/`write_linear_memory`/`read_linear_memory`, а запросы размещаются через необязательный экспорт гостя `aios_alloc` либо в выращенной хостом `StoreState::ipc_scratch`, не пересекающейся с данными блока. `load_disk_blocks` регистрирует обработчик `MessageRouter` для каждого блока с экспортом `handle_message` (`DiskBlockInfo.routed`); `OrchestratorState.executor` теперь `Arc<Mutex<BlockExecutor>>`. Закрывает BUGS OPEN v2.57.0 #1. (aios-wasm +4 теста, aios +1.)
+
 ## Бэклог
 
 - [x] Сделать подключение `aios-init` + `build_initramfs.sh` в `live/build.sh` шаг [4] как `/init` initramfs режимом по умолчанию (сделано в v2.14.0; прежний путь busybox сохранён за `USE_BUSYBOX_INIT=1`)
@@ -336,7 +338,7 @@
 
 ## Запланировано
 
-- [ ] **Доработки загрузчика блоков (v2.57.0)**: выбирать вкомпилированный базовый набор фичами `base-*` (профильные наборы); маршрутизировать WebAssembly-дисковые блоки по IPC (маппинг `IpcPacket` → wasm-экспорты и регистрация обработчика в `MessageRouter`, чтобы `call_block_func` стал достижим); вывести отчёт загрузчика на вкладку Blocks в GUI (паритет со сводкой TUI).
+- [ ] **Доработки загрузчика блоков**: выбирать вкомпилированный базовый набор фичами `base-*` (профильные наборы); вывести отчёт загрузчика на вкладку Blocks в GUI (паритет со сводкой TUI).
 - [x] **Подпункт Фазы 24: Backend эндпоинт workflow** — `POST /api/v1/workflow` batch-исполнитель интентов в `aios-bridge`
 - [x] **Фаза 23: Многорежимный AI-движок (`aios-llm`) и гибридный маршрутизатор намерений — ЗАВЕРШЕНА**
   - [x] Крейт `aios-llm` с унифицированным trait/enum дизайном: LlmConfig, BackendKind, CloudProvider, LlmRequest/Response

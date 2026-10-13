@@ -526,7 +526,11 @@ fn draw_blocks_tab(frame: &mut Frame, area: Rect, app: &TuiApp) {
             disk_desc.join(", ")
         },
         state.disk_blocks.failed_count(),
-        state.executor.executed_count(),
+        state
+            .executor
+            .lock()
+            .map(|e| e.executed_count())
+            .unwrap_or(0),
     );
     block_items.insert(
         0,
@@ -1212,7 +1216,7 @@ mod render_smoke_tests {
             net_block_id: BlockId::new(100),
             base_blocks: Vec::new(),
             disk_blocks: crate::blocks::DiskBlockReport::default(),
-            executor: BlockExecutor::with_default_config().unwrap(),
+            executor: Arc::new(Mutex::new(BlockExecutor::with_default_config().unwrap())),
             safe_mode: true,
             start_time: Instant::now(),
             bridge_running: Arc::new(AtomicBool::new(false)),

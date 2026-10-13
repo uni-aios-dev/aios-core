@@ -28,6 +28,7 @@ use aios_net_config::config::NetworkConfig;
 use aios_wasm::executor::BlockExecutor;
 use aios_wasm::isolation::IsolationConfig;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// WebAssembly magic number (`\0asm`), used to tell a real module apart from a
 /// registry-only placeholder or a native `.bin` payload.
@@ -55,6 +56,9 @@ pub struct DiskBlockInfo {
     pub version: String,
     /// Exported functions the executor called during bring-up.
     pub functions_called: Vec<String>,
+    /// Whether the block exports `handle_message` and is therefore wired into
+    /// the [`MessageRouter`] for IPC dispatch.
+    pub routed: bool,
 }
 
 /// Aggregate result of the on-disk block phase.
@@ -204,16 +208,21 @@ pub fn looks_like_wasm(binary: &[u8]) -> bool {
     binary.len() >= WASM_MAGIC.len() && &binary[..WASM_MAGIC.len()] == WASM_MAGIC
 }
 
-/// Discover and execute every on-disk block under `dir`.
+/// Discover and execute every on-disk block under `dir`, wiring executable
+/// WebAssembly blocks into `router`.
 ///
 /// Discovery registers each `.wasm`/`.bin` file (and its sidecar metadata) in
 /// the registry; any payload that is a real WebAssembly module is then
-/// instantiated block by block through the [`BlockExecutor`]. Placeholder or
-/// native `.bin` payloads are registered only. Failures are collected rather
-/// than propagated so a single broken block cannot stall the boot.
+/// instantiated block by block through the [`BlockExecutor`]. A block that
+/// exports `handle_message` is additionally registered with the
+/// [`MessageRouter`] so it receives IPC packets exactly like a base block.
+/// Placeholder or native `.bin` payloads are registered only. Failures are
+/// collected rather than propagated so a single broken block cannot stall the
+/// boot.
 pub fn load_disk_blocks(
     registry: &mut BlockRegistry,
-    executor: &mut BlockExecutor,
+    executor: Arc<Mutex<BlockExecutor>>,
+    router: &mut MessageRouter,
     dir: &Path,
 ) -> DiskBlockReport {
     let discoveries = registry.boot_discover(dir);
@@ -247,14 +256,36 @@ pub fn load_disk_blocks(
             continue;
         }
 
-        match executor.execute_block(registry, manifest.id, IsolationConfig::default()) {
-            Ok(result) => report.loaded.push(DiskBlockInfo {
-                id: manifest.id,
-                name: result.name,
-                version: result.version,
-                functions_called: result.functions_called,
-            }),
-            Err(e) => {
+        let executed = {
+            let mut guard = match executor.lock() {
+                Ok(guard) => guard,
+                Err(e) => {
+                    report.failed.push((
+                        manifest.name.clone(),
+                        format!("WASM executor poisoned: {e}"),
+                    ));
+                    continue;
+                }
+            };
+            let result = guard.execute_block(registry, manifest.id, IsolationConfig::default());
+            let routed = result.is_ok() && guard.routes_ipc(manifest.id);
+            (result, routed)
+        };
+
+        match executed {
+            (Ok(result), routed) => {
+                if routed {
+                    register_wasm_router_handler(router, Arc::clone(&executor), manifest.id);
+                }
+                report.loaded.push(DiskBlockInfo {
+                    id: manifest.id,
+                    name: result.name,
+                    version: result.version,
+                    functions_called: result.functions_called,
+                    routed,
+                });
+            }
+            (Err(e), _) => {
                 log::error!(
                     "AIOS ERROR: disk block '{}' failed to execute: {e}",
                     manifest.name
@@ -265,6 +296,25 @@ pub fn load_disk_blocks(
     }
 
     report
+}
+
+/// Wire an executed WebAssembly block's `handle_message` export into the
+/// [`MessageRouter`], sharing the executor through an `Arc<Mutex<..>>`.
+fn register_wasm_router_handler(
+    router: &mut MessageRouter,
+    executor: Arc<Mutex<BlockExecutor>>,
+    id: BlockId,
+) {
+    router.register_handler(
+        id.0,
+        Box::new(move |packet| {
+            let mut guard = executor
+                .lock()
+                .map_err(|e| AIOSException::Generic(format!("WASM executor poisoned: {e}")))?;
+            guard.dispatch_wasm_packet(id, packet)
+        }),
+    );
+    log::info!("AIOS: disk block {} wired for IPC dispatch", id);
 }
 
 #[cfg(test)]
@@ -336,8 +386,14 @@ mod tests {
         std::fs::write(dir.path().join("legacy_1.0.0.bin"), b"not wasm").unwrap();
 
         let mut registry = BlockRegistry::new();
-        let mut executor = BlockExecutor::with_default_config().unwrap();
-        let report = load_disk_blocks(&mut registry, &mut executor, dir.path());
+        let executor = Arc::new(Mutex::new(BlockExecutor::with_default_config().unwrap()));
+        let mut router = MessageRouter::new();
+        let report = load_disk_blocks(
+            &mut registry,
+            Arc::clone(&executor),
+            &mut router,
+            dir.path(),
+        );
 
         assert_eq!(report.loaded_count(), 1);
         assert_eq!(report.failed_count(), 0);
@@ -347,17 +403,72 @@ mod tests {
         assert!(report.loaded[0]
             .functions_called
             .contains(&"start".to_string()));
+        // The demo module has no `handle_message`, so it is executed but not
+        // wired for IPC dispatch.
+        assert!(!report.loaded[0].routed);
         assert!(report.registered_only.contains(&"legacy".to_string()));
         assert!(registry.find_by_name("demo").is_some());
-        assert!(executor.executed_count() >= 1);
+        assert!(executor.lock().unwrap().executed_count() >= 1);
+    }
+
+    #[test]
+    fn test_load_disk_blocks_routes_wasm_over_ipc() {
+        // A hand-assembled binary module exporting `memory` and a
+        // `handle_message(i32,i32)->i64` that echoes the request back, so the
+        // kernel router can dispatch a packet into a disk block over IPC.
+        // (Text WAT cannot be used here: the loader classifies disk payloads by
+        // the `\0asm` magic and WAT lacks it.)
+        const ECHO_WASM: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+            0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7e, // type (i32,i32)->i64
+            0x03, 0x02, 0x01, 0x00, // func 0 : type 0
+            0x05, 0x03, 0x01, 0x00, 0x01, // memory 0 : min 1 page
+            0x07, 0x1b, 0x02, 0x06, b'm', b'e', b'm', b'o', b'r', b'y', 0x02, 0x00, 0x0e, b'h',
+            b'a', b'n', b'd', b'l', b'e', b'_', b'm', b'e', b's', b's', b'a', b'g', b'e', 0x00,
+            0x00, // exports: memory, handle_message
+            0x0a, 0x0e, 0x01, 0x0c, 0x00, 0x20, 0x00, 0xad, 0x42, 0x20, 0x86, 0x20, 0x01, 0xad,
+            0x84, 0x0b, // (ptr<<32)|len
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("echo_1.0.0.wasm"), ECHO_WASM).unwrap();
+
+        let mut registry = BlockRegistry::new();
+        let executor = Arc::new(Mutex::new(BlockExecutor::with_default_config().unwrap()));
+        let mut router = MessageRouter::new();
+        let report = load_disk_blocks(
+            &mut registry,
+            Arc::clone(&executor),
+            &mut router,
+            dir.path(),
+        );
+
+        assert_eq!(report.loaded_count(), 1, "report: {report:?}");
+        assert!(report.loaded[0].routed);
+
+        let id = registry.find_by_name("echo").unwrap().manifest.id;
+        let packet = IpcPacket::new(
+            0,
+            id.0,
+            CommandId::Custom,
+            Payload::Custom("ping".into(), vec![9, 8, 7]),
+        );
+        let response = router.dispatch(&packet).unwrap().unwrap();
+        assert_eq!(response, packet);
     }
 
     #[test]
     fn test_load_disk_blocks_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
         let mut registry = BlockRegistry::new();
-        let mut executor = BlockExecutor::with_default_config().unwrap();
-        let report = load_disk_blocks(&mut registry, &mut executor, dir.path());
+        let executor = Arc::new(Mutex::new(BlockExecutor::with_default_config().unwrap()));
+        let mut router = MessageRouter::new();
+        let report = load_disk_blocks(
+            &mut registry,
+            Arc::clone(&executor),
+            &mut router,
+            dir.path(),
+        );
 
         assert_eq!(report.loaded_count(), 0);
         assert_eq!(report.failed_count(), 0);

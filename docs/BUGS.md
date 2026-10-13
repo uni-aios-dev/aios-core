@@ -1,22 +1,45 @@
 # AIOS Known Bugs & Workarounds
 
-## OPEN (v2.57.0): WebAssembly disk blocks are executed but not yet IPC-routed; base set is fixed at build time
+## RESOLVED (v2.58.0): WebAssembly disk blocks are routed over IPC (was OPEN v2.57.0)
 
-- **Status:** OPEN — known scope limit of the v2.57.0 hybrid block loader, not a regression.
+- **Status:** RESOLVED in v2.58.0 (was OPEN through v2.57.0). The v2.57.0 entry
+  "disk `.wasm` blocks are executed but not IPC-routed" is now closed.
+- **Fix:** a disk block participates in IPC by exporting
+  `handle_message(ptr: i32, len: i32) -> i64`; `BlockExecutor::dispatch_wasm_packet`
+  stages a bincode `IpcPacket` in the block's linear memory, calls the export and
+  decodes the packed `(resp_ptr << 32) | resp_len` reply (`len == 0` → no response).
+  `load_disk_blocks` registers a `MessageRouter` handler for every executed block
+  that exports `handle_message` (`DiskBlockInfo.routed`), so disk blocks are
+  dispatched exactly like the compiled-in base blocks. See
+  `docs/ARCHITECTURE.md` → "IPC Dispatch (`executor.rs`)" for the ABI.
+
+## RESOLVED (v2.58.0): flaky `test_runner_reset` (watchdog runner)
+
+- **Status:** RESOLVED in v2.58.0. Test-only flake, never a production issue.
+- **Symptom:** `aios-watchdog::runner::tests::test_runner_reset` failed
+  intermittently during the full-workspace run (`left: Warned, right: Monitoring`)
+  but always passed in isolation.
+- **Cause:** the test did `force_safe_mode()` + 20 ms sleep + `reset()` + 20 ms
+  sleep, then asserted `Monitoring`. `reset()` is synchronous, but the background
+  runner thread ticks `check_timeout()` every `heartbeat_interval_ms / 2`; with no
+  heartbeat recorded, the next tick after `reset()` moves `Monitoring → Warned`.
+  Under parallel test load that tick landed inside the 20 ms window.
+- **Fix:** `test_runner_reset` now stops the runner before asserting (state is set
+  synchronously); `test_runner_pop_actions` polls for the first action instead of
+  racing a fixed sleep. No production change.
+
+## OPEN (v2.57.0): base set is fixed at build time; `.bin` payloads are registered only
+
+- **Status:** OPEN — remaining scope limits of the hybrid block loader, not a regression.
 - **Limits / risks:**
-  1. Disk `.wasm` blocks are discovered, executed one-by-one through `BlockExecutor`
-     (`init`/`start`) and kept resident, but **no `MessageRouter` handler is
-     registered for them**: `call_block_func` / IPC dispatch to a WebAssembly
-     block is not reachable yet. Only the compiled-in base blocks
-     (`hal`, `browser`, `net_settings`) are serviced over IPC.
-  2. `.bin` / placeholder payloads that do not start with the WebAssembly magic
+  1. `.bin` / placeholder payloads that do not start with the WebAssembly magic
      (`\0asm`) are registered only (`registered_only`) and never executed.
-  3. The compiled-in base set is fixed at build time (`aios/src/blocks.rs`); there
+  2. The compiled-in base set is fixed at build time (`aios/src/blocks.rs`); there
      are no per-block Cargo features yet, so every build carries
      `hal` + `browser` + `net_settings`.
-- **Workaround:** treat the base set as the IPC-serviced tier and disk blocks as
-  the loaded/resident tier; drive disk blocks through their WASM exports directly
-  until the router bridge lands (see TODO "Block loader follow-ups").
+- **Workaround:** ship native blocks as `.wasm` to have them executed and
+  IPC-routed, or accept `.bin` placeholders as topology-only entries; base-set
+  feature flags are tracked in TODO "Block loader follow-ups".
 
 ## OPEN (v2.48.0): new wired NIC drivers lack runtime verification (no QEMU model / host)
 

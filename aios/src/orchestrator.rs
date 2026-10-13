@@ -29,8 +29,10 @@ pub struct OrchestratorState {
     pub base_blocks: Vec<blocks::BaseBlockInfo>,
     /// Result of the on-disk block phase.
     pub disk_blocks: blocks::DiskBlockReport,
-    /// Executor that keeps on-disk WebAssembly blocks alive after bring-up.
-    pub executor: BlockExecutor,
+    /// Executor that keeps on-disk WebAssembly blocks alive after bring-up and
+    /// services their IPC traffic (`Arc<Mutex<..>>` because router handlers,
+    /// which must be `Send`, share it).
+    pub executor: Arc<Mutex<BlockExecutor>>,
     pub safe_mode: bool,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
@@ -126,8 +128,9 @@ pub async fn initialize(
         .unwrap_or(BlockId::new(100));
 
     push_log(&logs, "AIOS: initializing WASM executor...".into());
-    let mut executor =
-        BlockExecutor::with_default_config().map_err(|e| format!("WASM init failed: {e}"))?;
+    let executor = Arc::new(Mutex::new(
+        BlockExecutor::with_default_config().map_err(|e| format!("WASM init failed: {e}"))?,
+    ));
 
     // Disk set: only the blocks dropped in by the installer run, block by block.
     let blocks_dir = std::env::var("AIOS_BLOCKS_DIR")
@@ -140,12 +143,19 @@ pub async fn initialize(
         );
         blocks::DiskBlockReport::default()
     } else {
-        let report = blocks::load_disk_blocks(&mut registry, &mut executor, &blocks_dir);
+        let report = blocks::load_disk_blocks(
+            &mut registry,
+            Arc::clone(&executor),
+            &mut router,
+            &blocks_dir,
+        );
+        let routed = report.loaded.iter().filter(|b| b.routed).count();
         push_log(
             &logs,
             format!(
-                "AIOS: loaded {} disk blocks ({} registered-only, {} failed) from {:?}",
+                "AIOS: loaded {} disk blocks ({} routed over IPC, {} registered-only, {} failed) from {:?}",
                 report.loaded_count(),
+                routed,
                 report.registered_only.len(),
                 report.failed_count(),
                 blocks_dir

@@ -182,6 +182,9 @@ pub struct StoreState {
     pub memory_used_bytes: usize,
     pub fuel_consumed: u64,
     pub blocks_loaded: u32,
+    /// Host-owned scratch offset in linear memory where the next IPC request is
+    /// staged (`0` until the first request needs a buffer).
+    pub ipc_scratch: usize,
 }
 
 pub struct WasmBlock {
@@ -426,6 +429,86 @@ impl WasmBlock {
             self.name
         );
         true
+    }
+
+    /// Whether the instantiated module exports a function named `func_name`.
+    ///
+    /// Used to discover the optional IPC entry point (`handle_message`) and the
+    /// optional guest allocator (`aios_alloc`) without assuming either exists.
+    pub fn has_func(&self, store: &mut Store<StoreState>, func_name: &str) -> bool {
+        self.instance
+            .as_ref()
+            .and_then(|inst| inst.get_func(store, func_name))
+            .is_some()
+    }
+
+    /// Current size of the exported linear memory (`memory`) in bytes, or `0`
+    /// when the module does not export a memory.
+    pub fn memory_size(&self, store: &mut Store<StoreState>) -> usize {
+        self.instance
+            .as_ref()
+            .and_then(|inst| inst.get_memory(store.as_context_mut(), "memory"))
+            .map(|m| m.data(store.as_context()).len())
+            .unwrap_or(0)
+    }
+
+    /// Grow the exported linear memory by `delta_pages` 64 KiB pages.
+    pub fn grow_memory(&self, store: &mut Store<StoreState>, delta_pages: u64) -> Result<()> {
+        let instance = self.instance.as_ref().ok_or_else(|| {
+            AIOSException::Generic(format!("Block {} not instantiated", self.name))
+        })?;
+        let memory = instance
+            .get_memory(store.as_context_mut(), "memory")
+            .ok_or_else(|| {
+                AIOSException::Generic(format!("Block {} has no exported linear memory", self.name))
+            })?;
+        memory
+            .grow(store.as_context_mut(), delta_pages)
+            .map_err(|e| AIOSException::Generic(format!("WASM grow memory: {e}")))?;
+        Ok(())
+    }
+
+    /// Write `data` into the exported linear memory at `offset`.
+    pub fn write_linear_memory(
+        &self,
+        store: &mut Store<StoreState>,
+        offset: usize,
+        data: &[u8],
+    ) -> Result<()> {
+        let instance = self.instance.as_ref().ok_or_else(|| {
+            AIOSException::Generic(format!("Block {} not instantiated", self.name))
+        })?;
+        let memory = instance
+            .get_memory(store.as_context_mut(), "memory")
+            .ok_or_else(|| {
+                AIOSException::Generic(format!("Block {} has no exported linear memory", self.name))
+            })?;
+        memory
+            .write(store.as_context_mut(), offset, data)
+            .map_err(|e| AIOSException::Generic(format!("WASM write memory: {e}")))?;
+        Ok(())
+    }
+
+    /// Read `len` bytes from the exported linear memory at `offset`.
+    pub fn read_linear_memory(
+        &self,
+        store: &mut Store<StoreState>,
+        offset: usize,
+        len: usize,
+    ) -> Result<Vec<u8>> {
+        let instance = self.instance.as_ref().ok_or_else(|| {
+            AIOSException::Generic(format!("Block {} not instantiated", self.name))
+        })?;
+        let memory = instance
+            .get_memory(store.as_context_mut(), "memory")
+            .ok_or_else(|| {
+                AIOSException::Generic(format!("Block {} has no exported linear memory", self.name))
+            })?;
+        let mut buf = vec![0u8; len];
+        memory
+            .read(store.as_context(), offset, &mut buf)
+            .map_err(|e| AIOSException::Generic(format!("WASM read memory: {e}")))?;
+        Ok(buf)
     }
 }
 

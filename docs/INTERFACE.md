@@ -186,7 +186,7 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 
 The block store fetches blocks from three kinds of sources: GitHub (`github:owner/repo`), a local directory (`local:path`) and an HTTP update service (`http://host:port`). Installations land in `AIOS_BLOCKS_DIR` as `{name}_{version}.wasm` + sidecar JSON; updates are backed up (`.bak`) and auto-rollback on failure.
 
-The kernel loads two kinds of block at boot: the compiled-in **base set** (`hal`, `browser`, `net_settings` — built into the binary through the block factory) and **disk blocks** discovered under `AIOS_BLOCKS_DIR` and executed block by block. Store-installed blocks therefore appear in the same `Blocks & Svc` tab as the base set; the loader summary line there reports `base`/`disk`/`failed`/`live` counts.
+The kernel loads two kinds of block at boot: the compiled-in **base set** (`hal`, `browser`, `net_settings` — built into the binary through the block factory) and **disk blocks** discovered under `AIOS_BLOCKS_DIR` and executed block by block. Store-installed blocks therefore appear in the same `Blocks & Svc` tab as the base set; the loader summary line there reports `base`/`disk`/`failed`/`live` counts. A disk block that exports `handle_message` is registered on the message router and is dispatchable over IPC exactly like a base block; the boot log reports how many were routed.
 
 | Command | Arguments | Description |
 |---------|-----------|-------------|

@@ -183,24 +183,36 @@ mod tests {
 
     #[test]
     fn test_runner_reset() {
-        let runner = WatchdogRunner::start(test_config());
+        // `force_safe_mode`/`reset` mutate state synchronously; stop the
+        // background thread before asserting so a concurrent `check_timeout`
+        // tick cannot move the state out of `Monitoring` mid-assertion.
+        let mut runner = WatchdogRunner::start(test_config());
         runner.force_safe_mode();
-        std::thread::sleep(Duration::from_millis(20));
         runner.reset();
-        std::thread::sleep(Duration::from_millis(20));
+        runner.stop();
         assert_eq!(runner.state(), WatchdogState::Monitoring);
     }
 
     #[test]
     fn test_runner_pop_actions() {
+        // Poll until the watchdog thread produces its first action instead of
+        // racing a fixed sleep (which is flaky under parallel test load).
         let runner = WatchdogRunner::start(test_config());
         runner.force_safe_mode();
-        std::thread::sleep(Duration::from_millis(50));
-        let actions = runner.pop_actions();
-        assert!(!actions.is_empty());
-        let actions2 = runner.pop_actions();
-        for action in &actions2 {
-            assert!(action == &WatchdogAction::InSafeMode);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let actions = runner.pop_actions();
+            if !actions.is_empty() {
+                for action in &actions {
+                    assert!(action == &WatchdogAction::InSafeMode);
+                }
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watchdog produced no actions in time"
+            );
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 

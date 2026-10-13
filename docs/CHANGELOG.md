@@ -1,6 +1,42 @@
 # AIOS Development Log
 
-# AIOS Development Log
+## v2.58.0 — WASM blocks are routed over IPC: `handle_message` ABI (2026-10-14)
+
+### Added
+- **WASM IPC entry point** (`aios-wasm/src/executor.rs`): `BlockExecutor::dispatch_wasm_packet`
+  / `dispatch_wasm` deliver a bincode-serialized `IpcPacket` to an executed WebAssembly
+  block and decode its optional response. A disk block participates in IPC by exporting
+  `handle_message(ptr: i32, len: i32) -> i64`, where the packed result is
+  `(resp_ptr << 32) | resp_len` and `resp_len == 0` means "no response". `has_export` /
+  `routes_ipc` probe the module for the entry point.
+- **Guest memory accessors** (`aios-wasm/src/sandbox.rs`): `WasmBlock` gained `has_func`,
+  `memory_size`, `grow_memory`, `write_linear_memory` and `read_linear_memory`. A request
+  is staged through the guest's optional `aios_alloc` export, otherwise in host-grown
+  memory (`StoreState::ipc_scratch`) that never overlaps the block's own data; the ABI
+  export names are `IPC_ENTRY_EXPORT` (`handle_message`) / `IPC_ALLOC_EXPORT` (`aios_alloc`).
+- **Disk blocks on the router** (`aios/src/blocks.rs`): `load_disk_blocks` now takes the
+  shared `Arc<Mutex<BlockExecutor>>` and the `MessageRouter`, and registers a handler for
+  every executed block that exports `handle_message`, so disk blocks are dispatched over
+  IPC exactly like the compiled-in base blocks. `DiskBlockInfo.routed` reports the wiring.
+
+### Changed
+- `OrchestratorState.executor` is now `Arc<Mutex<BlockExecutor>>` (router handlers must be
+  `Send`); the boot log reports how many disk blocks were routed (`... routed over IPC ...`).
+- The TUI Blocks summary reads the live executor count through the mutex.
+
+### Fixed
+- **Flaky watchdog runner test** (`aios-watchdog/src/runner.rs`): `test_runner_reset` raced
+  the background `check_timeout` tick during a fixed 20 ms sleep (after `reset()` a
+  `Monitoring → Warned` transition could land inside the window under parallel test load,
+  which is how it occasionally failed during the full-workspace run). Since `reset` /
+  `force_safe_mode` mutate state synchronously, the test now stops the runner before
+  asserting; `test_runner_pop_actions` polls for the first action instead of racing a fixed
+  sleep. No production behaviour changed.
+
+### Verification
+- `aios-wasm` +4 tests (round trip, "no response", missing entry point, memory growth for a
+  200 KiB request); `aios` +1 test (a disk block dispatched through the router echoes the
+  packet back). Full workspace tests green, clippy clean, fmt clean.
 
 ## v2.57.0 — Hybrid block loading: base factory + installer-selected disk blocks (2026-10-14)
 
