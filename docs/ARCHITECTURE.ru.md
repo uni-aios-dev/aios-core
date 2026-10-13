@@ -669,7 +669,7 @@ TUI не может отображать настоящие веб-страни�
 Нативный дашборд на egui/eframe с 8 вкладками (7 при сборке `--no-default-features` — без Native Browser): System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser*, Files. Горячая клавиша `W` в обоих TUI запускает дашборд GUI через `aios_webview::launcher::launch_gui()`. `*` — вкладка за фичей `webview`.
 
 - **System Dashboard (F1)**: карточки статистики (RAM, блоки, процессы, watchdog), панель системы (CPU/GPU/хранилище/HW Tier), спарклайн RAM, распределение приоритетов, таблица процессов (PID, Имя, Приоритет, Состояние, RAM, CPU ms, Сбои) с Обновить/Убить/Приостановить/Возобновить, журнал активности
-- **WASM Blocks (F2)**: таблица блоков + Обновить / Загрузить (2-шаговый диалог) / Выгрузить / Горячая замена
+- **WASM Blocks (F2)**: таблица блоков + Обновить / Загрузить (2-шаговый диалог) / Выгрузить / Горячая замена; под панелью инструментов выводится строка сводки загрузчика (`base [...] | disk [...] | failed N | live M`), совпадающая со сводкой TUI
 - **AI Studio (F3)**: асинхронный чат с LLM — список сообщений, потоковые ответы (живая жёлтая частичная строка), отправка по Enter (фокус сохраняется), слэш-команды `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`, строка статуса (бэкенд/модель/температура/токены/busy); запросы стримятся через фоновую tokio-задачу, интерфейс остаётся отзывчивым. Чат автосохраняется в общий `AIOS_DATA_DIR/chat.jsonl`, а шаблоны `/preset` — в `AIOS_DATA_DIR/presets.json` (те же файлы, что и у AI Console TUI)
 - **App Store (F4)**: каталог с поиском и действиями Установить/Обновить/Удалить
 - **Network Settings (F5)**: форма hostname/port/таймауты/private-access/DNS/user-agent с Save (частичное JSON-обновление по IPC в `net_settings`) и Reset, плюс живой JSON-предпросмотр
@@ -684,6 +684,7 @@ TUI не может отображать настоящие веб-страни�
 
 - Настоящий `Scheduler` (round-robin, aging 5000 мс, слайс 100 мс) — таблица процессов, RAM и IPC-управление (`kill/suspend/resume`).
 - Настоящий `BlockRegistry` с нативными модулями (`hal`, `ipc_bus`, `scheduler`, `browser`) и пополняемый `boot_discover` из `AIOS_BLOCKS_DIR` (по умолчанию `./blocks`). Вкладка WASM Blocks грузит/выгружает/заменяет записи реестра; Hot-Swap выполняет `LiveUpdateEngine::perform_swap` (SHA-256, запись отката) по установленной копии в store, затем `registry.swap_binary`, с панелью истории свопов.
+- **Отчёт загрузчика (v2.59.0)**: `GuiRuntime::new` снимает `GuiBlockLoadReport` (засеянный базовый набор, обнаруженные дисковые блоки, неудачные обнаружения); `GuiBlockLoadReport::summary_line` форматирует `base [...] | disk [...] | failed N | live M`, а `AiosApp::block_load_summary` выводит её на вкладке Blocks. В отличие от TUI, рантайм GUI держит блоки резидентными, не исполняя WebAssembly, поэтому `live` — это число текущих резидентных блоков реестра (`disk` = обнаруженные/зарегистрированные), а не счётчик исполненных блоков.
 - Настоящий `Watchdog` получает heartbeat раз в секунду (секрет `aios_gui_secret`); индикатор `WD:` в топбаре отражает `WatchdogState` (`Monitoring → 0`, `Suspended → 1`, `Recovering → 2`, иначе safe-mode).
 - Общая шина `IpcBus` (4096 слотов), которую питают реальные OS-thread процессы ядра (`ai_orchestrator[High]`, `io_handler[Normal]`, `health_monitor[Low]`, `telemetry_agg[Normal]`) через `spawn_real_process` с кооперативными `TerminateFlag`/`SuspendFlag`; счётчик IPC дренирует шину.
 - `HotReloader` пересканирует каталог блоков при каждом опросе UI и горячо перезагружает изменённые бинарники.
@@ -1081,10 +1082,10 @@ User Input (TUI)
 
 ## Архитектура тестирования
 
-- **Модульные тесты**: 1351 тест в исходных файлах под `#[cfg(test)] mod tests`
+- **Модульные тесты**: 1354 теста в исходных файлах под `#[cfg(test)] mod tests`
 - **Интеграционные тесты**: 217 тестов в целях `tests/` workspace (интеграционные, стресс, chaos, proptest)
 - **Doc-тесты**: 1 тест в документации крейта
-- **Итого**: 1569 тестов, все проходят, ноль предупреждений clippy
+- **Итого**: 1572 теста, все проходят, ноль предупреждений clippy
 
 **Пороги скорости**:
 - Debug-режим: < 50us (без оптимизации)

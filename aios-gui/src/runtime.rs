@@ -26,6 +26,52 @@ use std::time::Duration;
 const HEARTBEAT_SECRET: &[u8] = b"aios_gui_secret";
 const SCHEDULER_TICK_MS: u64 = 25;
 
+/// Boot-time block loader report for the GUI, surfaced by the Blocks tab.
+///
+/// Mirrors the TUI's loader summary line: the compiled-in *base set* that was
+/// seeded into the registry, the *disk* blocks discovered under
+/// `AIOS_BLOCKS_DIR`, and any *failed* discoveries. The GUI runtime keeps blocks
+/// resident but does not execute WebAssembly, so the "live" count rendered next
+/// to this report is the number of currently-resident registry blocks (see
+/// [`GuiBlockLoadReport::summary_line`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GuiBlockLoadReport {
+    /// Compiled-in base blocks seeded into the registry as `(name, version)`.
+    pub base: Vec<(String, String)>,
+    /// Disk blocks discovered under `AIOS_BLOCKS_DIR` as `(name, version)`.
+    pub disk: Vec<(String, String)>,
+    /// Discoveries that failed, as `(name, error)`.
+    pub failed: Vec<(String, String)>,
+}
+
+impl GuiBlockLoadReport {
+    /// Render a single-line summary in the same shape as the TUI Blocks tab:
+    /// `base [...] | disk [...] | failed N | live M`.
+    ///
+    /// `live` is supplied by the caller (the number of resident registry
+    /// blocks), because the report itself is a static boot-time snapshot.
+    pub fn summary_line(&self, live: usize) -> String {
+        fn names(items: &[(String, String)]) -> String {
+            if items.is_empty() {
+                "none".to_string()
+            } else {
+                items
+                    .iter()
+                    .map(|(name, version)| format!("{name} v{version}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        }
+        format!(
+            "base [{}] | disk [{}] | failed {} | live {}",
+            names(&self.base),
+            names(&self.disk),
+            self.failed.len(),
+            live,
+        )
+    }
+}
+
 /// A minimal self-contained kernel runtime for the GUI.
 pub struct GuiRuntime {
     pub scheduler: Arc<Mutex<Scheduler>>,
@@ -37,6 +83,8 @@ pub struct GuiRuntime {
     pub hot_reloader: Arc<Mutex<HotReloader>>,
     pub marketplace: Arc<Mutex<BlockMarketplace>>,
     pub blocks_dir: PathBuf,
+    /// Boot-time loader report surfaced by the Blocks tab (TUI parity).
+    pub loader_report: GuiBlockLoadReport,
     /// Total packets drained off the IPC bus so far (live traffic counter).
     ipc_drained: AtomicU64,
     started: bool,
@@ -65,34 +113,40 @@ impl GuiRuntime {
         std::fs::create_dir_all(&blocks_dir).ok();
 
         let mut registry = BlockRegistry::new();
-        let _ = BlockLoader::load_from_binary(
-            &mut registry,
-            "hal",
-            "1.0.0",
-            b"hal-native-module".to_vec(),
-        );
-        let _ =
-            BlockLoader::load_from_binary(&mut registry, "ipc_bus", "1.0.0", b"ipc_bus".to_vec());
-        let _ = BlockLoader::load_from_binary(
-            &mut registry,
-            "scheduler",
-            "1.0.0",
-            b"scheduler".to_vec(),
-        );
-        let _ = BlockLoader::load_from_binary(
-            &mut registry,
-            "browser",
-            "0.1.0",
-            b"browser-native".to_vec(),
-        );
+        let mut loader_report = GuiBlockLoadReport::default();
+        let base_set: [(&str, &str, &[u8]); 4] = [
+            ("hal", "1.0.0", b"hal-native-module"),
+            ("ipc_bus", "1.0.0", b"ipc_bus"),
+            ("scheduler", "1.0.0", b"scheduler"),
+            ("browser", "0.1.0", b"browser-native"),
+        ];
+        for (name, version, binary) in base_set {
+            if BlockLoader::load_from_binary(&mut registry, name, version, binary.to_vec()).is_ok()
+            {
+                loader_report
+                    .base
+                    .push((name.to_string(), version.to_string()));
+            }
+        }
         registry.set_block_dependencies("ipc_bus", vec!["hal".into()]);
         registry.set_block_dependencies("scheduler", vec!["ipc_bus".into()]);
         let results = registry.boot_discover(&blocks_dir);
+        for result in &results {
+            match result {
+                Ok(manifest) => loader_report
+                    .disk
+                    .push((manifest.name.clone(), manifest.version.clone())),
+                Err(e) => loader_report
+                    .failed
+                    .push(("<discovery>".to_string(), e.to_string())),
+            }
+        }
         log::info!(
-            "GUI runtime: {}/{} disk blocks loaded from {:?}",
+            "GUI runtime: {}/{} disk blocks loaded from {:?} ({})",
             results.iter().filter(|r| r.is_ok()).count(),
             results.len(),
-            blocks_dir
+            blocks_dir,
+            loader_report.summary_line(results.iter().filter(|r| r.is_ok()).count())
         );
 
         let scheduler = Scheduler::new(ram_total_mb)
@@ -153,6 +207,7 @@ impl GuiRuntime {
             hot_reloader: Arc::new(Mutex::new(hot_reloader)),
             marketplace: Arc::new(Mutex::new(marketplace)),
             blocks_dir,
+            loader_report,
             ipc_drained: AtomicU64::new(0),
             started: false,
             scheduler_stop: Arc::new(AtomicBool::new(false)),
@@ -271,6 +326,12 @@ impl GuiRuntime {
             log::info!("GUI hot-reload: {event:?}");
         }
     }
+
+    /// Boot-time loader report (base set + disk discovery), surfaced by the
+    /// Blocks tab for parity with the TUI summary line.
+    pub fn loader_report(&self) -> &GuiBlockLoadReport {
+        &self.loader_report
+    }
 }
 
 impl Drop for GuiRuntime {
@@ -379,5 +440,41 @@ mod tests {
         let mut rt = GuiRuntime::new(4096);
         rt.poll_hot_reload();
         assert!(!rt.registry.lock().unwrap().all_ids().is_empty());
+    }
+
+    #[test]
+    fn test_loader_report_captures_base_set() {
+        let rt = GuiRuntime::new(4096);
+        let report = rt.loader_report();
+        assert!(
+            report.base.iter().any(|(name, _)| name == "hal"),
+            "base set must record the compiled-in hal block: {:?}",
+            report.base
+        );
+        assert!(report.base.iter().any(|(name, _)| name == "scheduler"));
+        assert!(!report.base.is_empty());
+        // The throwaway test blocks dir is empty, so nothing is discovered and
+        // nothing fails.
+        assert!(report.disk.is_empty());
+        assert!(report.failed.is_empty());
+    }
+
+    #[test]
+    fn test_loader_report_summary_line_matches_tui_shape() {
+        let report = GuiBlockLoadReport {
+            base: vec![("hal".into(), "1.0.0".into())],
+            disk: vec![("net_stack".into(), "2.1.0".into())],
+            failed: vec![("broken".into(), "bad magic".into())],
+        };
+        assert_eq!(
+            report.summary_line(7),
+            "base [hal v1.0.0] | disk [net_stack v2.1.0] | failed 1 | live 7"
+        );
+
+        let empty = GuiBlockLoadReport::default();
+        assert_eq!(
+            empty.summary_line(0),
+            "base [none] | disk [none] | failed 0 | live 0"
+        );
     }
 }

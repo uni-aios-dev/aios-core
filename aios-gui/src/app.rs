@@ -728,6 +728,13 @@ impl AiosApp {
         self.blocks = infos;
     }
 
+    /// One-line block loader summary for the Blocks tab, mirroring the TUI:
+    /// `base [...] | disk [...] | failed N | live M`, where `live` is the number
+    /// of currently-resident registry blocks.
+    pub fn block_load_summary(&self) -> String {
+        self.runtime.loader_report().summary_line(self.blocks.len())
+    }
+
     pub fn kill_process(&mut self, pid: u64) {
         {
             let scheduler = self.runtime.scheduler.clone();
@@ -2060,6 +2067,32 @@ mod tests {
             .contains("Load missing v9.9.9 failed"));
         app.unload_block(9999);
         assert!(app.log_messages.last().unwrap().contains("Unload failed"));
+    }
+
+    #[test]
+    fn test_block_load_summary_reflects_resident_blocks() {
+        let mut app = AiosApp::new(
+            AiTier::Tier1,
+            HardwareProfile::mock_modern(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            4096,
+        );
+        app.refresh_blocks();
+        let summary = app.block_load_summary();
+        assert!(
+            summary.starts_with("base ["),
+            "summary must mirror the TUI shape: {summary}"
+        );
+        assert!(summary.contains(" | disk ["), "summary: {summary}");
+        assert!(summary.contains(" | failed "), "summary: {summary}");
+        assert!(summary.contains(" | live "), "summary: {summary}");
+        assert!(
+            summary.contains(&format!("| live {}", app.blocks.len())),
+            "live count must match resident blocks: {summary}"
+        );
     }
 
     #[test]

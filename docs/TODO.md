@@ -454,7 +454,8 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
 
 ## Planned
 
-- [ ] **Block loader follow-ups**: select the compiled-in base set with `base-*` feature flags (per-profile base sets); surface the loader report in the GUI Blocks tab (parity with the TUI summary line).
+- [x] **GUI Blocks tab loader report (v2.59.0)**: `GuiRuntime::loader_report()` + `AiosApp::block_load_summary()` render `base [...] | disk [...] | failed N | live M` in the GUI Blocks tab — parity with the TUI summary line.
+- [ ] **Block loader follow-ups**: select the compiled-in base set with `base-*` feature flags (per-profile base sets).
 - [x] **Phase 24 sub-item: Backend workflow execution endpoint** — `POST /api/v1/workflow` batch intent executor in `aios-bridge`
 - [x] **Phase 23: Multi-Mode AI Engine (`aios-llm`) & Hybrid Intent Router — COMPLETE**
   - [x] `aios-llm` crate with unified trait/enum design: LlmConfig, BackendKind, CloudProvider, LlmRequest/Response

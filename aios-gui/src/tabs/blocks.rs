@@ -38,6 +38,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
     });
 
     ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(app.block_load_summary())
+            .color(theme.info)
+            .monospace()
+            .size(11.0),
+    );
+    ui.add_space(2.0);
 
     let header_height = 28.0;
     egui::TopBottomPanel::top("block_header")

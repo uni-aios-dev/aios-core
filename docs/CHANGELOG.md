@@ -1,5 +1,27 @@
 # AIOS Development Log
 
+## v2.59.0 — GUI Blocks tab surfaces the boot-time loader report (TUI parity) (2026-10-14)
+
+### Added
+- **Loader report for the GUI runtime** (`aios-gui/src/runtime.rs`): new `GuiBlockLoadReport`
+  records the compiled-in **base set** seeded into the registry, the **disk** blocks discovered
+  under `AIOS_BLOCKS_DIR`, and any **failed** discoveries, captured once at `GuiRuntime::new`.
+  `GuiBlockLoadReport::summary_line(live)` renders a single line in the exact shape of the TUI
+  summary: `base [...] | disk [...] | failed N | live M`; `GuiRuntime::loader_report()` exposes it.
+- **Blocks-tab summary line** (`aios-gui/src/tabs/blocks.rs`): the GUI Blocks tab now renders that
+  summary directly under the toolbar, so base/disk/failed/live counts are visible without the TUI
+  (`AiosApp::block_load_summary` formats it, using the resident-block count for `live`).
+
+### Changed
+- The GUI base set is now loaded from an explicit `(name, version, binary)` table and each
+  successful load is recorded in the report; the boot log line for disk discovery also prints the
+  summary.
+
+### Verification
+- `aios-gui` +3 tests (loader report captures the base set; `summary_line` matches the TUI shape on
+  a populated and an empty report; `block_load_summary` reflects the resident block count).
+  `cargo test -p aios-gui` 25 passed / 0 failed; clippy clean; fmt clean.
+
 ## v2.58.0 — WASM blocks are routed over IPC: `handle_message` ABI (2026-10-14)
 
 ### Added

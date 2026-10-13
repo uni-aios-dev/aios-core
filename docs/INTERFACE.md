@@ -442,6 +442,7 @@ The top bar appends system-control segments after the RAM separator: Wi-Fi state
 - **Activity Log**: scrollable log with color-coded messages
 
 #### WASM Blocks (F2)
+- **Loader summary**: a boot-time report line under the toolbar — `base [...] | disk [...] | failed N | live M` — mirrors the TUI Blocks summary (`live` is the number of resident registry blocks; the GUI runtime does not execute WebAssembly)
 - **Table**: ID, Name, Version, State (badge), Size, Dependencies
 - **Actions**: Refresh, Load Block (2-step dialog), Unload, Hot-Swap
 - **Load Dialog**: Step 1 — enter block name, Step 2 — enter version, Enter/Cancel

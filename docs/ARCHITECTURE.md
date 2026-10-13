@@ -668,7 +668,7 @@ The TUI cannot render real web pages (no CSS/JS engine), so the full-featured br
 Native egui/eframe dashboard with 8 tabs (7 when built with `--no-default-features` — no Native Browser): System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Deps, Native Browser*, Files. Hotkey `W` in either TUI launches the GUI dashboard via `aios_webview::launcher::launch_gui()`. `\*` gated behind the `webview` feature.
 
 - **System Dashboard (F1)**: stat cards (RAM, blocks, processes, watchdog), system panel (CPU/GPU/storage/HW tier), RAM sparkline, priority distribution, processes table (PID, Name, Priority, State, RAM, CPU ms, Crashes) with Refresh/Kill/Suspend/Resume, activity log
-- **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap
+- **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap; a boot-time loader summary line (`base [...] | disk [...] | failed N | live M`) is rendered under the toolbar, matching the TUI Blocks summary
 - **AI Studio (F3)**: async LLM chat — message list, streaming replies (live yellow partial line), Enter-to-send (focus retained), slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens /preset /save /load`, status line (backend/model/temp/tokens/busy); requests stream over a background tokio task so the UI stays responsive. The chat auto-persists to the shared `AIOS_DATA_DIR/chat.jsonl` and `/preset` templates to `AIOS_DATA_DIR/presets.json` (same files as the TUI AI Console)
 - **App Store (F4)**: searchable catalog table with Install/Update/Uninstall
 - **Network Settings (F5)**: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON IPC update to `net_settings`) and Reset, plus a live JSON preview
@@ -683,6 +683,7 @@ Since v2.31.2 every dashboard panel is backed by a **real kernel runtime** (`Gui
 
 - Real `Scheduler` (round-robin, aging threshold 5000 ms, 100 ms time slice) drives the process table, RAM usage and IPC control (`kill/suspend/resume`).
 - Real `BlockRegistry` seeded with native modules (`hal`, `ipc_bus`, `scheduler`, `browser`) and augmented by `boot_discover` scanning `AIOS_BLOCKS_DIR` (default `./blocks`). The WASM Blocks tab loads/unloads/swaps registry entries; Hot-Swap runs `LiveUpdateEngine::perform_swap` (SHA-256 verified, rollback entry stored) against the installed store copy and then `registry.swap_binary`, with a swap-history panel.
+- **Loader report (v2.59.0)**: `GuiRuntime::new` captures a `GuiBlockLoadReport` (the seeded base set, the discovered disk blocks, and any failed discoveries); `GuiBlockLoadReport::summary_line` formats `base [...] | disk [...] | failed N | live M` and `AiosApp::block_load_summary` renders it in the Blocks tab. Unlike the TUI, the GUI runtime keeps blocks resident without executing WebAssembly, so `live` is the number of currently-resident registry blocks (`disk` = discovered/registered) rather than an executed-block count.
 - Real `Watchdog` receives a heartbeat every second (secret `aios_gui_secret`); the top-bar `WD:` indicator mirrors `WatchdogState` (`Monitoring → 0`, `Suspended → 1`, `Recovering → 2`, else safe-mode).
 - Shared `IpcBus` (4096 slots) fed by real OS-thread kernel processes (`ai_orchestrator[High]`, `io_handler[Normal]`, `health_monitor[Low]`, `telemetry_agg[Normal]`) via `spawn_real_process` with cooperative `TerminateFlag`/`SuspendFlag`; the IPC counter drains the bus.
 - `HotReloader` re-scans the blocks dir each UI poll and hot-reloads modified binaries.
@@ -1081,10 +1082,10 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ## Testing Architecture
 
-- **Unit tests**: 1351 tests embedded in source files under `#[cfg(test)] mod tests`
+- **Unit tests**: 1354 tests embedded in source files under `#[cfg(test)] mod tests`
 - **Integration tests**: 217 tests across the workspace `tests/` targets (integration, stress, chaos, proptest)
 - **Doc tests**: 1 test in crate documentation
-- **Total**: 1569 tests, all passing, zero clippy warnings
+- **Total**: 1572 tests, all passing, zero clippy warnings
 
 **Speed test thresholds**:
 - Debug mode: < 50us (unoptimized)
