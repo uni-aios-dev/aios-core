@@ -38,8 +38,8 @@ CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
 # statically on a musl host. So deps are built normally and only the final
 # crate is re-linked with the static CRT via `cargo rustc`'s pass-through
 # flags.
-CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features
-CARGO_TARGET_DIR=/tmp/target cargo rustc -p aios --release --no-default-features \
+CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features --features base-all
+CARGO_TARGET_DIR=/tmp/target cargo rustc -p aios --release --no-default-features --features base-all \
   -- -C target-feature=+crt-static
 cp /tmp/target-dyn/release/aios "$W/aios-bin"
 cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"

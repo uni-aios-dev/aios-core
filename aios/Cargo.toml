@@ -5,8 +5,18 @@ edition = "2021"
 publish = false
 
 [features]
-default = ["webview"]
+default = ["webview", "base-all"]
 webview = ["aios-webview/webview"]
+# Compiled-in base block set — the guaranteed half of the hybrid block model.
+# All base blocks are on by default; a per-profile build selects a subset with
+# `--no-default-features --features base-hal,base-net-settings` (or `base-all`
+# for the full set). Keep `live/build.sh` and `build_initramfs.sh` in sync: they
+# build with `--no-default-features` and must pass `--features base-all` to keep
+# the shipped base set.
+base-all = ["base-hal", "base-browser", "base-net-settings"]
+base-hal = []
+base-browser = []
+base-net-settings = []
 
 [dependencies]
 aios-core = { path = "../aios-core" }

@@ -56,7 +56,7 @@ file "${INIT_BIN}" 2>/dev/null || true
 AIOS_BIN=""
 if [[ "${STAGE_AIOS_CORE}" == "1" ]]; then
   echo "[aios-init] building static aios kernel TUI for ${TARGET}"
-  cargo build -p aios --release --target "${TARGET}" --no-default-features
+  cargo build -p aios --release --target "${TARGET}" --no-default-features --features base-all
   AIOS_BIN="${SCRIPT_DIR}/target/${TARGET}/release/aios"
   if [[ ! -x "${AIOS_BIN}" ]]; then
     echo "WARN: aios binary not found — /system/aios-core will be absent, boot falls back to the rescue shell" >&2

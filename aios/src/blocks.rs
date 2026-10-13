@@ -18,12 +18,17 @@
 use aios_block_mgr::factory::{BlockFactory, BlockFactoryRegistry};
 use aios_block_mgr::registry::BlockRegistry;
 use aios_block_mgr::router::MessageRouter;
+#[cfg(feature = "base-browser")]
 use aios_browser::block::BrowserBlock;
+#[cfg(feature = "base-browser")]
 use aios_browser::types::BrowserConfig;
 use aios_core::block::{BlockId, StatefulBlock};
 use aios_core::error::{AIOSException, Result};
+#[cfg(feature = "base-hal")]
 use aios_hal::hardware::HalBlock;
+#[cfg(feature = "base-net-settings")]
 use aios_net_config::block::NetSettingsBlock;
+#[cfg(feature = "base-net-settings")]
 use aios_net_config::config::NetworkConfig;
 use aios_wasm::executor::BlockExecutor;
 use aios_wasm::isolation::IsolationConfig;
@@ -85,8 +90,10 @@ impl DiskBlockReport {
 }
 
 /// Factory for the `hal` base block.
+#[cfg(feature = "base-hal")]
 struct HalFactory;
 
+#[cfg(feature = "base-hal")]
 impl BlockFactory for HalFactory {
     fn name(&self) -> &str {
         "hal"
@@ -102,8 +109,10 @@ impl BlockFactory for HalFactory {
 }
 
 /// Factory for the `browser` base block.
+#[cfg(feature = "base-browser")]
 struct BrowserFactory;
 
+#[cfg(feature = "base-browser")]
 impl BlockFactory for BrowserFactory {
     fn name(&self) -> &str {
         "browser"
@@ -119,8 +128,10 @@ impl BlockFactory for BrowserFactory {
 }
 
 /// Factory for the `net_settings` base block.
+#[cfg(feature = "base-net-settings")]
 struct NetSettingsFactory;
 
+#[cfg(feature = "base-net-settings")]
 impl BlockFactory for NetSettingsFactory {
     fn name(&self) -> &str {
         "net_settings"
@@ -139,15 +150,18 @@ impl BlockFactory for NetSettingsFactory {
 }
 
 /// Build the registry of compiled-in base block factories.
-///
 /// The order is the registration order and is stable across builds. Adding a
-/// block to the base set only requires a new factory here (and, once the
-/// installer grows a catalog, a matching entry in `base-*` feature flags).
+/// block to the base set only requires a new factory here and a `base-*`
+/// feature flag. All three are on by default; subsets can be selected with
+/// `--no-default-features --features base-hal,base-net-settings` (and include
+/// `base-all` for the full set on builds that use `--no-default-features`).
 pub fn base_factories() -> BlockFactoryRegistry {
     let mut factories = BlockFactoryRegistry::new();
-    // Names are unique constants, so registration cannot fail here.
+    #[cfg(feature = "base-hal")]
     let _ = factories.register(Box::new(HalFactory));
+    #[cfg(feature = "base-browser")]
     let _ = factories.register(Box::new(BrowserFactory));
+    #[cfg(feature = "base-net-settings")]
     let _ = factories.register(Box::new(NetSettingsFactory));
     factories
 }
@@ -323,11 +337,15 @@ mod tests {
     use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 
     #[test]
-    fn test_base_factories_exposes_expected_blocks() {
+    fn test_base_factories_matches_enabled_features() {
         let factories = base_factories();
-        assert_eq!(factories.names(), vec!["hal", "browser", "net_settings"]);
-        assert!(factories.contains("net_settings"));
         assert!(!factories.contains("nonexistent"));
+        #[cfg(feature = "base-hal")]
+        assert!(factories.contains("hal"));
+        #[cfg(feature = "base-browser")]
+        assert!(factories.contains("browser"));
+        #[cfg(feature = "base-net-settings")]
+        assert!(factories.contains("net_settings"));
     }
 
     #[test]
@@ -336,28 +354,36 @@ mod tests {
         let mut router = MessageRouter::new();
 
         let wired = register_base_blocks(&mut registry, &mut router);
-        assert_eq!(wired.len(), 3);
 
-        let names: Vec<&str> = wired.iter().map(|b| b.name.as_str()).collect();
-        assert!(names.contains(&"hal"));
-        assert!(names.contains(&"browser"));
-        assert!(names.contains(&"net_settings"));
+        let mut expected_len: usize = 0;
+        #[cfg(feature = "base-hal")]
+        { expected_len += 1; }
+        #[cfg(feature = "base-browser")]
+        { expected_len += 1; }
+        #[cfg(feature = "base-net-settings")]
+        { expected_len += 1; }
+        assert_eq!(wired.len(), expected_len);
 
-        let net_id = registry.find_by_name("net_settings").unwrap().manifest.id;
+        #[cfg(feature = "base-net-settings")]
+        {
+            let names: Vec<&str> = wired.iter().map(|b| b.name.as_str()).collect();
+            assert!(names.contains(&"net_settings"));
+            let net_id = registry.find_by_name("net_settings").unwrap().manifest.id;
 
-        let packet = IpcPacket::new(
-            0,
-            net_id.0,
-            CommandId::Custom,
-            Payload::Custom("net_get".into(), Vec::new()),
-        );
-        let resp = router.dispatch(&packet).unwrap().unwrap();
-        let json = match resp.payload {
-            Payload::Text(t) => t,
-            other => panic!("expected text response, got {other:?}"),
-        };
-        let config = NetworkConfig::from_json(&json).unwrap();
-        assert_eq!(config.hostname, "aios-host");
+            let packet = IpcPacket::new(
+                0,
+                net_id.0,
+                CommandId::Custom,
+                Payload::Custom("net_get".into(), Vec::new()),
+            );
+            let resp = router.dispatch(&packet).unwrap().unwrap();
+            let json = match resp.payload {
+                Payload::Text(t) => t,
+                other => panic!("expected text response, got {other:?}"),
+            };
+            let config = aios_net_config::config::NetworkConfig::from_json(&json).unwrap();
+            assert_eq!(config.hostname, "aios-host");
+        }
     }
 
     #[test]
