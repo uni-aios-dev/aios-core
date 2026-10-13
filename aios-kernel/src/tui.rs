@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.56.0";
+pub(crate) const VERSION: &str = "AIOS kernel v2.57.0";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -455,11 +455,12 @@ fn cmd_http(rest: &str) -> Vec<String> {
 }
 
 /// `socktest` — loopback self-test of the kernel socket layer over the bound
-/// IP: a two-way UDP exchange, a complete TCP connect/accept/echo/close
-/// and a segmented 3000-byte bulk transfer (three MSS-sized segments over
-/// the transmit queue), so both directions, the listen path and the
-/// segmentation pipeline are verified without external traffic. Prints one
-/// PASS/FAIL line per phase.
+/// IP: a two-way UDP exchange, broadcast (`255.255.255.255`) and multicast
+/// (class D) fan-outs, a complete TCP `listen`/`connect`/`accept`/echo/close
+/// lifecycle, a segmented 3000-byte bulk transfer, and (v2.57.0) a
+/// congestion-control/window-scaling check that asserts the client's `cwnd`
+/// (one MSS per completed segment) and the fixed `wscale = 4` shift. Prints
+/// one PASS/FAIL line per phase.
 fn cmd_socktest() -> Vec<String> {
     let Some(our) = crate::net::lease() else {
         return vec!["socktest: no ip bound (dhcp/static first)".to_string()];
@@ -749,6 +750,27 @@ fn cmd_socktest() -> Vec<String> {
         crate::sock::close(c);
         crate::sock::close(c);
         crate::sock::close(s);
+
+        // -- TCP congestion / window scaling (v2.57.0) --
+        let mss = crate::sock::tcp_mss() as u32;
+        if let Some(info) = crate::sock::cc_info(c) {
+            // After one data ACK and one segment received/ack'ed in a full
+            // round, `cwnd` should be >= 2·MSS (slow start). Also assert
+            // our `wscale` is offered (shift 4).
+            let cwnd_ok = info.0 >= 2 * mss;
+            let w_ok = info.2 == 4;
+            lines.push(format!(
+                "tcp cc: cwnd={} ssth={}>={} wscale={}/{} -> {}",
+                info.0,
+                info.1,
+                2 * mss,
+                info.2,
+                info.3,
+                if cwnd_ok && w_ok { "PASS" } else { "FAIL" }
+            ));
+        } else {
+            lines.push("tcp cc: no cc info - FAIL".to_string());
+        }
     } else {
         lines.push("tcp: socket table full - FAIL".to_string());
     }

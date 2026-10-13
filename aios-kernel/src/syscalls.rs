@@ -66,7 +66,10 @@ pub const SYS_SOCK_RECV: u64 = 13;
 /// Close a socket: `rdi = fd`. TCP sends a FIN; a second call frees the slot.
 pub const SYS_SOCK_CLOSE: u64 = 14;
 /// Lifecycle code of `fd` (1 connecting, 2 open, 3 closing, 4 closed,
-/// 5 time-wait, 6 listening): `rdi = fd`. Returns `rax = code`.
+/// 5 time-wait, 6 listening): `rdi = fd`. Returns `rax = code`. When `rsi`
+/// points to a 10-byte scratch buffer, it is filled with the TCP congestion
+/// snapshot `cwnd` (u32 LE), `ssthresh` (u32 LE), `wscale`, `peer_wscale`
+/// (v2.57.0).
 pub const SYS_SOCK_STATUS: u64 = 15;
 /// Start listening on a bound TCP socket: `rdi = fd`. Returns `rax = 1|0`.
 pub const SYS_SOCK_LISTEN: u64 = 16;
@@ -404,6 +407,21 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         }
         SYS_SOCK_STATUS => {
             frame.rax = sock::status(frame.rdi as usize) as u64;
+            // Congestion snapshot (v2.57.0): when `rsi` points to a 10-byte
+            // scratch buffer, fill `cwnd` (u32 LE), `ssthresh` (u32 LE),
+            // `wscale` (u8), `peer_wscale` (u8) for a TCP descriptor.
+            if frame.rsi != 0 {
+                if let Some((cwnd, ssthresh, wscale, peer_wscale)) =
+                    sock::cc_info(frame.rdi as usize)
+                {
+                    let buf = unsafe { &mut *addr_of_mut!(SOCK_IO) };
+                    buf[..4].copy_from_slice(&cwnd.to_le_bytes());
+                    buf[4..8].copy_from_slice(&ssthresh.to_le_bytes());
+                    buf[8] = wscale;
+                    buf[9] = peer_wscale;
+                    let _ = user_write(frame.rsi, &buf[..10]);
+                }
+            }
         }
         SYS_SOCK_LISTEN => {
             let fd = frame.rdi as usize;

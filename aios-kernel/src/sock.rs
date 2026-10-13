@@ -48,6 +48,10 @@ const REXMIT_MAX: u8 = 4;
 const TIME_WAIT_TICKS: u64 = 400;
 /// Initial TCP send window advertised in every segment.
 const TCP_WINDOW: u16 = 64240;
+/// Window-scale shift (v2.57.0): the advertised window field carries
+/// `TCP_WINDOW >> wscale` and a peer restores the true window with `2^wscale`
+/// (scale factor 16). Offered as a TCP option on SYN/SYN-ACK.
+const WSCALE_SHIFT: u8 = 4;
 
 /// Transport selector passed to [`open`].
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,9 +145,14 @@ struct Socket {
     // marks the socket as a broadcast member that accepts datagrams from any
     // source sent to its bound port.
     broadcast: bool,
-    // Congestion control (v2.54.0).
+    // Congestion control (v2.54.0, live v2.57.0).
     cwnd: u32,     // congestion window in bytes (>= 1 MSS)
     ssthresh: u32, // slow-start threshold
+    // Window scaling (v2.57.0): `wscale` scales our advertised window
+    // (offered on SYN/SYN-ACK); `peer_wscale` is the shift seen in the
+    // peer's handshake options (kept for inspection, not yet applied).
+    wscale: u8,
+    peer_wscale: u8,
 }
 
 impl Socket {
@@ -180,6 +189,8 @@ impl Socket {
         broadcast: false,
         cwnd: TCP_MSS as u32,
         ssthresh: 10 * TCP_MSS as u32,
+        wscale: WSCALE_SHIFT,
+        peer_wscale: 0,
     };
 }
 
@@ -361,6 +372,24 @@ pub fn status(fd: usize) -> u8 {
     }
 }
 
+/// Congestion snapshot (v2.57.0): `(cwnd, ssthresh, wscale, peer_wscale)` for
+/// a TCP descriptor, or `None` for free/non-TCP ones. Feeds `SYS_SOCK_STATUS`'s
+/// scratch-buffer extension and the TUI `socktest` `tcp cc` phase.
+pub fn cc_info(fd: usize) -> Option<(u32, u32, u8, u8)> {
+    unsafe {
+        let sk = get_mut(fd)?;
+        if sk.kind != Kind::Tcp {
+            return None;
+        }
+        Some((sk.cwnd, sk.ssthresh, sk.wscale, sk.peer_wscale))
+    }
+}
+
+/// The TCP maximum segment size in bytes, for tests and docs.
+pub const fn tcp_mss() -> usize {
+    TCP_MSS
+}
+
 /// Owning task id of `fd`, or `0` when the descriptor is free.
 pub fn owner(fd: usize) -> u32 {
     unsafe {
@@ -509,6 +538,13 @@ fn kick(sk: &mut Socket) {
         return;
     }
     let n = sk.tx_q_len.min(TCP_MSS);
+    // Congestion window (v2.57.0): never put more than `cwnd` bytes in
+    // flight. Stop-and-wait keeps the ceiling at one segment, so the gate
+    // binds only when a shrink dropped `cwnd` below MSS — not in normal
+    // operation (slow start and the Reno floor keep it at or above MSS).
+    if n as u32 > sk.cwnd {
+        return;
+    }
     let mut r = sk.tx_q_head;
     for i in 0..n {
         sk.tx_buf[i] = sk.tx_q[r];
@@ -522,8 +558,6 @@ fn kick(sk: &mut Socket) {
     sk.tx_pending = true;
     sk.retries = 0;
     sk.sent_at = net::now_ticks();
-    // Congestion control (v2.54.0): additive increase after each segment sent
-    sk.cwnd = sk.cwnd.saturating_add(TCP_MSS as u32);
     send_segment(sk, sk.tx_seq, PSH | ACK, &sk.tx_buf[..n]);
 }
 
@@ -562,15 +596,20 @@ pub fn tick(now: u64) {
             TcpState::Established => {
                 if sk.tx_pending && now.wrapping_sub(sk.sent_at) >= REXMIT_TICKS {
                     if sk.retries < REXMIT_MAX {
+                        // Congestion control (v2.57.0): Reno multiplicative
+                        // decrease on the first timeout — the connection
+                        // survives with a halved window instead of shrinking
+                        // only at the abort point.
+                        if sk.retries == 0 {
+                            sk.ssthresh = (sk.cwnd / 2).max(2 * TCP_MSS as u32);
+                            sk.cwnd = sk.ssthresh;
+                        }
                         sk.retries += 1;
                         sk.sent_at = now;
                         let seq = sk.tx_seq;
                         let len = sk.tx_len;
                         send_segment(sk, seq, PSH | ACK, &sk.tx_buf[..len]);
                     } else {
-                        // Congestion control (v2.54.0): multiplicative decrease on timeout
-                        sk.cwnd = sk.ssthresh / 2;
-                        sk.ssthresh = sk.cwnd.max(2 * TCP_MSS as u32);
                         sk.tx_pending = false;
                         sk.state = TcpState::Closed;
                         sk.eof = true;
@@ -583,6 +622,23 @@ pub fn tick(now: u64) {
             _ => {}
         }
     }
+}
+
+/// Parses the window-scale option (kind 3, len 3) from a SYN segment's option
+/// area and returns the peer's shift (0 when absent). Options occupy
+/// `[20, doff)`; EOL stops, NOPs are skipped, other kinds advance by len.
+fn wscale_opt(seg: &[u8], doff: usize) -> u8 {
+    let mut i = 20;
+    while i + 2 <= doff {
+        match seg[i] {
+            3 if seg[i + 1] == 3 && i + 2 < doff => return seg[i + 2],
+            0 => return 0,
+            1 => i += 1,
+            k if seg[i + 1] as usize >= 2 => i += seg[i + 1] as usize,
+            _ => return 0,
+        }
+    }
+    0
 }
 
 /// Enqueues an inbound UDP datagram addressed to `dst` (`src`/`sport` identify
@@ -652,7 +708,7 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
     if flags & SYN != 0 && flags & ACK == 0 {
         for (fd, sk) in arr.iter().enumerate() {
             if sk.used && sk.kind == Kind::Tcp && sk.state == TcpState::Listen && sk.port == dport {
-                spawn_child(fd, arr, src, sport, seq);
+                spawn_child(fd, arr, src, sport, seq, wscale_opt(seg, doff));
                 return;
             }
         }
@@ -679,6 +735,7 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
                     sk.rcv_nxt = seq.wrapping_add(1);
                     sk.snd_una = ack;
                     sk.snd_nxt = ack;
+                    sk.peer_wscale = wscale_opt(seg, doff);
                     sk.state = TcpState::Established;
                     send_segment(sk, sk.snd_nxt, ACK, &[]);
                 }
@@ -702,6 +759,15 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
             if sk.tx_pending && ack == seg_end {
                 sk.tx_pending = false;
                 sk.snd_una = ack;
+                // Congestion control (v2.57.0): grow per completed segment —
+                // slow start adds one MSS while under `ssthresh`, congestion
+                // avoidance one MSS per window above it.
+                if sk.cwnd <= sk.ssthresh {
+                    sk.cwnd = sk.cwnd.saturating_add(TCP_MSS as u32);
+                } else {
+                    let inc = (TCP_MSS as u32 * TCP_MSS as u32) / sk.cwnd;
+                    sk.cwnd = sk.cwnd.saturating_add(inc.max(1));
+                }
                 kick(sk);
             }
             match sk.state {
@@ -738,7 +804,14 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
 /// `listener`, answers the SYN with a SYN-ACK and remembers the client's
 /// 5-tuple so its final ACK lands on this child. Drops the SYN when the table
 /// is full.
-fn spawn_child(listener: usize, arr: &mut [Socket], src: [u8; 4], sport: u16, seq: u32) {
+fn spawn_child(
+    listener: usize,
+    arr: &mut [Socket],
+    src: [u8; 4],
+    sport: u16,
+    seq: u32,
+    peer_wscale: u8,
+) {
     let (pid, port) = {
         let l = &arr[listener];
         (l.pid, l.port)
@@ -762,6 +835,7 @@ fn spawn_child(listener: usize, arr: &mut [Socket], src: [u8; 4], sport: u16, se
     c.snd_nxt = iss.wrapping_add(1);
     c.rcv_nxt = seq.wrapping_add(1);
     c.state = TcpState::SynRecv;
+    c.peer_wscale = peer_wscale;
     c.retries = 0;
     c.sent_at = now;
     net::arp_resolve(src);
@@ -781,20 +855,33 @@ fn append_rx(sk: &mut Socket, data: &[u8]) -> bool {
 }
 
 fn send_segment(sk: &Socket, seq: u32, flags: u8, payload: &[u8]) {
+    // SYN/SYN-ACK carry the window-scale option (kind 3, len 3) padded with
+    // a NOP to a 4-byte boundary; data segments stay at a 20-byte header.
+    let with_opts = flags & SYN != 0;
+    let hdr = if with_opts { 24 } else { 20 };
     let plen = payload.len().min(TCP_MSS);
-    let mut seg = [0u8; 20 + TCP_MSS];
+    let mut seg = [0u8; 24 + TCP_MSS];
     seg[0..2].copy_from_slice(&sk.port.to_be_bytes());
     seg[2..4].copy_from_slice(&sk.rport.to_be_bytes());
     seg[4..8].copy_from_slice(&seq.to_be_bytes());
     let ack = if flags & ACK != 0 { sk.rcv_nxt } else { 0 };
     seg[8..12].copy_from_slice(&ack.to_be_bytes());
-    seg[12] = (20u8 / 4) << 4;
+    seg[12] = ((hdr / 4) as u8) << 4;
     seg[13] = flags;
-    seg[14..16].copy_from_slice(&TCP_WINDOW.to_be_bytes());
+    // Advertised window, scaled by our shift (v2.57.0): the peer restores
+    // the true 64240-byte window with `2^wscale`.
+    let win = (TCP_WINDOW >> sk.wscale) as u16;
+    seg[14..16].copy_from_slice(&win.to_be_bytes());
     seg[16..18].copy_from_slice(&0u16.to_be_bytes());
     seg[18..20].copy_from_slice(&0u16.to_be_bytes());
-    seg[20..20 + plen].copy_from_slice(&payload[..plen]);
-    let total = 20 + plen;
+    if with_opts {
+        seg[20] = 3; // window-scale option kind (RFC 7323)
+        seg[21] = 3; // option length: kind + len + shift
+        seg[22] = sk.wscale;
+        seg[23] = 1; // NOP pad to a 4-byte boundary
+    }
+    seg[hdr..hdr + plen].copy_from_slice(&payload[..plen]);
+    let total = hdr + plen;
     let c = net::l4_checksum(net::bound_ip(), sk.rip, 6, &seg[..total]);
     seg[16..18].copy_from_slice(&c.to_be_bytes());
     let _ = net::emit_ipv4(sk.rip, 6, &seg[..total]);
