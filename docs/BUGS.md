@@ -34,9 +34,10 @@
 - **Limits / risks:**
   1. `.bin` / placeholder payloads that do not start with the WebAssembly magic
      (`\0asm`) are registered only (`registered_only`) and never executed.
-  2. The compiled-in base set is fixed at build time (`aios/src/blocks.rs`); there
-     are no per-block Cargo features yet, so every build carries
-     `hal` + `browser` + `net_settings`.
+  2. The compiled-in base set was fixed at build time (`aios/src/blocks.rs`).
+     Base blocks are now selectable via `base-*` Cargo features (default-on:
+     `base-hal`, `base-browser`, `base-net-settings`; use `base-all` for builds
+     that omit default features). Subsets remain possible per profile.
 - **Workaround:** ship native blocks as `.wasm` to have them executed and
   IPC-routed, or accept `.bin` placeholders as topology-only entries; base-set
   feature flags are tracked in TODO "Block loader follow-ups".
