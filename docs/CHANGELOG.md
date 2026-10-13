@@ -52,20 +52,21 @@
 ### Verification
 - `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt` clean. The enlargement is enforced by the `MAX_SOCKS = 16` constant and the `fd >= MAX_SOCKS` bounds checks on every look‑up; no kernel unit tests run on the bare target, so the larger table is exercised by opening more sockets than the old 8‑slot table allowed.
 
-## v2.54.0 — TCP window scaling & congestion control (2026-10-13)
+## v2.54.0 — TCP congestion control: cwnd/ssthresh accounting (2026-10-13)
 
 ### Added
-- **Window scaling** (`aios-kernel/src/sock.rs`): per‑socket `wscale` option
-  and advertised window field; the send window is still `TCP_WINDOW = 64240`
-  by default but can be adjusted via the option.
-- **Congestion control** (`aios-kernel/src/sock.rs`): Reno‑style
-  additive‑increase / multiplicative‑decrease implemented through
-  `cwnd`/`ssthresh` fields in `Socket`. `send` now tracks queued bytes
-  against `cwnd`; `kick` increments `cwnd` on each segment transmitted;
-  `tick` halves `cwnd` and raises `ssthresh` when the retransmit limit
-  `REXMIT_MAX` is exceeded.
-- The TUI version banner and `cwnd`/`ssthresh` initialization are covered in
-  the `Changed` section below; no new `socktest` line was introduced.
+- **Congestion‑control accounting** (`aios-kernel/src/sock.rs`): the
+  `Socket` struct gained `cwnd`/`ssthresh` fields; `kick` grows `cwnd` by
+  one MSS per transmitted segment and `tick` halves `cwnd` and raises
+  `ssthresh` once the retransmit limit `REXMIT_MAX` is exceeded.
+  This is bookkeeping only: the TCP data path is stop-and-wait, so `send`
+  never gates on `cwnd`, and multiplicative decrease runs when a connection
+  is abandoned after `REXMIT_MAX` retries, not as live congestion recovery.
+- **Correction:** TCP window scaling is **not** implemented in this
+  milestone — there is no `wscale` field, no TCP options in the header
+  (`doff` stays 20), and the advertised window remains the fixed constant
+  `TCP_WINDOW = 64240`. The earlier claim is corrected here; scaling stays
+  on the roadmap.
 
 ### Changed
 - The `cwnd`/`ssthresh` fields are initialized per socket from `Socket::EMPTY`
@@ -73,9 +74,9 @@
 
 ### Verification
 - `aios-kernel` builds and lints clean for `x86_64-unknown-none`,
-  `cargo fmt` clean. The congestion‑window pipeline is exercised by every
-  multi‑segment send: `kick` grows `cwnd` per segment and `tick` reacts to
-  retransmit timeouts; no kernel unit tests run on the bare target.
+  `cargo fmt` clean. The `cwnd` growth/halving path is compile-time only —
+  no kernel unit tests run on the bare target, and the accounting never
+  changes observed TCP behavior.
 
 ## v2.53.0 — TCP segmentation: multi‑segment sends over a transmit queue (2026-10-13)
 

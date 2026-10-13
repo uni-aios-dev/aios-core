@@ -13,7 +13,7 @@
 //! The TCP side is deliberately small: sends larger than one segment
 //! are queued per socket and segmented into MSS-sized chunks with one
 //! segment in flight at a time (stop-and-wait over the queue, since
-//! v2.53.0), with Reno-style congestion control and window scaling
+//! v2.53.0), with Reno-style congestion-control accounting
 //! (`cwnd`/`ssthresh`, since v2.54.0), an 8 KiB receive ring and
 //! an 8 KiB transmit queue per socket. Since v2.50.0 it covers both
 //! directions — a minimal **client** (active open) and a minimal

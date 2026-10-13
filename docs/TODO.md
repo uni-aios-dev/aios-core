@@ -140,13 +140,14 @@ The v2.38.22 GUI is a first step; a real windowing system needs:
   `MAX_SOCKS = 8`, UDP broadcast/multicast, and
   external-NIC verification keeps depending on QEMU NIC
   models.
-- [x] **TCP window scaling & congestion control (v2.54.0)** — sends can now
-  advertise a scaled window and the congestion window (`cwnd`/`ssthresh`)
-  implements Reno‑style additive increase / multiplicative decrease; `kick`
-  grows `cwnd` on each transmitted segment, `tick` shrinks it after a
-  retransmit timeout.
-  Known limit: window scaling parameters are still static (no runtime
-  negotiation), and the congestion‑control state is not yet exposed through
+- [x] **TCP congestion control: cwnd/ssthresh accounting (v2.54.0)** — the
+  `Socket` fields `cwnd`/`ssthresh` track Reno-style additive increase /
+  multiplicative decrease: `kick` grows `cwnd` per transmitted segment,
+  `tick` halves it after the retransmit limit is exceeded. Accounting only:
+  sends never gate on `cwnd` (stop-and-wait dominates), so the fields do not
+  change TCP behavior. Window scaling is **not** implemented (no `wscale`,
+  no TCP options, fixed `TCP_WINDOW = 64240`). Still open: real window
+  scaling, gating sends on `cwnd`, and exposing congestion state through
   `SYS_SOCK_STATUS`.
 - [x] **MAX_SOCKS raised 8 → 16 (v2.55.0)** — the static socket table
   `SOCKS` now holds 16 entries instead of 8, allowing more concurrent

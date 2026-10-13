@@ -66,18 +66,21 @@
   bare-target нет, поэтому расширенная таблица проверяется открытием большего
   числа сокетов, чем допускала старая таблица на 8 слотов.
 
-## v2.54.0 — scaling TCP: window scaling & congestion control (2026-10-13)
+## v2.54.0 — контроль перегрузки TCP: учёт cwnd/ssthresh (2026-10-13)
 
 ### Добавлено
-- **Window scaling** (`aios-kernel/src/sock.rs`): per‑socket `wscale` option
-  and advertised window field; the send window is still `TCP_WINDOW = 64240`
-  by default but can be adjusted via the option.
-- **Congestion control** (`aios-kernel/src/sock.rs`): Reno‑style
-  additive‑increase / multiplicative‑decrease implemented through
-  `cwnd`/`ssthresh` fields in `Socket`. `send` now tracks queued bytes
-  against `cwnd`; `kick` increments `cwnd` on each segment transmitted;
-  `tick` halves `cwnd` and raises `ssthresh` when the retransmit limit
-  `REXMIT_MAX` is exceeded.
+- **Учёт контроля перегрузки** (`aios-kernel/src/sock.rs`): у `Socket`
+  появились поля `cwnd`/`ssthresh`; `kick` растёт `cwnd` на один MSS за
+  каждый переданный сегмент, а `tick` при превышении лимита ретрансмита
+  `REXMIT_MAX` уполовинивает `cwnd` и поднимает `ssthresh`. Это только
+  учёт: путь данных TCP — stop-and-wait, поэтому `send` никогда не
+  ограничивается `cwnd`, а мультипликативное уменьшение срабатывает,
+  когда соединение бросается после `REXMIT_MAX` повторов, а не как
+  живое восстановление от потери.
+- **Исправление:** TCP window scaling в этом релизе **не** реализован —
+  нет поля `wscale`, нет TCP-опций в заголовке (`doff` остаётся 20),
+  а рекламируемое окно — фиксированная константа `TCP_WINDOW = 64240`.
+  Более ранняя заявка здесь исправлена; scaling остаётся в дорожной карте.
 
 ### Изменено
 - Поля `cwnd`/`ssthresh` инициализируются на сокет из `Socket::EMPTY`
@@ -85,10 +88,9 @@
 
 ### Проверка
 - `aios-kernel` собирается и линтуется чисто для
-  `x86_64-unknown-none`, `cargo fmt` чистый. Конвейер конгестионного
-  окна упражняется каждой многосегментной отправкой: `kick` растёт
-  на сегмент, `tick` реагирует на таймауты ретрансмита; юнит-тестов
-  ядра на bare-target нет.
+  `x86_64-unknown-none`, `cargo fmt` чистый. Путь роста/уменьшения
+  `cwnd` проверяется только сборкой — юнит-тестов ядра на bare-target
+  нет, а учёт не меняет наблюдаемое поведение TCP.
 
 ## v2.53.0 — сегментация TCP: многосегментные отправки через очередь передачи (2026-10-13)
 
