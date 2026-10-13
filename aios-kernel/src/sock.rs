@@ -13,7 +13,8 @@
 //! The TCP side is deliberately small: sends larger than one segment
 //! are queued per socket and segmented into MSS-sized chunks with one
 //! segment in flight at a time (stop-and-wait over the queue, since
-//! v2.53.0), no window scaling or options, an 8 KiB receive ring and
+//! v2.53.0), with Reno-style congestion control and window scaling
+//! (`cwnd`/`ssthresh`, since v2.54.0), an 8 KiB receive ring and
 //! an 8 KiB transmit queue per socket. Since v2.50.0 it covers both
 //! directions — a minimal **client** (active open) and a minimal
 //! **server** ([`listen`] + [`accept`] with a per-listener child
@@ -136,6 +137,10 @@ struct Socket {
     sent_at: u64,
     retries: u8,
     time_at: u64,
+    // Broadcast flag (v2.56.0): set when the peer address is 255.255.255.255;
+    // marks the socket as a broadcast member that accepts datagrams from any
+    // source sent to its bound port.
+    broadcast: bool,
     // Congestion control (v2.54.0).
     cwnd: u32,     // congestion window in bytes (>= 1 MSS)
     ssthresh: u32, // slow-start threshold
@@ -172,6 +177,7 @@ impl Socket {
         sent_at: 0,
         retries: 0,
         time_at: 0,
+        broadcast: false,
         cwnd: TCP_MSS as u32,
         ssthresh: 10 * TCP_MSS as u32,
     };
@@ -288,7 +294,10 @@ pub fn accept(fd: usize) -> Option<usize> {
 }
 
 /// Sets the peer address. For UDP this merely arms [`send`]; for TCP it starts
-/// the three-way handshake (SYN) and requires a bound IPv4 address.
+/// the three-way handshake (SYN) and requires a bound IPv4 address. Connecting
+/// a UDP socket to `255.255.255.255` puts it into broadcast mode (v2.56.0):
+/// [`send`]/[`deliver_udp`] then use the broadcast fan-out instead of a unicast
+/// peer, and the link loops the frame back to every member on the port.
 pub fn connect(fd: usize, ip: [u8; 4], port: u16) -> bool {
     let now = net::now_ticks();
     unsafe {
@@ -299,6 +308,7 @@ pub fn connect(fd: usize, ip: [u8; 4], port: u16) -> bool {
         sk.rip = ip;
         sk.rport = port;
         if sk.kind == Kind::Udp {
+            sk.broadcast = ip == [255, 255, 255, 255];
             sk.state = TcpState::Established;
             return true;
         }
@@ -575,18 +585,29 @@ pub fn tick(now: u64) {
     }
 }
 
-/// Enqueues an inbound UDP datagram to the matching bound socket.
-pub fn deliver_udp(src: [u8; 4], sport: u16, dport: u16, payload: &[u8]) {
+/// Enqueues an inbound UDP datagram addressed to `dst` (`src`/`sport` identify
+/// the sender). Unicast frames (since v2.49.0) reach the single socket bound to
+/// `dport` that either has no peer or matches the sender; broadcast
+/// (`255.255.255.255`) and multicast (class D) frames (v2.56.0) fan out to every
+/// member socket — peers connected to the destination address, broadcast
+/// members, and unconnected sockets bound to the port.
+pub fn deliver_udp(src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16, payload: &[u8]) {
     if payload.len() > UDP_MTU {
         return;
     }
+    let fan = dst == [255, 255, 255, 255] || dst[0] & 0xF0 == 0xE0;
     #[allow(static_mut_refs)]
     let arr = unsafe { &mut *addr_of_mut!(SOCKS) };
     for sk in arr.iter_mut() {
         if !sk.used || sk.kind != Kind::Udp || sk.port != dport {
             continue;
         }
-        if sk.rip != [0; 4] && (sk.rip != src || sk.rport != sport) {
+        if fan {
+            // Any member accepts broadcast/group frames regardless of sender.
+            if !(sk.broadcast || sk.rip == [0; 4] || sk.rip == dst) {
+                continue;
+            }
+        } else if sk.rip != [0; 4] && (sk.rip != src || sk.rport != sport) {
             continue;
         }
         if sk.udp_len >= UDP_SLOTS {
@@ -599,7 +620,9 @@ pub fn deliver_udp(src: [u8; 4], sport: u16, dport: u16, payload: &[u8]) {
         d.src_port = sport;
         d.data[..payload.len()].copy_from_slice(payload);
         sk.udp_len += 1;
-        return;
+        if !fan {
+            return;
+        }
     }
 }
 

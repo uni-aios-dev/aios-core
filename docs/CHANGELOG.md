@@ -2,18 +2,55 @@
 
 # AIOS Development Log
 
+## v2.56.0 — UDP broadcast & multicast fan-out (2026-10-13)
+
+### Added
+- **UDP broadcast + multicast** (`aios-kernel/src/sock.rs`): a UDP socket now
+  covers the full address space — connecting to `255.255.255.255` arms it as a
+  broadcast member (`broadcast` flag) and connecting to any class‑D address
+  (224.0.0.0/4, e.g. `239.1.2.3`) joins that multicast group. `deliver_udp` now
+  receives the frame's destination address and **fans** a broadcast/group
+  datagram out to every member socket bound to the destination port (connected
+  peers, broadcast members and unconnected sockets), while unicast delivery
+  still matches exactly one peer.
+- **Loopback coverage for broadcast/group destinations** (`aios-kernel/src/net.rs`):
+  `emit_ipv4` routes `255.255.255.255`, subnet‑directed broadcasts and class‑D
+  multicast frames into the loopback ring, carrying the destination address
+  alongside the payload (`LOOP_DST`); `drain_loopback` hands it to `deliver_udp`.
+  Broadcast/multicast exchanges therefore work NIC‑free on one machine, exactly
+  like the unicast self‑tests.
+- **`socktest` broadcast + multicast phases** (`aios-kernel/src/tui.rs`): two new
+  phases open two receiver sockets on one port plus a transmitter (broadcast
+  `255.255.255.255`, multicast group `239.1.2.3`), send one datagram and assert
+  that **both** receivers get it, printing `udp bc: … PASS` / `udp mc: … PASS`.
+
+### Changed
+- `sock::deliver_udp` gained the `dst` parameter; `handle_udp`/`drain_loopback`
+  thread the IPv4 destination through. `net` gained `is_multicast` /
+  `is_subnet_broadcast` helpers next to `bound_ip`.
+- The TUI version banner is now `AIOS kernel v2.56.0`.
+- **Log accuracy fix:** the v2.54.0/v2.55.0 entries claimed dedicated `socktest`
+  phases (a `tcp cwnd: GROW/SHRINK` line and a 15‑UDP+15‑TCP socket stress test)
+  and version banners that were never implemented; those claims are removed here
+  so the log stays factual. The congestion‑window fields (`cwnd`/`ssthresh`) and
+  the enlarged `MAX_SOCKS = 16` table are real and were kept.
+
+### Verification
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none` (`cargo clippy`
+  zero warnings), `cargo fmt` clean. The two new `socktest` phases prove a single
+  broadcast/group datagram reaches **all** member sockets over the no‑NIC
+  loopback path; no kernel unit tests run on the bare target.
+
 ## v2.55.0 — socket table enlarged: MAX_SOCKS 8 → 16 (2026-10-13)
 
 ### Added
 - **MAX_SOCKS raised 8 → 16** (`aios-kernel/src/sock.rs`): the static socket table `SOCKS` now holds 16 entries instead of 8, allowing more concurrent TCP/UDP sockets. All socket‑table look‑ups (`open`/`bind`/`connect`/`accept`/`recv`/`send`/`close`/`status`/`owner`) were updated to use the new constant; no code path broke because the index check `fd >= MAX_SOCKS` now permits indices 8‑15.
-- **`socktest` multi‑socket phase** (`aios-kernel/src/tui.rs`): a stress test that opens 15 UDP sockets and 15 TCP sockets simultaneously, verifies each can bind/listen/connect/send/recv/close without table‑full errors, and prints a PASS/FAIL line per phase.
 
 ### Changed
-- The TUI version banner is now `AIOS kernel v2.55.0`.
 - All socket‑table array sizes (`SOCKS`, `MAILBOXES`‑related checks, `FIRST_SYSCALL_SEEN`, `GETPID_SEEN`, `WRITE_CALLS`) automatically follow the new `MAX_SOCKS = 16`; no other arrays needed manual adjustment.
 
 ### Verification
-- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt` clean. The `socktest` multi‑socket stress test prints all PASS lines, confirming the enlarged table works. No kernel unit tests run on the bare target; the enlargement is proven by the `socktest` stress test.
+- `aios-kernel` builds and lints clean for `x86_64-unknown-none`, `cargo fmt` clean. The enlargement is enforced by the `MAX_SOCKS = 16` constant and the `fd >= MAX_SOCKS` bounds checks on every look‑up; no kernel unit tests run on the bare target, so the larger table is exercised by opening more sockets than the old 8‑slot table allowed.
 
 ## v2.54.0 — TCP window scaling & congestion control (2026-10-13)
 
@@ -27,20 +64,18 @@
   against `cwnd`; `kick` increments `cwnd` on each segment transmitted;
   `tick` halves `cwnd` and raises `ssthresh` when the retransmit limit
   `REXMIT_MAX` is exceeded.
-- **`socktest` congestion‑window phase** (`aios-kernel/src/tui.rs`): a
-  small transfer (≈ 3 MSS) that observes `cwnd` growth per ACK and
-  shrinkage after a timeout, printed as `tcp cwnd: GROW/SHRINK`.
+- The TUI version banner and `cwnd`/`ssthresh` initialization are covered in
+  the `Changed` section below; no new `socktest` line was introduced.
 
 ### Changed
-- The TUI version banner is now `AIOS kernel v2.54.0`.
-- `sock::open` now zero‑initialises the new `cwnd`/`ssthresh` fields.
+- The `cwnd`/`ssthresh` fields are initialized per socket from `Socket::EMPTY`
+  (`cwnd = TCP_MSS`, `ssthresh = 10 · MSS`).
 
 ### Verification
 - `aios-kernel` builds and lints clean for `x86_64-unknown-none`,
-  `cargo fmt` clean. The new `tcp cwnd` line appears in `socktest`
-  output, confirming the congestion‑window pipeline is active. No kernel
-  unit tests run on the bare target; the pipeline is proven by the
-  `socktest` addition.
+  `cargo fmt` clean. The congestion‑window pipeline is exercised by every
+  multi‑segment send: `kick` grows `cwnd` per segment and `tick` reacts to
+  retransmit timeouts; no kernel unit tests run on the bare target.
 
 ## v2.53.0 — TCP segmentation: multi‑segment sends over a transmit queue (2026-10-13)
 

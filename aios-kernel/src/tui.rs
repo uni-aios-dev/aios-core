@@ -38,7 +38,7 @@ pub fn panel_rows() -> usize {
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
 /// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.53.0";
+pub(crate) const VERSION: &str = "AIOS kernel v2.56.0";
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
@@ -520,6 +520,107 @@ fn cmd_socktest() -> Vec<String> {
         crate::sock::close(c);
     } else {
         lines.push("udp: socket table full - FAIL".to_string());
+    }
+
+    // -- UDP broadcast + multicast fan-out (v2.56.0) --
+    const BC_PORT: u16 = 40_003;
+    const MC_PORT: u16 = 40_004;
+    const MC_GROUP: [u8; 4] = [239, 1, 2, 3];
+    let bc_a = crate::sock::open(pid, crate::sock::Kind::Udp);
+    let bc_b = crate::sock::open(pid, crate::sock::Kind::Udp);
+    let bc_tx = crate::sock::open(pid, crate::sock::Kind::Udp);
+    let mc_a = crate::sock::open(pid, crate::sock::Kind::Udp);
+    let mc_b = crate::sock::open(pid, crate::sock::Kind::Udp);
+    let mc_tx = crate::sock::open(pid, crate::sock::Kind::Udp);
+    if let (Some(a), Some(b), Some(tx)) = (bc_a, bc_b, bc_tx) {
+        let ok = crate::sock::bind(a, BC_PORT)
+            && crate::sock::bind(b, BC_PORT)
+            && crate::sock::bind(tx, BC_PORT + 1)
+            && crate::sock::connect(tx, [255, 255, 255, 255], BC_PORT);
+        let pkt = b"bc-ping";
+        let sent = crate::sock::send(tx, pkt);
+        let (mut got_a, mut got_b) = (0usize, 0usize);
+        for _ in 0..50 {
+            crate::net::poll();
+            if got_a == 0 {
+                if let Some(n) = crate::sock::recv(a, &mut buf) {
+                    if n > 0 {
+                        got_a = n;
+                    }
+                }
+            }
+            if got_b == 0 {
+                if let Some(n) = crate::sock::recv(b, &mut buf) {
+                    if n > 0 {
+                        got_b = n;
+                    }
+                }
+            }
+            if got_a > 0 && got_b > 0 {
+                break;
+            }
+            crate::interrupts::delay_ms(10);
+        }
+        let verified = ok && sent == Some(pkt.len()) && got_a == pkt.len() && got_b == pkt.len();
+        lines.push(format!(
+            "udp bc: rx {}/{} {}/{} -> {}",
+            got_a,
+            pkt.len(),
+            got_b,
+            pkt.len(),
+            if verified { "PASS" } else { "FAIL" }
+        ));
+        crate::sock::close(a);
+        crate::sock::close(b);
+        crate::sock::close(tx);
+    } else {
+        lines.push("udp bc: socket table full - FAIL".to_string());
+    }
+    if let (Some(a), Some(b), Some(tx)) = (mc_a, mc_b, mc_tx) {
+        let ok = crate::sock::bind(a, MC_PORT)
+            && crate::sock::bind(b, MC_PORT)
+            && crate::sock::connect(a, MC_GROUP, 0)
+            && crate::sock::connect(b, MC_GROUP, 0)
+            && crate::sock::bind(tx, MC_PORT + 1)
+            && crate::sock::connect(tx, MC_GROUP, MC_PORT);
+        let pkt = b"mc-ping";
+        let sent = crate::sock::send(tx, pkt);
+        let (mut got_a, mut got_b) = (0usize, 0usize);
+        for _ in 0..50 {
+            crate::net::poll();
+            if got_a == 0 {
+                if let Some(n) = crate::sock::recv(a, &mut buf) {
+                    if n > 0 {
+                        got_a = n;
+                    }
+                }
+            }
+            if got_b == 0 {
+                if let Some(n) = crate::sock::recv(b, &mut buf) {
+                    if n > 0 {
+                        got_b = n;
+                    }
+                }
+            }
+            if got_a > 0 && got_b > 0 {
+                break;
+            }
+            crate::interrupts::delay_ms(10);
+        }
+        let verified = ok && sent == Some(pkt.len()) && got_a == pkt.len() && got_b == pkt.len();
+        lines.push(format!(
+            "udp mc: rx {}/{} {}/{} -> {}",
+            got_a,
+            pkt.len(),
+            got_b,
+            pkt.len(),
+            if verified { "PASS" } else { "FAIL" }
+        ));
+        crate::sock::close(a);
+        crate::sock::close(b);
+        crate::sock::close(tx);
+    } else {
+        lines.push("udp mc: socket table full - FAIL".to_string());
     }
 
     // -- TCP accept + echo --

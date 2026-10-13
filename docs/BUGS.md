@@ -38,13 +38,18 @@
 
 - **Status:** OPEN — by design scope + verification gap; not a regression.
 - **Limits:**
-  1. **TCP is intentionally thin**: a fixed `TCP_WINDOW = 64240`, stop-and-wait
-     (no congestion control / fast retransmit), no TCP options / window scaling,
-     and a backlog bounded by `MAX_SOCKS = 8` (each SYN allocates a child slot
-     until `accept`). Server (`listen`/`accept`) and client (active open) sides
+  1. **TCP is intentionally thin**: stop-and-wait (no fast retransmit), a fixed
+     `TCP_WINDOW = 64240`, and no runtime window-scaling/congestion-control
+     negotiation — `cwnd`/`ssthresh` follow a static Reno-style policy (v2.54.0)
+     that is not yet exposed through `SYS_SOCK_STATUS`. The backlog is bounded by
+     `MAX_SOCKS` (raised 8 → 16 in v2.55.0; each SYN allocates a child slot until
+     `accept`). Server (`listen`/`accept`) and client (active open) sides
      both exist since v2.50.0; the in-kernel `socktest` shells exercise them over
      loopback.
-  2. **UDP** has no broadcast/multicast send and no per-packet error reporting.
+  2. **UDP** has no per-packet error reporting; broadcast (`255.255.255.255`)
+     and multicast (class D) fan-out work since v2.56.0 but only over loopback /
+     the destination port's member sockets — there is no external routing of
+     multicast groups.
   3. **No kernel unit tests** (the bare `x86_64-unknown-none` target has no `test`
      harness), so the layer is run via the `socktest` shell self-test (loopback
      UDP round trip + TCP connect/accept/echo/close) and — since v2.51.0 — the

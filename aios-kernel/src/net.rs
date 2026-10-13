@@ -226,6 +226,7 @@ const LOOP_SLOTS: usize = 16;
 static mut LOOP_PROTO: [u8; LOOP_SLOTS] = [0; LOOP_SLOTS];
 static mut LOOP_LEN: [usize; LOOP_SLOTS] = [0; LOOP_SLOTS];
 static mut LOOP_DATA: [[u8; LOOP_L4MAX]; LOOP_SLOTS] = [[0; LOOP_L4MAX]; LOOP_SLOTS];
+static mut LOOP_DST: [[u8; 4]; LOOP_SLOTS] = [[0; 4]; LOOP_SLOTS];
 static mut LOOP_HEAD: usize = 0;
 static mut LOOP_COUNT: usize = 0;
 
@@ -576,6 +577,26 @@ pub(crate) fn bound_ip() -> [u8; 4] {
     read_bound().ip
 }
 
+/// True when `dst` is a class-D multicast address (224.0.0.0/4), which the
+/// socket layer treats as a receive group rather than a unicast peer.
+fn is_multicast(dst: [u8; 4]) -> bool {
+    dst[0] & 0xF0 == 0xE0
+}
+
+/// True when `dst` is the subnet-directed broadcast of the bound address
+/// (host bits all set, same network part as ours). The global broadcast
+/// `255.255.255.255` is handled separately.
+fn is_subnet_broadcast(dst: [u8; 4]) -> bool {
+    let b = read_bound();
+    let mask = u32::from_be_bytes(b.mask);
+    if mask == 0 {
+        return false;
+    }
+    let our = u32::from_be_bytes(b.ip);
+    let d = u32::from_be_bytes(dst);
+    (d & mask) == (our & mask) && (d | mask) == u32::MAX
+}
+
 /// Resolves the next-hop IPv4 address for `dst`: the destination itself when it
 /// is on-link (same subnet as the bound address), otherwise the default
 /// gateway. Falls back to `dst` when no mask/gateway is configured.
@@ -616,12 +637,20 @@ pub(crate) fn emit_ipv4(dst: [u8; 4], proto: u8, l4: &[u8]) -> Result<(), &'stat
         return Err("net: l4 too large");
     }
     let our = bound_ip();
-    if our != [0; 4] && (dst == our || dst == [127, 0, 0, 1]) {
+    if our != [0; 4]
+        && (dst == our
+            || dst == [127, 0, 0, 1]
+            || dst == BROADCAST_IP
+            || is_multicast(dst)
+            || is_subnet_broadcast(dst))
+    {
         // Loopback: queue the frame for local delivery on the next [`poll`]
         // (drained by `drain_loopback`) without touching the NIC. Deferring the
         // delivery avoids re-entering the socket state while the sending socket
         // still borrows it, and lets kernel servers and clients talk to each
         // other on one machine (the `socktest` self-test runs on this path).
+        // Broadcast and multicast destinations (v2.56.0) loop back too, so the
+        // socket layer can fan a datagram out to every member on the port.
         unsafe {
             let head = *addr_of!(LOOP_HEAD);
             let count = *addr_of!(LOOP_COUNT);
@@ -629,6 +658,7 @@ pub(crate) fn emit_ipv4(dst: [u8; 4], proto: u8, l4: &[u8]) -> Result<(), &'stat
             let n = l4.len().min(LOOP_L4MAX);
             (*addr_of_mut!(LOOP_PROTO))[idx] = proto;
             (*addr_of_mut!(LOOP_LEN))[idx] = n;
+            (*addr_of_mut!(LOOP_DST))[idx] = dst;
             let slot = &mut (*addr_of_mut!(LOOP_DATA))[idx];
             slot[..n].copy_from_slice(&l4[..n]);
             if count < LOOP_SLOTS {
@@ -686,6 +716,7 @@ unsafe fn drain_loopback() {
         let proto = *addr_of!(LOOP_PROTO[idx]);
         let len = *addr_of!(LOOP_LEN[idx]);
         let data = *addr_of!(LOOP_DATA[idx]);
+        let dst = *addr_of!(LOOP_DST[idx]);
         *addr_of_mut!(LOOP_HEAD) = (*addr_of!(LOOP_HEAD) + 1) % LOOP_SLOTS;
         *addr_of_mut!(LOOP_COUNT) = *addr_of!(LOOP_COUNT) - 1;
         let src = read_bound().ip;
@@ -694,7 +725,7 @@ unsafe fn drain_loopback() {
         } else if proto == PROTO_UDP && len >= 8 {
             let sport = u16::from_be_bytes([data[0], data[1]]);
             let dport = u16::from_be_bytes([data[2], data[3]]);
-            crate::sock::deliver_udp(src, sport, dport, &data[8..len]);
+            crate::sock::deliver_udp(src, dst, sport, dport, &data[8..len]);
         }
     }
 }
@@ -781,12 +812,12 @@ unsafe fn handle_ipv4(frame: &[u8]) {
                 crate::sock::deliver_tcp(src, &frame[l4..]);
             }
         }
-        PROTO_UDP => handle_udp(frame, l4, src),
+        PROTO_UDP => handle_udp(frame, l4, src, dst),
         _ => {}
     }
 }
 
-unsafe fn handle_udp(frame: &[u8], l4: usize, src: [u8; 4]) {
+unsafe fn handle_udp(frame: &[u8], l4: usize, src: [u8; 4], dst: [u8; 4]) {
     if frame.len() < l4 + 8 {
         return;
     }
@@ -807,7 +838,7 @@ unsafe fn handle_udp(frame: &[u8], l4: usize, src: [u8; 4]) {
     } else if sport == DNS_PORT && dport == DNS_SRC_PORT {
         handle_dns(payload);
     } else {
-        crate::sock::deliver_udp(src, sport, dport, payload);
+        crate::sock::deliver_udp(src, dst, sport, dport, payload);
     }
 }
 

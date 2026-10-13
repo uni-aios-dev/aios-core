@@ -682,11 +682,13 @@ input.
   opens a TCP connection, issues `GET / HTTP/1.0`, and prints the byte count,
   the status line and a short body preview. Both require a bound IP (`dhcp`/
   `static` first) and drive the socket layer through the `SYS_SOCK_*` syscalls.
-- `socktest` (v2.50.0) runs a loopback self-test over the bound IP without any
-  NIC traffic: a two-way UDP exchange plus a full TCP `listen`/`connect`/
-  `accept`/request/echo/close lifecycle, printing one `PASS`/`FAIL` line per
-  phase — runtime verification of the socket layer (both directions, handshake
-  and FIN) that works without QEMU NIC models.
+- `socktest` (v2.50.0; broadcast/multicast phases v2.56.0) runs a loopback
+  self-test over the bound IP without any NIC traffic: a two-way UDP exchange,
+  a broadcast (`255.255.255.255`) and a multicast (class D, `239.1.2.3`)
+  fan-out each reaching two receivers, plus a full TCP `listen`/`connect`/
+  `accept`/request/echo/close lifecycle and a segmented 3000-byte bulk transfer,
+  printing one `PASS`/`FAIL` line per phase — runtime verification of the socket
+  layer (both directions, handshake and FIN) that works without QEMU NIC models.
 - `faults` (v2.45.2, queue v2.45.4, events v2.46.0) prints the fault-recovery
   aggregate — `total`, `resume`, `terminate`, `rollback`, `queued`, `events`
   counters — then one line
