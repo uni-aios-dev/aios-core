@@ -245,6 +245,13 @@ pub struct HardwareProfile {
 
 ### Менеджер блоков (`aios-block-mgr`)
 
+#### Гибридная модель блоков (обзор)
+
+AIOS использует гибридную модель: небольшой **вкомпилированный базовый набор** нативных блоков + **динамические дисковые блоки**.
+
+- **Базовые блоки (вкомпилированные)**: ключевые блоки HAL/browser/Net-settings компилируются в бинарь `aios` и регистрируются при старте. Набор выбирается флагами Cargo: `base-hal`, `base-browser`, `base-net-settings`, `base-all` (по умолчанию `["webview","base-all"]`). Фабрики базовых блоков обёрнуты в `cfg(feature = "...")`, что позволяет профилям урезать набор (`--no-default-features --features ...`); скрипты сборки live/initramfs при `--no-default-features` добавляют `--features base-all`, сохраняя штатный базовый набор.
+- **Дисковые блоки (динамические)**: обнаруживаются в `AIOS_BLOCKS_DIR` в виде бандлов `.wasm` или `.bin` с сопутствующими метаданными (`block.toml` / `manifest.json`). Блоки `.wasm` исполняются через `aios-wasm` (Wasmtime), подключаются к `MessageRouter` и могут реализовывать IPC (ABI `handle_message`). Пэйлоады `.bin`/не-WASM **регистрируются только** (не исполняются). `DiskBlockReport` содержит `registered_only_count()` для их учёта.
+
 #### Реестр (`registry.rs`)
 
 `BlockRegistry` — центральный каталог блоков:

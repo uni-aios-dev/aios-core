@@ -21,6 +21,28 @@
 - `aios-gui` +3 tests (loader report captures the base set; `summary_line` matches the TUI shape on
   a populated and an empty report; `block_load_summary` reflects the resident block count).
   `cargo test -p aios-gui` 25 passed / 0 failed; clippy clean; fmt clean.
+- Full workspace: 1572 passed / 0 failed (94 suites) at release time.
+
+## v2.59.1 — Base block set feature-gated; `.bin` payloads formalized as registered-only (2026-10-14)
+
+### Added
+- **Base block feature flags** (`aios/Cargo.toml`, `aios/src/blocks.rs`): new `base-*` features
+  (`base-hal`, `base-browser`, `base-net-settings`, `base-all`), `default = ["webview","base-all"]`.
+  Base factories/imports are `cfg(feature = "...")`-gated. `DiskBlockReport::registered_only_count()`
+  added to surface non-WASM payloads.
+- **Build scripts updated** (`live/build.sh`, `build_initramfs.sh`): when building with `--no-default-features`,
+  pass `--features base-all` to preserve the shipped compiled-in base set.
+- **`.bin`/placeholder handling formalized** (`aios/src/blocks.rs`): discovery logs distinguish
+  non-WASM payloads as "registered only"; they are never executed. Report exposes `registered_only_count()`.
+
+### Changed
+- Tests made cfg-safe where base factories are optional.
+- Logging clarified for non-WASM disk payloads.
+
+### Verification
+- `cargo test --workspace`: 1572 passed / 0 failed (94 suites)
+- `cargo clippy --workspace --all-targets`: 0 errors, 2 warnings (pre-existing)
+- `cargo fmt --all -- --check`: clean
 
 ## v2.58.0 — WASM blocks are routed over IPC: `handle_message` ABI (2026-10-14)
 

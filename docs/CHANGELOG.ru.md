@@ -22,7 +22,30 @@
 ### Проверка
 - `aios-gui` +3 теста (отчёт загрузчика фиксирует базовый набор; `summary_line` совпадает с формой
   TUI на заполненном и пустом отчёте; `block_load_summary` отражает число резидентных блоков).
-  `cargo test -p aios-gui` 25 passed / 0 failed; clippy чисто; fmt чисто.
+  `cargo test -p aios-gui` 25 пройдено / 0 не пройдено; clippy чистый; fmt чистый.
+- Полный workspace: 1572 пройдено / 0 не пройдено (94 набора тестов) на момент релиза.
+
+## v2.59.1 — Базовый набор блоков вынесен в feature-флаги; `.bin`-пэйлоады формализованы как registered-only (2026-10-14)
+
+### Добавлено
+- **Feature-флаги базовых блоков** (`aios/Cargo.toml`, `aios/src/blocks.rs`): добавлены `base-*`
+  (`base-hal`, `base-browser`, `base-net-settings`, `base-all`), `default = ["webview","base-all"]`.
+  Фабрики базовых блоков обёрнуты в `cfg(feature = "...")`. В `DiskBlockReport` добавлен
+  `registered_only_count()` для учёта не-WASM-пэйлоадов.
+- **Обновление скриптов сборки** (`live/build.sh`, `build_initramfs.sh`): при `--no-default-features`
+  теперь передаётся `--features base-all` — сохраняет штатный базовый набор.
+- **Формализация `.bin`/placeholder** (`aios/src/blocks.rs`): в логах явно указывается, что
+  не-WASM-пэйлоад считается "registered only" и **не исполняется**. В отчёте доступен
+  `registered_only_count()`.
+
+### Изменено
+- Тесты сделаны cfg-safe там, где задействованы базовые фабрики.
+- Уточнены логи для не-WASM дисковых блоков.
+
+### Проверка
+- `cargo test --workspace`: 1572 пройдено / 0 не пройдено (94 набора)
+- `cargo clippy --workspace --all-targets`: 0 ошибок, 2 предупреждения (существовали ранее)
+- `cargo fmt --all -- --check`: чисто
 
 ## v2.58.0 — wasm-блоки маршрутизируются по IPC: ABI `handle_message` (2026-10-14)
 

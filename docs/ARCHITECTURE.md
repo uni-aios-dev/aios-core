@@ -245,6 +245,13 @@ Classification is deterministic based on hardware flags. Any single missing requ
 
 ### Block Manager (`aios-block-mgr`)
 
+#### Hybrid block model (overview)
+
+AIOS uses a hybrid model: a small **compiled-in base set** of native blocks plus **dynamic disk blocks**.
+
+- **Base blocks (compiled-in)**: core HAL/browser/Net-settings blocks are compiled into the `aios` binary and registered at startup. The compiled-in set is selected via Cargo features: `base-hal`, `base-browser`, `base-net-settings`, `base-all` (default `["webview","base-all"]`). Base factories/imports are `cfg(feature = "...")`-gated, so profiles can trim the base set with `--no-default-features --features ...` (build scripts for live/initramfs add `--features base-all` when `--no-default-features` is used).
+- **Disk blocks (dynamic)**: discovered under `AIOS_BLOCKS_DIR` as `.wasm` or `.bin` bundles with sidecar metadata (`block.toml` / `manifest.json`). `.wasm` blocks are executed via `aios-wasm` (Wasmtime), wired to the `MessageRouter` and can implement IPC (`handle_message` ABI). `.bin`/non-WASM payloads are **registered only** (never executed). `DiskBlockReport` exposes `registered_only_count()` to surface them.
+
 #### Registry (`registry.rs`)
 
 `BlockRegistry` — Central block catalog:
