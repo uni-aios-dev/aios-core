@@ -87,9 +87,14 @@ impl DiskBlockReport {
     pub fn failed_count(&self) -> usize {
         self.failed.len()
     }
-}
 
-/// Factory for the `hal` base block.
+    /// Number of `.bin`/placeholder payloads that were discovered but not
+    /// executed (registered only) because they do not start with the WebAssembly
+    /// magic number.
+    pub fn registered_only_count(&self) -> usize {
+        self.registered_only.len()
+    }
+}
 #[cfg(feature = "base-hal")]
 struct HalFactory;
 
@@ -424,8 +429,8 @@ mod tests {
             dir.path(),
         );
 
-        assert_eq!(report.loaded_count(), 1);
         assert_eq!(report.failed_count(), 0);
+        assert_eq!(report.registered_only_count(), 1);
         assert!(report.loaded[0]
             .functions_called
             .contains(&"init".to_string()));
