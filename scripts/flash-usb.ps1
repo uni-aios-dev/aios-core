@@ -1,4 +1,4 @@
-# flash-usb.ps1 - write a bootable AIOS image to a physical USB stick.
+﻿# flash-usb.ps1 - write a bootable AIOS image to a physical USB stick.
 #
 # The bare-metal kernel ISO is isohybrid (Limine MBR installed via
 # `limine bios-install`), so a raw byte copy boots on:

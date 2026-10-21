@@ -27,49 +27,28 @@ fn run() -> i32 {
     set_user_env();
     bring_userspace();
 
-    // The primary TUI is dynamically linked against the squashfs userspace
-    // (musl + libwebkit2gtk for the native browser). When that userspace is
-    // missing the exec fails with exit 127 вЂ” fall back to the static
-    // engine-less TUI kept in the initramfs so the console keeps working.
-    let exec_failed = match run_block(c"/system/aios-core", &[c"/system/aios-core"]) {
-        RunResult::TermRequested => {
-            log("aios-init: shutdown requested вЂ” entering idle loop");
-            idle()
-        }
-        RunResult::GaveUp(code) => {
-            log(&format!(
-                "aios-init: block /system/aios-core gave up (last exit {code})"
-            ));
-            code == 127
-        }
-    };
-    if exec_failed {
-        match run_block(c"/system/aios-core.static", &[c"/system/aios-core.static"]) {
-            RunResult::TermRequested => {
-                log("aios-init: shutdown requested вЂ” entering idle loop");
-                idle();
-            }
-            RunResult::GaveUp(code) => {
-                log(&format!(
-                    "aios-init: block /system/aios-core.static gave up (last exit {code})"
-                ));
-            }
-        }
+    // Replace init with the AIOS TUI directly (like running aios-tui.exe) so it
+    // becomes PID 1 and owns the controlling terminal with no supervisor/restarter.
+    log("aios-init: starting AIOS TUI as PID 1");
+    let env = Env::from_current();
+    let envp = env.ptrs();
+    let mut argv_main: Vec<*const c_char> = vec![c"/system/aios-core".as_ptr(), std::ptr::null()];
+    unsafe {
+        libc::execve(c"/system/aios-core".as_ptr(), argv_main.as_ptr(), envp.as_ptr());
+    }
+    log("aios-init: exec /system/aios-core failed, trying static fallback");
+    let mut argv_static: Vec<*const c_char> = vec![c"/system/aios-core.static".as_ptr(), std::ptr::null()];
+    unsafe {
+        libc::execve(c"/system/aios-core.static".as_ptr(), argv_static.as_ptr(), envp.as_ptr());
     }
 
-    match run_block(c"/installer", &[c"/installer"]) {
-        RunResult::TermRequested => {
-            log("aios-init: shutdown requested вЂ” entering idle loop");
-            idle();
-        }
-        RunResult::GaveUp(code) => {
-            log(&format!(
-                "aios-init: block /installer gave up (last exit {code})"
-            ));
-        }
+    log("aios-init: failed to exec TUI — trying installer");
+    let mut argv_inst: Vec<*const c_char> = vec![c"/installer".as_ptr(), std::ptr::null()];
+    unsafe {
+        libc::execve(c"/installer".as_ptr(), argv_inst.as_ptr(), envp.as_ptr());
     }
 
-    log("aios-init: no AIOS block found вЂ” starting emergency shell");
+    log("aios-init: no AIOS block found — starting emergency shell");
     emergency_shell()
 }
 
