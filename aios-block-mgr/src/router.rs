@@ -21,6 +21,16 @@ impl MessageRouter {
         self.handlers.insert(block_id, handler);
     }
 
+    /// Remove the handler of `block_id`, releasing the captured executor.
+    ///
+    /// Returns `true` when a handler was registered. Unloading a block must
+    /// call this, otherwise the router keeps the old executor alive and keeps
+    /// routing packets to a block that is no longer in the registry.
+    pub fn unregister_handler(&mut self, block_id: u32) -> bool {
+        self.routes.remove(&block_id);
+        self.handlers.remove(&block_id).is_some()
+    }
+
     pub fn add_route(&mut self, from: u32, to: u32) {
         self.routes.insert(from, to);
     }
@@ -101,5 +111,20 @@ mod tests {
         let pkt = IpcPacket::new(0, 10, CommandId::HealthCheck, Payload::Empty);
         let resp = router.dispatch(&pkt).unwrap().unwrap();
         assert_eq!(resp.payload, Payload::Binary(b"echo".to_vec()));
+    }
+
+    #[test]
+    fn test_unregister_handler_removes_route_and_handler() {
+        let mut router = MessageRouter::new();
+        router.add_route(10, 20);
+        router.register_handler(20, echo_handler());
+        assert!(router.has_handler(20));
+
+        assert!(router.unregister_handler(20));
+        assert!(!router.has_handler(20));
+        assert!(!router.unregister_handler(20));
+
+        let pkt = IpcPacket::new(0, 10, CommandId::HealthCheck, Payload::Empty);
+        assert!(router.dispatch(&pkt).is_err());
     }
 }

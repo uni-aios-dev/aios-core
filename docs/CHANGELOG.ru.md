@@ -1,5 +1,87 @@
 # Журнал разработки AIOS
 
+## v2.60.0 — паритет интерфейсов: ядерный TUI, standalone TUI, мост, GUI и Docker (2026-10-22)
+
+### Исправлено
+- **Перезапуск блока в ядерном TUI** (`aios/src/tui/mod.rs`): `block_restart()` сохраняет
+  исходную версию и бинарник выгруженного блока, регистрирует блок заново с ними и
+  активирует **новый** `BlockId` вместо подмены полезной нагрузки на заглушку `b"block"`
+  и повторной активации старого id.
+- **Устаревшие обработчики роутера** (`aios-block-mgr/src/router.rs`): новый
+  `MessageRouter::unregister_handler(block_id)` удаляет и маршрут, и обработчик блока;
+  ядерный TUI вызывает его после выгрузки/перезапуска блока, поэтому роутер перестаёт
+  маршрутизировать пакеты в незарегистрированный блок. Покрыто новым unit-тестом.
+- **Пауза журнала в ядерном TUI** (`aios/src/tui/app_state.rs`): `update_logs()` выходит
+  раньше, пока выставлен `log_paused`, поэтому `Space` действительно замораживает журнал
+  событий.
+- **Клавиши вкладки Blocks в ядерном TUI** (`aios/src/tui/mod.rs`): `j`/`Down` перемещают
+  выделение вниз, `k`/`Up` — вверх, `K` выгружает выбранный блок, `r` перезапускает его,
+  `l`/`L` загружают блок с диска. `k` больше не выгружает блок по ошибке.
+- **Тупик в standalone TUI** (`aios-tui/src/main.rs`): `F10` и `Alt`+`q` завершают работу с
+  любой вкладки, `q` завершает работу на вкладке Files, `Alt`+`1`-`8` переключают вкладки
+  также с вкладок Shell и Files.
+- **Клавиши вкладки Files** (`aios-fm/src/ui_tui.rs`): `key_to_action` теперь сопоставляет
+  также `j`/`k` (перемещение), `o` (открыть) и `s` (сменить сортировку) в дополнение к
+  стрелкам и F-клавишам.
+- **Режим команд Shell** (`aios-tui/src/dashboard.rs`): у `ShellState` появился флаг
+  `command_mode` с методами `enter_command_mode()` / `exit_command_mode()`; `:` переключает
+  приглашение на `AIOS:cmd>`, любая печатная клавиша делает то же самое, `Esc` очищает
+  строку и выходит из режима команд.
+- **Устаревший счётчик блоков** (`aios-tui/src/dashboard.rs`):
+  `update_from_scheduler()` обновляет `blocks_count` на каждом тике.
+- **Код ответа моста при ошибке авторизации** (`aios-bridge/src/server.rs`): ошибки
+  авторизации теперь возвращают `401 Unauthorized` с заголовком `WWW-Authenticate: Bearer`
+  вместо HTTP 200.
+- **Защищённый системный статус** (`aios-bridge/src/server.rs`): `/api/v1/sys/status`
+  убран из публичного allowlist — SSID Wi-Fi, уровень сигнала и температура устройства
+  больше не доступны анонимным посетителям.
+- **Capability-токен моста** (`aios/src/orchestrator.rs`): внутренний сервис моста
+  владеет capability-токеном (`BRIDGE_BLOCK_ID` = 42) с правами `ProcessKill`,
+  `ProcessSpawn`, `SchedModify`, `BlockLoad`, `BlockUnload` и `MemAlloc`, поэтому
+  разрушительные REST-интенты больше не отклоняются с 403.
+- **Сохранение настроек сети в GUI** (`aios-gui/src/app.rs`): `net_save()` / `net_reset()`
+  пишут через `NetworkConfigStore`, а новый `net_load_persisted()` восстанавливает
+  конфигурацию при старте.
+- **Системная панель в GUI** (`aios-gui/src/app.rs`): `sync_runtime_snapshot()` заполняет
+  историю RAM из 60 записей, uptime измеряется через `Instant::elapsed()` вместо счётчика
+  кадров, а `sync_dependency_view()` заполняет представление блоков/рёбер/порядка загрузки
+  из графа менеджера блоков.
+
+### Добавлено
+- **Конфигурация среды выполнения из переменных окружения**
+  (`aios/src/orchestrator.rs`): `AppConfig::from_env()` читает `AIOS_BRIDGE_PORT`
+  (по умолчанию 8080) и `AIOS_SAFE_MODE` (`1`/`true`/`yes`/`on`); флаг CLI `--safe-mode`
+  объединяется с переменной через «или», а вычисленный порт передаётся в строку состояния
+  TUI и в URL Studio.
+- **Подгрузка локальной модели** (`aios-llm/src/factory.rs`): `config_from_env()` выбирает
+  бэкенд через `AIOS_LLM_BACKEND` (`cloud` / `micro-local` / `full-local`), а локальные
+  движки подгружают GGUF-модель из `AIOS_MODEL_PATH`.
+- **API роутера** (`aios-block-mgr/src/router.rs`):
+  `MessageRouter::unregister_handler()`.
+
+### Изменено
+- **Docker-образ** (`Dockerfile`): собирает и устанавливает `aiosd` рядом с `aios`,
+  копирует SPA `aios-studio` в `/app/aios-studio` (каталог, который мост отдаёт через
+  `ServeDir`), объявляет `EXPOSE 8080` и задаёт `AIOS_BRIDGE_PORT`.
+- **Compose** (`docker-compose.yml`): сервис `aios` публикует `8080:8080`, а сервис
+  safe-mode стартует с `--safe-mode` в дополнение к `AIOS_SAFE_MODE=1`.
+- **Safe mode в daemon** (`aios-daemon/src/main.rs`): `aiosd` учитывает `AIOS_SAFE_MODE` и
+  пропускает обнаружение дисковых блоков.
+
+### Документация
+- `docs/INTERFACE.md` / `docs/INTERFACE.ru.md`: исправлены таблицы клавиш ядерного TUI
+  (`F10` переопрашивает оборудование, `q`/`Ctrl+C` завершают работу), клавиши вкладки
+  Blocks, клавиши выхода standalone TUI, режим команд Shell, URL Studio (порт 8080 вместо
+  9876), защищённая поверхность `/api/v1/*`, добавлены таблицы переменных окружения для
+  `aios` и `aiosd`.
+- `docs/BUGS.md` / `docs/BUGS.ru.md`: восемь новых записей RESOLVED по исправлениям выше.
+
+### Верификация
+- `cargo build --workspace` — чисто; `cargo clippy --workspace --all-targets` — чисто;
+  `cargo fmt --all -- --check` — чисто.
+- Полный воркспейс: 1573 пройдено / 0 провалено (94 набора) — +1 тест для
+  `MessageRouter::unregister_handler`.
+
 ## v2.59.0 — вкладка Blocks в GUI показывает отчёт загрузчика (паритет с TUI) (2026-10-14)
 
 ### Добавлено

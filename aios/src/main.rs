@@ -26,9 +26,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cli = Cli::parse();
+    let env_config = AppConfig::from_env();
     let config = AppConfig {
-        safe_mode: cli.safe_mode,
-        ..AppConfig::default()
+        safe_mode: cli.safe_mode || env_config.safe_mode,
+        bridge_port: env_config.bridge_port,
     };
 
     let state = initialize(&config).await?;

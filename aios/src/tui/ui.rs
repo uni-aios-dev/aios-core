@@ -1220,6 +1220,7 @@ mod render_smoke_tests {
             safe_mode: true,
             start_time: Instant::now(),
             bridge_running: Arc::new(AtomicBool::new(false)),
+            bridge_port: 8080,
             logs,
             cluster: None,
         }))

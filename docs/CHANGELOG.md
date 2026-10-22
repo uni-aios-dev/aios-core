@@ -1,5 +1,81 @@
 # AIOS Development Log
 
+## v2.60.0 — Interface parity pass: kernel TUI, standalone TUI, bridge, GUI and Docker (2026-10-22)
+
+### Fixed
+- **Kernel TUI block restart** (`aios/src/tui/mod.rs`): `block_restart()` keeps the original
+  manifest version and binary of the unloaded block, re-registers the block with them and
+  activates the **new** `BlockId` instead of replacing the payload with the `b"block"` stub
+  and re-activating the stale id.
+- **Stale router handlers** (`aios-block-mgr/src/router.rs`): new
+  `MessageRouter::unregister_handler(block_id)` removes both the route and the handler of a
+  block; the kernel TUI calls it after a block unload/restart so the router stops routing
+  packets to an unregistered block. Covered by a new unit test.
+- **Kernel TUI log pause** (`aios/src/tui/app_state.rs`): `update_logs()` returns early while
+  `log_paused` is set, so `Space` really freezes the event log.
+- **Kernel TUI Blocks keys** (`aios/src/tui/mod.rs`): `j`/`Down` move the selection down,
+  `k`/`Up` move it up, `K` unloads the selected block, `r` restarts it and `l`/`L` loads a
+  block from disk. `k` no longer unloads a block by accident.
+- **Standalone TUI dead end** (`aios-tui/src/main.rs`): `F10` and `Alt`+`q` quit from any
+  tab, `q` quits on the Files tab, and `Alt`+`1`-`8` switch tabs from the Shell and Files
+  tabs as well.
+- **Files tab keys** (`aios-fm/src/ui_tui.rs`): `key_to_action` now maps `j`/`k` (move),
+  `o` (open) and `s` (toggle sort) in addition to the arrows and the F-keys.
+- **Shell command mode** (`aios-tui/src/dashboard.rs`): `ShellState` gained a
+  `command_mode` flag with `enter_command_mode()` / `exit_command_mode()`; `:` switches the
+  prompt to `AIOS:cmd>`, any printable key does the same, `Esc` clears the line and leaves
+  command mode.
+- **Stale block counter** (`aios-tui/src/dashboard.rs`): `update_from_scheduler()` refreshes
+  `blocks_count` on every tick.
+- **Bridge auth status code** (`aios-bridge/src/server.rs`): authentication failures now
+  return `401 Unauthorized` with a `WWW-Authenticate: Bearer` header instead of HTTP 200.
+- **Protected system status** (`aios-bridge/src/server.rs`): `/api/v1/sys/status` was removed
+  from the public allowlist — the Wi-Fi SSID, signal strength and device temperature are no
+  longer exposed to anonymous callers.
+- **Bridge capability token** (`aios/src/orchestrator.rs`): the in-process bridge service
+  owns a capability token (`BRIDGE_BLOCK_ID` = 42) with `ProcessKill`, `ProcessSpawn`,
+  `SchedModify`, `BlockLoad`, `BlockUnload` and `MemAlloc`, so destructive REST intents are
+  no longer rejected with 403.
+- **GUI network persistence** (`aios-gui/src/app.rs`): `net_save()` / `net_reset()` write
+  through `NetworkConfigStore` and the new `net_load_persisted()` restores the config on
+  start-up.
+- **GUI system panel** (`aios-gui/src/app.rs`): `sync_runtime_snapshot()` fills a 60-entry
+  RAM history, the uptime is measured with `Instant::elapsed()` instead of a frame counter,
+  and `sync_dependency_view()` fills the block/edge/load-order view from the block manager
+  graph.
+
+### Added
+- **Runtime configuration from the environment** (`aios/src/orchestrator.rs`):
+  `AppConfig::from_env()` reads `AIOS_BRIDGE_PORT` (default 8080) and `AIOS_SAFE_MODE`
+  (`1`/`true`/`yes`/`on`); the CLI flag `--safe-mode` is OR-ed with the variable, and the
+  resolved port is propagated to the TUI status bar and the Studio URL.
+- **Local model preload** (`aios-llm/src/factory.rs`): `config_from_env()` selects the
+  backend via `AIOS_LLM_BACKEND` (`cloud` / `micro-local` / `full-local`) and the local
+  engines preload the GGUF model pointed at by `AIOS_MODEL_PATH`.
+- **Router API** (`aios-block-mgr/src/router.rs`): `MessageRouter::unregister_handler()`.
+
+### Changed
+- **Docker image** (`Dockerfile`): builds and installs `aiosd` next to `aios`, copies the
+  `aios-studio` SPA into `/app/aios-studio` (the directory the bridge serves with
+  `ServeDir`), declares `EXPOSE 8080` and sets `AIOS_BRIDGE_PORT`.
+- **Compose** (`docker-compose.yml`): the `aios` service publishes `8080:8080`, and the
+  safe-mode service starts with `--safe-mode` in addition to `AIOS_SAFE_MODE=1`.
+- **Daemon safe mode** (`aios-daemon/src/main.rs`): `aiosd` honours `AIOS_SAFE_MODE` and
+  skips disk block discovery.
+
+### Documentation
+- `docs/INTERFACE.md` / `docs/INTERFACE.ru.md`: corrected the kernel TUI key table (`F10`
+  re-probes the hardware, `q`/`Ctrl+C` quit), the Blocks tab keys, the standalone TUI quit
+  keys, the Shell command mode, the Studio URL (port 8080 instead of 9876), the protected
+  `/api/v1/*` surface and added the environment variable tables for `aios` and `aiosd`.
+- `docs/BUGS.md` / `docs/BUGS.ru.md`: eight new RESOLVED entries for the fixes above.
+
+### Verification
+- `cargo build --workspace` clean; `cargo clippy --workspace --all-targets` clean; `cargo fmt
+  --all -- --check` clean.
+- Full workspace: 1573 passed / 0 failed (94 suites) — +1 test for
+  `MessageRouter::unregister_handler`.
+
 ## v2.59.0 — GUI Blocks tab surfaces the boot-time loader report (TUI parity) (2026-10-14)
 
 ### Added

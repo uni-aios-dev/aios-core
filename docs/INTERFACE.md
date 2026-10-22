@@ -92,7 +92,8 @@ Far Manager / Midnight Commander style: top status bar, dual 50/50 panels (tab c
 | `s` | Show telemetry |
 | `x` | Show status |
 | `W` | Launch the AIOS GUI dashboard (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
-| `q` | Quit |
+| `q` | Quit (all tabs except the Shell tab, where `q` is typed into the command line) |
+| `F10` / `Alt`+`q` | Quit from **any** tab (including Shell and Files) |
 | `F1` or `?` | Toggle help overlay |
 | `:` | Enter command mode in Shell tab |
 | `Enter` | Execute command in Shell tab |
@@ -129,6 +130,7 @@ The Files tab shows two panels (left/right). The active panel is highlighted in 
 | `g` | Grant the `vfs:host:read` capability |
 | `w` | Grant the `vfs:host:write` capability |
 | `r` | Refresh the panels |
+| `q` | Quit the TUI (also `F10` / `Alt`+`q`) |
 | `Esc` | Close the AI preview / cancel the input dialog |
 
 ### Web Tab Keys (when Web tab is active)
@@ -155,10 +157,12 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 
 | Key | Action |
 |-----|--------|
-| `:` | Enter command mode |
+| `:` | Enter command mode (the prompt switches to `AIOS:cmd>`) |
+| any printable key | Types into the command line and switches the prompt to command mode |
 | `Enter` | Execute command |
 | `↑` / `↓` | Navigate command history |
-| `Esc` | Exit command mode |
+| `Esc` | Clear the input line and leave command mode |
+| `F10` / `Alt`+`q` | Quit the TUI |
 
 ### Shell Commands
 
@@ -267,17 +271,19 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `W` | Launch the AIOS GUI dashboard (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
 | `Space` | Pause/resume event log |
 | `L` | Toggle EN/RU input layout (the sys status line shows the active pair) |
-| `q` / `F10` / `Ctrl+C` | Quit |
+| `F10` | Re-probe the hardware (System & HW tab refresh) |
+| `q` / `Ctrl+C` | Quit |
 
 The bottom **event log** now lives as the right-hand panel of the dual layout (45% width). It carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `Space` to pause the log, or `L` to switch layouts from any tab; the same snapshot is rendered in the GUI top bar and exposed over REST (`/api/v1/sys/status`).
 ### Blocks Tab (2)
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Move block selection down / up |
-| `r` | Restart the selected block |
-| `k` | Unload the selected block |
-| `l` | Load a block from disk (prompts for a path) |
+| `j` / `↓` | Move block selection down |
+| `k` / `↑` | Move block selection up |
+| `r` | Restart the selected block (the original binary and version are preserved, the block is re-registered and the new id is activated) |
+| `K` | Unload the selected block |
+| `l` / `L` | Load a block from disk (prompts for a path) |
 
 ### AI Console (Tab 3)
 
@@ -381,6 +387,18 @@ Clustering is enabled by configuring `AIOS_CLUSTER_*` env vars (see `docs/ARCHIT
 ### Safe Mode
 
 With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks are not discovered, the bridge HTTP/WebSocket server is disabled, and the header shows `SAFE MODE`. Core blocks, the scheduler, the watchdog, the LLM engine and the TUI/Shell remain available.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AIOS_BRIDGE_PORT` | `8080` | TCP port of the REST/WebSocket bridge (the Studio SPA is served from the same port) |
+| `AIOS_SAFE_MODE` | unset | `1`/`true`/`yes`/`on` — same as `--safe-mode` (CLI flag and env var are OR-ed) |
+| `AIOS_BLOCKS_DIR` | `blocks` | Directory scanned for disk blocks at boot |
+| `AIOS_DATA_DIR` | `aios_data` | Chat history, bookmarks and other persistent state |
+| `AIOS_LLM_BACKEND` | `cloud` | `cloud`, `micro-local` or `full-local`; the local backends preload the GGUF model from `AIOS_MODEL_PATH` |
+| `AIOS_MODEL_PATH` | unset | Path to a local GGUF model (Qwen2/Qwen3) preloaded by the local LLM backends |
+| `AIOS_LLM_API_KEY` | unset | API key for the cloud LLM backends |
 
 ---
 
@@ -534,10 +552,10 @@ The web interface is served automatically by `aios-bridge` as static files. Run:
 
 ```bash
 cargo run --bin aios-tui   # or any binary that starts aios-bridge
-# Open http://localhost:9876 in your browser
+# Open http://localhost:8080 in your browser
 ```
 
-The SPA is available at the root URL. The bridge port is configurable via the `addr` parameter in `start_server()`.
+The SPA is available at the root URL. The bridge port is set with the `AIOS_BRIDGE_PORT` environment variable (default `8080`); `start_server()` receives the resulting `host:port` string.
 
 ### Dashboard (default tab)
 
@@ -577,7 +595,7 @@ As of v2.30.0 the Web Studio requires a local account before it will load the da
 - **Session token**: on success the server returns a self-signed HMAC token with a 12 h lifetime. The UI stores it in `localStorage` (`aios_token`) and sends it as `Authorization: Bearer <token>` on every API call via `apiFetch`.
 - **Re-login**: if the server replies `401`, the UI clears the token and returns to the sign-in screen automatically.
 - **Sign out**: the sidebar footer has a *Sign out* button (also shows the current username + avatar).
-- **Server-side protection**: the whole `/api/v1/*` surface is gated by the `require_auth` middleware, except the public `auth/register`, `auth/login`, `health`, `sys/status` and WebSocket telemetry routes. The bridge secret comes from `AIOS_AUTH_SECRET` (fallback derived from the data dir); users live in `<AIOS_DATA_DIR>/users.json`.
+- **Server-side protection**: the whole `/api/v1/*` surface is gated by the `require_auth` middleware, except the public `auth/register`, `auth/login` and `health` routes plus the WebSocket telemetry route. The bridge secret comes from `AIOS_AUTH_SECRET` (fallback derived from the data dir); users live in `<AIOS_DATA_DIR>/users.json`.
 - **WebSocket telemetry auth** (v2.31.2): the `/ws/telemetry` route stays in the middleware allowlist but validates an optional `?token=<session>` query inside the handler; when a user exists, a session missing/invalid token is rejected and the WS connection is closed. `app.js` appends the stored token automatically, so the dashboard connects seamlessly after sign-in.
 - **CORS**: disabled by default (the UI is same-origin) or restricted to a single origin via `AIOS_CORS_ORIGIN`.
 
@@ -621,11 +639,12 @@ AIOS_MOCK_PROFILE=legacy aiosd
 | `AIOS_DATA_DIR` | `/app/data` | Persistent database directory |
 | `AIOS_BLOCKS_DIR` | `/app/blocks` | Disk block binaries directory |
 | `AIOS_MOCK_PROFILE` | `modern` | Hardware profile: `modern`, `legacy`, `none` |
+| `AIOS_SAFE_MODE` | unset | `1`/`true`/`yes`/`on` — skip disk block discovery and boot in safe mode |
 | `RUST_LOG` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
 
 The daemon performs the same initialisation as `aios-tui` but runs without a terminal interface:
 1. Loads built-in blocks (hal, ipc_bus, scheduler)
-2. Loads disk blocks from `AIOS_BLOCKS_DIR`
+2. Loads disk blocks from `AIOS_BLOCKS_DIR` (skipped in safe mode)
 3. Opens the persistent database at `AIOS_DATA_DIR/context.redb`
 4. Spawns system processes (ai_orchestrator, io_handler, health_monitor)
 5. Starts watchdog heartbeat thread

@@ -1370,6 +1370,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if key.modifiers.contains(KeyModifiers::ALT) {
                         if let KeyCode::Char(d) = key.code {
+                            if d == 'q' || d == 'Q' {
+                                break;
+                            }
                             if let Some(d) = d.to_digit(10) {
                                 if (1..=8).contains(&d) {
                                     switch_tab(&mut state, (d - 1) as usize);
@@ -1377,6 +1380,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                    }
+
+                    if key.code == KeyCode::F(10) {
+                        break;
                     }
 
                     if state.show_help {
@@ -1562,9 +1569,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             KeyCode::Esc => {
-                                state.shell_state.input_buffer.clear();
+                                state.shell_state.exit_command_mode();
+                            }
+                            KeyCode::Char(':') => {
+                                state.shell_state.enter_command_mode();
                             }
                             KeyCode::Char(c) => {
+                                state.shell_state.command_mode = true;
                                 state.shell_state.input_buffer.push(c);
                             }
                             _ => {}
@@ -1596,6 +1607,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if key.code == KeyCode::Esc && state.fm_preview.is_some() {
                                 state.fm_preview = None;
                                 continue;
+                            }
+                            if key.code == KeyCode::Char('q') {
+                                break;
                             }
                             let side = fm.active_side();
                             if let Some(action) = key_to_action(key, side) {

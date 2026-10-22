@@ -217,8 +217,130 @@
   the initramfs because busybox is fully static.
 - **Risk:** none known remaining; the FATAL check doubles as a regression
   gate for the "static PID 1 + loader-less initramfs" invariant.
-
 # AIOS Known Bugs & Workarounds
+
+## RESOLVED (v2.60.0): kernel TUI block restart replaced the real WASM binary with a stub
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** pressing `r` on the Blocks tab of the kernel TUI (`aios`) re-registered the
+  selected block with the literal payload `b"block"` and version `1.0.0`, so a real disk
+  block lost its binary and its version after every restart.
+- **Cause:** `block_restart()` in `aios/src/tui/mod.rs` called
+  `registry.register_block(&name, "1.0.0", b"block".to_vec())` instead of reusing the
+  manifest of the unloaded block.
+- **Fix:** the manifest version and the original binary are read from the registry entry
+  before the unload, the block is re-registered with them and the **new** `BlockId` is
+  activated (the stale id is never re-activated). The unload path additionally calls the
+  new `MessageRouter::unregister_handler(block_id)` so the router stops routing packets to
+  a block that is no longer registered.
+
+## RESOLVED (v2.60.0): kernel TUI `Space` pause was cosmetic and `k` unloaded the block
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** `Space` set the `log_paused` flag, but the event log kept scrolling; on the
+  Blocks tab `k` unloaded the selected block instead of moving the selection up, so the
+  documented `j`/`k` navigation was impossible and an accidental `k` destroyed a block.
+- **Cause:** `update_logs()` in `aios/src/tui/app_state.rs` never checked `log_paused`, and
+  `handle_blocks_key()` mapped `k` to `block_kill()` while `Up` alone moved the selection.
+- **Fix:** `update_logs()` returns early while the log is paused; `k`/`Up` move the selection
+  up, `j`/`Down` move it down, `K` unloads the block and `l`/`L` load a block from disk.
+
+## RESOLVED (v2.60.0): standalone TUI Files tab was a dead end
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** on the Files tab of `aios-tui` the documented `q`, `F1`, `?` and `1`-`8` keys
+  did nothing, so the user could not quit or switch tabs without first visiting another tab;
+  the documented `j`/`k`/`o`/`s` keys were not mapped at all.
+- **Cause:** the key handler of the Files tab delegated every key to the file manager
+  (`aios-fm`) and never fell back to the global handler; `aios-fm::ui_tui::key_to_action`
+  only knew the arrow keys and the F-keys.
+- **Fix:** `key_to_action` now also maps `j`/`k` (move), `o` (open) and `s` (toggle sort);
+  `q` quits the TUI on the Files tab, `F10` and `Alt`+`q` quit from **any** tab, and
+  `Alt`+`1`-`8` switch tabs from every tab (including Shell and Files).
+
+## RESOLVED (v2.60.0): standalone TUI had no `:` command mode and a stale block counter
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** the documented `:` command mode did not exist in `aios-tui`, and the block
+  counter in the status bar kept the value captured at start-up.
+- **Cause:** `ShellState` had no command-mode flag, and `update_from_scheduler()` refreshed
+  the process and block tables but never `blocks_count`.
+- **Fix:** `ShellState` gained a `command_mode` flag with `enter_command_mode()` /
+  `exit_command_mode()`; `:` switches the prompt to `AIOS:cmd>`, typing any printable key
+  does the same, `Esc` clears the line and leaves command mode. `update_from_scheduler()`
+  now refreshes `blocks_count` on every tick.
+
+## RESOLVED (v2.60.0): bridge answered auth failures with HTTP 200 and exposed `sys/status`
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** a request without a bearer token was answered with HTTP 200 and a JSON body,
+  so clients could not detect the failure; `/api/v1/sys/status` was in the public
+  allowlist and exposed the Wi-Fi SSID, signal strength and device temperature to
+  anonymous callers.
+- **Cause:** `require_auth()` in `aios-bridge/src/server.rs` returned a bare JSON error
+  body (default status 200) and the middleware explicitly skipped `/api/v1/sys/status`.
+- **Fix:** all authentication failures now return `401 Unauthorized` with a
+  `WWW-Authenticate: Bearer` header; `/api/v1/sys/status` is protected like the rest of
+  the `/api/v1/*` surface (the public allowlist is `auth/register`, `auth/login`,
+  `health` and the WebSocket telemetry route, which validates its own token).
+
+## RESOLVED (v2.60.0): the bridge block had no capability token (destructive intents → 403)
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** every state-changing REST intent (`kill`, `spawn`, `load block`,
+  `unload block`, `compact memory`) was rejected with `403 Forbidden`, because the
+  in-process bridge service never owned a capability token.
+- **Cause:** `AccessControlLayer::issue_token()` was only called for user sessions, never
+  for the bridge service itself.
+- **Fix:** `aios/src/orchestrator.rs` issues a token for `BRIDGE_BLOCK_ID` (42) with
+  `ProcessKill`, `ProcessSpawn`, `SchedModify`, `BlockLoad`, `BlockUnload` and
+  `MemAlloc` before the bridge server starts.
+
+## RESOLVED (v2.60.0): GUI network settings were never persisted and the system panel was a stub
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** in `aios-gui` the "Save" button on the Network tab only serialised the
+  config into memory, so the settings were lost on restart; the RAM chart never filled,
+  the uptime counter advanced per rendered frame instead of per second, and the dependency
+  view of the Blocks tab was always empty.
+- **Cause:** `AiosApp::net_save()` had no store behind it, `ram_history` was only
+  initialised, `uptime_secs` was derived from a frame counter and the dependency graph was
+  never read from the block manager.
+- **Fix:** `net_save()`/`net_reset()` write through `NetworkConfigStore` and
+  `net_load_persisted()` restores the config on start-up; `sync_runtime_snapshot()` pushes
+  the current RAM usage into a 60-entry history and the uptime is measured with
+  `Instant::elapsed()`; `sync_dependency_view()` fills the block/edge/load-order view from
+  the block manager graph.
+
+## RESOLVED (v2.60.0): `AIOS_SAFE_MODE`, `AIOS_BRIDGE_PORT` and `AIOS_MODEL_PATH` were ignored
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** `AIOS_SAFE_MODE=1` (used by `docker-compose.yml`) had no effect — disk
+  blocks were still discovered; the bridge port was hard-coded to 8080, while the docs
+  advertised 9876; a local GGUF model could not be preloaded, because `AIOS_MODEL_PATH`
+  was only mentioned in an error message.
+- **Cause:** the runtime configuration was built from `AppConfig::default()` only, and the
+  local LLM engine never read the environment.
+- **Fix:** `AppConfig::from_env()` reads `AIOS_BRIDGE_PORT` and `AIOS_SAFE_MODE` (the CLI
+  flag `--safe-mode` is OR-ed with the variable) and the resolved port is propagated to the
+  TUI; `aiosd` honours `AIOS_SAFE_MODE` and skips disk block discovery;
+  `aios_llm::factory::config_from_env()` selects the local backend via
+  `AIOS_LLM_BACKEND` and preloads the model from `AIOS_MODEL_PATH`.
+
+## RESOLVED (v2.60.0): the Docker image shipped no Studio SPA and published no port
+
+- **Status:** RESOLVED in v2.60.0.
+- **Symptom:** the container image did not contain the `aios-studio` SPA, so the bridge
+  served an empty fallback; `docker-compose.yml` exposed no ports, so the API was
+  unreachable from the host; only the `aios` binary was built, so the documented `aiosd`
+  entrypoint was missing.
+- **Cause:** the `Dockerfile` copied only the `aios` binary and the compose file declared
+  no `ports:` mapping.
+- **Fix:** the image now copies `aios-studio` to `/app/aios-studio` (the directory the
+  bridge serves with `ServeDir`), builds and installs `aiosd` as well, declares
+  `EXPOSE 8080` and sets `AIOS_BRIDGE_PORT`; `docker-compose.yml` publishes
+  `8080:8080` and the safe-mode service now starts with `--safe-mode`.
+
 
 ## OPEN (v2.44.0): embedded JS engine has no input-event loop / document.write / auto error dispatch (documented scope limits)
 

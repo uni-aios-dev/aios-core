@@ -44,6 +44,7 @@ fn main() -> eframe::Result<()> {
                 4096,
             );
             app.ai_load_persisted();
+            app.net_load_persisted();
             app.fm_init();
             app.start_runtime();
             Ok(Box::new(app))

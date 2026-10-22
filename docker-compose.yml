@@ -9,6 +9,9 @@ services:
       - AIOS_DATA_DIR=/app/data
       - AIOS_BLOCKS_DIR=/app/blocks
       - AIOS_MOCK_PROFILE=modern
+      - AIOS_BRIDGE_PORT=8080
+    ports:
+      - "8080:8080"
     volumes:
       - aios-data:/app/data
       - aios-blocks:/app/blocks
@@ -19,6 +22,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: aios-safe-mode
+    command: ["aios", "--daemon", "--safe-mode"]
     environment:
       - RUST_LOG=debug
       - AIOS_SAFE_MODE=1

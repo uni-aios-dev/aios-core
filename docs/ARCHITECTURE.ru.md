@@ -1230,17 +1230,18 @@ User Input (TUI)
 - **Крейт `aios-daemon`**:
   - Бинарник `aiosd`: headless-сервер с той же инициализацией, что и `aios-tui`, без терминала
   - Загружает встроенные блоки (hal, ipc_bus, scheduler) и дисковые блоки из `AIOS_BLOCKS_DIR`
+    (пропускается, если задана `AIOS_SAFE_MODE`)
   - Открывает persistent store (`redb`) в `AIOS_DATA_DIR/context.redb`
   - Запускает системные процессы (ai_orchestrator, io_handler, health_monitor)
   - Запускает поток heartbeat watchdog
   - Фоновый цикл: heartbeat (процессы, RAM, watchdog) каждые 10с, сохранение телеметрии каждые 60с
   - Минимальные зависимости: без ratatui, crossterm, egui, wasmtime
-  - Конфигурация через `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+  - Конфигурация через `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `AIOS_SAFE_MODE`, `RUST_LOG`
 - **Headless-режим `aios-tui`**:
   - Флаг `--headless` и `AIOS_HEADLESS=1`: пропускает TUI-инициализацию, работает в фоне
 - **Docker**:
-  - Dockerfile собирает только `aios-daemon` (~2мин), CMD — `aiosd`
-  - `docker-compose.yml`: daemon по умолчанию, профиль `interactive` для TUI
+  - Dockerfile собирает `aios` (ядро, `--daemon` — headless-режим) и `aios-daemon` (`aiosd`), копирует SPA `aios-studio` в `/app/aios-studio` (её отдаёт мост через `ServeDir`), объявляет `EXPOSE 8080` и задаёт `AIOS_BRIDGE_PORT`
+  - `docker-compose.yml`: сервис `aios` публикует `8080:8080`; профиль `safe-mode` стартует ядро с `--safe-mode` и `AIOS_SAFE_MODE=1`
   - Размер образа уменьшен с ~800MB до ~120MB
 
 ### Фаза 26+27: Атомарные обновления, магазин, телеметрия и отладка (`aios-updater`, `aios-store`, `aios-telemetry`, `aios-debug`) — *ЗАВЕРШЕНО*

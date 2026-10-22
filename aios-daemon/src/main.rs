@@ -18,15 +18,25 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+fn env_flag(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let data_dir = PathBuf::from(env_or("AIOS_DATA_DIR", "/app/data"));
     let blocks_dir = PathBuf::from(env_or("AIOS_BLOCKS_DIR", "/app/blocks"));
     let mock_profile = env_or("AIOS_MOCK_PROFILE", "modern");
+    let safe_mode = env_flag("AIOS_SAFE_MODE");
 
     log::info!(
-        "AIOS daemon: data_dir={:?}, blocks_dir={:?}",
+        "AIOS daemon: data_dir={:?}, blocks_dir={:?}, safe_mode={safe_mode}",
         data_dir,
         blocks_dir
     );
@@ -61,7 +71,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         b"browser-native".to_vec(),
     );
 
-    let disk_results = BlockLoader::load_from_directory(&mut registry, &blocks_dir);
+    let disk_results = if safe_mode {
+        log::info!("AIOS daemon: SAFE MODE — disk block discovery disabled");
+        Vec::new()
+    } else {
+        BlockLoader::load_from_directory(&mut registry, &blocks_dir)
+    };
     let disk_loaded = disk_results.iter().filter(|r| r.is_ok()).count();
     let disk_failed = disk_results.iter().filter(|r| r.is_err()).count();
     log::info!(

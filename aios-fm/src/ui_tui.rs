@@ -38,7 +38,11 @@ pub fn key_to_action(key: KeyEvent, side: PanelSide) -> Option<TuiAction> {
     match key.code {
         KeyCode::Up => Some(TuiAction::MoveUp { side }),
         KeyCode::Down => Some(TuiAction::MoveDown { side }),
+        KeyCode::Char('k') => Some(TuiAction::MoveUp { side }),
+        KeyCode::Char('j') => Some(TuiAction::MoveDown { side }),
         KeyCode::Enter => Some(TuiAction::Enter { side }),
+        KeyCode::Char('o') => Some(TuiAction::Enter { side }),
+        KeyCode::Char('s') => Some(TuiAction::ToggleSort { side }),
         KeyCode::Backspace | KeyCode::Left => Some(TuiAction::GoUp { side }),
         KeyCode::Tab => Some(TuiAction::SwitchPanel),
         KeyCode::F(3) => Some(TuiAction::ViewSelected),

@@ -158,6 +158,10 @@ impl TuiApp {
             let s = state.lock().unwrap();
             s.logs.clone()
         };
+        let bridge_port = {
+            let s = state.lock().unwrap();
+            s.bridge_port
+        };
         let (hw_engine, hw_views, hw_toasts) = init_hw_engine(&state);
         let hw_hotplug = if hw_engine.is_some() {
             Some(HotplugMonitor::start(Default::default()))
@@ -174,7 +178,7 @@ impl TuiApp {
             ai_input: String::new(),
             ai_mode: false,
             ai_output: Arc::new(Mutex::new(VecDeque::new())),
-            bridge_port: 8080,
+            bridge_port,
             ai_system_prompt: "You are a helpful AI assistant.".into(),
             ai_config: default_config(),
             ai_history: VecDeque::new(),
@@ -272,6 +276,9 @@ impl TuiApp {
     }
 
     pub fn update_logs(&mut self) {
+        if self.log_paused {
+            return;
+        }
         if let Ok(guard) = self.logs.lock() {
             while self.displayed_logs.len() < guard.len() {
                 let idx = self.displayed_logs.len();

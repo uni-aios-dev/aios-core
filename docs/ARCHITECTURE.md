@@ -1234,17 +1234,18 @@ Three adaptive AI modes depending on hardware resources:
 - **`aios-daemon` crate**:
   - `aiosd` binary: headless server performing the same initialization as `aios-tui` without terminal access
   - Loads built-in blocks (hal, ipc_bus, scheduler) and disk blocks from `AIOS_BLOCKS_DIR`
+    (skipped when `AIOS_SAFE_MODE` is set)
   - Opens persistent store (`redb`) at `AIOS_DATA_DIR/context.redb`
   - Spawns system processes (ai_orchestrator, io_handler, health_monitor)
   - Starts watchdog heartbeat thread
   - Background loop: logs heartbeat (processes, RAM, watchdog state) every 10s, persists telemetry every 60s
   - Minimal dependencies: no ratatui, crossterm, egui, or wasmtime
-  - Environment config via `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `RUST_LOG`
+  - Environment config via `AIOS_DATA_DIR`, `AIOS_BLOCKS_DIR`, `AIOS_MOCK_PROFILE`, `AIOS_SAFE_MODE`, `RUST_LOG`
 - **`aios-tui` headless mode**:
   - `--headless` CLI flag and `AIOS_HEADLESS=1` env var: skips TUI initialization, runs background loop
 - **Docker**:
-  - Dockerfile builds only `aios-daemon` (~2min build), uses `aiosd` as default CMD
-  - `docker-compose.yml` has headless daemon by default, `interactive` profile for TUI
+  - Dockerfile builds `aios` (kernel binary, `--daemon` runs headless) and `aios-daemon` (`aiosd`), copies the `aios-studio` SPA into `/app/aios-studio` (served by the bridge with `ServeDir`), declares `EXPOSE 8080` and sets `AIOS_BRIDGE_PORT`
+  - `docker-compose.yml`: the `aios` service publishes `8080:8080`; the `safe-mode` profile starts the kernel with `--safe-mode` and `AIOS_SAFE_MODE=1`
   - Image size reduced from ~800MB to ~120MB
 
 ### Phase 26+27: Atomic Updates, Store, Telemetry & Debug (`aios-updater`, `aios-store`, `aios-telemetry`, `aios-debug`) — *COMPLETED*

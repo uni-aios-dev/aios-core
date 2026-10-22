@@ -106,6 +106,8 @@ pub struct ShellState {
     pub command_history: Vec<String>,
     pub history_pos: usize,
     pub show_bar: bool,
+    /// Command mode flag: entered with `:`, left with `Esc`.
+    pub command_mode: bool,
 }
 
 impl Default for ShellState {
@@ -122,6 +124,7 @@ impl ShellState {
             command_history: Vec::new(),
             history_pos: 0,
             show_bar: false,
+            command_mode: false,
         }
     }
 
@@ -135,6 +138,18 @@ impl ShellState {
     pub fn push_history(&mut self, cmd: String) {
         self.command_history.push(cmd);
         self.history_pos = self.command_history.len();
+    }
+
+    /// Enter command mode and reset the prompt.
+    pub fn enter_command_mode(&mut self) {
+        self.command_mode = true;
+        self.input_buffer.clear();
+    }
+
+    /// Leave command mode and reset the prompt.
+    pub fn exit_command_mode(&mut self) {
+        self.command_mode = false;
+        self.input_buffer.clear();
     }
 }
 
@@ -444,6 +459,7 @@ impl DashboardState {
         self.process_count = scheduler.process_count();
         self.processes = Self::snapshot_processes(scheduler);
         self.blocks = Self::snapshot_blocks(registry);
+        self.blocks_count = registry.count();
         self.dep_snapshot = Self::snapshot_dependencies(registry);
         self.ram_history.push(used);
         if self.ram_history.len() > 60 {
@@ -1847,12 +1863,24 @@ fn draw_shell(f: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     ));
     f.render_widget(output, chunks[0]);
 
-    let input_display = format!("  $ {}{}", state.shell_state.input_buffer, "█");
-    let input = Paragraph::new(Line::from(Span::styled(
-        input_display,
-        Style::default().fg(Color::Yellow),
-    )))
-    .block(Block::default().borders(Borders::ALL).title(" Input "));
+    let prompt = if state.shell_state.command_mode {
+        "AIOS:cmd> "
+    } else {
+        "AIOS> "
+    };
+    let input_display = format!("  {prompt}{}{}", state.shell_state.input_buffer, "█");
+    let input =
+        Paragraph::new(Line::from(Span::styled(
+            input_display,
+            Style::default().fg(Color::Yellow),
+        )))
+        .block(Block::default().borders(Borders::ALL).title(
+            if state.shell_state.command_mode {
+                " Input — command mode (Esc to leave) "
+            } else {
+                " Input — press ':' for command mode "
+            },
+        ));
     f.render_widget(input, chunks[1]);
 }
 

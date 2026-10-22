@@ -205,7 +205,6 @@ async fn require_auth(State(state): State<SharedState>, req: Request, next: Next
         || path == "/api/v1/auth/login"
         || path == "/api/v1/health"
         || path == "/ws/telemetry"
-        || path == "/api/v1/sys/status"
         || !path.starts_with("/api/")
     {
         return next.run(req).await;
@@ -213,18 +212,26 @@ async fn require_auth(State(state): State<SharedState>, req: Request, next: Next
     // `/api/v1/auth/me` is protected and reads the token below.
 
     let Some(header) = req.headers().get(axum::http::header::AUTHORIZATION) else {
-        return Json(serde_json::json!({
-            "success": false,
-            "error": "Authentication required"
-        }))
-        .into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            Json(serde_json::json!({
+                "success": false,
+                "error": "Authentication required"
+            })),
+        )
+            .into_response();
     };
     let Ok(header_str) = header.to_str() else {
-        return Json(serde_json::json!({
-            "success": false,
-            "error": "Malformed authorization header"
-        }))
-        .into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            Json(serde_json::json!({
+                "success": false,
+                "error": "Malformed authorization header"
+            })),
+        )
+            .into_response();
     };
     let user = {
         let store = state.auth.lock().unwrap();
@@ -236,11 +243,15 @@ async fn require_auth(State(state): State<SharedState>, req: Request, next: Next
             req.extensions_mut().insert(user);
             next.run(req).await
         }
-        None => Json(serde_json::json!({
-            "success": false,
-            "error": "Invalid or expired token"
-        }))
-        .into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            Json(serde_json::json!({
+                "success": false,
+                "error": "Invalid or expired token"
+            })),
+        )
+            .into_response(),
     }
 }
 

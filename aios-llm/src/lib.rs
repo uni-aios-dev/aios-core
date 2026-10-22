@@ -3,7 +3,7 @@ pub mod factory;
 pub mod local;
 pub mod types;
 
-pub use factory::{default_config, LlmEngine};
+pub use factory::{config_from_env, default_config, LlmEngine};
 pub use types::*;
 
 #[cfg(test)]

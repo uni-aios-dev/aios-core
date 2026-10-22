@@ -12,6 +12,7 @@ use aios_core::block::BlockId;
 use aios_llm::{default_config, LlmEngine};
 use aios_process_mgr::scheduler::Scheduler;
 use aios_security::access_control::AccessControlLayer;
+use aios_security::capability::Capability;
 use aios_wasm::executor::BlockExecutor;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
 
@@ -19,6 +20,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Block id of the in-process bridge service. It owns the REST/WS API and is
+/// the only caller allowed to mutate scheduler and block state.
+pub const BRIDGE_BLOCK_ID: u32 = 42;
 
 pub struct OrchestratorState {
     pub hw_profile: HwProfile,
@@ -36,6 +41,8 @@ pub struct OrchestratorState {
     pub safe_mode: bool,
     pub start_time: Instant,
     pub bridge_running: Arc<AtomicBool>,
+    /// TCP port the REST/WS bridge listens on.
+    pub bridge_port: u16,
     pub logs: Arc<Mutex<Vec<String>>>,
     /// Distributed cluster scheduler when `AIOS_CLUSTER_PEERS` is configured.
     pub cluster: Option<Arc<Mutex<DistributedScheduler>>>,
@@ -51,6 +58,29 @@ impl Default for AppConfig {
         Self {
             bridge_port: 8080,
             safe_mode: false,
+        }
+    }
+}
+
+impl AppConfig {
+    /// Builds the runtime configuration from the environment.
+    ///
+    /// * `AIOS_BRIDGE_PORT` — TCP port of the REST/WS bridge (default `8080`).
+    /// * `AIOS_SAFE_MODE` — `1`/`true`/`yes` boots into safe mode.
+    pub fn from_env() -> Self {
+        let bridge_port = std::env::var("AIOS_BRIDGE_PORT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(8080);
+        let safe_mode = std::env::var("AIOS_SAFE_MODE")
+            .map(|v| {
+                let v = v.trim().to_ascii_lowercase();
+                v == "1" || v == "true" || v == "yes" || v == "on"
+            })
+            .unwrap_or(false);
+        Self {
+            bridge_port,
+            safe_mode,
         }
     }
 }
@@ -156,7 +186,7 @@ pub async fn initialize(
                 "AIOS: loaded {} disk blocks ({} routed over IPC, {} registered-only, {} failed) from {:?}",
                 report.loaded_count(),
                 routed,
-                report.registered_only.len(),
+                report.registered_only_count(),
                 report.failed_count(),
                 blocks_dir
             ),
@@ -169,7 +199,28 @@ pub async fn initialize(
     );
 
     push_log(&logs, "AIOS: initializing access control...".into());
-    let access_control = AccessControlLayer::new(b"aios_master_secret_2026".to_vec(), 86_400_000);
+    let mut access_control =
+        AccessControlLayer::new(b"aios_master_secret_2026".to_vec(), 86_400_000);
+    // The bridge block is the trusted in-process caller of the REST/WS API.
+    // Without a capability token every state-changing intent (`kill`, `spawn`,
+    // `load block`, `unload block`, `compact memory`) is rejected with 403
+    // before it ever reaches the scheduler.
+    if let Err(e) = access_control.issue_token(
+        BRIDGE_BLOCK_ID,
+        vec![
+            Capability::ProcessKill,
+            Capability::ProcessSpawn,
+            Capability::SchedModify,
+            Capability::BlockLoad,
+            Capability::BlockUnload,
+            Capability::MemAlloc,
+        ],
+    ) {
+        push_log(
+            &logs,
+            format!("AIOS: failed to issue bridge capability token: {e}"),
+        );
+    }
 
     push_log(&logs, "AIOS: initializing watchdog...".into());
     let watchdog = Watchdog::new(WatchdogConfig::default());
@@ -242,7 +293,13 @@ pub async fn initialize(
         }
     };
 
-    let bridge = BridgeContext::new(scheduler, registry, access_control, watchdog, 42);
+    let bridge = BridgeContext::new(
+        scheduler,
+        registry,
+        access_control,
+        watchdog,
+        BRIDGE_BLOCK_ID,
+    );
     let bridge = Arc::new(bridge);
 
     push_log(&logs, "AIOS: starting bridge server...".into());
@@ -286,6 +343,7 @@ pub async fn initialize(
         safe_mode: config.safe_mode,
         start_time: Instant::now(),
         bridge_running,
+        bridge_port: config.bridge_port,
         logs,
         cluster,
     })

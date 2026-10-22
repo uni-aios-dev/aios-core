@@ -963,13 +963,48 @@ fn block_restart(app: &mut TuiApp) {
     let Some(name) = name else {
         return;
     };
-    let state = locked(&app.state);
-    let mut registry = locked(&state.bridge.registry);
-    if let Ok(_entry) = registry.unload_block(id) {
-        let _ = registry.register_block(&name, "1.0.0", b"block".to_vec());
-        let _ = registry.activate_block(id);
+    let mut state = locked(&app.state);
+    let bridge = state.bridge.clone();
+    let mut registry = locked(&bridge.registry);
+    let (version, binary) = match registry.get(id) {
+        Ok(entry) => (entry.manifest.version.clone(), entry.binary.clone()),
+        Err(e) => {
+            drop(registry);
+            drop(state);
+            push_log(
+                &app.logs,
+                format!("AIOS: blocks: restart '{name}' failed: {e}"),
+            );
+            return;
+        }
+    };
+    let outcome = match registry.unload_block(id) {
+        Ok(_) => {
+            state.router.unregister_handler(id.0);
+            registry
+                .register_block(&name, &version, binary)
+                .inspect(|&new_id| {
+                    let _ = registry.activate_block(new_id);
+                })
+                .map_err(|e| e.to_string())
+        }
+        Err(e) => Err(e.to_string()),
+    };
+    drop(registry);
+    drop(state);
+    match outcome {
+        Ok(new_id) => push_log(
+            &app.logs,
+            format!(
+                "AIOS: blocks: restarted '{name}' v{version} (id {})",
+                new_id.0
+            ),
+        ),
+        Err(e) => push_log(
+            &app.logs,
+            format!("AIOS: blocks: restart '{name}' failed: {e}"),
+        ),
     }
-    push_log(&app.logs, format!("AIOS: blocks: restarted '{name}'"));
 }
 
 fn block_kill(app: &mut TuiApp) {
@@ -977,10 +1012,17 @@ fn block_kill(app: &mut TuiApp) {
     let Some(name) = name else {
         return;
     };
-    let state = locked(&app.state);
-    let mut registry = locked(&state.bridge.registry);
-    match registry.unload_block(id) {
-        Ok(_) => push_log(
+    let mut state = locked(&app.state);
+    let bridge = state.bridge.clone();
+    let mut registry = locked(&bridge.registry);
+    let outcome = registry.unload_block(id).map(|_| ());
+    if outcome.is_ok() {
+        state.router.unregister_handler(id.0);
+    }
+    drop(registry);
+    drop(state);
+    match outcome {
+        Ok(()) => push_log(
             &app.logs,
             format!("AIOS: blocks: unloaded '{name}' ({})", id.0),
         ),
@@ -1568,21 +1610,22 @@ fn handle_blocks_key(app: &mut TuiApp, key: event::KeyEvent) {
         KeyCode::Char('j') | KeyCode::Down => {
             let count = {
                 let state = locked(&app.state);
-                let reg = locked(&state.bridge.registry);
+                let bridge = state.bridge.clone();
+                let reg = locked(&bridge.registry);
                 reg.count()
             };
             if count > 0 && app.blocks_selected + 1 < count {
                 app.blocks_selected += 1;
             }
         }
-        KeyCode::Up => {
+        KeyCode::Char('k') | KeyCode::Up => {
             if app.blocks_selected > 0 {
                 app.blocks_selected -= 1;
             }
         }
         KeyCode::Char('r') => block_restart(app),
-        KeyCode::Char('k') => block_kill(app),
-        KeyCode::Char('l') => {
+        KeyCode::Char('K') => block_kill(app),
+        KeyCode::Char('l') | KeyCode::Char('L') => {
             app.load_mode = true;
             app.load_input.clear();
         }

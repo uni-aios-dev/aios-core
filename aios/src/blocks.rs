@@ -363,11 +363,17 @@ mod tests {
         let expected_len: usize = {
             let mut n: usize = 0;
             #[cfg(feature = "base-hal")]
-            { n += 1; }
+            {
+                n += 1;
+            }
             #[cfg(feature = "base-browser")]
-            { n += 1; }
+            {
+                n += 1;
+            }
             #[cfg(feature = "base-net-settings")]
-            { n += 1; }
+            {
+                n += 1;
+            }
             n
         };
         assert_eq!(wired.len(), expected_len);

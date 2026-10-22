@@ -11,6 +11,7 @@ use aios_fm::state::PanelSide;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
 use aios_net_config::config::NetworkConfig;
+use aios_net_config::store::NetworkConfigStore;
 use aios_process_mgr::task::ProcessId;
 use aios_store::ManifestInfo;
 use aios_vfs::ai_preview::AiPreview;
@@ -28,6 +29,9 @@ pub struct AiMessage {
     pub role: String,
     pub text: String,
 }
+
+/// Number of RAM samples kept for the dashboard sparkline.
+const RAM_HISTORY_LEN: usize = 60;
 
 /// Default data directory used when `AIOS_DATA_DIR` is not set.
 fn data_dir() -> PathBuf {
@@ -162,6 +166,8 @@ pub struct AiosApp {
     pending_browser_error: Arc<Mutex<Option<String>>>,
 
     pub uptime_secs: u64,
+    /// Wall-clock origin of the dashboard, used to derive `uptime_secs`.
+    started_at: std::time::Instant,
 
     /// Interactive crash dialog state: surfaced when the scheduler freezes a
     /// faulted task, decisions are applied to the runtime's scheduler.
@@ -295,6 +301,7 @@ impl AiosApp {
             #[cfg(feature = "webview")]
             pending_browser_error: Arc::new(Mutex::new(None)),
             uptime_secs: 0,
+            started_at: std::time::Instant::now(),
             crash: CrashDialogState::new(),
             ai_config: aios_llm::default_config(),
             ai_input: String::new(),
@@ -341,6 +348,7 @@ impl AiosApp {
         if self.runtime.is_started() {
             self.add_log("Live runtime started".into());
         }
+        self.refresh_blocks();
     }
 
     /// Poll the runtime at most every 250 ms: re-read processes, blocks,
@@ -379,6 +387,13 @@ impl AiosApp {
                 .collect();
             let (used, _total) = scheduler.ram_usage();
             self.ram_used = used;
+            let total = self.ram_total.max(1);
+            let pct = (used as f32 / total as f32).clamp(0.0, 1.0);
+            self.ram_history.push(pct);
+            if self.ram_history.len() > RAM_HISTORY_LEN {
+                let overflow = self.ram_history.len() - RAM_HISTORY_LEN;
+                self.ram_history.drain(0..overflow);
+            }
             for fault in scheduler.fault_queue() {
                 self.crash.present(fault.clone());
                 if self.crash.is_open() {
@@ -726,6 +741,29 @@ impl AiosApp {
         drop(registry);
         infos.sort_by(|a, b| a.name.cmp(&b.name));
         self.blocks = infos;
+        self.sync_dependency_view(&graph);
+    }
+
+    /// Refresh the Deps tab model from the live dependency graph.
+    ///
+    /// Keeps `dep_blocks` (every registered block), `dep_edges` (block ->
+    /// dependency pairs) and `dep_load_order` (topological order) in sync with
+    /// the registry so the tab reflects the running topology.
+    fn sync_dependency_view(&mut self, graph: &aios_block_mgr::dependency::DependencyGraph) {
+        let mut names: Vec<String> = self.blocks.iter().map(|b| b.name.clone()).collect();
+        names.sort();
+        self.dep_blocks = names;
+
+        let mut edges: Vec<(String, String)> = Vec::new();
+        for block in &self.dep_blocks {
+            for dep in graph.dependencies_of(block) {
+                edges.push((block.clone(), dep));
+            }
+        }
+        edges.sort();
+        self.dep_edges = edges;
+
+        self.dep_load_order = graph.load_order().unwrap_or_default();
     }
 
     /// One-line block loader summary for the Blocks tab, mirroring the TUI:
@@ -1615,16 +1653,40 @@ impl AiosApp {
         self.ai_restore_chat();
     }
 
+    /// Persist the network configuration to `AIOS_DATA_DIR/network.json`.
+    ///
+    /// The GUI writes the same file the kernel-side `net_settings` block uses,
+    /// so a configuration saved here is picked up by the next kernel boot.
     pub fn net_save(&mut self) {
-        let json = self.net_config.to_json();
-        self.net_status = Some(format!("Saved: {json}"));
-        self.add_log("Network config saved".into());
+        let store = NetworkConfigStore::default_path();
+        let result = NetworkConfigStore::new(store).save(&self.net_config);
+        match result {
+            Ok(()) => {
+                self.net_status = Some(format!("Saved: {}", self.net_config.to_json()));
+                self.add_log("Network config saved".into());
+            }
+            Err(e) => {
+                self.net_status = Some(format!("Save failed: {e}"));
+                self.add_log(format!("Network config save failed: {e}"));
+            }
+        }
     }
 
+    /// Reset the network configuration to defaults and persist the result.
     pub fn net_reset(&mut self) {
         self.net_config = NetworkConfig::default();
+        self.net_save();
         self.net_status = Some("Reset to defaults".into());
         self.add_log("Network config reset".into());
+    }
+
+    /// Load the persisted network configuration (called once at startup).
+    pub fn net_load_persisted(&mut self) {
+        let store = NetworkConfigStore::default_path();
+        match NetworkConfigStore::new(store).load_or(NetworkConfig::default()) {
+            Ok(cfg) => self.net_config = cfg,
+            Err(e) => self.add_log(format!("Network config load failed: {e}")),
+        }
     }
 
     fn move_selection_up(&mut self) {
@@ -1698,7 +1760,7 @@ impl eframe::App for AiosApp {
             }
         }
 
-        self.uptime_secs += 1;
+        self.uptime_secs = self.started_at.elapsed().as_secs();
         self.poll_runtime();
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
 

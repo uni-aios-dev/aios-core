@@ -13,12 +13,29 @@ impl LlmEngine {
         match config.backend {
             BackendKind::Cloud(_) => LlmEngine::Cloud(CloudEngine::new(config)),
             BackendKind::MicroLocal => {
-                LlmEngine::MicroLocal(LocalEngine::new(config, LocalModelKind::Micro))
+                LlmEngine::MicroLocal(Self::local_engine(config, LocalModelKind::Micro))
             }
             BackendKind::FullLocal => {
-                LlmEngine::FullLocal(LocalEngine::new(config, LocalModelKind::Full))
+                LlmEngine::FullLocal(Self::local_engine(config, LocalModelKind::Full))
             }
         }
+    }
+
+    /// Builds a local engine and preloads the GGUF model pointed at by
+    /// `AIOS_MODEL_PATH`, if that variable is set and the file is readable.
+    fn local_engine(config: LlmConfig, kind: LocalModelKind) -> LocalEngine {
+        let mut engine = LocalEngine::new(config, kind);
+        if let Ok(path) = std::env::var("AIOS_MODEL_PATH") {
+            let path = std::path::PathBuf::from(path);
+            if path.is_file() {
+                if let Err(e) = engine.load_model_from_path(&path) {
+                    log::warn!("AIOS: failed to load AIOS_MODEL_PATH {path:?}: {e}");
+                }
+            } else {
+                log::warn!("AIOS: AIOS_MODEL_PATH {path:?} does not exist");
+            }
+        }
+        engine
     }
 
     pub async fn query(&self, request: &LlmRequest) -> LlmResult<LlmResponse> {
@@ -69,4 +86,26 @@ pub fn default_config() -> LlmConfig {
         max_tokens: 512,
         temperature: 0.7,
     }
+}
+
+/// Backend selected by `AIOS_LLM_BACKEND`: `cloud` (default), `micro-local`
+/// or `full-local`. The local backends are the ones that honour
+/// `AIOS_MODEL_PATH`.
+pub fn config_from_env() -> LlmConfig {
+    let mut config = default_config();
+    match std::env::var("AIOS_LLM_BACKEND")
+        .unwrap_or_default()
+        .as_str()
+    {
+        "micro-local" | "micro" => {
+            config.backend = BackendKind::MicroLocal;
+            config.model = "qwen2-local".into();
+        }
+        "full-local" | "local" => {
+            config.backend = BackendKind::FullLocal;
+            config.model = "qwen2-local".into();
+        }
+        _ => {}
+    }
+    config
 }
