@@ -168,9 +168,10 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 
 | Command | Arguments | Description |
 |---------|-----------|-------------|
-| `fetch` | `<url>` | Download and load a block from a URL |
-| `search` | `<query>` | Web search via DuckDuckGo |
+| `fetch` | `<url>` | Download and load a block from a URL (runs in the background) |
+| `search` | `<query>` | Web search via DuckDuckGo (runs in the background) |
 | `open` | `<query or url>` | Open/search on the Web tab |
+| `intent` | `<request in natural language>` | Translate a request into an IPC intent and show the plan (see below) |
 | `clear` | — | Clear shell output |
 | `ps` / `list` | — | List running processes |
 | `blocks` / `ls` | — | List loaded blocks |
@@ -185,6 +186,22 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `net` | `<sub>` | Network settings (see below) |
 | `help` / `?` | — | Show all available commands |
 | `exit` | — | Exit the safe-mode shell |
+
+Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
+
+### Intent Shell Command
+
+`intent <request in natural language>` translates a request with the built-in `IntentEngine` and prints the resulting plan:
+
+```
+AIOS:cmd> intent free up memory
+  intent: Free up memory
+  plan: Optimizing memory: currently 4096MB/16384MB used. Throttling background processes and freeing caches.
+  packet: AdjustPriority -> block 3 (from block 0)
+  note: translation only — the kernel AI console executes intents
+```
+
+The standalone TUI has no message router, so the command only **translates** the request: it shows the matched intent, the plan, the IPC command and the target block, but does not execute anything. The kernel TUI (AI Console) executes intents over the bridge. When nothing matches, the shell prints `no intent matched` and a list of example phrasings.
 
 ### Store Shell Commands
 
@@ -365,8 +382,8 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `kill` | `<pid>` | Kill a process |
 | `spawn` | `<wasm-path-or-file>` | Load a block from disk |
 | `store list` | — | List installed blocks |
-| `store search` | `<query>` | Search the block store catalog |
-| `store install` | `<name>` | Install a block from the store |
+| `store search` | `<query>` | Search the block store catalog (runs in the background) |
+| `store install` | `<name>` | Install a block from the store (runs in the background) |
 | `net get` | — | Show the current network configuration (JSON) |
 | `net set` | `key=value [key2=value2 ...]` | Apply a partial network update |
 | `cluster status` | — | Cluster overview: self node, peers (status/tier/load), remote and local processes |
@@ -376,11 +393,15 @@ The built-in text-mode browser loads pages in the background (the TUI stays resp
 | `cluster migrate` | `<node> <pid> [target_node]` | Relocate a remote process to another node, carrying its state snapshot (stateful spawn-then-kill) |
 | `status` | — | Uptime, bridge state, AI tier, RAM, block count |
 | `logs` | — | Show the last 20 event log entries |
-| `restart` | — | Re-probe hardware and re-initialize subsystems |
+| `restart` | — | Re-probe the hardware profile and rescan the hardware engine |
 | `help` / `?` | — | Show all available commands |
 | `clear` | — | Clear the shell output |
 
 `Esc` clears the current input line. Every keystroke on the Shell tab is captured by the input line, so `q` quits only from other tabs. Output lines longer than the panel width wrap to the next line instead of being clipped (impacting multi-byte text correctly); the shell keeps the last ~300 lines in its scrollback.
+
+`store search` and `store install` do not block the UI: the catalog request runs as a background task and the result is appended to the shell output when it arrives. While a store task is running, a second one is rejected with `store task already running: <label>`.
+
+`restart` re-probes the hardware profile (`aios::hw_probe::probe()`) and rescans the hardware engine (`HwEngine::rescan()`), which re-detects the attached devices and refreshes the driver/block list. It does not restart the orchestrator process.
 
 Clustering is enabled by configuring `AIOS_CLUSTER_*` env vars (see `docs/ARCHITECTURE.md`); without `AIOS_CLUSTER_PEERS` the `cluster` commands reply `clustering disabled (set AIOS_CLUSTER_PEERS to enable)`. Remote process spawns run on real `aios-process-mgr` scheduler threads via `SchedulerProcessExecutor`.
 

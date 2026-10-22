@@ -458,7 +458,10 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
 ## Planned
 
 - [x] **GUI Blocks tab loader report (v2.59.0)**: `GuiRuntime::loader_report()` + `AiosApp::block_load_summary()` render `base [...] | disk [...] | failed N | live M` in the GUI Blocks tab — parity with the TUI summary line.
-- [ ] **Block loader follow-ups**: select the compiled-in base set with `base-*` feature flags (per-profile base sets).
+- [x] **Block loader follow-ups (v2.59.1)**: the compiled-in base set is selected with the `base-hal` / `base-browser` / `base-net-settings` feature flags (`base-all` enables all of them).
+- [ ] **Per-profile base sets**: the base set is still a compile-time choice; selecting a different base set per hardware profile (e.g. a smaller set for low-RAM devices) is still open.
+- [x] **Non-blocking shell network commands (v2.61.0)**: `store search` / `store install` / `store update` (both TUIs), plus `fetch` and `search` in the standalone TUI, run as background tasks — the UI never freezes on network I/O.
+- [x] **Standalone `intent` shell command (v2.61.0)**: the built-in `IntentEngine` is reachable from the standalone TUI shell; it translates a natural-language request into the IPC intent, the plan and the target block (translation only — the kernel AI Console executes intents).
 - [x] **Phase 24 sub-item: Backend workflow execution endpoint** — `POST /api/v1/workflow` batch intent executor in `aios-bridge`
 - [x] **Phase 23: Multi-Mode AI Engine (`aios-llm`) & Hybrid Intent Router — COMPLETE**
   - [x] `aios-llm` crate with unified trait/enum design: LlmConfig, BackendKind, CloudProvider, LlmRequest/Response

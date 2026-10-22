@@ -341,6 +341,51 @@
   `EXPOSE 8080` and sets `AIOS_BRIDGE_PORT`; `docker-compose.yml` publishes
   `8080:8080` and the safe-mode service now starts with `--safe-mode`.
 
+## RESOLVED (v2.61.0): store and web shell commands froze the TUI
+
+- **Status:** RESOLVED in v2.61.0.
+- **Symptom:** in the standalone TUI `store search`, `store install` and `store update`
+  froze the terminal until the catalog request or the download finished; `fetch` and
+  `search` froze it for the duration of the HTTP request. The kernel TUI froze the same
+  way for `store search` and `store install`.
+- **Cause:** all of these commands performed their network I/O synchronously on the UI
+  thread — `StoreManager::block_on` and `reqwest::blocking::get` were called inline in
+  the command handler.
+- **Fix:** the commands run as background tasks. The standalone TUI prints their result
+  through `DashboardState::check_task_outbox()`, the kernel TUI through
+  `store_poll()`; the standalone `fetch` hands the downloaded bytes to the main loop via
+  `DashboardState::take_fetched_block()`, which loads them into the registry. Only one
+  background task runs at a time (`Task already running: <label>`), and a generation
+  counter discards the result of a superseded task.
+
+## RESOLVED (v2.61.0): the kernel TUI `restart` command was mislabelled
+
+- **Status:** RESOLVED in v2.61.0.
+- **Symptom:** the kernel TUI shell printed `subsystems re-initialized (hardware
+  re-probed)` and `docs/INTERFACE.md` described `restart` as "re-probe hardware and
+  re-initialize subsystems", but the command only re-probed the hardware profile and
+  rescanned the hardware engine — no subsystem was re-initialized.
+- **Cause:** `TuiApp::refresh_hw()` calls `hw_probe::probe()` and `HwEngine::rescan()`;
+  the message and the documentation claimed more than the implementation does.
+- **Fix:** the shell now prints `hardware re-probed (hardware engine rescanned)`, and
+  `docs/INTERFACE.md` / `docs/INTERFACE.ru.md` describe the real behaviour: the hardware
+  profile is re-probed and the hardware engine is rescanned (devices re-detected, the
+  driver/block list refreshed). The orchestrator process is not restarted.
+
+## RESOLVED (v2.61.0): mojibake em dashes in source comments and messages
+
+- **Status:** RESOLVED in v2.61.0.
+- **Symptom:** 54 em dashes in comments, doc comments and user-facing messages appeared
+  as the byte sequence `as the CP1251 mojibake of an em dash (the UTF-8 bytes `E2 80 94` read as CP1251)` (UTF-8 text decoded as CP1251) — most visibly in the
+  kernel GUI block tables, the interrupt handlers, the init shell and the GUI Blocks tab.
+- **Cause:** the files were edited through a console that re-encoded UTF-8 output as
+  CP1251 before writing it back.
+- **Fix:** all 54 occurrences were replaced with the real `—` character; the affected
+  files are `aios-kernel/src/gui.rs` (37), `aios/src/tui/mod.rs` (5),
+  `aios-init/src/main.rs` (4), `aios-kernel/src/interrupts.rs` (4),
+  `aios-gui/src/tabs/blocks.rs` (2), plus two `mism=0` quotes in `docs/BUGS.md` /
+  `docs/BUGS.ru.md`.
+
 
 ## OPEN (v2.44.0): embedded JS engine has no input-event loop / document.write / auto error dispatch (documented scope limits)
 
@@ -1919,7 +1964,7 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
   probe, printed RAW IDT gate dumps, then a planned `int 0x20` soft-int fired
   a #GP (General Protection Fault, vector-13) at non-canonical `ip=0xffffffff000aa2`.
 - **Byte-truth evidence:**
-  - fresh ISO written to USB as raw bytes, read-back verified „mism=0“, contained
+  - fresh ISO written to USB as raw bytes, read-back verified `mism=0`, contained
     the markers IDT-RAW-32 and IDT-RAW-50 (RAW=True on the booted image);
   - vector-50 (the soft-int used by the scheduler probe) is intact;
   - vector-32 gate descriptor offset is corrupt:  x000aa2 + upper=0xffffffff

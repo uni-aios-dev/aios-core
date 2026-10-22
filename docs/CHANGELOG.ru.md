@@ -1,5 +1,65 @@
 # Журнал разработки AIOS
 
+## v2.61.0 — отзывчивые TUI: неблокирующие команды store/web, команда `intent`, чистка текста (2026-10-22)
+
+### Исправлено
+- **Команды store замораживали интерфейс** (`aios-tui/src/main.rs`, `aios/src/tui/mod.rs`):
+  `store search`, `store install` и `store update` вызывали `StoreManager::block_on` в потоке
+  UI, поэтому терминал висел до конца запроса каталога или загрузки. Теперь команды выполняются
+  фоновыми задачами, а результат дописывается в вывод оболочки по готовности. Одновременно
+  выполняется только одна фоновая задача (`Task already running: <метка>` /
+  `store task already running: <метка>`), а счётчик поколений отбрасывает результат
+  superseded-задачи.
+- **Команды `fetch` и `search` в standalone TUI замораживали интерфейс**
+  (`aios-tui/src/main.rs`): загрузка блока и поиск в DuckDuckGo выполнялись через
+  `reqwest::blocking::get` прямо в потоке UI. Теперь загрузка идёт в фоновом рабочем потоке,
+  а байты загружаются в реестр главным циклом (`DashboardState::take_fetched_block()`); поиск
+  тоже выполняется фоновой задачей.
+- **Команда `restart` в ядерном TUI была описана неверно** (`aios/src/tui/mod.rs`): команда
+  только пере-обнаруживает профиль оборудования и пересканирует hardware engine, но оболочка
+  печатала `subsystems re-initialized (hardware re-probed)`, а документация обещала
+  переинициализацию подсистем. Теперь сообщение — `hardware re-probed (hardware engine
+  rescanned)`, а `docs/INTERFACE.md` описывает реальное поведение.
+- **Мojibake в комментариях и сообщениях** (`aios-kernel/src/gui.rs`,
+  `aios-kernel/src/interrupts.rs`, `aios-init/src/main.rs`, `aios-gui/src/tabs/blocks.rs`,
+  `aios/src/tui/mod.rs`): 54 тире хранились как байтовая последовательность CP1251 `как CP1251-mojibake тире (байты UTF-8 `E2 80 94`, прочитанные как CP1251)` —
+  теперь это настоящие символы `—`.
+
+### Добавлено
+- **Команда `intent` в standalone TUI** (`aios-tui/src/main.rs`): встроенный `IntentEngine`
+  доступен из оболочки standalone TUI. Команда `intent <запрос>` переводит запрос на
+  естественном языке и печатает распознанный интент, план, IPC-команду и целевой блок. В
+  standalone TUI нет шины сообщений, поэтому команда только переводит запрос — исполняют
+  интенты AI Console ядра через мост.
+- **Обратное преобразование command id** (`aios-core/src/ipc_protocol.rs`):
+  `CommandId::from_u16()` переводит числовой id команды обратно в вариант enum (`None` для
+  неизвестных id).
+- **Механика фоновых задач** (`aios-tui/src/dashboard.rs`): в `DashboardState` появилась тройка
+  `task_outbox` / `task_gen` / `task_label` с методами `begin_task()`, `task_running()`,
+  `task_label()` и `check_task_outbox()`, а также outbox `fetch_out` с
+  `take_fetched_block()`.
+
+### Изменено
+- Outbox-типы standalone TUI теперь общие для фоновых задач оболочки: `TaskOutbox` (строки
+  вывода) и `FetchOutbox` (байты загруженного блока) вместо store-специфичного
+  `StoreTaskOutbox`.
+
+### Документация
+- `docs/INTERFACE.md` / `docs/INTERFACE.ru.md`: описаны неблокирующие команды оболочки, новая
+  команда `intent` в standalone TUI и реальная семантика команды `restart` в ядре.
+- `docs/TODO.md` / `docs/TODO.ru.md`: пункт о загрузчике блоков теперь ссылается на
+  реализованные фичи `base-*` (остались профильные базовые наборы), а также добавлены пункты
+  о неблокирующих командах и команде `intent`.
+- `docs/BUGS.md` / `docs/BUGS.ru.md`: RESOLVED-записи о зависающих командах оболочки,
+  неверно описанном `restart` и mojibake.
+
+### Проверка
+- `cargo build --workspace` без ошибок; `cargo clippy --workspace --all-targets` без
+  предупреждений; `cargo fmt --all -- --check` без расхождений.
+- Новые тесты: standalone TUI (вывод фоновой задачи, ошибка, устаревшее поколение,
+  загруженный блок, перевод `intent` и отсутствие совпадения), ядерный TUI (обработка
+  поколений результата store) и `aios-core` (round-trip `CommandId::from_u16` и неизвестный id).
+
 ## v2.60.0 — паритет интерфейсов: ядерный TUI, standalone TUI, мост, GUI и Docker (2026-10-22)
 
 ### Исправлено

@@ -27,6 +27,9 @@ pub struct AiMessage {
 /// Outbox slot for a background web fetch result (generation, target tab, outcome).
 pub type FetchOut = Arc<Mutex<Option<(u64, usize, Result<Page, String>)>>>;
 
+/// Outbox slot for a background store operation (generation, formatted output lines).
+pub type StoreOut = Arc<Mutex<Option<(u64, Result<Vec<String>, String>)>>>;
+
 /// A single persisted Web tab bookmark: a display name plus the target URL.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WebBookmark {
@@ -139,6 +142,12 @@ pub struct TuiApp {
     pub blocks_selected: usize,
     pub store_installed: Vec<String>,
     pub store_status: String,
+    /// Generation counter for background store operations.
+    pub store_gen: u64,
+    /// Outbox for background store operations (result of the running task).
+    pub store_out: StoreOut,
+    /// Label of the running store task (`None` when the store is idle).
+    pub store_task: Option<String>,
     pub load_mode: bool,
     pub load_input: String,
     pub hw_engine: Option<AutohalEngine>,
@@ -199,6 +208,9 @@ impl TuiApp {
             blocks_selected: 0,
             store_installed: Vec::new(),
             store_status: String::new(),
+            store_gen: 0,
+            store_out: Arc::new(Mutex::new(None)),
+            store_task: None,
             load_mode: false,
             load_input: String::new(),
             hw_engine,

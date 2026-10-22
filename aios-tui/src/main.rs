@@ -20,6 +20,7 @@ use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::BlockId;
+use aios_core::ipc_protocol::CommandId;
 use aios_fm::commands::Command;
 use aios_fm::engine::FileManager;
 use aios_fm::state::PanelSide;
@@ -33,6 +34,7 @@ use aios_process_mgr::task::Priority;
 use aios_store::manager::StoreManager;
 use aios_store::manifest::{sign_manifest, ManifestInfo, ManifestValidator};
 use aios_tui::dashboard::{self, DashboardState, PageContent};
+use aios_tui::intent_engine::{IntentContext, IntentEngine};
 use aios_vfs::security::AclContext;
 use aios_vfs::vfs::{AiosVfs, VirtualFileSystem};
 use aios_watchdog::heartbeat::Heartbeat;
@@ -331,6 +333,56 @@ fn web_browser_spawn(target: String) {
     });
 }
 
+/// Spawn a background shell task so the TUI stays responsive during network I/O.
+///
+/// The worker returns the lines to print (or a fully formatted error line);
+/// the result is picked up by `DashboardState::check_task_outbox` in the
+/// main loop. Only one task runs at a time.
+fn spawn_task<F>(state: &mut DashboardState, label: impl Into<String>, work: F)
+where
+    F: FnOnce() -> Result<Vec<String>, String> + Send + 'static,
+{
+    if state.task_running() {
+        state.shell_state.add_output(format!(
+            "Task already running: {}",
+            state.task_label().unwrap_or("?")
+        ));
+        return;
+    }
+    let gen = state.begin_task(label);
+    let outbox = state.task_outbox.clone();
+    std::thread::spawn(move || {
+        let result = work();
+        if let Ok(mut slot) = outbox.lock() {
+            *slot = Some((gen, result));
+        }
+    });
+}
+
+/// Spawn a background block download so the TUI stays responsive.
+///
+/// The downloaded bytes are handed over to the main loop through
+/// `DashboardState::take_fetched_block`, which loads them into the registry.
+fn spawn_fetch<F>(state: &mut DashboardState, label: impl Into<String>, work: F)
+where
+    F: FnOnce() -> Result<(String, Vec<u8>), String> + Send + 'static,
+{
+    if state.task_running() {
+        state.shell_state.add_output(format!(
+            "Task already running: {}",
+            state.task_label().unwrap_or("?")
+        ));
+        return;
+    }
+    let gen = state.begin_task(label);
+    let outbox = state.fetch_out.clone();
+    std::thread::spawn(move || {
+        let result = work();
+        if let Ok(mut slot) = outbox.lock() {
+            *slot = Some((gen, result));
+        }
+    });
+}
 fn execute_shell_cmd(
     state: &mut DashboardState,
     cmd: &str,
@@ -346,34 +398,29 @@ fn execute_shell_cmd(
             return;
         }
         Some("fetch") => {
-            let url = *parts.get(1).unwrap_or(&"");
+            let url = parts.get(1).map(|u| u.to_string()).unwrap_or_default();
             if url.is_empty() {
                 state.shell_state.add_output("Usage: fetch <url>".into());
                 return;
             }
+            let name = url
+                .split('/')
+                .next_back()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("block")
+                .to_string();
             state
                 .shell_state
                 .add_output(format!("Fetching block from: {url}..."));
-            match reqwest::blocking::get(url) {
-                Ok(resp) => match resp.bytes() {
-                    Ok(binary) => {
-                        let name = url.split('/').next_back().unwrap_or("block");
-                        match BlockLoader::load_from_binary(
-                            registry,
-                            name,
-                            "1.0.0",
-                            binary.to_vec(),
-                        ) {
-                            Ok(m) => state
-                                .shell_state
-                                .add_output(format!("Loaded block '{}' ID {}", m.name, m.id)),
-                            Err(e) => state.shell_state.add_output(format!("Load failed: {e}")),
-                        }
-                    }
-                    Err(e) => state.shell_state.add_output(format!("Read failed: {e}")),
-                },
-                Err(e) => state.shell_state.add_output(format!("Fetch failed: {e}")),
-            }
+            spawn_fetch(state, format!("fetch '{url}'"), move || {
+                let resp =
+                    reqwest::blocking::get(&url).map_err(|e| format!("Fetch failed: {e}"))?;
+                let binary = resp
+                    .bytes()
+                    .map_err(|e| format!("Read failed: {e}"))?
+                    .to_vec();
+                Ok((name, binary))
+            });
             return;
         }
         Some("search") => {
@@ -389,30 +436,22 @@ fn execute_shell_cmd(
                 "https://html.duckduckgo.com/html/?q={}",
                 urlencoding(&query)
             );
-            match reqwest::blocking::get(&url) {
-                Ok(resp) => {
-                    if let Ok(html) = resp.text() {
-                        let links = HtmlParser::extract_links(&html, &url);
-                        state
-                            .shell_state
-                            .add_output(format!("Found {} results:", links.len()));
-                        for (i, link) in links.iter().take(20).enumerate() {
-                            let text = if link.text.is_empty() {
-                                &link.href
-                            } else {
-                                &link.text
-                            };
-                            state.shell_state.add_output(format!(
-                                "  {}. {} — {}",
-                                i + 1,
-                                text,
-                                link.href
-                            ));
-                        }
-                    }
+            spawn_task(state, format!("search '{query}'"), move || {
+                let resp =
+                    reqwest::blocking::get(&url).map_err(|e| format!("Search failed: {e}"))?;
+                let html = resp.text().map_err(|e| format!("Search failed: {e}"))?;
+                let links = HtmlParser::extract_links(&html, &url);
+                let mut lines = vec![format!("Found {} results:", links.len())];
+                for (i, link) in links.iter().take(20).enumerate() {
+                    let text = if link.text.is_empty() {
+                        &link.href
+                    } else {
+                        &link.text
+                    };
+                    lines.push(format!("  {}. {} — {}", i + 1, text, link.href));
                 }
-                Err(e) => state.shell_state.add_output(format!("Search failed: {e}")),
-            }
+                Ok(lines)
+            });
             return;
         }
         Some("open") => {
@@ -424,6 +463,54 @@ fn execute_shell_cmd(
             state.selected_tab = 5;
             state.selected_row = 0;
             navigate_web(state, &url);
+            return;
+        }
+        Some("intent") => {
+            let text = parts.get(1..).map(|p| p.join(" ")).unwrap_or_default();
+            if text.is_empty() {
+                state
+                    .shell_state
+                    .add_output("Usage: intent <request in natural language>".into());
+                return;
+            }
+            let ctx = IntentContext {
+                active_processes: state.processes.iter().map(|p| p.name.clone()).collect(),
+                loaded_blocks: state.blocks.iter().map(|b| b.name.clone()).collect(),
+                current_tier: state.ai_tier.to_string(),
+                ram_used_mb: state.ram_used,
+                ram_total_mb: state.ram_total,
+            };
+            match IntentEngine::translate(&text, &ctx) {
+                Some(cmd) => {
+                    let command = CommandId::from_u16(cmd.packet.header.command_id)
+                        .map(|c| format!("{c:?}"))
+                        .unwrap_or_else(|| format!("0x{:04x}", cmd.packet.header.command_id));
+                    state
+                        .shell_state
+                        .add_output(format!("  intent: {}", cmd.intent));
+                    state
+                        .shell_state
+                        .add_output(format!("  plan: {}", cmd.explanation));
+                    state.shell_state.add_output(format!(
+                        "  packet: {} -> block {} (from block {})",
+                        command, cmd.packet.header.target_block, cmd.packet.header.source_block
+                    ));
+                    state.shell_state.add_output(
+                        "  note: translation only — the kernel AI console executes intents"
+                            .to_string(),
+                    );
+                }
+                None => {
+                    state
+                        .shell_state
+                        .add_output(format!("  no intent matched: {text}"));
+                    state.shell_state.add_output(
+                        "  try: free up memory | optimize for video editing | kill <process> | \
+                         spawn <process> | check health | show topology"
+                            .to_string(),
+                    );
+                }
+            }
             return;
         }
         Some("net") => {
@@ -637,24 +724,24 @@ fn execute_shell_cmd(
                     state
                         .shell_state
                         .add_output(format!("Searching store for '{query}'..."));
-                    match StoreManager::block_on(manager.search(&query, source_name.as_deref())) {
-                        Ok(results) => {
-                            if results.is_empty() {
-                                state.shell_state.add_output("No matches.".into());
-                            } else {
-                                state
-                                    .shell_state
-                                    .add_output(format!("Found {} result(s):", results.len()));
-                                for m in &results {
-                                    state.shell_state.add_output(format!(
-                                        "  {} {} — {}",
-                                        m.name, m.version, m.description
-                                    ));
-                                }
+                    spawn_task(state, format!("search '{query}'"), move || {
+                        let results =
+                            StoreManager::block_on(manager.search(&query, source_name.as_deref()))
+                                .map_err(|e| format!("Search failed: {e}"))?;
+                        let mut lines = Vec::new();
+                        if results.is_empty() {
+                            lines.push("No matches.".to_string());
+                        } else {
+                            lines.push(format!("Found {} result(s):", results.len()));
+                            for m in &results {
+                                lines.push(format!(
+                                    "  {} {} — {}",
+                                    m.name, m.version, m.description
+                                ));
                             }
                         }
-                        Err(e) => state.shell_state.add_output(format!("Search failed: {e}")),
-                    }
+                        Ok(lines)
+                    });
                 }
                 "install" => {
                     let (name, source_name) = split_store_args(parts.get(2..).unwrap_or(&[]));
@@ -667,43 +754,45 @@ fn execute_shell_cmd(
                     state
                         .shell_state
                         .add_output(format!("Installing '{name}'..."));
-                    match StoreManager::block_on(manager.install(
-                        source_name.as_deref(),
-                        &name,
-                        None,
-                    )) {
-                        Ok(b) => state.shell_state.add_output(format!(
+                    spawn_task(state, format!("install '{name}'"), move || {
+                        let b = StoreManager::block_on(manager.install(
+                            source_name.as_deref(),
+                            &name,
+                            None,
+                        ))
+                        .map_err(|e| format!("Install failed: {e}"))?;
+                        Ok(vec![format!(
                             "Installed {} {}",
                             b.manifest.name, b.manifest.version
-                        )),
-                        Err(e) => state.shell_state.add_output(format!("Install failed: {e}")),
-                    }
+                        )])
+                    });
                 }
                 "update" => {
                     let (name, source_name) = split_store_args(parts.get(2..).unwrap_or(&[]));
                     state
                         .shell_state
                         .add_output("Checking for updates...".into());
-                    let name_arg = if name.is_empty() {
-                        None
-                    } else {
-                        Some(name.as_str())
-                    };
-                    match StoreManager::block_on(manager.update(source_name.as_deref(), name_arg)) {
-                        Ok(updated) => {
-                            if updated.is_empty() {
-                                state.shell_state.add_output("Already up to date.".into());
-                            } else {
-                                for b in &updated {
-                                    state.shell_state.add_output(format!(
-                                        "Updated {} -> {}",
-                                        b.manifest.name, b.manifest.version
-                                    ));
-                                }
-                            }
+                    spawn_task(state, "update".to_string(), move || {
+                        let name_arg = if name.is_empty() {
+                            None
+                        } else {
+                            Some(name.as_str())
+                        };
+                        let updated = StoreManager::block_on(
+                            manager.update(source_name.as_deref(), name_arg),
+                        )
+                        .map_err(|e| format!("Update failed: {e}"))?;
+                        if updated.is_empty() {
+                            Ok(vec!["Already up to date.".to_string()])
+                        } else {
+                            Ok(updated
+                                .iter()
+                                .map(|b| {
+                                    format!("Updated {} -> {}", b.manifest.name, b.manifest.version)
+                                })
+                                .collect())
                         }
-                        Err(e) => state.shell_state.add_output(format!("Update failed: {e}")),
-                    }
+                    });
                 }
                 "uninstall" => {
                     let name = parts.get(2).copied().unwrap_or("");
@@ -1354,7 +1443,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(WatchdogState::Monitoring);
         state.update_watchdog(wd_state);
         state.check_page_cache();
+        state.check_task_outbox();
         state.poll_fm_acks();
+
+        if let Some(result) = state.take_fetched_block() {
+            match result {
+                Ok((name, binary)) => {
+                    match BlockLoader::load_from_binary(&mut registry, &name, "1.0.0", binary) {
+                        Ok(m) => state
+                            .shell_state
+                            .add_output(format!("Loaded block '{}' ID {}", m.name, m.id)),
+                        Err(e) => state.shell_state.add_output(format!("Load failed: {e}")),
+                    }
+                }
+                Err(e) => state.shell_state.add_output(e),
+            }
+        }
 
         terminal.draw(|f| {
             state.update_from_scheduler(&scheduler, &registry);
@@ -1961,5 +2065,93 @@ mod tests {
             links: vec![],
         });
         assert_eq!(web_current_page_url(&state), Some("https://x".into()));
+    }
+
+    #[test]
+    fn test_task_runs_in_background() {
+        let mut state = make_dashboard_state();
+        super::spawn_task(&mut state, "search 'demo'", || {
+            Ok(vec!["Found 1 result(s):".to_string()])
+        });
+        assert!(state.task_running());
+        for _ in 0..100 {
+            state.check_task_outbox();
+            if !state.task_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!state.task_running());
+        assert!(state
+            .shell_state
+            .output
+            .contains(&"Found 1 result(s):".to_string()));
+    }
+
+    #[test]
+    fn test_task_rejects_second_task_while_running() {
+        let mut state = make_dashboard_state();
+        super::spawn_task(&mut state, "search 'demo'", || Ok(vec!["done".to_string()]));
+        super::spawn_task(&mut state, "install 'demo'", || Ok(vec![]));
+        assert!(state
+            .shell_state
+            .output
+            .contains(&"Task already running: search 'demo'".to_string()));
+    }
+
+    #[test]
+    fn test_fetch_task_delivers_block_bytes() {
+        let mut state = make_dashboard_state();
+        super::spawn_fetch(&mut state, "fetch 'https://x/block.wasm'", || {
+            Ok(("block.wasm".to_string(), vec![1u8, 2, 3]))
+        });
+        let mut fetched = None;
+        for _ in 0..100 {
+            fetched = state.take_fetched_block();
+            if fetched.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let result = fetched.expect("block bytes expected");
+        let (name, bytes) = result.expect("fetch ok");
+        assert_eq!(name, "block.wasm");
+        assert_eq!(bytes, vec![1u8, 2, 3]);
+        assert!(!state.task_running());
+    }
+
+    #[test]
+    fn test_intent_command_translates_request() {
+        let mut state = make_dashboard_state();
+        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
+        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        super::execute_shell_cmd(
+            &mut state,
+            "intent free up memory",
+            &mut scheduler,
+            &mut registry,
+            &mut safe_shell,
+        );
+        let out = state.shell_state.output.join("\n");
+        assert!(out.contains("intent: Free up memory"), "got {out}");
+        assert!(out.contains("packet: AdjustPriority"), "got {out}");
+    }
+
+    #[test]
+    fn test_intent_command_reports_unknown_request() {
+        let mut state = make_dashboard_state();
+        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
+        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        super::execute_shell_cmd(
+            &mut state,
+            "intent make me a sandwich",
+            &mut scheduler,
+            &mut registry,
+            &mut safe_shell,
+        );
+        let out = state.shell_state.output.join("\n");
+        assert!(out.contains("no intent matched"), "got {out}");
     }
 }

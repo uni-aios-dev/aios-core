@@ -57,7 +57,7 @@ const TASKBAR_H: usize = 18;
 /// drag (edges/corners, checked before title/body).
 const RESIZE_BORDER: usize = 5;
 /// Smallest window width accepted by an edge/corner resize drag (equals the
-/// narrowest default вЂ” the 96 px ring-3 client window).
+/// narrowest default — the 96 px ring-3 client window).
 const RESIZE_MIN_W: usize = 96;
 /// Smallest window height (title bar included): the 64 px client body plus
 /// `TITLE_H`, i.e. 8 glyph rows of kernel text content.
@@ -196,7 +196,7 @@ enum TitleBtn {
 }
 
 /// Active pointer drag, keyed by the window's [`WinKind`] (stable across
-/// `bring_to_front` slot shifts вЂ” an index would go stale the moment the
+/// `bring_to_front` slot shifts — an index would go stale the moment the
 /// drag starts and the window is focused/brought to the front).
 #[derive(Clone, Copy)]
 enum Drag {
@@ -214,7 +214,7 @@ enum Drag {
     },
 }
 
-/// A widget hosted in a window body вЂ” the first increment of the widget-set
+/// A widget hosted in a window body — the first increment of the widget-set
 /// roadmap (v2.38.32, buttons). Coordinates are window-local, so the widget
 /// follows its host through move, resize and maximize, and it is painted on
 /// top of the body content by [`draw_widgets`] and hit-tested before any
@@ -392,7 +392,7 @@ struct ClientWin {
     title: [u8; CLIENT_TITLE_CAP],
     title_len: usize,
     /// One pending event (`0` = none): [`EV_KEY`] or [`EV_CLICK`] encoding.
-    /// Keep-first semantics вЂ” a second event arriving before the app polls is
+    /// Keep-first semantics — a second event arriving before the app polls is
     /// dropped rather than overwriting the queued one.
     event: u64,
 }
@@ -450,7 +450,7 @@ static mut CLIENTS: [Option<ClientWin>; MAX_CLIENTS] = [None, None, None, None];
 /// Base of the RAM backbuffer: a dense software frame the GUI renders into and
 /// then publishes to VRAM with a damage-aware `blit_region`. Sits in the spare
 /// PML4-slot gap directly above the kernel heap (v2.38.33: the 4 MiB heap ends
-/// exactly at `BACKBUF_BASE` вЂ” abutting, page-disjoint) and below the
+/// exactly at `BACKBUF_BASE` — abutting, page-disjoint) and below the
 /// paging self-test page (`0xFFFF_FF00_1000_0000`), so it shares the paging
 /// hierarchy already built for the heap and never collides with it.
 const BACKBUF_BASE: u64 = 0xFFFF_FF00_0040_0000;
@@ -519,7 +519,7 @@ fn rect_overlaps(d: &Rect, x: usize, y: usize, w: usize, h: usize) -> bool {
 /// frame allocator directly instead of the kernel heap: the buffer for a
 /// 1920x1080 screen is ~8 MiB and growing the 2 MiB heap for it would starve
 /// every other allocation. On any failure the GUI silently falls back to the
-/// direct-VRAM path (`render()` handles a missing buffer) вЂ” no panic, no OOM
+/// direct-VRAM path (`render()` handles a missing buffer) — no panic, no OOM
 /// risk during the whole uptime.
 fn ensure_backbuffer(fb: &Framebuffer) {
     unsafe {
@@ -570,7 +570,7 @@ fn ensure_backbuffer(fb: &Framebuffer) {
 
 /// Wraps the mapped RAM backbuffer as a dense painting surface with the same
 /// pixel format as VRAM. `None` when the buffer is absent (allocation failed or
-/// not yet requested) вЂ” the caller then paints directly into VRAM.
+/// not yet requested) — the caller then paints directly into VRAM.
 fn back_fb(vram: &Framebuffer) -> Option<Framebuffer> {
     let base = unsafe { *core::ptr::addr_of!(BACK_BASE) };
     if base == 0 || base == BACKBUF_FAIL {
@@ -657,7 +657,7 @@ fn focused_idx() -> Option<usize> {
         .max()
 }
 
-/// Kind of the focused window, if any вЂ” the target of the keyboard hotkeys.
+/// Kind of the focused window, if any — the target of the keyboard hotkeys.
 fn focused_kind() -> Option<WinKind> {
     let i = focused_idx()?;
     unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref().map(|w| w.kind) }
@@ -688,7 +688,7 @@ fn remember_closed_z(kind: WinKind, rank: u8) {
 }
 
 /// Takes (and forgets) the rank remembered for `kind` by
-/// [`remember_closed_z`] вЂ” the caller then places the reopened window there.
+/// [`remember_closed_z`] — the caller then places the reopened window there.
 fn take_closed_z(kind: WinKind) -> Option<u8> {
     let found = unsafe {
         let mem = &mut *core::ptr::addr_of_mut!(CLOSED_Z);
@@ -836,7 +836,7 @@ fn unfocus_all() {
     }
 }
 
-/// Closes window `i` вЂ” unless it holds a typed-text note, in which case the
+/// Closes window `i` — unless it holds a typed-text note, in which case the
 /// modal confirm dialog opens instead. All three close paths (Esc, the `X`
 /// button, `F4`) funnel here, so none of them can silently drop the note.
 fn close_window(i: usize) {
@@ -950,7 +950,7 @@ fn modal_key(sc: u8) -> bool {
 
 /// Mouse routing while the dialog is up: only the two button plates act;
 /// any other press (window body/title, icon, task bar) is blocked, so the
-/// focus вЂ” and ring-3 client input вЂ” cannot be stolen.
+/// focus — and ring-3 client input — cannot be stolen.
 fn modal_click(fb: &Framebuffer, x: usize, y: usize) {
     if !modal_active() {
         return;
@@ -1224,7 +1224,7 @@ fn kind_rank(kind: WinKind) -> u8 {
 
 /// All open window indices in [`kind_rank`] order (`usize::MAX` marks the
 /// unused tail). Both the task-bar hit test and its drawing walk this order,
-/// so buttons keep their place across focus/z-order changes вЂ” a minimized
+/// so buttons keep their place across focus/z-order changes — a minimized
 /// window's button never moves under the pointer.
 fn taskbar_slots() -> [usize; MAX_WINS] {
     let mut out = [usize::MAX; MAX_WINS];
@@ -1338,15 +1338,15 @@ struct CreateReq {
 
 /// Wire entry for the `SYS_GUI` syscall from ring-3, dispatched on `rdi`:
 ///
-/// - `0` вЂ” CREATE with `rsi` pointing at a [`CreateReq`] (returns the client
+/// - `0` — CREATE with `rsi` pointing at a [`CreateReq`] (returns the client
 ///   id, `u64::MAX` on any validation failure);
-/// - `1` вЂ” PRESENT: the client's window is made dirty (and re-spawned if it
+/// - `1` — PRESENT: the client's window is made dirty (and re-spawned if it
 ///   was closed, e.g. by the GUI `leave()`), so the composite picks up the new
-///   pixels on the next `render()` вЂ” this is the ring-3 client's "flip";
-/// - `2` вЂ” GET_EVENT: drains the single pending input event (returns the
+///   pixels on the next `render()` — this is the ring-3 client's "flip";
+/// - `2` — GET_EVENT: drains the single pending input event (returns the
 ///   [`EV_KEY`]/[`EV_CLICK`] packed word, [`EV_NONE`] when idle, `u64::MAX`
 ///   if the task owns no client window);
-/// - anything else вЂ” `u64::MAX`.
+/// - anything else — `u64::MAX`.
 pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
     if frame.rdi == 0 {
         let req_va = frame.rsi;
@@ -1411,7 +1411,7 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
             }
         }
     } else if frame.rdi == 2 {
-        // GET_EVENT вЂ” drain the single pending input event.
+        // GET_EVENT — drain the single pending input event.
         frame.rax = take_client_event(pid).unwrap_or(u64::MAX);
     } else {
         frame.rax = u64::MAX;
@@ -1683,28 +1683,28 @@ pub fn handle_scancode(sc: u8) -> bool {
         // `sc & 0x80` gate), so F-keys need no modifier/release tracking and
         // can never collide with typing (they are not printable).
         0x3C => {
-            // F2 вЂ” maximize/restore the focused window.
+            // F2 — maximize/restore the focused window.
             if let Some(kind) = focused_kind() {
                 toggle_maximize(kind);
             }
             return true;
         }
         0x3E => {
-            // F4 вЂ” close the focused window (same path as Esc and the X button).
+            // F4 — close the focused window (same path as Esc and the X button).
             if let Some(i) = focused_idx() {
                 close_window(i);
             }
             return true;
         }
         0x3F => {
-            // F5 вЂ” minimize the focused window.
+            // F5 — minimize the focused window.
             if let Some(kind) = focused_kind() {
                 minimize_window(kind);
             }
             return true;
         }
         0x43 => {
-            // F9 вЂ” cycle focus (Tab twin).
+            // F9 — cycle focus (Tab twin).
             cycle_focus();
             return true;
         }
@@ -1765,8 +1765,8 @@ static PIN_LOCK: AtomicBool = AtomicBool::new(false);
 
 /// Runaway-pointer gate (v2.38.33): decides whether one pointer report may be
 /// processed (logged, applied, rendered) by the active screen owner. Real
-/// hardware that streams garbage deltas вЂ” a desynced PS/2 touchpad next to a
-/// USB mouse, or a misbehaving xHCI device вЂ” used to pin the arrow in the
+/// hardware that streams garbage deltas — a desynced PS/2 touchpad next to a
+/// USB mouse, or a misbehaving xHCI device — used to pin the arrow in the
 /// bottom-left corner forever while every packet cost a serial line, a
 /// formatted log and a full repaint (the lag/storm seen on the laptop).
 ///
@@ -1781,7 +1781,7 @@ pub fn input_allowed(dx: i32, dy: i32) -> bool {
         return true;
     };
     // Before the first packet the arrow has no position yet (it centres on
-    // the next report) вЂ” nothing can be pinned, so let input through.
+    // the next report) — nothing can be pinned, so let input through.
     if !unsafe { *core::ptr::addr_of!(CUR_VIS) } {
         return true;
     }
@@ -1821,7 +1821,7 @@ pub fn input_allowed(dx: i32, dy: i32) -> bool {
 }
 
 /// Applies a mouse report: moves the arrow (clamped to the framebuffer),
-/// drives the active drag вЂ” title-bar move or edge/corner resize вЂ” and
+/// drives the active drag — title-bar move or edge/corner resize — and
 /// dispatches clicks (icons / title-bar buttons / task bar / window body).
 /// A released button ends the drag, logging the final size after a resize;
 /// minimize/maximize clicks log their action and resulting geometry.
@@ -2071,7 +2071,7 @@ fn win_label(kind: WinKind, title: &'static str) -> String {
 /// Buttons of the Welcome window (v2.38.32 widget demo): a quick-launch row
 /// for the three built-in apps plus a note-safe close button. The body text
 /// block ends at `TITLE_H + 8 + 4 * GLYPH_H = 90` px below the window top,
-/// so row one starts at 102 and row two at 132 вЂ” the 170 px window still
+/// so row one starts at 102 and row two at 132 — the 170 px window still
 /// keeps a 14 px bottom margin.
 static WELCOME_WIDGETS: [Widget; 4] = [
     Widget::Button {
@@ -2110,7 +2110,7 @@ static WELCOME_WIDGETS: [Widget; 4] = [
 
 /// Widget table of the Network window (v2.38.34): seven input fields and
 /// seven command buttons, laid out on the 16 px body grid of the 420x356
-/// window вЂ” mode row at 104, address fields at 128..192, apply/test at 208,
+/// window — mode row at 104, address fields at 128..192, apply/test at 208,
 /// Wi-Fi fields at 296/312 and the scan/connect row at 328.
 static NETWORK_WIDGETS: [Widget; 14] = [
     Widget::Button {
@@ -2687,8 +2687,8 @@ fn widget_index_at(win: &Window, x: usize, y: usize) -> Option<usize> {
 
 /// The widget that would take a click at `(x, y)`, honouring the same
 /// topmost-wins rule as [`dispatch_click`]: the first window containing the
-/// point either yields its body widget or вЂ” when the point falls on its
-/// title/edges вЂ” nothing, never falling through to a window underneath.
+/// point either yields its body widget or — when the point falls on its
+/// title/edges — nothing, never falling through to a window underneath.
 fn hover_widget(x: usize, y: usize) -> Option<(WinKind, usize)> {
     for i in (0..MAX_WINS).rev() {
         let Some(win) = (unsafe { &(*core::ptr::addr_of!(WINS))[i] }) else {
@@ -2749,7 +2749,7 @@ fn update_widget_hover() {
 }
 
 /// Executes a clicked widget: logs the `[gui] widget <host>/<label> click`
-/// serial proof line, then runs the action вЂ” open/focus a built-in window, or
+/// serial proof line, then runs the action — open/focus a built-in window, or
 /// close the hosting window through [`close_window`] (modal gate included).
 /// The host index may have gone stale after [`focus_window`], so the action
 /// resolves the target window by its [`WinKind`] instead.
@@ -3125,7 +3125,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
             }
             if hit_body(win, x, y) {
                 // Widget plates swallow the click first (v2.38.32), no client
-                // event. Captured before `focus_window` moves slots around вЂ”
+                // event. Captured before `focus_window` moves slots around —
                 // see `cycle_focus`.
                 if let Some(wi) = widget_index_at(win, x, y) {
                     let kind = win.kind;
@@ -3178,8 +3178,8 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
 /// painted, the damaged rectangle is blitted into the physical framebuffer with
 /// `blit_region` (a single `copy_nonoverlapping` per scanline). VRAM is
 /// therefore never drawn incrementally: the panel either sees the previous
-/// complete frame or the new complete one, which вЂ” together with the damage
-/// culling вЂ” removes both the full-screen flicker and torn rows. If the
+/// complete frame or the new complete one, which — together with the damage
+/// culling — removes both the full-screen flicker and torn rows. If the
 /// backbuffer is unavailable the renderer falls back to painting directly into
 /// VRAM (identical damage logic, v2.38.23 behaviour).
 ///
@@ -3645,7 +3645,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
 }
 
 /// Paints the modal confirm dialog: title bar, the close question, the hint
-/// lines and the centered `OK` / `Cancel` pair вЂ” [`modal_click`] hits exactly
+/// lines and the centered `OK` / `Cancel` pair — [`modal_click`] hits exactly
 /// these two rectangles.
 fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
     let (x, y) = modal_pos(fb);

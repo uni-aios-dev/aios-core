@@ -4,7 +4,7 @@ mod ui;
 pub use app_state::TuiApp;
 pub use ui::draw;
 
-use self::app_state::{locked, AiMessage, WebBookmark, WebTab};
+use self::app_state::{locked, AiMessage, StoreOut, WebBookmark, WebTab};
 
 use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
@@ -89,6 +89,7 @@ fn run(
 
         app.update_logs();
         web_poll(&mut app);
+        store_poll(&mut app);
         app.hw_poll_hotplug();
         app.hw_refresh();
         app.sys_poll();
@@ -408,7 +409,7 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
     match name {
         "help" | "?" => {
             app.ai_show_help = true;
-            replies.push("Help panel opened вЂ” press h or Esc to close".into());
+            replies.push("Help panel opened — press h or Esc to close".into());
             replies.push(
                 "Commands: /help /status /clear /history /system /model /backend /key /temp \
                  /tokens /preset /save /load"
@@ -552,7 +553,7 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
                     replies.push(format!("Presets ({}):", app.ai_presets.len()));
                     for (name, text) in app.ai_presets.iter() {
                         let preview: String = text.chars().take(60).collect();
-                        replies.push(format!("  /preset {name}  вЂ”  {preview}"));
+                        replies.push(format!("  /preset {name}  —  {preview}"));
                     }
                 }
             } else if pname == "del" && !ptext.is_empty() {
@@ -752,6 +753,69 @@ fn web_navigate(app: &mut TuiApp, raw: &str) {
     web_load(app, &url, true);
 }
 
+/// Spawn a background store task; its output is printed by [`store_poll`].
+///
+/// The TUI must never block on store network I/O, so the catalog fetch and the
+/// block download run as a background task and the result is picked up by the
+/// next UI tick. Only one store task runs at a time.
+fn store_spawn<F, Fut>(app: &mut TuiApp, label: String, work: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Vec<String>, String>> + Send,
+{
+    if let Some(running) = app.store_task.clone() {
+        app.shell_push(format!("  store task already running: {running}"));
+        return;
+    }
+    app.store_gen += 1;
+    let gen = app.store_gen;
+    app.store_task = Some(label);
+    let out = app.store_out.clone();
+    let handle = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            app.store_task = None;
+            app.shell_push("  no tokio runtime for store task".into());
+            return;
+        }
+    };
+    handle.spawn(async move {
+        let result = work().await;
+        if let Ok(mut slot) = out.lock() {
+            *slot = Some((gen, result));
+        }
+    });
+}
+
+/// Take the finished store task result when it belongs to the current
+/// generation; stale results (from a superseded task) are dropped.
+fn take_store_result(out: &StoreOut, gen: u64) -> Option<Result<Vec<String>, String>> {
+    let got = {
+        let mut slot = locked(out);
+        slot.take()
+    };
+    match got {
+        Some((task_gen, result)) if task_gen == gen => Some(result),
+        _ => None,
+    }
+}
+
+/// Print the result of a finished background store task.
+fn store_poll(app: &mut TuiApp) {
+    let Some(result) = take_store_result(&app.store_out, app.store_gen) else {
+        return;
+    };
+    app.store_task = None;
+    match result {
+        Ok(lines) => {
+            for line in lines {
+                app.shell_push(line);
+            }
+        }
+        Err(e) => app.shell_push(e),
+    }
+}
+
 fn web_poll(app: &mut TuiApp) {
     let got = {
         let mut slot = app.web.fetch_out.lock().unwrap();
@@ -913,7 +977,7 @@ fn web_open_native(app: &mut TuiApp, target: Option<String>) {
             None => {
                 push_log(
                     &app.logs,
-                    "AIOS: web: nothing to open вЂ” load a page first".into(),
+                    "AIOS: web: nothing to open — load a page first".into(),
                 );
                 return;
             }
@@ -1180,7 +1244,7 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
         }
         "store" => {
             let sub = parts.get(1).copied().unwrap_or("");
-            let mut manager = store_manager();
+            let manager = store_manager();
             match sub {
                 "list" => {
                     let installed = manager.list_installed();
@@ -1197,33 +1261,44 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
                     if query.is_empty() {
                         out.push("Usage: store search <query>".into());
                     } else {
-                        match StoreManager::block_on(manager.search(&query, None)) {
-                            Ok(results) if results.is_empty() => out.push("  no matches".into()),
-                            Ok(results) => {
-                                out.push(format!("  {} result(s):", results.len()));
-                                for m in results {
-                                    out.push(format!(
-                                        "  {} {} вЂ” {}",
-                                        m.name, m.version, m.description
-                                    ));
-                                }
+                        out.push(format!("  searching store for '{query}'..."));
+                        store_spawn(app, format!("search '{query}'"), move || async move {
+                            let manager = store_manager();
+                            let results = manager
+                                .search(&query, None)
+                                .await
+                                .map_err(|e| format!("  search failed: {e}"))?;
+                            if results.is_empty() {
+                                return Ok(vec!["  no matches".to_string()]);
                             }
-                            Err(e) => out.push(format!("  search failed: {e}")),
-                        }
+                            let mut lines = vec![format!("  {} result(s):", results.len())];
+                            for m in results {
+                                lines.push(format!(
+                                    "  {} {} — {}",
+                                    m.name, m.version, m.description
+                                ));
+                            }
+                            Ok(lines)
+                        });
                     }
                 }
                 "install" => {
-                    let name = parts.get(2).copied().unwrap_or("");
+                    let name = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
                     if name.is_empty() {
                         out.push("Usage: store install <name>".into());
                     } else {
-                        match StoreManager::block_on(manager.install(None, name, None)) {
-                            Ok(b) => out.push(format!(
+                        out.push(format!("  installing '{name}'..."));
+                        store_spawn(app, format!("install '{name}'"), move || async move {
+                            let mut manager = store_manager();
+                            let b = manager
+                                .install(None, &name, None)
+                                .await
+                                .map_err(|e| format!("  install failed: {e}"))?;
+                            Ok(vec![format!(
                                 "  installed {} {}",
                                 b.manifest.name, b.manifest.version
-                            )),
-                            Err(e) => out.push(format!("  install failed: {e}")),
-                        }
+                            )])
+                        });
                     }
                 }
                 _ => out.push("Usage: store list | store search <q> | store install <name>".into()),
@@ -1279,11 +1354,11 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
         }
         "restart" => {
             app.refresh_hw();
-            out.push("  subsystems re-initialized (hardware re-probed)".into());
+            out.push("  hardware re-probed (hardware engine rescanned)".into());
             push_log(&app.logs, "AIOS: restart requested via shell".into());
         }
         _ => {
-            out.push(format!("  unknown command '{command}' вЂ” type help"));
+            out.push(format!("  unknown command '{command}' — type help"));
         }
     }
     for l in out {
@@ -1937,5 +2012,19 @@ mod tests {
         for s in &schedulers {
             s.lock().unwrap().shutdown();
         }
+    }
+
+    #[test]
+    fn store_result_is_taken_for_the_current_generation() {
+        let out: StoreOut = Arc::new(Mutex::new(Some((7, Ok(vec!["  1 result(s):".into()])))));
+        let result = take_store_result(&out, 7).expect("result expected");
+        assert_eq!(result.unwrap(), vec!["  1 result(s):".to_string()]);
+        assert!(take_store_result(&out, 7).is_none());
+    }
+
+    #[test]
+    fn store_result_ignores_a_stale_generation() {
+        let out: StoreOut = Arc::new(Mutex::new(Some((3, Ok(vec!["stale".into()])))));
+        assert!(take_store_result(&out, 4).is_none());
     }
 }

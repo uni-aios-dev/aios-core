@@ -569,6 +569,17 @@ contract in the host runtime and in the bare-metal kernel.
 
 `IntentContext` provides system state for translation: active processes, loaded blocks, current tier, RAM usage.
 
+**Where it is used (v2.61.0):** the kernel TUI AI Console translates and executes intents over the bridge. The standalone TUI (`aios-tui`) has no message router, so its shell command `intent <request>` uses the same engine for **translation only**: it prints the matched intent, the plan, the IPC command and the target block, and leaves execution to the kernel.
+
+### Background shell tasks (v2.61.0)
+
+Network commands must not block the TUI, so the shell hands them to a background worker and prints the result later:
+
+- **Standalone TUI** (`aios-tui`): `DashboardState` owns two outboxes — `TaskOutbox` (output lines of a shell task) and `FetchOutbox` (bytes of a downloaded block). A generation counter (`task_gen`) lets the main loop drop the result of a superseded task; only one task runs at a time.
+- **Kernel TUI** (`aios`): `TuiApp` owns `StoreOut`; `store_spawn()` starts the task on the tokio runtime, `store_poll()` collects the result on the next UI tick.
+
+Both TUIs run the store catalog request, the block download and the web search in a worker thread, so the event loop keeps rendering while the request is in flight.
+
 ### Dashboard (`aios/src/tui`)
 
 Ratatui-based kernel TUI with the 7-tab spec layout (`aios` binary), restyled in a classic Far Manager / Midnight Commander two-panel form (v2.31.0):

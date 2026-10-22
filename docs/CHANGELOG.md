@@ -1,5 +1,60 @@
 # AIOS Development Log
 
+## v2.61.0 — Responsive TUIs: non-blocking store/web commands, `intent` shell command, text cleanup (2026-10-22)
+
+### Fixed
+- **Store commands froze the UI** (`aios-tui/src/main.rs`, `aios/src/tui/mod.rs`): `store search`,
+  `store install` and `store update` called `StoreManager::block_on` on the UI thread, so the
+  terminal was frozen until the catalog request or the download finished. The commands now run
+  as background tasks; the result is appended to the shell output when it arrives. Only one
+  background task runs at a time (`Task already running: <label>` / `store task already running:
+  <label>`), and a generation counter drops the result of a superseded task.
+- **Standalone TUI `fetch` and `search` froze the UI** (`aios-tui/src/main.rs`): the block
+  download and the DuckDuckGo search used `reqwest::blocking::get` inline. The download now
+  happens in a background worker and the bytes are loaded into the registry by the main loop
+  (`DashboardState::take_fetched_block()`); the search runs as a background task as well.
+- **Kernel TUI `restart` was mislabelled** (`aios/src/tui/mod.rs`): the command only re-probes
+  the hardware profile and rescans the hardware engine, but the shell printed
+  `subsystems re-initialized (hardware re-probed)` and the docs promised a subsystem
+  re-initialization. The message is now `hardware re-probed (hardware engine rescanned)` and
+  `docs/INTERFACE.md` describes the real behaviour.
+- **Mojibake in comments and messages** (`aios-kernel/src/gui.rs`, `aios-kernel/src/interrupts.rs`,
+  `aios-init/src/main.rs`, `aios-gui/src/tabs/blocks.rs`, `aios/src/tui/mod.rs`): 54 em dashes
+  had been stored as the CP1251 byte sequence `as the CP1251 mojibake of an em dash (the UTF-8 bytes `E2 80 94` read as CP1251)`; they are real `—` characters again.
+
+### Added
+- **Standalone `intent` shell command** (`aios-tui/src/main.rs`): the built-in `IntentEngine`
+  is now reachable from the standalone TUI shell. `intent <request>` translates a natural
+  language request and prints the matched intent, the plan, the IPC command and the target
+  block. The standalone TUI has no message router, so the command translates only — the kernel
+  AI Console executes intents over the bridge.
+- **Command id lookup** (`aios-core/src/ipc_protocol.rs`): `CommandId::from_u16()` maps a raw
+  command id back to its enum variant (`None` for unknown ids).
+- **Background task plumbing** (`aios-tui/src/dashboard.rs`): `DashboardState` gained the
+  `task_outbox` / `task_gen` / `task_label` triple with `begin_task()`, `task_running()`,
+  `task_label()` and `check_task_outbox()`, plus the `fetch_out` outbox with
+  `take_fetched_block()`.
+
+### Changed
+- The standalone TUI outbox types are now generic for shell tasks: `TaskOutbox` (output lines)
+  and `FetchOutbox` (downloaded block bytes) replace the store-specific `StoreTaskOutbox`.
+
+### Documentation
+- `docs/INTERFACE.md` / `docs/INTERFACE.ru.md`: documented the non-blocking shell commands, the
+  new standalone `intent` command and the real semantics of the kernel `restart` command.
+- `docs/TODO.md` / `docs/TODO.ru.md`: the block-loader entry now points at the implemented
+  `base-*` feature flags (the remaining work is per-profile base sets) and lists the new
+  non-blocking commands and the `intent` command.
+- `docs/BUGS.md` / `docs/BUGS.ru.md`: RESOLVED entries for the frozen shell commands, the
+  mislabelled `restart` and the mojibake.
+
+### Verification
+- `cargo build --workspace` clean; `cargo clippy --workspace --all-targets` clean; `cargo fmt
+  --all -- --check` clean.
+- New tests: standalone TUI (background task output/error/stale generation, fetched block,
+  `intent` translation and no-match) and kernel TUI (store result generation handling),
+  `aios-core` (`CommandId::from_u16` round-trip and unknown id).
+
 ## v2.60.0 — Interface parity pass: kernel TUI, standalone TUI, bridge, GUI and Docker (2026-10-22)
 
 ### Fixed

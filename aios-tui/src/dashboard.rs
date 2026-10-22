@@ -99,6 +99,15 @@ pub fn web_nav_entries(ws: &WebState) -> Vec<NavEntry> {
 /// Outbox for background web fetches: `(fetch generation, result)`.
 pub type WebFetchOutbox = Arc<Mutex<Option<(u64, Result<(PageContent, Option<String>), String>)>>>;
 
+/// Outbox for background shell tasks: `(task generation, formatted output)`.
+///
+/// The worker thread returns the lines to print; `Err` carries the fully
+/// formatted error line so the shell keeps the same wording as before.
+pub type TaskOutbox = Arc<Mutex<Option<(u64, Result<Vec<String>, String>)>>>;
+
+/// Outbox for a background block download: `(generation, block name and bytes)`.
+pub type FetchOutbox = Arc<Mutex<Option<(u64, Result<(String, Vec<u8>), String>)>>>;
+
 #[derive(Clone, Debug)]
 pub struct ShellState {
     pub input_buffer: String,
@@ -295,6 +304,14 @@ pub struct DashboardState {
     pub web_state: WebState,
     /// Outbox for background web fetches: `(fetch generation, result)`.
     pub page_cache: WebFetchOutbox,
+    /// Outbox for background shell tasks: `(task generation, output lines)`.
+    pub task_outbox: TaskOutbox,
+    /// Generation counter for background shell tasks.
+    pub task_gen: u64,
+    /// Label of the running background task (`None` when no task is running).
+    pub task_label: Option<String>,
+    /// Outbox for a background block download: `(generation, block name and bytes)`.
+    pub fetch_out: FetchOutbox,
     pub shell_state: ShellState,
     pub show_help: bool,
     /// File manager instance (only present when the tokio runtime is active).
@@ -374,6 +391,10 @@ impl DashboardState {
                 history_sel: 0,
             },
             page_cache: Arc::new(Mutex::new(None)),
+            task_outbox: Arc::new(Mutex::new(None)),
+            task_gen: 0,
+            task_label: None,
+            fetch_out: Arc::new(Mutex::new(None)),
             shell_state: ShellState::default(),
             show_help: false,
             fm: None,
@@ -544,6 +565,64 @@ impl DashboardState {
                     self.add_log("Web: fetch failed".into());
                 }
             }
+        }
+    }
+
+    /// Register a new background shell task and return its generation id.
+    ///
+    /// The label is shown in the shell prompt while the task is running.
+    pub fn begin_task(&mut self, label: impl Into<String>) -> u64 {
+        self.task_gen += 1;
+        self.task_label = Some(label.into());
+        self.task_gen
+    }
+
+    /// True while a background shell task is still running.
+    pub fn task_running(&self) -> bool {
+        self.task_label.is_some()
+    }
+
+    /// Label of the running background task, if any.
+    pub fn task_label(&self) -> Option<&str> {
+        self.task_label.as_deref()
+    }
+
+    /// Pick up the result of a background shell task, ignoring stale generations.
+    ///
+    /// Completed tasks append their formatted lines to the shell output and
+    /// clear the running label, so the UI never blocks on network I/O.
+    pub fn check_task_outbox(&mut self) {
+        let result = self.task_outbox.lock().ok().and_then(|mut c| c.take());
+        let Some((gen, result)) = result else {
+            return;
+        };
+        if gen != self.task_gen {
+            return;
+        }
+        self.task_label = None;
+        match result {
+            Ok(lines) => {
+                for line in lines {
+                    self.shell_state.add_output(line);
+                }
+            }
+            Err(e) => self.shell_state.add_output(e),
+        }
+    }
+
+    /// Take the downloaded block bytes when they match the current generation.
+    ///
+    /// Returns `None` while the download is still running or when the result
+    /// belongs to a superseded download. A finished download clears the
+    /// running task label.
+    pub fn take_fetched_block(&mut self) -> Option<Result<(String, Vec<u8>), String>> {
+        let got = self.fetch_out.lock().ok().and_then(|mut c| c.take());
+        match got {
+            Some((gen, result)) if gen == self.task_gen => {
+                self.task_label = None;
+                Some(result)
+            }
+            _ => None,
         }
     }
 
@@ -2094,6 +2173,68 @@ mod tests {
         let mut state = make_state();
         state.update_watchdog(WatchdogState::SafeMode);
         assert_eq!(state.watchdog_state, WatchdogState::SafeMode);
+    }
+
+    #[test]
+    fn test_task_output_is_collected() {
+        let mut state = make_state();
+        let gen = state.begin_task("search 'demo'");
+        assert!(state.task_running());
+        assert_eq!(state.task_label(), Some("search 'demo'"));
+        *state.task_outbox.lock().unwrap() = Some((gen, Ok(vec!["Found 1 result(s):".into()])));
+        state.check_task_outbox();
+        assert!(!state.task_running());
+        assert!(state
+            .shell_state
+            .output
+            .contains(&"Found 1 result(s):".to_string()));
+    }
+
+    #[test]
+    fn test_task_error_line_is_printed() {
+        let mut state = make_state();
+        let gen = state.begin_task("install 'demo'");
+        *state.task_outbox.lock().unwrap() = Some((gen, Err("Install failed: no network".into())));
+        state.check_task_outbox();
+        assert!(!state.task_running());
+        assert!(state
+            .shell_state
+            .output
+            .contains(&"Install failed: no network".to_string()));
+    }
+
+    #[test]
+    fn test_task_stale_generation_is_ignored() {
+        let mut state = make_state();
+        state.begin_task("update");
+        let stale = state.task_gen - 1;
+        *state.task_outbox.lock().unwrap() = Some((stale, Ok(vec!["stale line".into()])));
+        state.check_task_outbox();
+        assert!(state.task_running());
+        assert!(!state.shell_state.output.contains(&"stale line".to_string()));
+    }
+
+    #[test]
+    fn test_fetched_block_is_taken_for_the_current_generation() {
+        let mut state = make_state();
+        let gen = state.begin_task("fetch 'https://x/block.wasm'");
+        *state.fetch_out.lock().unwrap() =
+            Some((gen, Ok(("block.wasm".to_string(), vec![1u8, 2]))));
+        let result = state.take_fetched_block().expect("block expected");
+        let (name, bytes) = result.expect("fetch ok");
+        assert_eq!(name, "block.wasm");
+        assert_eq!(bytes, vec![1u8, 2]);
+        assert!(!state.task_running());
+    }
+
+    #[test]
+    fn test_fetched_block_ignores_a_stale_generation() {
+        let mut state = make_state();
+        state.begin_task("fetch 'https://x/block.wasm'");
+        let stale = state.task_gen - 1;
+        *state.fetch_out.lock().unwrap() = Some((stale, Ok(("old.wasm".to_string(), vec![9u8]))));
+        assert!(state.take_fetched_block().is_none());
+        assert!(state.task_running());
     }
 
     #[test]

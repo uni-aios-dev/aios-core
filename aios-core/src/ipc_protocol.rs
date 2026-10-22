@@ -132,6 +132,35 @@ pub enum CommandId {
     Custom = 0x00FF,
 }
 
+impl CommandId {
+    /// Map a raw command id back to its enum variant.
+    ///
+    /// Returns `None` for ids that do not belong to the protocol.
+    pub fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0x0001 => Some(CommandId::RegisterBlock),
+            0x0002 => Some(CommandId::UnloadBlock),
+            0x0003 => Some(CommandId::GetTopology),
+            0x0010 => Some(CommandId::SpawnProcess),
+            0x0011 => Some(CommandId::KillProcess),
+            0x0012 => Some(CommandId::AdjustPriority),
+            0x0020 => Some(CommandId::HealthCheck),
+            0x0030 => Some(CommandId::ExtractState),
+            0x0031 => Some(CommandId::RestoreState),
+            0x0040 => Some(CommandId::HotSwap),
+            0x0041 => Some(CommandId::Rollback),
+            0x0050 => Some(CommandId::IntentCommand),
+            0x0060 => Some(CommandId::ClusterSpawn),
+            0x0061 => Some(CommandId::ClusterKill),
+            0x0062 => Some(CommandId::ClusterStatus),
+            0x0070 => Some(CommandId::FaultReport),
+            0x0071 => Some(CommandId::RecoveryDecision),
+            0x00FF => Some(CommandId::Custom),
+            _ => None,
+        }
+    }
+}
+
 impl IpcPacket {
     pub fn new(source_block: u32, target_block: u32, command: CommandId, payload: Payload) -> Self {
         let payload_bytes = payload.to_bytes();
@@ -240,6 +269,37 @@ mod tests {
     fn test_checksum_valid() {
         let pkt = IpcPacket::new(0, 1, CommandId::HealthCheck, Payload::Empty);
         assert!(pkt.verify_checksum());
+    }
+
+    #[test]
+    fn test_command_id_roundtrip() {
+        for id in [
+            CommandId::RegisterBlock,
+            CommandId::UnloadBlock,
+            CommandId::GetTopology,
+            CommandId::SpawnProcess,
+            CommandId::KillProcess,
+            CommandId::AdjustPriority,
+            CommandId::HealthCheck,
+            CommandId::ExtractState,
+            CommandId::RestoreState,
+            CommandId::HotSwap,
+            CommandId::Rollback,
+            CommandId::IntentCommand,
+            CommandId::ClusterSpawn,
+            CommandId::ClusterKill,
+            CommandId::ClusterStatus,
+            CommandId::FaultReport,
+            CommandId::RecoveryDecision,
+            CommandId::Custom,
+        ] {
+            assert_eq!(CommandId::from_u16(id as u16), Some(id));
+        }
+    }
+
+    #[test]
+    fn test_command_id_rejects_unknown_value() {
+        assert_eq!(CommandId::from_u16(0x1234), None);
     }
 
     #[test]

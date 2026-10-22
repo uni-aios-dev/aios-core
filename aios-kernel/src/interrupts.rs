@@ -32,8 +32,8 @@ static KEY_FIFO_TAIL: AtomicUsize = AtomicUsize::new(0);
 static KEY_FIFO_HEAD: AtomicUsize = AtomicUsize::new(0);
 static KEY_FIFO: [AtomicU8; 256] = [const { AtomicU8::new(0) }; 256];
 /// Shift-key state (v2.38.34): set/cleared from the raw PS/2 byte stream
-/// (make `0x2A`/`0x36`, break `0xAA`/`0xB6`) so typed text вЂ” including the
-/// Network window SSID/password fields вЂ” sees uppercase and shifted symbols.
+/// (make `0x2A`/`0x36`, break `0xAA`/`0xB6`) so typed text — including the
+/// Network window SSID/password fields — sees uppercase and shifted symbols.
 pub static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
 pub static SHIFTED: AtomicBool = AtomicBool::new(false);
 
@@ -332,7 +332,7 @@ pub fn idt_gate_installed(vector: u64) -> bool {
 }
 
 /// Returns the raw 16-byte IDT descriptor for `vector` as (lower, upper) u64
-/// halves вЂ” byte-truth readback used by the boot-time descriptor discriminator
+/// halves — byte-truth readback used by the boot-time descriptor discriminator
 /// (vector-32 gate corrupt vs healthy neighbor gate).
 pub fn idt_raw_gate(vector: u64) -> (u64, u64) {
     crate::idt::raw_gate(vector)
@@ -397,7 +397,7 @@ pub fn set_pit_masked(masked: bool) {
 /// Latches and reads the current PIT channel-0 countdown value.
 ///
 /// The PIT always counts (it is clocked directly), so this works even when its
-/// IRQ0 line never reaches the CPU вЂ” which makes it a usable time source for
+/// IRQ0 line never reaches the CPU — which makes it a usable time source for
 /// the software-tick fallback and for `delay_ms`.
 pub fn pit_count() -> u16 {
     unsafe {

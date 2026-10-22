@@ -204,7 +204,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
             ui.add_space(20.0);
             ui.label(
                 egui::RichText::new(format!(
-                    "Selected: {} v{} вЂ” {} вЂ” {}",
+                    "Selected: {} v{} — {} — {}",
                     b.name, b.version, b.state, b.size
                 ))
                 .color(theme.text_dim)

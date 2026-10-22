@@ -216,11 +216,11 @@ fn emergency_shell() -> ! {
             ));
             let code = supervise(pid);
             if TERM_REQUESTED.load(Ordering::SeqCst) {
-                log("aios-init: shutdown requested вЂ” entering idle loop");
+                log("aios-init: shutdown requested — entering idle loop");
                 idle();
             }
             log(&format!(
-                "aios-init: shell pid {pid} exited (code {code}) вЂ” respawning"
+                "aios-init: shell pid {pid} exited (code {code}) — respawning"
             ));
             attempts += 1;
             std::thread::sleep(Duration::from_millis(500));
@@ -330,7 +330,7 @@ fn bring_userspace() {
             log(&format!("aios-init: userspace bring-up exit code {code}"));
         }
         None => {
-            log("aios-init: userspace bring-up script unavailable вЂ” TUI only");
+            log("aios-init: userspace bring-up script unavailable — TUI only");
         }
     }
 }
@@ -357,7 +357,7 @@ fn mount_fs(source: &CStr, target: &CStr, fstype: &CStr, flags: c_ulong) -> bool
 }
 
 fn setup_dev_nodes() {
-    log("aios-init: devtmpfs unavailable вЂ” creating basic device nodes");
+    log("aios-init: devtmpfs unavailable — creating basic device nodes");
     mknod(c"/dev/console", 5, 1, 0o600);
     mknod(c"/dev/null", 1, 3, 0o666);
     mknod(c"/dev/tty", 5, 0, 0o666);
