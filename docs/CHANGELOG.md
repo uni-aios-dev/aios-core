@@ -1,5 +1,25 @@
 # AIOS Development Log
 
+## v2.64.0 ? Kernel GUI radio buttons (2026-10-23)
+
+### Added
+- **`Widget::Radio`** (`aios-kernel/src/gui.rs`): the widget set gains radio
+  buttons ? a round box with a caption, addressed by `group` + `value` in the
+  host form store. `draw_radio` paints the circle outline (`BAR_ON` while
+  hovered) and a filled dot when selected; `widget_click` selects the value
+  through `lab_radio_select`, which clears the siblings in the same group, and
+  logs `[gui] widget Widget Lab/radio <label> = <value>`, updating the header
+  status line. `widget_rect` covers the variant, so hit-testing, hover and
+  repaint stay uniform.
+- **Two demo radio buttons** in the Widget Lab (`DHCP` / `Static` in group 0,
+  16 px row at y=248): the selections live in `LAB_FORM.radios: [u8;
+  LAB_RADIO_N]` (`LAB_NO` = none) and reset when the window opens.
+
+### Changed
+- The Widget Lab factory table `LAB_WIDGETS` grew from eight to ten widgets and
+  the window body now documents the radio row; `docs/INTERFACE.md` and
+  `docs/ARCHITECTURE.md` describe the new variant and its proof line.
+
 ## v2.63.0 — Kernel GUI checkbox widget (2026-10-22)
 
 ### Added

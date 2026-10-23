@@ -288,6 +288,19 @@ enum Widget {
         id: u8,
         label: &'static str,
     },
+    /// Radio button (v2.64.0): a round box that selects its `group` slot in the
+    /// host form store; selecting one clears the others in the same group.
+    Radio {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        /// Form-store group addressing this radio's selection.
+        group: u8,
+        /// The `group` value this radio selects.
+        value: u8,
+        label: &'static str,
+    },
 }
 
 /// Width of a [`Widget::Scrollbar`] track in pixels.
@@ -300,7 +313,8 @@ fn widget_rect(wg: &Widget) -> (usize, usize, usize, usize) {
         | Widget::TextField { x, y, w, h, .. }
         | Widget::List { x, y, w, h, .. }
         | Widget::Menu { x, y, w, h, .. }
-        | Widget::Checkbox { x, y, w, h, .. } => (x, y, w, h),
+        | Widget::Checkbox { x, y, w, h, .. }
+        | Widget::Radio { x, y, w, h, .. } => (x, y, w, h),
         Widget::Scrollbar { x, y, h, .. } => (x, y, SCROLLBAR_W, h),
     }
 }
@@ -2276,7 +2290,7 @@ static LAB_MENU: [&str; 4] = ["Clear name", "Clear note", "Reset list", "Close"]
 /// keyboard input. Laid out for the 460x300 window: captions at 30/54, fields
 /// at 48/72, the list at 100 (5 rows) with its bar at x=312, and the action row
 /// at 192.
-static LAB_WIDGETS: [Widget; 8] = [
+static LAB_WIDGETS: [Widget; 10] = [
     Widget::TextField {
         x: 8,
         y: 48,
@@ -2338,6 +2352,24 @@ static LAB_WIDGETS: [Widget; 8] = [
         id: 1,
         label: "Persist config",
     },
+    Widget::Radio {
+        x: 8,
+        y: 248,
+        w: 132,
+        h: 16,
+        group: 0,
+        value: 0,
+        label: "DHCP",
+    },
+    Widget::Radio {
+        x: 148,
+        y: 248,
+        w: 132,
+        h: 16,
+        group: 0,
+        value: 1,
+        label: "Static",
+    },
 ];
 
 /// Widget Lab text-field capacity in bytes (ASCII, no terminator).
@@ -2374,10 +2406,15 @@ struct LabForm {
     msg_len: u8,
     /// Checkbox checked bits (v2.63.0), addressed by `Widget::Checkbox::id`.
     checks: [bool; LAB_CHECK_N],
+    /// Radio group selection (v2.64.0): `radios[g]` = the `value` of the selected
+    /// radio in group `g`, or `LAB_NO` for none.
+    radios: [u8; LAB_RADIO_N],
 }
 
 /// Widget Lab checkbox count (v2.63.0).
 const LAB_CHECK_N: usize = 2;
+/// Widget Lab radio group count (v2.64.0).
+const LAB_RADIO_N: usize = 1;
 
 static mut LAB_FORM: LabForm = LabForm {
     fields: [[0; LAB_FIELD_CAP]; LAB_FIELD_N],
@@ -2389,6 +2426,7 @@ static mut LAB_FORM: LabForm = LabForm {
     msg: [0; 20],
     msg_len: 0,
     checks: [false; LAB_CHECK_N],
+    radios: [LAB_NO; LAB_RADIO_N],
 };
 
 /// Resets the Widget Lab form to its defaults; called when the window opens.
@@ -2405,6 +2443,7 @@ fn lab_form_load() {
     f.sel = 0;
     f.scroll = 0;
     f.checks = [false; LAB_CHECK_N];
+    f.radios = [LAB_NO; LAB_RADIO_N];
     lab_msg("ready");
 }
 
@@ -2864,6 +2903,32 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
                 dirty_kind(host);
             }
         }
+        Widget::Radio { group, value, label, .. } => {
+            if host == WinKind::Widgets {
+                let g = group as usize;
+                let old = lab_radio(g);
+                let selected = value;
+                if old != selected {
+                    lab_radio_select(g, selected);
+                    crate::kprintln!(
+                        "[gui] widget {}/radio {} = {}",
+                        host_label,
+                        label,
+                        selected
+                    );
+                    lab_msg(label);
+                    dirty_kind(host);
+                } else {
+                    crate::kprintln!(
+                        "[gui] widget {}/radio {} = {}",
+                        host_label,
+                        label,
+                        selected
+                    );
+                    dirty_kind(host);
+                }
+            }
+        }
     }
 }
 
@@ -2880,6 +2945,19 @@ fn lab_check_toggle(i: usize) -> bool {
 /// Checked state of checkbox `i`, or `false` out of range.
 fn lab_checked(i: u8) -> bool {
     lab_form().checks.get(i as usize).copied().unwrap_or(false)
+}
+
+/// Selected value of radio group `g`, or [`LAB_NO`] if none/out of range.
+fn lab_radio(g: usize) -> u8 {
+    lab_form().radios.get(g).copied().unwrap_or(LAB_NO)
+}
+
+/// Selects radio `value` in group `g`.
+fn lab_radio_select(g: usize, value: u8) {
+    let f = lab_form();
+    if g < f.radios.len() {
+        f.radios[g] = value;
+    }
 }
 
 /// Marks every open window of `kind` for repaint.
@@ -3032,13 +3110,34 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 draw_plate(fb, ax, ay, w, h, label, plate);
             }
             Widget::Checkbox {
-                x, y, h, id, label, ..
+                x,
+                y,
+                h,
+                id,
+                label,
+                ..
             } => {
                 let (ax, ay) = (win.x + x, win.y + y);
                 if win.kind == WinKind::Widgets {
                     let on = lab_checked(id);
                     let hovered = hover == Some((win.kind, wi));
                     draw_checkbox(fb, ax, ay, h, label, on, hovered);
+                }
+            }
+            Widget::Radio {
+                x,
+                y,
+                h,
+                group,
+                value,
+                label,
+                ..
+            } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                if win.kind == WinKind::Widgets {
+                    let selected = lab_radio(group as usize) == value;
+                    let hovered = hover == Some((win.kind, wi));
+                    draw_radio(fb, ax, ay, h, label, selected, hovered);
                 }
             }
         }
@@ -3107,6 +3206,60 @@ fn draw_checkbox(
     let tx = ax + box_sz + 6;
     let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
     let color = if on { TEXT } else { TEXT_DIM };
+    tui::draw_text(fb, tx, ty, label, color, BTN_BG, fb.width());
+}
+
+/// Paints a radio button (v2.64.0): a circle outline with a filled dot when
+/// selected; the caption brightens when selected.
+fn draw_radio(
+    fb: &Framebuffer,
+    ax: usize,
+    ay: usize,
+    h: usize,
+    label: &str,
+    selected: bool,
+    hovered: bool,
+) {
+    let r = h.min(12) / 2;
+    let cx = ax + r + 1;
+    let cy = ay + h / 2;
+    let border = if hovered { BAR_ON } else { TEXT_DIM };
+    for dy in 0..(2 * r + 3) {
+        for dx in 0..(2 * r + 3) {
+            let px = cx as i32 + dx as i32 - (r as i32 + 1);
+            let py = cy as i32 + dy as i32 - (r as i32 + 1);
+            if px < 0 || py < 0 {
+                continue;
+            }
+            let dx2 = (dx as i32 - (r as i32 + 1)).abs();
+            let dy2 = (dy as i32 - (r as i32 + 1)).abs();
+            let dist2 = dx2 * dx2 + dy2 * dy2;
+            let r2 = ((r as i32 + 1) * (r as i32 + 1)) as i32;
+            let r12 = ((r as i32) * (r as i32)) as i32;
+            if dist2 <= r2 && dist2 >= r12 {
+                unsafe {
+                    fb.fill_rect(px as usize, py as usize, 1, 1, border);
+                }
+            }
+        }
+    }
+    if selected {
+        unsafe {
+            let ir = if r >= 3 { r - 2 } else { 1 };
+            for dy in 0..(2 * ir + 1) {
+                for dx in 0..(2 * ir + 1) {
+                    let dx2 = dx as i32 - ir as i32;
+                    let dy2 = dy as i32 - ir as i32;
+                    if dx2 * dx2 + dy2 * dy2 <= (ir as i32) * (ir as i32) {
+                        fb.fill_rect(cx + dx - ir, cy + dy - ir, 1, 1, TEXT);
+                    }
+                }
+            }
+        }
+    }
+    let tx = ax + 2 * r + 8;
+    let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
+    let color = if selected { TEXT } else { TEXT_DIM };
     tui::draw_text(fb, tx, ty, label, color, BTN_BG, fb.width());
 }
 

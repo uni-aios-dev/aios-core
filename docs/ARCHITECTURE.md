@@ -1735,6 +1735,12 @@ match on the bound local port and require the reply to come from the connected p
     toggles the bit through `lab_check_toggle` and logs `[gui] widget Widget
     Lab/check <label> = on|off`. Its checked bits live in the `LAB_FORM`
     (`checks: [bool; LAB_CHECK_N]`) field, reset on window load.
+    Since v2.64.0 a seventh variant, `Widget::Radio` (a round box + caption,
+    `group` + `value`), joins them: `draw_radio` paints the circle outline and
+    a filled dot when selected, `widget_click` selects the value through
+    `lab_radio_select` (which clears the siblings in the same group) and logs
+    `[gui] widget Widget Lab/radio <label> = <value>`. Selections live in
+    `LAB_FORM.radios: [u8; LAB_RADIO_N]` (`LAB_NO` = none), reset on load.
     The desktop gains a **Widget Lab** window (`WinKind::Widgets`, label
     `Widgets` in the icon column, 460×300) that hosts two text fields, a
     ten-row scrollable list with a bound scrollbar, an `Edit` dropdown, a

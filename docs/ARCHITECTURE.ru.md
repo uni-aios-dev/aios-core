@@ -1727,11 +1727,19 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
     переключает бит через `lab_check_toggle` и пишет `[gui] widget Widget Lab/check
     <label> = on|off`. Флаги чекбоксов живут в поле `LAB_FORM`
     (`checks: [bool; LAB_CHECK_N]`) и сбрасываются при загрузке окна.
+    С v2.64.0 добавляется седьмой вариант `Widget::Radio` (круглый бокс с
+    подписью, `group` + `value`): `draw_radio` рисует контур круга и
+    заполненный кружок у выбранного, `widget_click` выбирает значение через
+    `lab_radio_select` (снимая остальные в той же группе) и пишет
+    `[gui] widget Widget Lab/radio <label> = <value>`. Выборы живут в
+    `LAB_FORM.radios: [u8; LAB_RADIO_N]` (`LAB_NO` = ничего не выбрано) и
+    сбрасываются при загрузке окна.
     На десктопе появляется окно **Widget Lab** (`WinKind::Widgets`, метка
     `Widgets` в колонке иконок, 460×300) с двумя текстовыми полями,
     прокручиваемым списком из десяти строк с привязанным скроллбаром,
-    выпадающим меню `Edit`, кнопкой закрытия и двумя чекбоксами
-    (`Auto-connect` / `Persist config`); его состояние живёт в глобале
+    выпадающим меню `Edit`, кнопкой закрытия, двумя чекбоксами
+    (`Auto-connect` / `Persist config`) и двумя радиокнопками
+    (`DHCP` / `Static`); его состояние живёт в глобале
     `LAB_FORM: LabForm` (паттерн `NET_DRAFT`). Ввод с клавиатуры
     маршрутизируется фокусному хозяину до глобальных горячих клавиш через
     `widget_key` (вызывается из `handle_scancode` после `net_key`): `Tab`
