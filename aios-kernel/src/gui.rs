@@ -277,6 +277,17 @@ enum Widget {
         label: &'static str,
         items: &'static [&'static str],
     },
+    /// Checkbox (v2.63.0): a square box with a caption that toggles its bit in
+    /// the host form store; the checked bit flips [`WidgetAction::Check`].
+    Checkbox {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        /// Form-store bit addressing this checkbox.
+        id: u8,
+        label: &'static str,
+    },
 }
 
 /// Width of a [`Widget::Scrollbar`] track in pixels.
@@ -288,7 +299,8 @@ fn widget_rect(wg: &Widget) -> (usize, usize, usize, usize) {
         Widget::Button { x, y, w, h, .. }
         | Widget::TextField { x, y, w, h, .. }
         | Widget::List { x, y, w, h, .. }
-        | Widget::Menu { x, y, w, h, .. } => (x, y, w, h),
+        | Widget::Menu { x, y, w, h, .. }
+        | Widget::Checkbox { x, y, w, h, .. } => (x, y, w, h),
         Widget::Scrollbar { x, y, h, .. } => (x, y, SCROLLBAR_W, h),
     }
 }
@@ -2264,7 +2276,7 @@ static LAB_MENU: [&str; 4] = ["Clear name", "Clear note", "Reset list", "Close"]
 /// keyboard input. Laid out for the 460x300 window: captions at 30/54, fields
 /// at 48/72, the list at 100 (5 rows) with its bar at x=312, and the action row
 /// at 192.
-static LAB_WIDGETS: [Widget; 6] = [
+static LAB_WIDGETS: [Widget; 8] = [
     Widget::TextField {
         x: 8,
         y: 48,
@@ -2310,6 +2322,22 @@ static LAB_WIDGETS: [Widget; 6] = [
         label: "Close",
         action: WidgetAction::CloseHost,
     },
+    Widget::Checkbox {
+        x: 8,
+        y: 224,
+        w: 152,
+        h: 16,
+        id: 0,
+        label: "Auto-connect",
+    },
+    Widget::Checkbox {
+        x: 168,
+        y: 224,
+        w: 152,
+        h: 16,
+        id: 1,
+        label: "Persist config",
+    },
 ];
 
 /// Widget Lab text-field capacity in bytes (ASCII, no terminator).
@@ -2344,7 +2372,12 @@ struct LabForm {
     msg: [u8; 20],
     /// Used length of `msg`.
     msg_len: u8,
+    /// Checkbox checked bits (v2.63.0), addressed by `Widget::Checkbox::id`.
+    checks: [bool; LAB_CHECK_N],
 }
+
+/// Widget Lab checkbox count (v2.63.0).
+const LAB_CHECK_N: usize = 2;
 
 static mut LAB_FORM: LabForm = LabForm {
     fields: [[0; LAB_FIELD_CAP]; LAB_FIELD_N],
@@ -2355,6 +2388,7 @@ static mut LAB_FORM: LabForm = LabForm {
     scroll: 0,
     msg: [0; 20],
     msg_len: 0,
+    checks: [false; LAB_CHECK_N],
 };
 
 /// Resets the Widget Lab form to its defaults; called when the window opens.
@@ -2370,6 +2404,7 @@ fn lab_form_load() {
     f.menu = LAB_NO;
     f.sel = 0;
     f.scroll = 0;
+    f.checks = [false; LAB_CHECK_N];
     lab_msg("ready");
 }
 
@@ -2815,7 +2850,36 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
                 dirty_kind(host);
             }
         }
+        Widget::Checkbox { id, label, .. } => {
+            if host == WinKind::Widgets {
+                let i = id as usize;
+                let on = lab_check_toggle(i);
+                crate::kprintln!(
+                    "[gui] widget {}/check {} = {}",
+                    host_label,
+                    label,
+                    if on { "on" } else { "off" }
+                );
+                lab_msg(if on { "checked" } else { "unchecked" });
+                dirty_kind(host);
+            }
+        }
     }
+}
+
+/// Toggles checkbox `i` in the Widget Lab form store and returns the new state.
+fn lab_check_toggle(i: usize) -> bool {
+    let f = lab_form();
+    if i >= f.checks.len() {
+        return false;
+    }
+    f.checks[i] = !f.checks[i];
+    f.checks[i]
+}
+
+/// Checked state of checkbox `i`, or `false` out of range.
+fn lab_checked(i: u8) -> bool {
+    lab_form().checks.get(i as usize).copied().unwrap_or(false)
 }
 
 /// Marks every open window of `kind` for repaint.
@@ -2967,6 +3031,16 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 };
                 draw_plate(fb, ax, ay, w, h, label, plate);
             }
+            Widget::Checkbox {
+                x, y, h, id, label, ..
+            } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                if win.kind == WinKind::Widgets {
+                    let on = lab_checked(id);
+                    let hovered = hover == Some((win.kind, wi));
+                    draw_checkbox(fb, ax, ay, h, label, on, hovered);
+                }
+            }
         }
     }
 }
@@ -2999,6 +3073,41 @@ fn draw_plate(
     let tx = ax + w.saturating_sub(label.len() * console::GLYPH_W) / 2;
     let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
     tui::draw_text(fb, tx, ty, label, TEXT, plate, (ax + w).min(fb.width()));
+}
+
+/// Paints a checkbox (v2.63.0): a square box whose caption sits to its right.
+/// The box border is [`BAR_ON`] when hovered, the interior shows a check mark
+/// when on, and the caption is [`TEXT`] (dimmed while off).
+fn draw_checkbox(
+    fb: &Framebuffer,
+    ax: usize,
+    ay: usize,
+    h: usize,
+    label: &str,
+    on: bool,
+    hovered: bool,
+) {
+    let box_sz = h.min(12);
+    let by = ay + (h - box_sz) / 2;
+    let border = if hovered { BAR_ON } else { TEXT_DIM };
+    unsafe {
+        fb.fill_rect(ax, by, box_sz, box_sz, NET_BOX_BG);
+    }
+    draw_edge_box(fb, ax, by, box_sz, box_sz, border);
+    if on {
+        unsafe {
+            let mut k = 0;
+            while k < box_sz.saturating_sub(4) {
+                fb.fill_rect(ax + 3 + k, by + 3 + k, 2, 2, TEXT);
+                fb.fill_rect(ax + box_sz - 4 - k, by + 3 + k, 2, 2, TEXT);
+                k += 2;
+            }
+        }
+    }
+    let tx = ax + box_sz + 6;
+    let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
+    let color = if on { TEXT } else { TEXT_DIM };
+    tui::draw_text(fb, tx, ty, label, color, BTN_BG, fb.width());
 }
 
 /// Paints a 1px rectangular border in `border`.

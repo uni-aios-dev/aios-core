@@ -1,5 +1,24 @@
 # AIOS Development Log
 
+## v2.63.0 — Kernel GUI checkbox widget (2026-10-22)
+
+### Added
+- **`Widget::Checkbox`** (`aios-kernel/src/gui.rs`): the widget set gains a
+  checkbox — a square box with a caption and an `id` into the host form store.
+  `draw_checkbox` paints the box (`BAR_ON` border while hovered, `NET_BOX_BG`
+  fill) and an X-shaped check mark when on; `widget_click` toggles the bit
+  through `lab_check_toggle` and logs `[gui] widget Widget Lab/check <label> =
+  on|off`, updating the header status line. `widget_rect` covers the variant, so
+  hit-testing, hover and repaint stay uniform.
+- **Two demo checkboxes** in the Widget Lab (`Auto-connect` / `Persist config`,
+  16 px row at y=224): the checked bits live in the `LAB_FORM`
+  (`checks: [bool; LAB_CHECK_N]`) field and reset when the window opens.
+
+### Changed
+- The Widget Lab factory table `LAB_WIDGETS` grew from six to eight widgets and
+  the window body now documents the checkbox row; `docs/INTERFACE.md` and
+  `docs/ARCHITECTURE.md` describe the new variant and its proof line.
+
 ## v2.62.0 — Per-profile base sets: the hardware trims the compiled-in blocks (2026-10-22)
 
 ### Added

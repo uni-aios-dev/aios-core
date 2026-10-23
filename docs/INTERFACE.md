@@ -771,8 +771,9 @@ focused) returns to the console/TUI.
   - *Task Manager* — the open-window list with End Task / Switch To
     (open via the *Tasks* icon; see the v2.38.35 section below).
   - *Widget Lab* — the widget-set demo: two text fields, a scrollable list
-    with its scrollbar, an `Edit` dropdown and a `Close` button
-    (open via the *Widgets* icon; see the v2.47.0 section below).
+    with its scrollbar, an `Edit` dropdown, a `Close` button and two
+    checkboxes (`Auto-connect` / `Persist config`)
+    (open via the *Widgets* icon; see the v2.47.0 and v2.63.0 sections below).
 - **Input**:
   - Mouse: click an icon to open (or focus) that window; click a window body or
     task-bar button to focus; drag a title bar to move (clamped to the bounds);
@@ -1037,13 +1038,17 @@ focused) returns to the console/TUI.
   - *Menu*: the `Edit` plate opens a dropdown (`Clear name` / `Clear note` /
     `Reset list` / `Close`); hovering lights a row, clicking one runs it —
     the three edits update the demo form, `Close` closes the window.
+  - *Checkboxes* (v2.63.0): `Auto-connect` and `Persist config` — a square box
+    with a caption; click one to toggle it (the box fills with a check mark and
+    the caption brightens), and the header status line reports the new state.
   - *Close* button: closes the Lab through the normal path (a typed note
     still raises the `Confirm` dialog).
   - Press `Escape` to dismiss an open dropdown without closing the window.
   - Serial proof: `[gui] widget Widget Lab/field <n> focus`,
     `[gui] widget Widget Lab/list row <n> click`,
     `[gui] widget Widget Lab/menu open|close`,
-    `[gui] widget Widget Lab/menu item <n> click`.
+    `[gui] widget Widget Lab/menu item <n> click`,
+    `[gui] widget Widget Lab/check <label> = on|off`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the
