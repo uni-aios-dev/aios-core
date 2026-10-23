@@ -146,7 +146,7 @@ pub async fn initialize(
     // Base set: compiled-in blocks created on demand by the block factory and
     // wired into the message router exactly like a disk block would be.
     let mut router = MessageRouter::new();
-    let base_blocks = blocks::register_base_blocks(&mut registry, &mut router);
+    let base_blocks = blocks::register_base_blocks(&mut registry, &mut router, Some(total_ram_mb));
     push_log(
         &logs,
         format!("AIOS: wired {} base blocks", base_blocks.len()),

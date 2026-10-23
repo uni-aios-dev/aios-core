@@ -1,5 +1,25 @@
 # AIOS Development Log
 
+## v2.62.0 — Per-profile base sets: the hardware trims the compiled-in blocks (2026-10-22)
+
+### Added
+- **Per-profile base set** (`aios/src/blocks.rs`, `aios/src/orchestrator.rs`): `base_factories_for(total_ram_mb)`
+  builds the compiled-in factory registry for the detected hardware, and
+  `register_base_blocks(..., total_ram_mb)` wires only the blocks that fit the profile. The build-time
+  `base-*` features remain the upper bound — a profile can only trim it. The first filter is RAM:
+  machines with less than `BROWSER_MIN_RAM_MB` (4096 MiB) leave the `browser` block out, so a low-RAM
+  device boots the smaller set instead of swapping the heaviest block. Skipped blocks are logged as
+  `AIOS: base block 'browser' skipped for this profile: requires at least 4 GiB RAM`.
+- **Profile policy helper** (`blocks::base_block_skip_reason(name, total_ram_mb)`): returns why a base
+  block is unsuitable for a machine with that much RAM, or `None`. The policy is deliberately small;
+  every block without a hard hardware requirement stays in every profile.
+
+### Changed
+- `register_base_blocks()` now takes the detected RAM (`Option<u64>`; `None` means the full compiled-in
+  set, which is what the tests and profile-less callers use). `base_factories()` is a thin wrapper over
+  `base_factories_for(None)`. The orchestrator passes the RAM it already probes, so no second hardware
+  scan happens.
+
 ## v2.61.0 — Responsive TUIs: non-blocking store/web commands, `intent` shell command, text cleanup (2026-10-22)
 
 ### Fixed
@@ -20,7 +40,8 @@
   `docs/INTERFACE.md` describes the real behaviour.
 - **Mojibake in comments and messages** (`aios-kernel/src/gui.rs`, `aios-kernel/src/interrupts.rs`,
   `aios-init/src/main.rs`, `aios-gui/src/tabs/blocks.rs`, `aios/src/tui/mod.rs`): 54 em dashes
-  had been stored as the CP1251 byte sequence `as the CP1251 mojibake of an em dash (the UTF-8 bytes `E2 80 94` read as CP1251)`; they are real `—` characters again.
+  had been stored as the CP1251 readback of an em dash (the UTF-8 bytes `E2 80 94`
+  interpreted as CP1251); they are real `—` characters again.
 
 ### Added
 - **Standalone `intent` shell command** (`aios-tui/src/main.rs`): the built-in `IntentEngine`

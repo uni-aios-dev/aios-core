@@ -459,7 +459,7 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
 
 - [x] **GUI Blocks tab loader report (v2.59.0)**: `GuiRuntime::loader_report()` + `AiosApp::block_load_summary()` render `base [...] | disk [...] | failed N | live M` in the GUI Blocks tab — parity with the TUI summary line.
 - [x] **Block loader follow-ups (v2.59.1)**: the compiled-in base set is selected with the `base-hal` / `base-browser` / `base-net-settings` feature flags (`base-all` enables all of them).
-- [ ] **Per-profile base sets**: the base set is still a compile-time choice; selecting a different base set per hardware profile (e.g. a smaller set for low-RAM devices) is still open.
+- [x] **Per-profile base sets (v2.62.0)**: `base_factories_for(total_ram_mb)` / `register_base_blocks(..., total_ram_mb)` trim the compiled-in set to the detected hardware; the `base-*` features stay the upper bound. Today the only policy is RAM (below `BROWSER_MIN_RAM_MB` = 4096 MiB the `browser` block is skipped and logged). Still open: policies based on GPU/NPU capabilities, and per-profile build scripts that trim the binary itself.
 - [x] **Non-blocking shell network commands (v2.61.0)**: `store search` / `store install` / `store update` (both TUIs), plus `fetch` and `search` in the standalone TUI, run as background tasks — the UI never freezes on network I/O.
 - [x] **Standalone `intent` shell command (v2.61.0)**: the built-in `IntentEngine` is reachable from the standalone TUI shell; it translates a natural-language request into the IPC intent, the plan and the target block (translation only — the kernel AI Console executes intents).
 - [x] **Phase 24 sub-item: Backend workflow execution endpoint** — `POST /api/v1/workflow` batch intent executor in `aios-bridge`

@@ -154,6 +154,25 @@ impl BlockFactory for NetSettingsFactory {
     }
 }
 
+/// Minimum RAM (MiB) required by the `browser` base block.
+///
+/// Below this threshold the block is left out of the profile base set: the
+/// browser is the heaviest compiled-in block, and a low-RAM machine is better
+/// served by the smaller set than by swapping.
+pub const BROWSER_MIN_RAM_MB: u64 = 4096;
+
+/// Why a compiled-in base block is unsuitable for a machine with this much RAM.
+///
+/// Returns `None` when the block should be loaded. The policy is deliberately
+/// small and explicit: only blocks with a hard hardware requirement are
+/// filtered out, everything else is always part of the profile set.
+pub fn base_block_skip_reason(name: &str, total_ram_mb: u64) -> Option<&'static str> {
+    match name {
+        "browser" if total_ram_mb < BROWSER_MIN_RAM_MB => Some("requires at least 4 GiB RAM"),
+        _ => None,
+    }
+}
+
 /// Build the registry of compiled-in base block factories.
 /// The order is the registration order and is stable across builds. Adding a
 /// block to the base set only requires a new factory here and a `base-*`
@@ -161,31 +180,56 @@ impl BlockFactory for NetSettingsFactory {
 /// `--no-default-features --features base-hal,base-net-settings` (and include
 /// `base-all` for the full set on builds that use `--no-default-features`).
 pub fn base_factories() -> BlockFactoryRegistry {
+    base_factories_for(None)
+}
+
+/// Build the base factory registry for a hardware profile.
+///
+/// `total_ram_mb` is the detected physical memory; with `None` the full
+/// compiled-in set is returned. A profile can only *trim* the set selected at
+/// build time (see [`base_block_skip_reason`]):
+///
+/// ```text
+/// compiled-in set (base-* features)  >=  profile set (hardware filters)
+/// ```
+pub fn base_factories_for(total_ram_mb: Option<u64>) -> BlockFactoryRegistry {
     let mut factories = BlockFactoryRegistry::new();
     #[cfg(feature = "base-hal")]
     let _ = factories.register(Box::new(HalFactory));
     #[cfg(feature = "base-browser")]
-    let _ = factories.register(Box::new(BrowserFactory));
+    if total_ram_mb.is_none_or(|mb| base_block_skip_reason("browser", mb).is_none()) {
+        let _ = factories.register(Box::new(BrowserFactory));
+    }
     #[cfg(feature = "base-net-settings")]
     let _ = factories.register(Box::new(NetSettingsFactory));
     factories
 }
 
-/// Instantiate every base block, register it in the [`BlockRegistry`] and wire
-/// its message handler into the [`MessageRouter`].
+/// Instantiate every base block for the detected hardware, register it in the
+/// [`BlockRegistry`] and wire its message handler into the [`MessageRouter`].
 ///
-/// Returns the blocks that were wired. A block that fails to build is logged
-/// and skipped so one bad factory cannot abort the whole boot.
+/// `total_ram_mb` trims the compiled-in set (see [`base_factories_for`]); with
+/// `None` every compiled-in block is wired. Returns the blocks that were wired.
+/// A block that is skipped for the profile or fails to build is logged, so one
+/// bad factory cannot abort the whole boot.
 pub fn register_base_blocks(
     registry: &mut BlockRegistry,
     router: &mut MessageRouter,
+    total_ram_mb: Option<u64>,
 ) -> Vec<BaseBlockInfo> {
-    let factories = base_factories();
+    let factories = base_factories_for(total_ram_mb);
     let mut wired = Vec::new();
     for name in factories.names() {
         match register_one_base(&factories, name, registry, router) {
             Ok(info) => wired.push(info),
             Err(e) => log::error!("AIOS ERROR: base block '{name}' failed to wire: {e}"),
+        }
+    }
+    if let Some(mb) = total_ram_mb {
+        for name in base_factories().names() {
+            if let Some(reason) = base_block_skip_reason(name, mb) {
+                log::info!("AIOS: base block '{name}' skipped for this profile: {reason}");
+            }
         }
     }
     wired
@@ -358,7 +402,7 @@ mod tests {
         let mut registry = BlockRegistry::new();
         let mut router = MessageRouter::new();
 
-        let wired = register_base_blocks(&mut registry, &mut router);
+        let wired = register_base_blocks(&mut registry, &mut router, None);
 
         let expected_len: usize = {
             let mut n: usize = 0;
@@ -398,6 +442,50 @@ mod tests {
             let config = aios_net_config::config::NetworkConfig::from_json(&json).unwrap();
             assert_eq!(config.hostname, "aios-host");
         }
+    }
+
+    #[test]
+    fn test_base_block_skip_reason_only_filters_low_ram_browser() {
+        assert_eq!(base_block_skip_reason("hal", 512), None);
+        assert_eq!(base_block_skip_reason("net_settings", 512), None);
+        assert_eq!(
+            base_block_skip_reason("browser", BROWSER_MIN_RAM_MB - 1),
+            Some("requires at least 4 GiB RAM")
+        );
+        assert_eq!(base_block_skip_reason("browser", BROWSER_MIN_RAM_MB), None);
+        assert_eq!(base_block_skip_reason("browser", 8192), None);
+    }
+
+    #[test]
+    fn test_base_factories_for_low_ram_trims_browser() {
+        let low = base_factories_for(Some(1024));
+        #[cfg(feature = "base-hal")]
+        assert!(low.contains("hal"));
+        #[cfg(feature = "base-net-settings")]
+        assert!(low.contains("net_settings"));
+        #[cfg(feature = "base-browser")]
+        {
+            assert!(!low.contains("browser"));
+            assert!(base_factories_for(Some(BROWSER_MIN_RAM_MB)).contains("browser"));
+            assert!(base_factories_for(None).contains("browser"));
+        }
+    }
+
+    #[test]
+    fn test_register_base_blocks_low_ram_skips_browser() {
+        let mut registry = BlockRegistry::new();
+        let mut router = MessageRouter::new();
+
+        let wired = register_base_blocks(&mut registry, &mut router, Some(512));
+        let names: Vec<&str> = wired.iter().map(|b| b.name.as_str()).collect();
+
+        #[cfg(feature = "base-hal")]
+        assert!(names.contains(&"hal"));
+        #[cfg(feature = "base-net-settings")]
+        assert!(names.contains(&"net_settings"));
+        #[cfg(feature = "base-browser")]
+        assert!(!names.contains(&"browser"));
+        assert!(registry.find_by_name("browser").is_none());
     }
 
     #[test]
