@@ -1,5 +1,25 @@
 # AIOS Development Log
 
+## v2.65.0 ? Per-window widget forms and generic checkbox in Network (2026-10-23)
+
+### Added
+- **Per-window form store** (`aios-kernel/src/gui.rs`): `WidgetForm` replaces the
+  Widget Lab-only `LabForm`, held in `FORMS[]` keyed by a per-`WinKind` slot
+  (`form_slot`). `form_load`/`form_msg` are generic; `lab_form_load`/`lab_msg`
+  remain as compat shims for the Widget Lab. Every widget host gets its own
+  checkbox/radio/text-field state.
+- **Generic `Widget::Checkbox` in Network**: the Network window gains a
+  `Remember settings` checkbox (row at y=208) driven by the Network form slot;
+  `form_check_toggle`/`form_checked` route clicks and draws through the generic
+  form store, with serial proof `[gui] widget Network/check Remember settings =
+  on|off`.
+
+### Changed
+- `widget_click` and `draw_widgets` route checkbox/radio through `form_*`
+  helpers for any host; `LAB_WIDGETS`/radio helpers moved to host-aware
+  `form_*` APIs. `docs/INTERFACE.md` and `docs/ARCHITECTURE.md` describe the
+  per-window store and the Network checkbox.
+
 ## v2.64.0 ? Kernel GUI radio buttons (2026-10-23)
 
 ### Added
