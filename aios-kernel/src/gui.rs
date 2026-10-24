@@ -789,6 +789,7 @@ fn spawn(kind: WinKind) {
         x = 420.min(fb_w.saturating_sub(w + 8));
         y = 356.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
         net_draft_load();
+        form_load(WinKind::Network);
     }
     if kind == WinKind::Tasks {
         w = 440;
@@ -2138,7 +2139,7 @@ static WELCOME_WIDGETS: [Widget; 4] = [
 /// seven command buttons, laid out on the 16 px body grid of the 420x356
 /// window — mode row at 104, address fields at 128..192, apply/test at 208,
 /// Wi-Fi fields at 296/312 and the scan/connect row at 328.
-static NETWORK_WIDGETS: [Widget; 14] = [
+static NETWORK_WIDGETS: [Widget; 15] = [
     Widget::Button {
         x: 80,
         y: 104,
@@ -2210,6 +2211,14 @@ static NETWORK_WIDGETS: [Widget; 14] = [
         h: 16,
         label: "Test",
         action: WidgetAction::Net(NetBtn::Test),
+    },
+    Widget::Checkbox {
+        x: 252,
+        y: 208,
+        w: 160,
+        h: 16,
+        id: 0,
+        label: "Remember settings",
     },
     Widget::Button {
         x: 80,
@@ -2381,13 +2390,13 @@ const LAB_NO: u8 = 0xFF;
 /// Visible rows of the Widget Lab list.
 const LAB_ROWS: usize = 5;
 
-/// Editable state of the Widget Lab (v2.47.0). Follows the Network window's
-/// `NET_DRAFT` pattern: one global form reloaded when the window opens, with
-/// `focus`/`menu` naming the widget that owns the keyboard. The routing
-/// ([`widget_key`]) is generic — it dispatches to whichever host is focused —
-/// while the backing store remains demo-specific; a per-window store shared by
-/// every host is the planned follow-up.
-struct LabForm {
+/// Editable state of one widget host (v2.65.0). Originally the Widget Lab's
+/// `LAB_FORM` (v2.47.0), it is now a per-window store: [`FORMS`] holds one
+/// instance per built-in host, keyed by [`form_slot`], so a checkbox or radio
+/// in the Network window never aliases the Widget Lab's state. `focus`/`menu`
+/// name the widget that owns the keyboard; the routing ([`widget_key`]) is
+/// generic and dispatches to whichever host is focused.
+struct WidgetForm {
     /// Text buffers for field ids `0..LAB_FIELD_N`.
     fields: [[u8; LAB_FIELD_CAP]; LAB_FIELD_N],
     /// Used length of each field buffer.
@@ -2405,18 +2414,38 @@ struct LabForm {
     /// Used length of `msg`.
     msg_len: u8,
     /// Checkbox checked bits (v2.63.0), addressed by `Widget::Checkbox::id`.
-    checks: [bool; LAB_CHECK_N],
+    checks: [bool; FORM_CHECK_N],
     /// Radio group selection (v2.64.0): `radios[g]` = the `value` of the selected
     /// radio in group `g`, or `LAB_NO` for none.
-    radios: [u8; LAB_RADIO_N],
+    radios: [u8; FORM_RADIO_N],
 }
 
-/// Widget Lab checkbox count (v2.63.0).
-const LAB_CHECK_N: usize = 2;
-/// Widget Lab radio group count (v2.64.0).
-const LAB_RADIO_N: usize = 1;
+/// Checkbox count of a widget form (v2.63.0).
+const FORM_CHECK_N: usize = 2;
+/// Radio group count of a widget form (v2.64.0).
+const FORM_RADIO_N: usize = 1;
 
-static mut LAB_FORM: LabForm = LabForm {
+/// One form slot per built-in host kind (v2.65.0).
+const FORM_SLOTS: usize = 8;
+
+/// Slot of `kind` in [`FORMS`]: built-in windows own a slot each, ring-3
+/// clients share the last one (their widget table is host-driven and today
+/// empty).
+const fn form_slot(kind: WinKind) -> usize {
+    match kind {
+        WinKind::Welcome => 0,
+        WinKind::System => 1,
+        WinKind::Clock => 2,
+        WinKind::About => 3,
+        WinKind::Network => 4,
+        WinKind::Tasks => 5,
+        WinKind::Widgets => 6,
+        WinKind::Client(_) => 7,
+    }
+}
+
+/// Default (empty) widget form; the initializer of every [`FORMS`] slot.
+const EMPTY_FORM: WidgetForm = WidgetForm {
     fields: [[0; LAB_FIELD_CAP]; LAB_FIELD_N],
     lens: [0; LAB_FIELD_N],
     focus: LAB_NO,
@@ -2425,13 +2454,22 @@ static mut LAB_FORM: LabForm = LabForm {
     scroll: 0,
     msg: [0; 20],
     msg_len: 0,
-    checks: [false; LAB_CHECK_N],
-    radios: [LAB_NO; LAB_RADIO_N],
+    checks: [false; FORM_CHECK_N],
+    radios: [LAB_NO; FORM_RADIO_N],
 };
 
-/// Resets the Widget Lab form to its defaults; called when the window opens.
-fn lab_form_load() {
-    let f = lab_form();
+/// Per-window widget forms, one per [`form_slot`] (single-threaded GUI global).
+static mut FORMS: [WidgetForm; FORM_SLOTS] = [EMPTY_FORM; FORM_SLOTS];
+
+/// Mutable handle to `kind`'s widget form (single-threaded GUI global).
+fn form(kind: WinKind) -> &'static mut WidgetForm {
+    let forms = unsafe { &mut *core::ptr::addr_of_mut!(FORMS) };
+    &mut forms[form_slot(kind)]
+}
+
+/// Resets the form of `kind` to its defaults; called when the window opens.
+fn form_load(kind: WinKind) {
+    let f = form(kind);
     for b in f.fields.iter_mut() {
         for c in b.iter_mut() {
             *c = 0;
@@ -2442,22 +2480,32 @@ fn lab_form_load() {
     f.menu = LAB_NO;
     f.sel = 0;
     f.scroll = 0;
-    f.checks = [false; LAB_CHECK_N];
-    f.radios = [LAB_NO; LAB_RADIO_N];
-    lab_msg("ready");
+    f.checks = [false; FORM_CHECK_N];
+    f.radios = [LAB_NO; FORM_RADIO_N];
+    form_msg(kind, "ready");
+}
+
+/// Resets the Widget Lab form; called when its window opens.
+fn lab_form_load() {
+    form_load(WinKind::Widgets);
 }
 
 /// Mutable handle to the Widget Lab form (single-threaded GUI global).
-fn lab_form() -> &'static mut LabForm {
-    unsafe { &mut *core::ptr::addr_of_mut!(LAB_FORM) }
+fn lab_form() -> &'static mut WidgetForm {
+    form(WinKind::Widgets)
+}
+
+/// Sets the status line of `kind`'s form (ASCII, truncated to the buffer).
+fn form_msg(kind: WinKind, s: &str) {
+    let f = form(kind);
+    let n = s.len().min(f.msg.len());
+    f.msg[..n].copy_from_slice(&s.as_bytes()[..n]);
+    f.msg_len = n as u8;
 }
 
 /// Sets the Widget Lab status line (ASCII, truncated to the buffer).
 fn lab_msg(s: &str) {
-    let f = lab_form();
-    let n = s.len().min(f.msg.len());
-    f.msg[..n].copy_from_slice(&s.as_bytes()[..n]);
-    f.msg_len = n as u8;
+    form_msg(WinKind::Widgets, s);
 }
 
 /// Focused Widget Lab widget id, or [`LAB_NO`].
@@ -2890,51 +2938,39 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
             }
         }
         Widget::Checkbox { id, label, .. } => {
-            if host == WinKind::Widgets {
-                let i = id as usize;
-                let on = lab_check_toggle(i);
-                crate::kprintln!(
-                    "[gui] widget {}/check {} = {}",
-                    host_label,
-                    label,
-                    if on { "on" } else { "off" }
-                );
-                lab_msg(if on { "checked" } else { "unchecked" });
-                dirty_kind(host);
-            }
+            let on = form_check_toggle(host, id as usize);
+            crate::kprintln!(
+                "[gui] widget {}/check {} = {}",
+                host_label,
+                label,
+                if on { "on" } else { "off" }
+            );
+            form_msg(host, if on { "checked" } else { "unchecked" });
+            dirty_kind(host);
         }
-        Widget::Radio { group, value, label, .. } => {
-            if host == WinKind::Widgets {
-                let g = group as usize;
-                let old = lab_radio(g);
-                let selected = value;
-                if old != selected {
-                    lab_radio_select(g, selected);
-                    crate::kprintln!(
-                        "[gui] widget {}/radio {} = {}",
-                        host_label,
-                        label,
-                        selected
-                    );
-                    lab_msg(label);
-                    dirty_kind(host);
-                } else {
-                    crate::kprintln!(
-                        "[gui] widget {}/radio {} = {}",
-                        host_label,
-                        label,
-                        selected
-                    );
-                    dirty_kind(host);
-                }
-            }
+        Widget::Radio {
+            group,
+            value,
+            label,
+            ..
+        } => {
+            let g = group as usize;
+            form_radio_select(host, g, value);
+            crate::kprintln!(
+                "[gui] widget {}/radio {} = {}",
+                host_label,
+                label,
+                value
+            );
+            form_msg(host, label);
+            dirty_kind(host);
         }
     }
 }
 
-/// Toggles checkbox `i` in the Widget Lab form store and returns the new state.
-fn lab_check_toggle(i: usize) -> bool {
-    let f = lab_form();
+/// Toggles checkbox `i` in `host`'s form store and returns the new state.
+fn form_check_toggle(host: WinKind, i: usize) -> bool {
+    let f = form(host);
     if i >= f.checks.len() {
         return false;
     }
@@ -2942,19 +2978,21 @@ fn lab_check_toggle(i: usize) -> bool {
     f.checks[i]
 }
 
-/// Checked state of checkbox `i`, or `false` out of range.
-fn lab_checked(i: u8) -> bool {
-    lab_form().checks.get(i as usize).copied().unwrap_or(false)
+/// Checked state of checkbox `id` in `host`'s form store, `false` out of range.
+fn form_checked(host: WinKind, id: u8) -> bool {
+    form(host).checks.get(id as usize).copied().unwrap_or(false)
 }
 
-/// Selected value of radio group `g`, or [`LAB_NO`] if none/out of range.
-fn lab_radio(g: usize) -> u8 {
-    lab_form().radios.get(g).copied().unwrap_or(LAB_NO)
+/// Selected value of radio group `g` in `host`'s form store, or [`LAB_NO`] if
+/// none/out of range.
+fn form_radio(host: WinKind, g: usize) -> u8 {
+    form(host).radios.get(g).copied().unwrap_or(LAB_NO)
 }
 
-/// Selects radio `value` in group `g`.
-fn lab_radio_select(g: usize, value: u8) {
-    let f = lab_form();
+/// Selects radio `value` in group `g` of `host`'s form store; the group keeps a
+/// single value, so the sibling radios of the same group clear implicitly.
+fn form_radio_select(host: WinKind, g: usize, value: u8) {
+    let f = form(host);
     if g < f.radios.len() {
         f.radios[g] = value;
     }
@@ -3118,11 +3156,9 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 ..
             } => {
                 let (ax, ay) = (win.x + x, win.y + y);
-                if win.kind == WinKind::Widgets {
-                    let on = lab_checked(id);
-                    let hovered = hover == Some((win.kind, wi));
-                    draw_checkbox(fb, ax, ay, h, label, on, hovered);
-                }
+                let on = form_checked(win.kind, id);
+                let hovered = hover == Some((win.kind, wi));
+                draw_checkbox(fb, ax, ay, h, label, on, hovered);
             }
             Widget::Radio {
                 x,
@@ -3134,11 +3170,9 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 ..
             } => {
                 let (ax, ay) = (win.x + x, win.y + y);
-                if win.kind == WinKind::Widgets {
-                    let selected = lab_radio(group as usize) == value;
-                    let hovered = hover == Some((win.kind, wi));
-                    draw_radio(fb, ax, ay, h, label, selected, hovered);
-                }
+                let selected = form_radio(win.kind, group as usize) == value;
+                let hovered = hover == Some((win.kind, wi));
+                draw_radio(fb, ax, ay, h, label, selected, hovered);
             }
         }
     }
