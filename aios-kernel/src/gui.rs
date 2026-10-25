@@ -1983,6 +1983,40 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
     }
 }
 
+fn draw_tasks(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let x = win.x + 8;
+    let mut y = win.y + TITLE_H + 8;
+    let rows = taskbar_slots();
+    let mut count = 0usize;
+    let mut items = [(WinKind::Welcome, "" as &str); MAX_WINS];
+    for &idx in rows.iter() {
+        if idx == usize::MAX {
+            break;
+        }
+        if let Some(w) = unsafe { (*core::ptr::addr_of!(WINS))[idx].as_ref() } {
+            let label = win_live_title(w);
+            items[count] = (w.kind, label);
+            count += 1;
+        }
+    }
+    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
+    tui::draw_text(fb, x, y, &alloc::format!("{} tasks", count), TEXT_DIM, WIN_BG, max_px);
+    y += 16;
+    for k in 0..count {
+        let (kind, label) = items[k];
+        let focused = sel == Some(kind);
+        let fg = if focused { TEXT } else { TEXT_DIM };
+        tui::draw_text(fb, x, y + k * 16, label, fg, WIN_BG, max_px);
+    }
+    let sel_line = if let Some(kind) = sel {
+        alloc::format!("selected: {}", win_label(kind, win_title(kind)))
+    } else {
+        "no selection".into()
+    };
+    y += count * 16 + 4;
+    tui::draw_text(fb, x, y, &sel_line, TEXT_DIM, WIN_BG, max_px);
+}
+
 fn hit_title(win: &Window, x: usize, y: usize) -> bool {
     y >= win.y && y < win.y + TITLE_H && x >= win.x && x < win.x + win.w.saturating_sub(TITLE_BTNS)
 }
@@ -2529,66 +2563,6 @@ fn lab_focus_cycle() {
 }
 
 /// Deletes the last character of the focused text field, if any.
-fn lab_backspace() {
-    let f = lab_form();
-    let id = f.focus as usize;
-    if id < LAB_FIELD_N && f.lens[id] > 0 {
-        f.lens[id] -= 1;
-        f.fields[id][f.lens[id] as usize] = 0;
-    }
-}
-
-/// Activates the focused widget: a text field acknowledges, the list picks the
-/// selected row's label into the status line.
-fn lab_enter() {
-    let row = {
-        let f = lab_form();
-        if f.focus as usize == 2 {
-            Some(f.sel as usize)
-        } else if (f.focus as usize) < LAB_FIELD_N {
-            lab_msg("ok");
-            None
-        } else {
-            None
-        }
-    };
-    if let Some(row) = row {
-        if row < LAB_ITEMS.len() {
-            lab_msg(LAB_ITEMS[row]);
-        }
-    }
-}
-
-/// Routes a printable character to the focused widget. Text fields append up to
-/// `LAB_FIELD_CAP`; the list uses `n`/`p` to move the selection and keeps it
-/// visible.
-fn lab_type(c: u8) {
-    let f = lab_form();
-    let id = f.focus as usize;
-    if id < LAB_FIELD_N {
-        let len = f.lens[id] as usize;
-        if len < LAB_FIELD_CAP {
-            f.fields[id][len] = c;
-            f.lens[id] += 1;
-        }
-        return;
-    }
-    if id == 2 {
-        let count = LAB_ITEMS.len();
-        let sel = match c {
-            b'n' => (f.sel as usize + 1).min(count.saturating_sub(1)),
-            b'p' => (f.sel as usize).saturating_sub(1),
-            _ => return,
-        };
-        f.sel = sel as u8;
-        if sel < f.scroll as usize {
-            f.scroll = sel as u8;
-        } else if sel >= f.scroll as usize + LAB_ROWS {
-            f.scroll = (sel + 1 - LAB_ROWS) as u8;
-        }
-    }
-}
-
 /// Runs a picked menu row (v2.47.0): indices edit the demo form, `3` closes
 /// the host window.
 fn lab_menu_pick(index: usize) {
@@ -2731,33 +2705,32 @@ fn widget_key(sc: u8) -> bool {
     let Some(i) = focused_idx() else {
         return false;
     };
-    let is_lab = unsafe {
-        (*core::ptr::addr_of!(WINS))[i]
-            .as_ref()
-            .is_some_and(|w| w.kind == WinKind::Widgets)
+    let Some(host) = (unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref().map(|w| w.kind) }) else {
+        return false;
     };
-    if !is_lab {
+    if host == WinKind::Network {
         return false;
     }
-    if lab_menu() != LAB_NO {
-        if sc == 0x01 {
-            lab_form().menu = LAB_NO;
-            dirty_kind(WinKind::Widgets);
-            return true;
-        }
-        lab_form().menu = LAB_NO;
+    let f_menu = form_menu(host);
+    if f_menu != LAB_NO && sc == 0x01 {
+        form_menu_set(host, LAB_NO);
+        dirty_kind(host);
+        return true;
+    }
+    if f_menu != LAB_NO {
+        form_menu_set(host, LAB_NO);
     }
     let consumed = match sc {
         0x0F => {
-            lab_focus_cycle();
+            form_focus_cycle(host);
             true
         }
         0x0E => {
-            lab_backspace();
+            form_backspace(host);
             true
         }
         0x1C => {
-            lab_enter();
+            form_enter(host);
             true
         }
         _ => {
@@ -2767,12 +2740,12 @@ fn widget_key(sc: u8) -> bool {
             if c.is_control() {
                 return false;
             }
-            lab_type(c as u8);
+            form_type_char(host, c);
             true
         }
     };
     if consumed {
-        dirty_kind(WinKind::Widgets);
+        dirty_kind(host);
     }
     consumed
 }
@@ -2783,6 +2756,8 @@ fn menu_dropdown_w(items: &[&str]) -> usize {
     max * console::GLYPH_W + 12
 }
 
+/// Whether `kind` has an empty widget table (no generic widgets to route keys
+/// to, aside from host-specific handlers).
 /// Widget table of a window kind; clients and built-ins without a demo table
 /// get an empty slice.
 fn widgets_for(kind: WinKind) -> &'static [Widget] {
@@ -2797,6 +2772,12 @@ fn widgets_for(kind: WinKind) -> &'static [Widget] {
     } else {
         &[]
     }
+}
+
+/// Whether `kind` has an empty widget table (no generic widgets to route keys
+/// to, aside from host-specific handlers).
+fn widget_table_empty(kind: WinKind) -> bool {
+    matches!(kind, WinKind::Client(_)) || widgets_for(kind).is_empty()
 }
 
 /// Index of the widget of `win` under the absolute point `(x, y)`, if any.
@@ -2902,12 +2883,11 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
             }
         }
         Widget::TextField { id, .. } => {
-            if host == WinKind::Widgets {
-                crate::kprintln!("[gui] widget {}/field {} focus", host_label, id);
-                lab_form().focus = id;
-                lab_msg("field");
-                dirty_kind(host);
-            }
+            crate::kprintln!("[gui] widget {}/field {} focus", host_label, id);
+            let f = form(win.kind);
+            f.focus = id;
+            form_msg(win.kind, "field");
+            dirty_kind(win.kind);
         }
         Widget::List {
             y: wy,
@@ -2916,37 +2896,37 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
             items,
             ..
         } => {
-            if host == WinKind::Widgets {
+            if win.kind == WinKind::Widgets {
                 lab_list_click(win, wy, wh, id, items, y);
             }
         }
         Widget::Scrollbar { y: wy, h: wh, .. } => {
-            if host == WinKind::Widgets {
+            if win.kind == WinKind::Widgets {
                 lab_scroll_click(win, wy, wh, y);
             }
         }
         Widget::Menu { id, .. } => {
-            if host == WinKind::Widgets {
-                let open = lab_menu() == id;
-                lab_form().menu = if open { LAB_NO } else { id };
+            if win.kind == WinKind::Widgets {
+                let open = form_menu(win.kind) == id;
+                form_menu_set(win.kind, if open { LAB_NO } else { id });
                 crate::kprintln!(
                     "[gui] widget {}/menu {}",
                     host_label,
                     if open { "close" } else { "open" }
                 );
-                dirty_kind(host);
+                dirty_kind(win.kind);
             }
         }
         Widget::Checkbox { id, label, .. } => {
-            let on = form_check_toggle(host, id as usize);
+            let on = form_check_toggle(win.kind, id as usize);
             crate::kprintln!(
                 "[gui] widget {}/check {} = {}",
                 host_label,
                 label,
                 if on { "on" } else { "off" }
             );
-            form_msg(host, if on { "checked" } else { "unchecked" });
-            dirty_kind(host);
+            form_msg(win.kind, if on { "checked" } else { "unchecked" });
+            dirty_kind(win.kind);
         }
         Widget::Radio {
             group,
@@ -2955,50 +2935,21 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
             ..
         } => {
             let g = group as usize;
-            form_radio_select(host, g, value);
+            form_radio_select(win.kind, g, value);
             crate::kprintln!(
                 "[gui] widget {}/radio {} = {}",
                 host_label,
                 label,
                 value
             );
-            form_msg(host, label);
-            dirty_kind(host);
+            form_msg(win.kind, label);
+            dirty_kind(win.kind);
         }
     }
 }
 
 /// Toggles checkbox `i` in `host`'s form store and returns the new state.
-fn form_check_toggle(host: WinKind, i: usize) -> bool {
-    let f = form(host);
-    if i >= f.checks.len() {
-        return false;
-    }
-    f.checks[i] = !f.checks[i];
-    f.checks[i]
-}
-
-/// Checked state of checkbox `id` in `host`'s form store, `false` out of range.
-fn form_checked(host: WinKind, id: u8) -> bool {
-    form(host).checks.get(id as usize).copied().unwrap_or(false)
-}
-
-/// Selected value of radio group `g` in `host`'s form store, or [`LAB_NO`] if
-/// none/out of range.
-fn form_radio(host: WinKind, g: usize) -> u8 {
-    form(host).radios.get(g).copied().unwrap_or(LAB_NO)
-}
-
-/// Selects radio `value` in group `g` of `host`'s form store; the group keeps a
-/// single value, so the sibling radios of the same group clear implicitly.
-fn form_radio_select(host: WinKind, g: usize, value: u8) {
-    let f = form(host);
-    if g < f.radios.len() {
-        f.radios[g] = value;
-    }
-}
-
-/// Marks every open window of `kind` for repaint.
+/// Deletes the last character of the focused text field, if any.
 fn dirty_kind(kind: WinKind) {
     let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
     for win in wins.iter().flatten() {
@@ -3017,35 +2968,34 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
         match *wg {
             Widget::TextField { x, y, w, h, id } => {
                 let (ax, ay) = (win.x + x, win.y + y);
-                let focused = win.kind == WinKind::Widgets && lab_focus() == id;
-                draw_field_box(fb, ax, ay, w, h, focused, hover == Some((win.kind, wi)));
-                if win.kind == WinKind::Widgets {
-                    let (val, len) = {
-                        let f = lab_form();
-                        let i = id as usize;
-                        if i < LAB_FIELD_N {
-                            (
-                                core::str::from_utf8(&f.fields[i][..f.lens[i] as usize])
-                                    .unwrap_or(""),
-                                f.lens[i] as usize,
-                            )
-                        } else {
-                            ("", 0)
-                        }
-                    };
-                    let ty = ay + (h - console::GLYPH_H) / 2;
-                    if len == 0 {
-                        let hint = if id == 0 { "name" } else { "note" };
-                        tui::draw_text(fb, ax + 4, ty, hint, TEXT_DIM, NET_BOX_BG, ax + w - 4);
+                let hostk = win.kind;
+                let focused = form_focus(hostk) == id;
+                draw_field_box(fb, ax, ay, w, h, focused, hover == Some((hostk, wi)));
+                let (val, len) = {
+                    let f = form(hostk);
+                    let i = id as usize;
+                    if i < LAB_FIELD_N {
+                        (
+                            core::str::from_utf8(&f.fields[i][..f.lens[i] as usize])
+                                .unwrap_or(""),
+                            f.lens[i] as usize,
+                        )
                     } else {
-                        tui::draw_text(fb, ax + 4, ty, val, TEXT, NET_BOX_BG, ax + w - 4);
+                        ("", 0)
                     }
-                    if focused {
-                        let cx = ax + 4 + len * console::GLYPH_W;
-                        if cx + 2 < ax + w {
-                            unsafe {
-                                fb.fill_rect(cx, ay + 2, 2, h.saturating_sub(4), BAR_ON);
-                            }
+                };
+                let ty = ay + (h - console::GLYPH_H) / 2;
+                if len == 0 {
+                    let hint = if id == 0 { "name" } else { "note" };
+                    tui::draw_text(fb, ax + 4, ty, hint, TEXT_DIM, NET_BOX_BG, ax + w - 4);
+                } else {
+                    tui::draw_text(fb, ax + 4, ty, val, TEXT, NET_BOX_BG, ax + w - 4);
+                }
+                if focused {
+                    let cx = ax + 4 + len * console::GLYPH_W;
+                    if cx + 2 < ax + w {
+                        unsafe {
+                            fb.fill_rect(cx, ay + 2, 2, h.saturating_sub(4), BAR_ON);
                         }
                     }
                 }
@@ -3079,7 +3029,7 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 items,
             } => {
                 let (ax, ay) = (win.x + x, win.y + y);
-                let open = win.kind == WinKind::Widgets && lab_menu() == id;
+                let open = win.kind == WinKind::Widgets && form_menu(win.kind) == id;
                 let plate = if open || hover == Some((win.kind, wi)) {
                     BAR_ON
                 } else {
@@ -5030,6 +4980,8 @@ fn task_end() {
 
 /// Switch To button (and the Enter shortcut): focuses and raises the selected
 /// window, logging `[gui] tasks switch <label>` as the serial proof.
+/// Switch To button (and the Enter shortcut): focuses and raises the selected
+/// window, logging `[gui] tasks switch <label>` as the serial proof.
 fn task_switch() {
     let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
     let Some(kind) = sel else {
@@ -5037,19 +4989,16 @@ fn task_switch() {
         return;
     };
     let Some(i) = find_kind(kind) else {
-        crate::kprintln!(
-            "[gui] tasks switch: {} gone",
-            win_label(kind, win_title(kind))
-        );
+        crate::kprintln!("[gui] tasks switch: {} gone", win_label(kind, win_title(kind)));
         return;
     };
     crate::kprintln!("[gui] tasks switch {}", win_label(kind, win_title(kind)));
     focus_window(i);
+    bring_to_front(i);
+    dirty_all();
 }
 
-/// Enter (make-code 0x1C) on the focused Task Manager window runs
-/// [`task_switch`]; every other scancode and every other focused window falls
-/// through to the normal key routing untouched.
+/// The focused Task Manager window takes Enter to switch to the selected row.
 fn task_key(sc: u8) -> bool {
     if sc != 0x1C {
         return false;
@@ -5060,8 +5009,7 @@ fn task_key(sc: u8) -> bool {
     let is_tasks = unsafe {
         (*core::ptr::addr_of!(WINS))[i]
             .as_ref()
-            .map(|w| w.kind == WinKind::Tasks)
-            .unwrap_or(false)
+            .is_some_and(|w| w.kind == WinKind::Tasks)
     };
     if !is_tasks {
         return false;
@@ -5070,86 +5018,119 @@ fn task_key(sc: u8) -> bool {
     true
 }
 
-/// Paints the Task Manager body (v2.38.35): the Task/Status column header on
-/// its own strip, one 16 px row per open window in task-bar rank order (the
-/// selected row highlighted with [`BAR_ON`], status Running/Background/
-/// Minimized), then the `N tasks` count and the current selection line. Row
-/// clicks are resolved by [`task_row_click`]; the button plates come from
-/// [`draw_widgets`].
-fn draw_tasks(fb: &Framebuffer, win: &Window, max_px: usize) {
-    let slots = taskbar_slots();
-    let count = slots.iter().filter(|&&i| i != usize::MAX).count();
-    let hx = win.x + 8;
-    let hw = win.w.saturating_sub(16);
-    unsafe {
-        fb.fill_rect(hx, win.y + TASK_HDR_Y, hw, TASK_ROW_H, BAR_BG);
+
+
+/// Toggles checkbox `i` in `host`'s form store and returns the new state.
+fn form_check_toggle(host: WinKind, i: usize) -> bool {
+    let f = form(host);
+    if i >= f.checks.len() {
+        return false;
     }
-    let col2 = (win.x + TASK_STATUS_X).min(max_px);
-    tui::draw_text(
-        fb,
-        hx + 4,
-        win.y + TASK_HDR_Y,
-        "Task",
-        TEXT_DIM,
-        BAR_BG,
-        col2,
-    );
-    tui::draw_text(
-        fb,
-        win.x + TASK_STATUS_X + 4,
-        win.y + TASK_HDR_Y,
-        "Status",
-        TEXT_DIM,
-        BAR_BG,
-        max_px,
-    );
-    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
-    for (row, &i) in slots.iter().enumerate() {
-        if i == usize::MAX {
-            break;
-        }
-        let Some(w) = (unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() }) else {
-            continue;
-        };
-        let y = win.y + TASK_ROWS_Y + row * TASK_ROW_H;
-        let selected = sel == Some(w.kind);
-        if selected {
-            unsafe {
-                fb.fill_rect(hx, y, hw, TASK_ROW_H, BAR_ON);
-            }
-        }
-        let bg = if selected { BAR_ON } else { WIN_BG };
-        tui::draw_text(fb, hx + 4, y, win_live_title(w), TEXT, bg, col2);
-        let status = if w.focused {
-            "Running"
-        } else if w.minimized {
-            "Minimized"
-        } else {
-            "Background"
-        };
-        tui::draw_text(
-            fb,
-            win.x + TASK_STATUS_X + 4,
-            y,
-            status,
-            TEXT_DIM,
-            bg,
-            max_px,
-        );
-    }
-    let foot = format!("{} tasks", count);
-    tui::draw_text(fb, hx, win.y + TASK_FOOT_Y, &foot, TEXT_DIM, WIN_BG, max_px);
-    let sel_line = match sel {
-        Some(kind) => format!("sel {}", win_label(kind, win_title(kind))),
-        None => String::from("sel -"),
-    };
-    tui::draw_text(
-        fb,
-        hx,
-        win.y + TASK_FOOT_Y + TASK_ROW_H,
-        &sel_line,
-        TEXT_DIM,
-        WIN_BG,
-        max_px,
-    );
+    f.checks[i] = !f.checks[i];
+    f.checks[i]
 }
+
+/// Checked state of checkbox `id` in `host`'s form store, `false` out of range.
+fn form_checked(host: WinKind, id: u8) -> bool {
+    form(host).checks.get(id as usize).copied().unwrap_or(false)
+}
+
+/// Selected value of radio group `g` in `host`'s form store, or [`LAB_NO`] if
+/// none/out of range.
+fn form_radio(host: WinKind, g: usize) -> u8 {
+    form(host).radios.get(g).copied().unwrap_or(LAB_NO)
+}
+
+/// Selects radio `value` in group `g` of `host`'s form store.
+fn form_radio_select(host: WinKind, g: usize, value: u8) {
+    let f = form(host);
+    if g < f.radios.len() {
+        f.radios[g] = value;
+    }
+}
+
+/// Advances the focus across text fields of `host`'s form.
+fn form_focus_cycle(host: WinKind) {
+    let f = form(host);
+    if f.focus < LAB_NO {
+        f.focus = f.focus.saturating_add(1) % (LAB_FIELD_N as u8);
+    } else {
+        f.focus = 0;
+    }
+}
+
+/// Deletes the last character of the focused text field, if any.
+fn form_backspace(host: WinKind) {
+    let f = form(host);
+    let id = f.focus as usize;
+    if id < LAB_FIELD_N && f.lens[id] > 0 {
+        f.lens[id] -= 1;
+        f.fields[id][f.lens[id] as usize] = 0;
+    }
+}
+
+/// Types `c` into the focused text field.
+fn form_type_char(host: WinKind, c: char) {
+    let b = c as u8;
+    let f = form(host);
+    let id = f.focus as usize;
+    if id < LAB_FIELD_N {
+        let len = f.lens[id] as usize;
+        if len < LAB_FIELD_CAP {
+            f.fields[id][len] = b;
+            f.lens[id] += 1;
+        }
+        return;
+    }
+    if host == WinKind::Widgets && id == 2 {
+        let count = LAB_ITEMS.len();
+        let sel = match b {
+            b'n' => (f.sel as usize + 1).min(count.saturating_sub(1)),
+            b'p' => (f.sel as usize).saturating_sub(1),
+            _ => return,
+        };
+        f.sel = sel as u8;
+        if sel < f.scroll as usize {
+            f.scroll = sel as u8;
+        } else if sel >= f.scroll as usize + LAB_ROWS {
+            f.scroll = sel as u8 + 1 - LAB_ROWS as u8;
+        }
+    }
+}
+
+/// Activates the focused widget of `host`'s form.
+fn form_enter(host: WinKind) {
+    if host != WinKind::Widgets {
+        return;
+    }
+    let row = {
+        let f = form(host);
+        if (f.focus as usize) == 2 {
+            Some(f.sel as usize)
+        } else if (f.focus as usize) < LAB_FIELD_N {
+            form_msg(host, "ok");
+            None
+        } else {
+            None
+        }
+    };
+    if let Some(row) = row {
+        if row < LAB_ITEMS.len() {
+            form_msg(host, LAB_ITEMS[row]);
+        }
+    }
+}
+
+fn form_menu(host: WinKind) -> u8 {
+    form(host).menu
+}
+
+fn form_menu_set(host: WinKind, m: u8) {
+    form(host).menu = m;
+}
+
+fn form_focus(host: WinKind) -> u8 {
+    form(host).focus
+}
+
+
