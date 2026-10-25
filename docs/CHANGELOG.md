@@ -1,5 +1,11 @@
 # AIOS Development Log
 
+## v2.66.0 — Generic widget keyboard routing (2026-10-25)
+
+### Changed
+- Generic widget key routing (aios-kernel/src/gui.rs): widget_key now routes Tab/Backspace/Enter/printable keys to the focused window's widget form for any host with a widget table (except Network), using per-window form storage from v2.65.0.
+- Added form_focus_cycle/form_backspace/form_type_char/form_enter/form_menu/form_menu_set/form_focus; text fields and widget clicks draw/use host-generic form helpers.
+
 ## v2.65.0 ? Per-window widget forms and generic checkbox in Network (2026-10-23)
 
 ### Added

@@ -1983,38 +1983,88 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
     }
 }
 
+/// Paints the Task Manager body (v2.38.35): the Task/Status column header on
+/// its own strip, one 16 px row per open window in task-bar rank order (the
+/// selected row highlighted with [`BAR_ON`], status Running/Background/
+/// Minimized), then the `N tasks` count and the current selection line. Row
+/// clicks are resolved by [`task_row_click`]; the button plates come from
+/// [`draw_widgets`].
 fn draw_tasks(fb: &Framebuffer, win: &Window, max_px: usize) {
-    let x = win.x + 8;
-    let mut y = win.y + TITLE_H + 8;
-    let rows = taskbar_slots();
-    let mut count = 0usize;
-    let mut items = [(WinKind::Welcome, "" as &str); MAX_WINS];
-    for &idx in rows.iter() {
-        if idx == usize::MAX {
+    let slots = taskbar_slots();
+    let count = slots.iter().filter(|&&i| i != usize::MAX).count();
+    let hx = win.x + 8;
+    let hw = win.w.saturating_sub(16);
+    unsafe {
+        fb.fill_rect(hx, win.y + TASK_HDR_Y, hw, TASK_ROW_H, BAR_BG);
+    }
+    let col2 = (win.x + TASK_STATUS_X).min(max_px);
+    tui::draw_text(
+        fb,
+        hx + 4,
+        win.y + TASK_HDR_Y,
+        "Task",
+        TEXT_DIM,
+        BAR_BG,
+        col2,
+    );
+    tui::draw_text(
+        fb,
+        win.x + TASK_STATUS_X + 4,
+        win.y + TASK_HDR_Y,
+        "Status",
+        TEXT_DIM,
+        BAR_BG,
+        max_px,
+    );
+    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
+    for (row, &i) in slots.iter().enumerate() {
+        if i == usize::MAX {
             break;
         }
-        if let Some(w) = unsafe { (*core::ptr::addr_of!(WINS))[idx].as_ref() } {
-            let label = win_live_title(w);
-            items[count] = (w.kind, label);
-            count += 1;
+        let Some(w) = (unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() }) else {
+            continue;
+        };
+        let y = win.y + TASK_ROWS_Y + row * TASK_ROW_H;
+        let selected = sel == Some(w.kind);
+        if selected {
+            unsafe {
+                fb.fill_rect(hx, y, hw, TASK_ROW_H, BAR_ON);
+            }
         }
+        let bg = if selected { BAR_ON } else { WIN_BG };
+        tui::draw_text(fb, hx + 4, y, win_live_title(w), TEXT, bg, col2);
+        let status = if w.focused {
+            "Running"
+        } else if w.minimized {
+            "Minimized"
+        } else {
+            "Background"
+        };
+        tui::draw_text(
+            fb,
+            win.x + TASK_STATUS_X + 4,
+            y,
+            status,
+            TEXT_DIM,
+            bg,
+            max_px,
+        );
     }
-    let sel = unsafe { *core::ptr::addr_of!(TASK_SEL) };
-    tui::draw_text(fb, x, y, &alloc::format!("{} tasks", count), TEXT_DIM, WIN_BG, max_px);
-    y += 16;
-    for k in 0..count {
-        let (kind, label) = items[k];
-        let focused = sel == Some(kind);
-        let fg = if focused { TEXT } else { TEXT_DIM };
-        tui::draw_text(fb, x, y + k * 16, label, fg, WIN_BG, max_px);
-    }
-    let sel_line = if let Some(kind) = sel {
-        alloc::format!("selected: {}", win_label(kind, win_title(kind)))
-    } else {
-        "no selection".into()
+    let foot = format!("{} tasks", count);
+    tui::draw_text(fb, hx, win.y + TASK_FOOT_Y, &foot, TEXT_DIM, WIN_BG, max_px);
+    let sel_line = match sel {
+        Some(kind) => format!("sel {}", win_label(kind, win_title(kind))),
+        None => String::from("sel -"),
     };
-    y += count * 16 + 4;
-    tui::draw_text(fb, x, y, &sel_line, TEXT_DIM, WIN_BG, max_px);
+    tui::draw_text(
+        fb,
+        hx,
+        win.y + TASK_FOOT_Y + TASK_ROW_H,
+        &sel_line,
+        TEXT_DIM,
+        WIN_BG,
+        max_px,
+    );
 }
 
 fn hit_title(win: &Window, x: usize, y: usize) -> bool {
