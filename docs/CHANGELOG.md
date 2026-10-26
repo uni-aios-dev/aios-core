@@ -1,5 +1,29 @@
 # AIOS Development Log
 
+## v2.67.0 — Slider widget in the kernel GUI (2026-10-26)
+
+### Added
+- **`Widget::Slider`** (`aios-kernel/src/gui.rs`): an eighth widget variant — a
+  horizontal track with a thumb, addressed by `id` in the host form store and
+  spanning `min..=max`. `draw_slider` paints the caption, a sunken track with
+  the filled portion in `BAR_ON`, a `TEXT` thumb and the numeric value;
+  `slider_value_at` maps a click's x on the track to a value and
+  `form_slider_set` stores it, logging `[gui] widget <host>/slider <label> =
+  <value>`. `widget_rect` covers the variant, so hit-testing, hover and repaint
+  stay uniform; `widget_click` now also receives the click x.
+- **Form slider store**: `WidgetForm.sliders: [u8; FORM_SLIDER_N]` with the
+  `form_slider`/`form_slider_set` helpers, reset by `form_load`.
+- **Demo slider**: the Widget Lab gains a `Volume` 0–100 slider (row y=272); the
+  window grows to 460×332 and its hint line moves down to y=300.
+
+### Changed
+- `LAB_WIDGETS` grows to 11 entries; removed the unused `widget_table_empty`
+  stub and the dead `lab_focus`/`lab_focus_cycle` wrappers left over from
+  v2.66.0.
+- Restored the Task Manager body (`draw_tasks` with the `Task`/`Status` columns
+  and `N tasks` footer) that the v2.66.0 follow-up commit had simplified by
+  accident; it is byte-identical to the v2.65.0 implementation again.
+
 ## v2.66.0 — Generic widget keyboard routing (2026-10-25)
 
 ### Changed

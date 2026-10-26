@@ -1732,35 +1732,48 @@ match on the bound local port and require the reply to come from the connected p
     Since v2.63.0 a sixth variant, `Widget::Checkbox` (a box + caption with an
     `id` into the host form store), joins them: `draw_checkbox` paints the box
     (`BAR_ON` border while hovered) and a check mark when on, `widget_click`
-    toggles the bit through `lab_check_toggle` and logs `[gui] widget Widget
-    Lab/check <label> = on|off`. Its checked bits live in the `LAB_FORM`
-    (`checks: [bool; LAB_CHECK_N]`) field, reset on window load.
-    Since v2.64.0 a seventh variant, `Widget::Radio` (a round box + caption,
-    `group` + `value`), joins them: `draw_radio` paints the circle outline and
-    a filled dot when selected, `widget_click` selects the value through
-    `lab_radio_select` (which clears the siblings in the same group) and logs
-    `[gui] widget Widget Lab/radio <label> = <value>`. Selections live in
-    `LAB_FORM.radios: [u8; LAB_RADIO_N]` (`LAB_NO` = none), reset on load.
+    toggles the bit through `form_check_toggle` and logs `[gui] widget
+    <host>/check <label> = on|off`. Since v2.64.0 a seventh variant,
+    `Widget::Radio` (a round box + caption, `group` + `value`), joins them:
+    `draw_radio` paints the circle outline and a filled dot when selected,
+    `widget_click` selects the value through `form_radio_select` and logs
+    `[gui] widget <host>/radio <label> = <value>`. Since v2.67.0 an eighth
+    variant, `Widget::Slider` (a track + thumb, `id` + `min`/`max`), joins them:
+    `draw_slider` paints the caption, a sunken track with the filled portion in
+    `BAR_ON`, a `TEXT` thumb and the numeric value; a track click maps its x to a
+    value through `slider_value_at` and stores it with `form_slider_set`,
+    logging `[gui] widget <host>/slider <label> = <value>`.
+    Since v2.65.0 every host owns its widget state: `WidgetForm` (fields, lens,
+    focus, menu, sel, scroll, msg, `checks`, `radios`, `sliders`) lives in the
+    `FORMS: [WidgetForm; FORM_SLOTS]` global, one slot per built-in window
+    (`form_slot`), so a Network checkbox never aliases the Widget Lab.
+    `form_load` resets a slot on open; `form`, `form_msg`,
+    `form_check_toggle`, `form_checked`, `form_radio`, `form_radio_select`,
+    `form_slider` and `form_slider_set` are host-generic.
     The desktop gains a **Widget Lab** window (`WinKind::Widgets`, label
-    `Widgets` in the icon column, 460×300) that hosts two text fields, a
+    `Widgets` in the icon column, 460?332) that hosts two text fields, a
     ten-row scrollable list with a bound scrollbar, an `Edit` dropdown, a
-    close button and two checkboxes (`Auto-connect` / `Persist config`); its
-    state lives in the `LAB_FORM: LabForm` global (the
-    `NET_DRAFT` pattern). Keyboard input is routed to the focused host before
-    the global shortcuts by `widget_key` (called from `handle_scancode` after
-    `net_key`): `Tab` cycles the widget focus, `Backspace` edits the focused
+    close button, two checkboxes (`Auto-connect` / `Persist config`), two radios
+    (`DHCP` / `Static`) and a `Volume` slider. Keyboard input is routed to the
+    focused host before the global shortcuts by `widget_key` (called from
+    `handle_scancode` after `task_key`/`net_key`): since v2.66.0 the routing is
+    host-generic ? it applies to any window with a widget table except Network ?
+    and dispatches through `form_focus_cycle`/`form_backspace`/`form_type_char`/
+    `form_enter`: `Tab` cycles the widget focus, `Backspace` edits the focused
     field, `Enter` activates (fields acknowledge, the list picks the selected
-    label), printable keys type into a field or move the list with `n`/`p`,
-    and `Escape` dismisses an open dropdown. Mouse clicks on the new variants
-    are dispatched by `widget_click` (field focus, list row select, scrollbar
-    jump, menu toggle, checkbox toggle), and an open dropdown is served first by
-    `lab_dropdown_click` — its item clicks run `lab_menu_pick` before ordinary
-    hit-testing, a click on the plate toggles, a click elsewhere dismisses and
-    falls through. The room for the `Widgets` kind (rank 6, clients 7+id) is
-    reserved in `kind_rank`/`taskbar_slots`. Proof lines: `[gui] widget Widget
-    Lab/field <n> focus`, `[gui] widget Widget Lab/list row <n> click`,
+    label), printable keys type into a field or move the list with `n`/`p`, and
+    `Escape` dismisses an open dropdown. Mouse clicks on the variants are
+    dispatched by `widget_click` (field focus, list row select, scrollbar jump,
+    menu toggle, checkbox toggle, radio select, slider set), and an open dropdown
+    is served first by `lab_dropdown_click` ? its item clicks run `lab_menu_pick`
+    before ordinary hit-testing, a click on the plate toggles, a click elsewhere
+    dismisses and falls through. The room for the `Widgets` kind (rank 6, clients
+    7+id) is reserved in `kind_rank`/`taskbar_slots`. Proof lines: `[gui] widget
+    Widget Lab/field <n> focus`, `[gui] widget Widget Lab/list row <n> click`,
     `[gui] widget Widget Lab/menu open|close`, `[gui] widget Widget Lab/menu
-    item <n> click`, `[gui] widget Widget Lab/check <label> = on|off`.
+    item <n> click`, `[gui] widget Widget Lab/check <label> = on|off`, `[gui]
+    widget Widget Lab/radio <label> = <value>`, `[gui] widget Widget Lab/slider
+    <label> = <value>`.
 - `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and five ring-3 tasks (the four IPC/GUI demos plus, since v2.51.0, the socket ping-pong client), declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `tui::render()` (or, since v2.38.22, `gui::render()` while the `gui` command left the windowed desktop active) are driven. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. Keyboard bytes come from the 256-slot FIFO drained with `while let Some(sc) = key_pop()` at the top of each iteration (v2.38.36 — extended/shift filtering happens on the drained stream, so a stalled loop no longer loses burst input to the old single-slot overwrite), and on a PS/2 button edge the band first flushes every pending `mouse_dx`/`mouse_dy` (up to 64 `drain_axis` steps) before calling `on_mouse`, so a press is dispatched at the pointer's settled position rather than mid-backlog (v2.38.36, the missed-click fix). Mouse deltas are drained **every idle-loop iteration** — both bands read `ps2::mouse_dx`/`mouse_dy` and `xhci::take_mouse_delta` unconditionally, so the 256 px clamp's carry-over residue is applied even when no new report arrived, while packets that arrived while the loop was elsewhere accumulate instead of overwriting each other (v2.38.30) — and since v2.38.38 a latched press edge (`take_button_edges()` in both bands) or a button-state change (`btn_changed = seq_changed && buttons != last`) is delivered through the new `deliver_pointer`, which replays up to three states (stale release → press carrying dx/dy → final release) so a press+release pair coalesced between two loop iterations still reaches `gui::on_mouse` (BUGS v2.38.38); the per-application clamp itself lives in the drivers (`MOUSE_MAX_STEP`, v2.38.35). Before anything is logged or rendered the loop calls the screen owner's `gui::input_allowed`/`tui::input_allowed` (v2.38.33 runaway gate): 60 consecutive packets pushing an already-clamped cursor further into an edge suppress the pointer input until a moving packet pushes away, and movement itself is aggregated into at most one serial line per band per second (`MoveLog`, `USB_MOVE`/`PS2_MOVE` statics — `[serial] usb mouse +N pkts dx=… dy=…`); button changes keep their per-report lines. It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
   - Panic handler prints via the framebuffer console and serial, then `halt_loop`s.
 - `aios-kernel-run`: builds the kernel (`cargo build --target x86_64-unknown-none --release`), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.

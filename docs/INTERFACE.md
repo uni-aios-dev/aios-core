@@ -1026,8 +1026,11 @@ focused) returns to the console/TUI.
   into a generic set shared by every host — **text fields**, a **scrollable
   list** with a bound **scrollbar** and a **dropdown menu** — and the focused
   host now receives keyboard input (routed *before* the global shortcuts).
-  The demo host is the *Widget Lab* window (460×300), open from the
-  `Widgets` icon (sixth in the left column). Contents:
+  The demo host is the *Widget Lab* window (460×332), open from the
+  `Widgets` icon (sixth in the left column). Since v2.66.0 the keyboard routing
+  is host-generic: any window with a widget table (except Network, which keeps
+  its dedicated form handler) receives the same Tab/Backspace/Enter/typing keys
+  into its own per-window form store. Contents:
   - *Fields*: `name` and `note` — click one (or `Tab` to it) to focus, then
     type; empty fields show a dim placeholder, focused fields get a lit
     border and a caret, `Backspace` deletes.
@@ -1046,6 +1049,10 @@ focused) returns to the console/TUI.
     with a caption; clicking one selects it (a filled dot appears, the caption
     brightens) and clears the other in the group, logged as
     `[gui] widget Widget Lab/radio <label> = <value>`.
+  - *Slider* (v2.67.0): `Volume` 0–100 — a horizontal track with a thumb; the
+    filled portion and the numeric value at the right show the current value,
+    and clicking anywhere on the track jumps the thumb there proportionally,
+    logged as `[gui] widget Widget Lab/slider <label> = <value>`.
   - *Close* button: closes the Lab through the normal path (a typed note
     still raises the `Confirm` dialog).
   - Press `Escape` to dismiss an open dropdown without closing the window.
@@ -1054,7 +1061,8 @@ focused) returns to the console/TUI.
     `[gui] widget Widget Lab/menu open|close`,
     `[gui] widget Widget Lab/menu item <n> click`,
     `[gui] widget Widget Lab/check <label> = on|off`,
-    `[gui] widget Widget Lab/radio <label> = <value>`.
+    `[gui] widget Widget Lab/radio <label> = <value>`,
+    `[gui] widget Widget Lab/slider <label> = <value>`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

@@ -301,6 +301,22 @@ enum Widget {
         value: u8,
         label: &'static str,
     },
+    /// Horizontal slider (v2.67.0): a track with a thumb whose fraction of the
+    /// span maps to a value in `min..=max`, stored in the host form store.
+    /// Clicking anywhere on the track jumps the thumb to that value.
+    Slider {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        /// Form-store slot addressing this slider's value.
+        id: u8,
+        /// Value at the left end of the track.
+        min: u8,
+        /// Value at the right end of the track.
+        max: u8,
+        label: &'static str,
+    },
 }
 
 /// Width of a [`Widget::Scrollbar`] track in pixels.
@@ -314,7 +330,8 @@ fn widget_rect(wg: &Widget) -> (usize, usize, usize, usize) {
         | Widget::List { x, y, w, h, .. }
         | Widget::Menu { x, y, w, h, .. }
         | Widget::Checkbox { x, y, w, h, .. }
-        | Widget::Radio { x, y, w, h, .. } => (x, y, w, h),
+        | Widget::Radio { x, y, w, h, .. }
+        | Widget::Slider { x, y, w, h, .. } => (x, y, w, h),
         Widget::Scrollbar { x, y, h, .. } => (x, y, SCROLLBAR_W, h),
     }
 }
@@ -799,7 +816,7 @@ fn spawn(kind: WinKind) {
     }
     if kind == WinKind::Widgets {
         w = 460;
-        h = 300;
+        h = 332;
         x = 500.min(fb_w.saturating_sub(w + 8));
         y = 120.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
         lab_form_load();
@@ -2383,7 +2400,7 @@ static LAB_MENU: [&str; 4] = ["Clear name", "Clear note", "Reset list", "Close"]
 /// keyboard input. Laid out for the 460x300 window: captions at 30/54, fields
 /// at 48/72, the list at 100 (5 rows) with its bar at x=312, and the action row
 /// at 192.
-static LAB_WIDGETS: [Widget; 10] = [
+static LAB_WIDGETS: [Widget; 11] = [
     Widget::TextField {
         x: 8,
         y: 48,
@@ -2463,6 +2480,16 @@ static LAB_WIDGETS: [Widget; 10] = [
         value: 1,
         label: "Static",
     },
+    Widget::Slider {
+        x: 8,
+        y: 272,
+        w: 300,
+        h: 16,
+        id: 0,
+        min: 0,
+        max: 100,
+        label: "Volume",
+    },
 ];
 
 /// Widget Lab text-field capacity in bytes (ASCII, no terminator).
@@ -2502,12 +2529,16 @@ struct WidgetForm {
     /// Radio group selection (v2.64.0): `radios[g]` = the `value` of the selected
     /// radio in group `g`, or `LAB_NO` for none.
     radios: [u8; FORM_RADIO_N],
+    /// Slider values (v2.67.0), addressed by `Widget::Slider::id`.
+    sliders: [u8; FORM_SLIDER_N],
 }
 
 /// Checkbox count of a widget form (v2.63.0).
 const FORM_CHECK_N: usize = 2;
 /// Radio group count of a widget form (v2.64.0).
 const FORM_RADIO_N: usize = 1;
+/// Slider count of a widget form (v2.67.0).
+const FORM_SLIDER_N: usize = 1;
 
 /// One form slot per built-in host kind (v2.65.0).
 const FORM_SLOTS: usize = 8;
@@ -2540,6 +2571,7 @@ const EMPTY_FORM: WidgetForm = WidgetForm {
     msg_len: 0,
     checks: [false; FORM_CHECK_N],
     radios: [LAB_NO; FORM_RADIO_N],
+    sliders: [0; FORM_SLIDER_N],
 };
 
 /// Per-window widget forms, one per [`form_slot`] (single-threaded GUI global).
@@ -2566,6 +2598,7 @@ fn form_load(kind: WinKind) {
     f.scroll = 0;
     f.checks = [false; FORM_CHECK_N];
     f.radios = [LAB_NO; FORM_RADIO_N];
+    f.sliders = [0; FORM_SLIDER_N];
     form_msg(kind, "ready");
 }
 
@@ -2592,27 +2625,11 @@ fn lab_msg(s: &str) {
     form_msg(WinKind::Widgets, s);
 }
 
-/// Focused Widget Lab widget id, or [`LAB_NO`].
-fn lab_focus() -> u8 {
-    lab_form().focus
-}
-
 /// Open Widget Lab menu id, or [`LAB_NO`].
 fn lab_menu() -> u8 {
     lab_form().menu
 }
 
-/// Advances the Widget Lab keyboard focus across the two fields then the list.
-fn lab_focus_cycle() {
-    let f = lab_form();
-    f.focus = match f.focus {
-        0 => 1,
-        1 => 2,
-        _ => 0,
-    };
-}
-
-/// Deletes the last character of the focused text field, if any.
 /// Runs a picked menu row (v2.47.0): indices edit the demo form, `3` closes
 /// the host window.
 fn lab_menu_pick(index: usize) {
@@ -2806,8 +2823,6 @@ fn menu_dropdown_w(items: &[&str]) -> usize {
     max * console::GLYPH_W + 12
 }
 
-/// Whether `kind` has an empty widget table (no generic widgets to route keys
-/// to, aside from host-specific handlers).
 /// Widget table of a window kind; clients and built-ins without a demo table
 /// get an empty slice.
 fn widgets_for(kind: WinKind) -> &'static [Widget] {
@@ -2822,12 +2837,6 @@ fn widgets_for(kind: WinKind) -> &'static [Widget] {
     } else {
         &[]
     }
-}
-
-/// Whether `kind` has an empty widget table (no generic widgets to route keys
-/// to, aside from host-specific handlers).
-fn widget_table_empty(kind: WinKind) -> bool {
-    matches!(kind, WinKind::Client(_)) || widgets_for(kind).is_empty()
 }
 
 /// Index of the widget of `win` under the absolute point `(x, y)`, if any.
@@ -2906,7 +2915,7 @@ fn update_widget_hover() {
 /// close the hosting window through [`close_window`] (modal gate included).
 /// The host index may have gone stale after [`focus_window`], so the action
 /// resolves the target window by its [`WinKind`] instead.
-fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
+fn widget_click(win: &Window, host_label: &str, wg: Widget, click_x: usize, y: usize) {
     let host = win.kind;
     match wg {
         Widget::Button { label, action, .. } => {
@@ -2993,6 +3002,21 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, y: usize) {
                 value
             );
             form_msg(win.kind, label);
+            dirty_kind(win.kind);
+        }
+        Widget::Slider {
+            x,
+            w,
+            id,
+            min,
+            max,
+            label,
+            ..
+        } => {
+            let v = slider_value_at(win.x + x, w, min, max, click_x);
+            form_slider_set(win.kind, id, v);
+            crate::kprintln!("[gui] widget {}/slider {} = {}", host_label, label, v);
+            form_msg(win.kind, "slider");
             dirty_kind(win.kind);
         }
     }
@@ -3174,6 +3198,21 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 let hovered = hover == Some((win.kind, wi));
                 draw_radio(fb, ax, ay, h, label, selected, hovered);
             }
+            Widget::Slider {
+                x,
+                y,
+                w,
+                h,
+                id,
+                min,
+                max,
+                label,
+            } => {
+                let (ax, ay) = (win.x + x, win.y + y);
+                let value = form_slider(win.kind, id).clamp(min, max);
+                let hovered = hover == Some((win.kind, wi));
+                draw_slider(fb, ax, ay, w, h, label, min, max, value, hovered);
+            }
         }
     }
 }
@@ -3295,6 +3334,102 @@ fn draw_radio(
     let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
     let color = if selected { TEXT } else { TEXT_DIM };
     tui::draw_text(fb, tx, ty, label, color, BTN_BG, fb.width());
+}
+
+/// Left inset of a slider's track from its widget origin (leaves room for the
+/// caption).
+const SLIDER_LABEL_W: usize = 96;
+/// Right inset of a slider's track from its widget width (leaves room for the
+/// numeric value).
+const SLIDER_VALUE_W: usize = 40;
+/// Thickness of the slider track in pixels.
+const SLIDER_TRACK_H: usize = 4;
+/// Side length of the slider thumb in pixels.
+const SLIDER_THUMB: usize = 10;
+
+/// Track `(x, width)` of a slider widget at origin `ax` with total width `w`.
+fn slider_track(ax: usize, w: usize) -> (usize, usize) {
+    (ax + SLIDER_LABEL_W, w.saturating_sub(SLIDER_LABEL_W + SLIDER_VALUE_W))
+}
+
+/// Value a click at absolute `x` maps to on the track of a slider spanning
+/// `min..=max`.
+fn slider_value_at(ax: usize, w: usize, min: u8, max: u8, x: usize) -> u8 {
+    let (tx, tw) = slider_track(ax, w);
+    if tw == 0 || max <= min {
+        return min;
+    }
+    let rel = x.clamp(tx, tx + tw) - tx;
+    let span = (max - min) as usize;
+    (min as usize + rel * span / tw).min(max as usize) as u8
+}
+
+/// Paints a slider (v2.67.0): caption on the left, a sunken track with the
+/// filled portion in [`BAR_ON`], a [`TEXT`] thumb at the value, and the numeric
+/// value on the right.
+fn draw_slider(
+    fb: &Framebuffer,
+    ax: usize,
+    ay: usize,
+    w: usize,
+    h: usize,
+    label: &str,
+    min: u8,
+    max: u8,
+    value: u8,
+    hovered: bool,
+) {
+    let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
+    let label_fg = if hovered { TEXT } else { TEXT_DIM };
+    tui::draw_text(fb, ax, ty, label, label_fg, WIN_BG, ax + SLIDER_LABEL_W);
+    let (tx, tw) = slider_track(ax, w);
+    if tw == 0 {
+        return;
+    }
+    let cy = ay + h / 2;
+    let span = (max.saturating_sub(min)).max(1) as usize;
+    let off = ((value.saturating_sub(min)) as usize * tw / span).min(tw);
+    let ty0 = cy.saturating_sub(SLIDER_TRACK_H / 2);
+    unsafe {
+        fb.fill_rect(tx, ty0, tw, SLIDER_TRACK_H, BTN_BG);
+        fb.fill_rect(tx, ty0, off, SLIDER_TRACK_H, BAR_ON);
+    }
+    draw_edge_box(
+        fb,
+        tx,
+        ty0,
+        tw,
+        SLIDER_TRACK_H,
+        if hovered { BAR_ON } else { TEXT_DIM },
+    );
+    let thx = (tx + off).saturating_sub(SLIDER_THUMB / 2);
+    unsafe {
+        fb.fill_rect(thx, cy.saturating_sub(SLIDER_THUMB / 2), SLIDER_THUMB, SLIDER_THUMB, TEXT);
+    }
+    draw_edge_box(
+        fb,
+        thx,
+        cy.saturating_sub(SLIDER_THUMB / 2),
+        SLIDER_THUMB,
+        SLIDER_THUMB,
+        TEXT_DIM,
+    );
+    let mut buf = [0u8; 3];
+    let mut n = value as usize;
+    let mut len = 0usize;
+    if n == 0 {
+        buf[0] = b'0';
+        len = 1;
+    } else {
+        while n > 0 && len < buf.len() {
+            buf[len] = b'0' + (n % 10) as u8;
+            n /= 10;
+            len += 1;
+        }
+        buf[..len].reverse();
+    }
+    let val = core::str::from_utf8(&buf[..len]).unwrap_or("0");
+    tui::draw_text(fb, tx + tw + 6, ty, val, TEXT, WIN_BG, ax + w);
 }
 
 /// Paints a 1px rectangular border in `border`.
@@ -3441,7 +3576,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                     ) {
                         focus_window(i);
                     }
-                    widget_click(win, &label, wg, y);
+                    widget_click(win, &label, wg, x, y);
                     hit_any = true;
                     break;
                 }
@@ -4722,7 +4857,7 @@ fn draw_lab(fb: &Framebuffer, win: &Window, max_px: usize) {
         tui::draw_text(fb, x, win.y + y, s, fg, WIN_BG, max_px);
     };
     at(TITLE_H + 8, "Widget Lab", TEXT);
-    at(278, "Tab focus  n/p list  enter pick", TEXT_DIM);
+    at(300, "Tab focus  n/p list  enter pick", TEXT_DIM);
     if lab_menu() == LAB_NO {
         let f = lab_form();
         if f.msg_len > 0 {
@@ -5096,6 +5231,19 @@ fn form_radio_select(host: WinKind, g: usize, value: u8) {
     let f = form(host);
     if g < f.radios.len() {
         f.radios[g] = value;
+    }
+}
+
+/// Value of slider `id` in `host`'s form store, `0` out of range.
+fn form_slider(host: WinKind, id: u8) -> u8 {
+    form(host).sliders.get(id as usize).copied().unwrap_or(0)
+}
+
+/// Sets slider `id` in `host`'s form store to `value`.
+fn form_slider_set(host: WinKind, id: u8, value: u8) {
+    let f = form(host);
+    if let Some(slot) = f.sliders.get_mut(id as usize) {
+        *slot = value;
     }
 }
 
