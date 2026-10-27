@@ -11,7 +11,7 @@
 //! falls back to xAPIC MMIO at the base reported by `IA32_APIC_BASE` when the
 //! CPU exposes neither x2APIC capable nor an enabled x2APIC mode.
 
-use crate::interrupts::{pit_count, APIC_TIMER_VECTOR, TIMER_HZ};
+use crate::interrupts::{pit_count, pit_elapsed, APIC_TIMER_VECTOR, TIMER_HZ};
 use crate::{kprintln, memory};
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -165,7 +165,7 @@ fn wait_pit(ms: u64) -> u64 {
     let mut elapsed = 0u64;
     loop {
         let now = pit_count();
-        elapsed += u64::from(last.wrapping_sub(now));
+        elapsed += pit_elapsed(last, now);
         last = now;
         if elapsed >= desired {
             return elapsed;

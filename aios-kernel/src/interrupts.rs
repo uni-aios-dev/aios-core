@@ -413,6 +413,26 @@ pub fn pit_count() -> u16 {
     }
 }
 
+/// Reload value of PIT channel 0 (`0` = free-running 65536 before `init_pit`
+/// programs 100 Hz).
+static PIT_DIV: AtomicU32 = AtomicU32::new(0);
+
+/// Elapsed PIT channel-0 clocks between two [`pit_count`] samples (v2.68.3).
+///
+/// The countdown reloads at the divisor - `11931` (`0x2E9B`) for 100 Hz -
+/// which is *not* a 16-bit wrap: a sample pair that straddles the reload makes
+/// a plain `wrapping_sub` report ~65536 extra clocks (the reloaded value is
+/// interpreted as a wrapped-down one). Reducing the difference modulo
+/// `divisor + 1` treats the reload as the cycle boundary it actually is, so
+/// `delay_ms`, `wait_for_irq32` and the LAPIC calibration window measure real
+/// time. Before `init_pit` the divisor is unknown and the plain 16-bit modulo
+/// is used, which is correct for a BIOS free-running counter.
+pub(crate) fn pit_elapsed(last: u16, now: u16) -> u64 {
+    let span = PIT_DIV.load(Ordering::Relaxed) + 1;
+    let span = if span <= 1 { 65_536 } else { span };
+    u64::from((u32::from(last) + span - u32::from(now)) % span)
+}
+
 /// Busy-waits `ms` milliseconds using the PIT channel-0 countdown.
 ///
 /// Independent of interrupt delivery (no IRQ required). The 16-bit countdown
@@ -425,7 +445,7 @@ pub fn delay_ms(ms: u64) {
     let mut elapsed = 0u64;
     loop {
         let now = pit_count();
-        elapsed += last.wrapping_sub(now) as u64;
+        elapsed += pit_elapsed(last, now);
         last = now;
         if elapsed >= desired {
             break;
@@ -437,9 +457,17 @@ pub fn delay_ms(ms: u64) {
 pub fn init_pit() {
     let divisor = (1193182 / TIMER_HZ) as u16;
     unsafe {
-        port::outb(PIT_CMD, 0x36);
+        // Mode 2 (rate generator, lobyte/hibyte): the counter register
+        // decrements by one per 1.193182 MHz clock, so `pit_count` deltas are
+        // a true time base. Mode 3 (0x36, square wave) decremented by two and
+        // made every polled interval look longer than it was; together with
+        // the reload-straddling delta bug (see `pit_elapsed`) that armed the
+        // LAPIC tick several times too fast and made uptime run 2-5x fast
+        // (v2.68.3).
+        port::outb(PIT_CMD, 0x34);
         port::outb(PIT_CH0, (divisor & 0xFF) as u8);
         port::outb(PIT_CH0, (divisor >> 8) as u8);
+        PIT_DIV.store(u32::from(divisor), Ordering::Relaxed);
         for _ in 0..2_500_000 {
             core::hint::spin_loop();
         }
@@ -470,7 +498,7 @@ pub fn wait_for_irq32(ms: u64) -> bool {
             return true;
         }
         let now = pit_count();
-        elapsed += last.wrapping_sub(now) as u64;
+        elapsed += pit_elapsed(last, now);
         last = now;
         if elapsed >= desired {
             return IRQ32_SEEN.load(Ordering::Relaxed);

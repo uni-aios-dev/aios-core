@@ -1,5 +1,30 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.68.3): uptime ran fast — square-wave PIT and reload-straddling deltas
+
+- **Status:** RESOLVED in v2.68.3.
+- **Symptom:** the GUI clock, the TUI `uptime` line and the `[tick] Ns` serial
+  stream counted seconds faster than wall time (roughly 2–5x depending on the
+  run), and `delay_ms`-based probes finished early.
+- **Root cause:** two defects in the polled PIT countdown path:
+  1. `init_pit` wrote `0x36` (mode 3, square wave), so the counter register
+     decremented by two per 1.193182 MHz clock while the readers assumed one
+     count per clock.
+  2. `delay_ms`, `wait_for_irq32` and `lapic::calibrate` accumulated samples
+     with `wrapping_sub`. Channel 0 reloads at the divisor (`11931` at 100 Hz —
+     not a 16-bit wrap), and a sample pair crossing the reload reports ~65536
+     extra clocks. `calibrate` therefore measured a window shorter than 10 ms,
+     underestimated `bus_hz` and armed the LAPIC tick early (`TICKS` ran at
+     ~200–500 Hz).
+- **Fix:** channel 0 uses `0x34` (mode 2, rate generator) and every count
+  delta goes through `interrupts::pit_elapsed`, which reduces the sample
+  difference modulo the programmed divisor + 1. IRQ0 keeps 100 Hz and
+  `delay_ms` waits real time again.
+- **Verification:** kernel build + clippy clean. On a QEMU/real boot,
+  `[lapic] calib: … pit_delta=…` should sit near 11931 (it used to read
+  ~47k–62k) with `init_count` proportionally larger, and `[tick] 1s` should
+  arrive one wall second after the previous line.
+
 ## RESOLVED (v2.68.1): `FC_PROTECTED = 0x0040` deviated from IEEE 802.11
 
 - **Status:** RESOLVED in v2.68.1 (was OPEN through v2.68.0).

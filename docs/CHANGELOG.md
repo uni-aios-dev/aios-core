@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## v2.68.3 — PIT time base fixed; uptime no longer runs fast (2026-10-27)
+
+### Fixed
+- **Fast clock** (`aios-kernel/src/interrupts.rs`, `lapic.rs`): two compounding
+  defects in the PIT time base made the guest count seconds faster than wall
+  time — the GUI clock, the TUI `uptime` line and the `[tick] Ns` stream could
+  run 2–5x fast depending on where a sample happened to land:
+  1. `init_pit` programmed channel 0 with `0x36` — mode 3 (square wave), where
+     the counter register decrements by **two** per 1.193182 MHz clock, while
+     every reader assumes one count per clock.
+  2. `delay_ms`, `wait_for_irq32` and `lapic::wait_pit` accumulated samples
+     with a plain `wrapping_sub`. Channel 0 reloads at the divisor (`11931` at
+     100 Hz, which is not a 16-bit wrap), so a sample pair that straddles a
+     reload makes `wrapping_sub` report ~65536 extra clocks — a "10 ms"
+     calibration window could really be 2–5 ms.
+  Channel 0 now uses `0x34` — mode 2 (rate generator, one count per clock) —
+  and the new `pit_elapsed` helper reduces each sample difference modulo
+  `divisor + 1`, so a reload is treated as the cycle boundary it is. IRQ0
+  stays at 100 Hz, `delay_ms` waits the requested time again, and `lapic`
+  calibrates `bus_hz` over a true 10 ms window, arming the tick at 10 ms.
+- **Boot fingerprint** (`docs/BUGS.md`, `docs/BUGS.ru.md`): the LAPIC
+  calibration line is the regression probe — with the fix `pit_delta` sits
+  near 11931 for the 10 ms window (it used to read ~47k–62k) and `init_count`
+  comes out proportionally larger.
+
 ## v2.68.2 — USB pointer press now settles pending motion (2026-10-27)
 
 ### Fixed
