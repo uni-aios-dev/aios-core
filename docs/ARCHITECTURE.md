@@ -1743,6 +1743,17 @@ match on the bound local port and require the reply to come from the connected p
     `BAR_ON`, a `TEXT` thumb and the numeric value; a track click maps its x to a
     value through `slider_value_at` and stores it with `form_slider_set`,
     logging `[gui] widget <host>/slider <label> = <value>`.
+    Since v2.68.0 text fields hold UTF-8 scalars: `form_type_char` appends the
+    encoded char when it fits whole in `LAB_FIELD_CAP`, `form_backspace` removes
+    one whole scalar, and the field painter walks chars with the caret counted
+    in scalars (non-ASCII shows `?` until a scalable font lands). A
+    kernel-internal clipboard (`CLIP`, 128 bytes) backs
+    `Ctrl+C`/`Ctrl+X`/`Ctrl+V` through `form_clip_copy`/`form_clip_cut`/
+    `form_clip_paste`, logging `[gui] clipboard copy|cut|paste <n> bytes` and
+    reporting `no field`/`full`/`empty` on the status line. `CTRL_DOWN` (interrupts) is
+    fed by the PS/2 `0x1D`/`0x9D` make/break bytes (including the `0xE0`
+    extended forms) and by `xhci::harvest_report`'s HID modifier byte, which at
+    the same time restores Shift on USB keyboards.
     Since v2.65.0 every host owns its widget state: `WidgetForm` (fields, lens,
     focus, menu, sel, scroll, msg, `checks`, `radios`, `sliders`) lives in the
     `FORMS: [WidgetForm; FORM_SLOTS]` global, one slot per built-in window

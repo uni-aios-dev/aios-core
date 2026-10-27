@@ -1,5 +1,23 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.68.0): USB keyboard ignored HID modifiers and the GUI had no clipboard
+
+- **Status:** RESOLVED in v2.68.0.
+- **Symptom:** on a board whose only keyboard is USB HID every letter typed
+  lowercase, because `xhci::harvest_report` never decoded report byte 0 into
+  `SHIFT_DOWN`/`SHIFTED`; with no `Ctrl` state at all, a `Ctrl+C` combo typed a
+  literal `c`, and the kernel GUI's text fields offered no way to move text.
+- **Fix:** `harvest_report` maps the HID modifier byte to
+  `SHIFT_DOWN`/`SHIFTED`/`CTRL_DOWN`; `CTRL_DOWN` (new in `interrupts.rs`) also
+  follows the PS/2 `0x1D`/`0x9D` make/break bytes, including the
+  `0xE0`-prefixed extended forms filtered by `ps2::feed_key` and the FIFO
+  drain in `main.rs`. `gui::widget_key` consumes `Ctrl+C`/`Ctrl+X`/`Ctrl+V`
+  against a kernel-internal clipboard (`CLIP`, 128 bytes) and drops other Ctrl
+  combos instead of typing the letter.
+- **Residual:** text fields store UTF-8 scalars and render non-ASCII as `?`
+  until the scalable-font backlog item lands; no current input path emits
+  non-ASCII, so typing stays US-layout ASCII.
+
 ## RESOLVED (v2.58.0): WebAssembly disk blocks are routed over IPC (was OPEN v2.57.0)
 
 - **Status:** RESOLVED in v2.58.0 (was OPEN through v2.57.0). The v2.57.0 entry
@@ -1034,7 +1052,7 @@
   no partial rows; `sendkey meta_l/meta_l/meta_r` produced zero panic lines and
   `[serial] tick` advanced to 470 s.
 
-## OPEN (v2.38.22): kernel GUI is a demo desktop — no client windows, no resize
+## OPEN (v2.38.22): kernel GUI is a demo desktop — no WM task, no multi-instance windows
 
 The windowed GUI (`gui` command) is functionally complete for a demo but is
 explicitly a first step:
@@ -1043,21 +1061,25 @@ explicitly a first step:
   ring-3 tasks can now create/present their own windows through the `SYS_GUI`
   CREATE/PRESENT gate (the kernel composites their buffers, see RESOLVED
   v2.38.25). Still open: an IPC-bus variant so host `aios-process-mgr` tasks
-  can do the same without `int 0x80`, and a WM task owning the policy.
-- **No resize/minimize/maximize** — *resolved in v2.38.27 (resize) and
-  v2.38.28 (minimize/maximize)*: drag-resize on every window, the full
-  title-bar cluster (minimize/maximize/close), minimized windows hidden from
-  render/input with dim task-bar buttons restored by click, and a stable
-  task-bar layout (`taskbar_slots()`/`kind_rank`) so buttons cannot move
-  under the pointer after a focus shuffle.
+  can do the same without `int 0x80`, and a WM task owning focus/z-order policy.
+- **Resize/minimize/maximize** — *resolved in v2.38.27 (resize) and v2.38.28
+  (minimize/maximize)*: drag-resize on every window, the full title-bar cluster
+  (minimize/maximize/close), minimized windows hidden from render/input with dim
+  task-bar buttons restored by click, and a stable task-bar layout
+  (`taskbar_slots()`/`kind_rank`) so buttons cannot move under the pointer after
+  a focus shuffle.
 - **One instance per window kind** — `MAX_WINS = 8` static slots, z-order
-  shuffles slots; multi-instance apps (two Welcome windows) are not supported.
+  shuffles slots; multi-instance apps (two Welcome windows) are not supported,
+  and window policy still lives in the kernel rather than in a WM task.
 - The widget set now covers buttons and, since v2.47.0, text fields, lists,
-  scrollbars and dropdown menus (all keyed off a single global form on the demo
-  *Widget Lab*); still no scalable font, no UTF-8 text input beyond ASCII, no
-  clipboard, and no per-window form store.
+  scrollbars and dropdown menus, plus checkboxes (v2.63.0), radios (v2.64.0) and
+  a slider (v2.67.0), all on a per-window form store (v2.65.0) with
+  host-generic key routing (v2.66.0) and a kernel clipboard (v2.68.0); still no
+  scalable font.
 
-Watch: typing is ASCII-only (PSF 8x8 glyph path). Non-ASCII input lands as '?'
+Watch: text is drawn through the PSF 8x8 glyph path, so UTF-8 text fields
+substitute `?` for non-ASCII scalars until a scalable font lands; keyboard
+typing stays ASCII because the scan-code tables are US-layout ASCII.
 
 ## OPEN (v2.38.20): lid heuristic must be calibrated from the MSI EC RAM dump
 - **Status:** OPEN — board-specific constants pending real-hardware boot

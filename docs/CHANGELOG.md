@@ -1,5 +1,34 @@
 # AIOS Development Log
 
+## v2.68.0 — Clipboard, UTF-8 text fields and USB modifiers (2026-10-26)
+
+### Added
+- **GUI clipboard** (`aios-kernel/src/gui.rs`): `Ctrl+C`/`Ctrl+X`/`Ctrl+V`
+  copy/cut/paste the focused text field through a kernel-internal `CLIP` buffer
+  (`CLIP_CAP = 128` bytes) shared by every widget host. Paste respects
+  `LAB_FIELD_CAP`, never splits a UTF-8 scalar, and reports `no field` / `full` / `empty`
+  on the host status line; serial proof `[gui] clipboard copy|cut|paste <n>
+  bytes`.
+- **Ctrl modifier tracking** (`aios-kernel/src/interrupts.rs`, `ps2.rs`,
+  `main.rs`): `CTRL_DOWN` follows the left/right Ctrl make/break bytes,
+  including the `0xE0`-prefixed extended forms that the PS/2 path filters
+  before the key FIFO.
+- **HID modifier byte** (`aios-kernel/src/xhci.rs`): `harvest_report` maps
+  report byte 0 to `SHIFT_DOWN`/`SHIFTED`/`CTRL_DOWN`, so a USB keyboard types
+  uppercase and shifted symbols (previously every letter arrived lowercase) and
+  the clipboard shortcuts work on USB-only boards.
+
+### Changed
+- **UTF-8 text fields**: values are stored as UTF-8 scalars (`form_type_char`
+  encodes the char and checks capacity per whole scalar) and `Backspace`
+  removes one whole scalar; drawing walks chars with the caret counted in
+  scalars. Non-ASCII renders as `?` until the scalable-font backlog item lands,
+  and no input path produces non-ASCII today.
+- The Widget Lab hint area gained a second row, `ctrl+c/x/v copy/cut/paste`
+  (y=314).
+- Removed three stale doc comments that had drifted onto the wrong functions
+  (`dirty_kind`, `draw_lab`, `draw_network`).
+
 ## v2.67.0 — Slider widget in the kernel GUI (2026-10-26)
 
 ### Added

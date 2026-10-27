@@ -1735,6 +1735,18 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
     значение; клик по треку отображает x в значение через `slider_value_at` и
     сохраняет его через `form_slider_set`, логируя `[gui] widget
     <host>/slider <label> = <value>`.
+    С v2.68.0 текстовые поля хранят UTF-8-скаляры: `form_type_char` дописывает
+    закодированный символ, если он целиком влезает в `LAB_FIELD_CAP`,
+    `form_backspace` удаляет один целый скаляр, а отрисовщик поля идёт по
+    символам, считая каретку в скалярах (не-ASCII показывается как `?` до
+    появления масштабируемого шрифта). Внутренний буфер обмена ядра (`CLIP`,
+    128 байт) обслуживает `Ctrl+C`/`Ctrl+X`/`Ctrl+V` через
+    `form_clip_copy`/`form_clip_cut`/`form_clip_paste`, логируя
+    `[gui] clipboard copy|cut|paste <n> bytes` и показывая `no field`/`full`/`empty` в
+    строке статуса. `CTRL_DOWN` (interrupts) питается make/break байтами PS/2
+    `0x1D`/`0x9D` (включая `0xE0`-префиксные формы) и байтом модификаторов HID
+    из `xhci::harvest_report`, который заодно возвращает Shift на
+    USB-клавиатурах.
     С v2.65.0 состояние виджетов принадлежит каждому хозяину: `WidgetForm`
     (поля, длины, фокус, меню, выбор, прокрутка, `msg`, `checks`, `radios`,
     `sliders`) живёт в глобале `FORMS: [WidgetForm; FORM_SLOTS]`, по слоту на

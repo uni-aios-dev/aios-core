@@ -627,6 +627,14 @@ fn harvest_report() {
     let current = pack_report(bytes);
     let previous = LAST_REPORT.load(Ordering::Relaxed);
     LAST_REPORT.store(current, Ordering::Relaxed);
+    // HID modifier byte (v2.68.0): bit 1/5 are Shift, bit 0/4 are Ctrl. The
+    // boot report carries no keycode for them, so without this the USB keyboard
+    // typed every letter lowercase and the GUI clipboard shortcuts could never
+    // fire on a USB-only board.
+    let shift = bytes[0] & 0x22 != 0;
+    crate::interrupts::SHIFT_DOWN.store(shift, Ordering::Relaxed);
+    crate::interrupts::SHIFTED.store(shift, Ordering::Relaxed);
+    crate::interrupts::CTRL_DOWN.store(bytes[0] & 0x11 != 0, Ordering::Relaxed);
     for key in &bytes[2..8] {
         if *key != 0 && !report_has_key(previous, *key) {
             if let Some(sc) = usage_to_scancode(*key) {

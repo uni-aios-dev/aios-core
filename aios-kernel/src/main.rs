@@ -1025,6 +1025,11 @@ pub fn idle_loop() -> ! {
             }
             if last_sc_ext {
                 last_sc_ext = false;
+                match sc {
+                    0x1D => interrupts::CTRL_DOWN.store(true, Ordering::Relaxed),
+                    0x9D => interrupts::CTRL_DOWN.store(false, Ordering::Relaxed),
+                    _ => {}
+                }
                 continue;
             }
             if sc == 0x2A || sc == 0x36 {
@@ -1035,6 +1040,10 @@ pub fn idle_loop() -> ! {
             if sc == 0xAA || sc == 0xB6 {
                 interrupts::SHIFT_DOWN.store(false, Ordering::Relaxed);
                 interrupts::SHIFTED.store(false, Ordering::Relaxed);
+                continue;
+            }
+            if sc == 0x1D || sc == 0x9D {
+                interrupts::CTRL_DOWN.store(sc == 0x1D, Ordering::Relaxed);
                 continue;
             }
             if sc & 0x80 == 0 {

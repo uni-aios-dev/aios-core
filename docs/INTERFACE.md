@@ -1056,13 +1056,20 @@ focused) returns to the console/TUI.
   - *Close* button: closes the Lab through the normal path (a typed note
     still raises the `Confirm` dialog).
   - Press `Escape` to dismiss an open dropdown without closing the window.
+  - *Clipboard* (v2.68.0): with a text field focused, `Ctrl+C` copies, `Ctrl+X`
+    cuts and `Ctrl+V` appends from a kernel-internal 128-byte buffer shared by
+    every window (not the firmware clipboard); the status line reports
+    `copied`/`cut`/`pasted`/`no field`/`full`/`empty`. Text fields hold UTF-8 and render
+    non-ASCII as `?` until a scalable font lands. The hint row lists
+    `ctrl+c/x/v copy/cut/paste`.
   - Serial proof: `[gui] widget Widget Lab/field <n> focus`,
     `[gui] widget Widget Lab/list row <n> click`,
     `[gui] widget Widget Lab/menu open|close`,
     `[gui] widget Widget Lab/menu item <n> click`,
     `[gui] widget Widget Lab/check <label> = on|off`,
     `[gui] widget Widget Lab/radio <label> = <value>`,
-    `[gui] widget Widget Lab/slider <label> = <value>`.
+    `[gui] widget Widget Lab/slider <label> = <value>`,
+    `[gui] clipboard copy|cut|paste <n> bytes`.
 - **Keyboard ext safety (v2.38.23)**: extended (0xE0/0xE1-prefixed) keys —
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the

@@ -234,6 +234,11 @@ fn feed_key(byte: u8) {
         unsafe {
             *core::ptr::addr_of_mut!(EXT) = false;
         }
+        match byte {
+            0x1D => crate::interrupts::CTRL_DOWN.store(true, Ordering::Relaxed),
+            0x9D => crate::interrupts::CTRL_DOWN.store(false, Ordering::Relaxed),
+            _ => {}
+        }
         return;
     }
     if byte == 0xE0 || byte == 0xE1 {
@@ -249,6 +254,14 @@ fn feed_key(byte: u8) {
         }
         0xAA | 0xB6 => {
             crate::interrupts::SHIFT_DOWN.store(false, Ordering::Relaxed);
+            return;
+        }
+        0x1D => {
+            crate::interrupts::CTRL_DOWN.store(true, Ordering::Relaxed);
+            return;
+        }
+        0x9D => {
+            crate::interrupts::CTRL_DOWN.store(false, Ordering::Relaxed);
             return;
         }
         _ => {}

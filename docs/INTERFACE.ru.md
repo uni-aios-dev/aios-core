@@ -1079,13 +1079,20 @@ v2.38.11-18 (статичный дашборд только для просмо�
   - *Кнопка Close*: закрывает Lab обычным путём (набранный текст всё ещё
     поднимает диалог `Confirm`).
   - Нажмите `Escape`, чтобы закрыть открытое меню, не закрывая окно.
+  - *Буфер обмена* (v2.68.0): при фокусе в текстовом поле `Ctrl+C` копирует,
+    `Ctrl+X` вырезает, а `Ctrl+V` дописывает из внутреннего буфера ядра на
+    128 байт, общего для всех окон (это не буфер прошивки/ОС). Строка статуса
+    сообщает `copied`/`cut`/`pasted`/`no field`/`full`/`empty`. Поля хранят UTF-8 и
+    рисуют не-ASCII как `?` до появления масштабируемого шрифта. В строке
+    подсказок — `ctrl+c/x/v copy/cut/paste`.
   - Serial-proof: `[gui] widget Widget Lab/field <n> focus`,
     `[gui] widget Widget Lab/list row <n> click`,
     `[gui] widget Widget Lab/menu open|close`,
     `[gui] widget Widget Lab/menu item <n> click`,
     `[gui] widget Widget Lab/check <label> = on|off`,
     `[gui] widget Widget Lab/radio <label> = <value>`,
-    `[gui] widget Widget Lab/slider <label> = <value>`.
+    `[gui] widget Widget Lab/slider <label> = <value>`,
+    `[gui] clipboard copy|cut|paste <n> bytes`.
 - **Безопасность клавиатуры (v2.38.23)**: extended-клавиши (с префиксом
   0xE0/0xE1) — Windows, стрелки, F-ряд, альт-цифры цифрового блока — гасятся
   в источнике на обоих путях ввода и никогда не доходят до GUI/TUI: они не

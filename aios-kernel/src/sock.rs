@@ -634,7 +634,7 @@ fn wscale_opt(seg: &[u8], doff: usize) -> u8 {
             3 if seg[i + 1] == 3 && i + 2 < doff => return seg[i + 2],
             0 => return 0,
             1 => i += 1,
-            k if seg[i + 1] as usize >= 2 => i += seg[i + 1] as usize,
+            _ if seg[i + 1] as usize >= 2 => i += seg[i + 1] as usize,
             _ => return 0,
         }
     }
@@ -870,7 +870,7 @@ fn send_segment(sk: &Socket, seq: u32, flags: u8, payload: &[u8]) {
     seg[13] = flags;
     // Advertised window, scaled by our shift (v2.57.0): the peer restores
     // the true 64240-byte window with `2^wscale`.
-    let win = (TCP_WINDOW >> sk.wscale) as u16;
+    let win = TCP_WINDOW >> sk.wscale;
     seg[14..16].copy_from_slice(&win.to_be_bytes());
     seg[16..18].copy_from_slice(&0u16.to_be_bytes());
     seg[18..20].copy_from_slice(&0u16.to_be_bytes());

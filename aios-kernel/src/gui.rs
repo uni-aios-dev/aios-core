@@ -2765,9 +2765,10 @@ fn lab_dropdown_click(x: usize, y: usize) -> bool {
     false
 }
 
-/// Routes a key to the Widgets host's focused widget (v2.47.0): menu dismissal,
-/// Tab field cycling, Backspace editing, Enter activation and printable typing.
-/// Returns `true` when the key was consumed by the Widget Lab.
+/// Routes a key to the focused host's form (v2.47.0, generic since v2.66.0):
+/// menu dismissal, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` clipboard shortcuts, Tab field
+/// cycling, Backspace editing, Enter activation and printable typing. Returns
+/// `true` when the key was consumed by the focused window.
 fn widget_key(sc: u8) -> bool {
     let Some(i) = focused_idx() else {
         return false;
@@ -2786,6 +2787,26 @@ fn widget_key(sc: u8) -> bool {
     }
     if f_menu != LAB_NO {
         form_menu_set(host, LAB_NO);
+    }
+    if crate::interrupts::CTRL_DOWN.load(Ordering::Relaxed) {
+        match sc {
+            0x2E => {
+                let _ = form_clip_copy(host);
+                dirty_kind(host);
+                return true;
+            }
+            0x2D => {
+                let _ = form_clip_cut(host);
+                dirty_kind(host);
+                return true;
+            }
+            0x2F => {
+                let _ = form_clip_paste(host);
+                dirty_kind(host);
+                return true;
+            }
+            _ => {}
+        }
     }
     let consumed = match sc {
         0x0F => {
@@ -2806,6 +2827,9 @@ fn widget_key(sc: u8) -> bool {
             };
             if c.is_control() {
                 return false;
+            }
+            if crate::interrupts::CTRL_DOWN.load(Ordering::Relaxed) {
+                return true;
             }
             form_type_char(host, c);
             true
@@ -2995,12 +3019,7 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, click_x: usize, y: u
         } => {
             let g = group as usize;
             form_radio_select(win.kind, g, value);
-            crate::kprintln!(
-                "[gui] widget {}/radio {} = {}",
-                host_label,
-                label,
-                value
-            );
+            crate::kprintln!("[gui] widget {}/radio {} = {}", host_label, label, value);
             form_msg(win.kind, label);
             dirty_kind(win.kind);
         }
@@ -3022,8 +3041,7 @@ fn widget_click(win: &Window, host_label: &str, wg: Widget, click_x: usize, y: u
     }
 }
 
-/// Toggles checkbox `i` in `host`'s form store and returns the new state.
-/// Deletes the last character of the focused text field, if any.
+/// Repaints the window(s) of `kind` after a form change.
 fn dirty_kind(kind: WinKind) {
     let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
     for win in wins.iter().flatten() {
@@ -3045,28 +3063,25 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 let hostk = win.kind;
                 let focused = form_focus(hostk) == id;
                 draw_field_box(fb, ax, ay, w, h, focused, hover == Some((hostk, wi)));
-                let (val, len) = {
+                let (val, count) = {
                     let f = form(hostk);
                     let i = id as usize;
                     if i < LAB_FIELD_N {
-                        (
-                            core::str::from_utf8(&f.fields[i][..f.lens[i] as usize])
-                                .unwrap_or(""),
-                            f.lens[i] as usize,
-                        )
+                        let bytes = &f.fields[i][..f.lens[i] as usize];
+                        (core::str::from_utf8(bytes).unwrap_or(""), utf8_chars(bytes))
                     } else {
                         ("", 0)
                     }
                 };
                 let ty = ay + (h - console::GLYPH_H) / 2;
-                if len == 0 {
+                if val.is_empty() {
                     let hint = if id == 0 { "name" } else { "note" };
                     tui::draw_text(fb, ax + 4, ty, hint, TEXT_DIM, NET_BOX_BG, ax + w - 4);
                 } else {
-                    tui::draw_text(fb, ax + 4, ty, val, TEXT, NET_BOX_BG, ax + w - 4);
+                    draw_field_text(fb, ax + 4, ty, val, ax + w - 4);
                 }
                 if focused {
-                    let cx = ax + 4 + len * console::GLYPH_W;
+                    let cx = ax + 4 + count * console::GLYPH_W;
                     if cx + 2 < ax + w {
                         unsafe {
                             fb.fill_rect(cx, ay + 2, 2, h.saturating_sub(4), BAR_ON);
@@ -3172,12 +3187,7 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 draw_plate(fb, ax, ay, w, h, label, plate);
             }
             Widget::Checkbox {
-                x,
-                y,
-                h,
-                id,
-                label,
-                ..
+                x, y, h, id, label, ..
             } => {
                 let (ax, ay) = (win.x + x, win.y + y);
                 let on = form_checked(win.kind, id);
@@ -3211,7 +3221,20 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                 let (ax, ay) = (win.x + x, win.y + y);
                 let value = form_slider(win.kind, id).clamp(min, max);
                 let hovered = hover == Some((win.kind, wi));
-                draw_slider(fb, ax, ay, w, h, label, min, max, value, hovered);
+                draw_slider(
+                    fb,
+                    SliderView {
+                        ax,
+                        ay,
+                        w,
+                        h,
+                        label,
+                        min,
+                        max,
+                        value,
+                        hovered,
+                    },
+                );
             }
         }
     }
@@ -3307,8 +3330,8 @@ fn draw_radio(
             let dx2 = (dx as i32 - (r as i32 + 1)).abs();
             let dy2 = (dy as i32 - (r as i32 + 1)).abs();
             let dist2 = dx2 * dx2 + dy2 * dy2;
-            let r2 = ((r as i32 + 1) * (r as i32 + 1)) as i32;
-            let r12 = ((r as i32) * (r as i32)) as i32;
+            let r2 = (r as i32 + 1) * (r as i32 + 1);
+            let r12 = (r as i32) * (r as i32);
             if dist2 <= r2 && dist2 >= r12 {
                 unsafe {
                     fb.fill_rect(px as usize, py as usize, 1, 1, border);
@@ -3349,7 +3372,10 @@ const SLIDER_THUMB: usize = 10;
 
 /// Track `(x, width)` of a slider widget at origin `ax` with total width `w`.
 fn slider_track(ax: usize, w: usize) -> (usize, usize) {
-    (ax + SLIDER_LABEL_W, w.saturating_sub(SLIDER_LABEL_W + SLIDER_VALUE_W))
+    (
+        ax + SLIDER_LABEL_W,
+        w.saturating_sub(SLIDER_LABEL_W + SLIDER_VALUE_W),
+    )
 }
 
 /// Value a click at absolute `x` maps to on the track of a slider spanning
@@ -3364,21 +3390,35 @@ fn slider_value_at(ax: usize, w: usize, min: u8, max: u8, x: usize) -> u8 {
     (min as usize + rel * span / tw).min(max as usize) as u8
 }
 
-/// Paints a slider (v2.67.0): caption on the left, a sunken track with the
-/// filled portion in [`BAR_ON`], a [`TEXT`] thumb at the value, and the numeric
-/// value on the right.
-fn draw_slider(
-    fb: &Framebuffer,
+/// One slider paint request (v2.68.0): geometry, caption and value. Grouping
+/// them keeps `draw_slider` readable and under clippy's argument limit.
+struct SliderView<'a> {
     ax: usize,
     ay: usize,
     w: usize,
     h: usize,
-    label: &str,
+    label: &'a str,
     min: u8,
     max: u8,
     value: u8,
     hovered: bool,
-) {
+}
+
+/// Paints a slider (v2.67.0): caption on the left, a sunken track with the
+/// filled portion in [`BAR_ON`], a [`TEXT`] thumb at the value, and the numeric
+/// value on the right.
+fn draw_slider(fb: &Framebuffer, view: SliderView<'_>) {
+    let SliderView {
+        ax,
+        ay,
+        w,
+        h,
+        label,
+        min,
+        max,
+        value,
+        hovered,
+    } = view;
     let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
     let label_fg = if hovered { TEXT } else { TEXT_DIM };
     tui::draw_text(fb, ax, ty, label, label_fg, WIN_BG, ax + SLIDER_LABEL_W);
@@ -3404,7 +3444,13 @@ fn draw_slider(
     );
     let thx = (tx + off).saturating_sub(SLIDER_THUMB / 2);
     unsafe {
-        fb.fill_rect(thx, cy.saturating_sub(SLIDER_THUMB / 2), SLIDER_THUMB, SLIDER_THUMB, TEXT);
+        fb.fill_rect(
+            thx,
+            cy.saturating_sub(SLIDER_THUMB / 2),
+            SLIDER_THUMB,
+            SLIDER_THUMB,
+            TEXT,
+        );
     }
     draw_edge_box(
         fb,
@@ -3464,6 +3510,28 @@ fn draw_field_box(
         TEXT_DIM
     };
     draw_edge_box(fb, ax, ay, w, h, border);
+}
+
+/// Number of UTF-8 scalars in `bytes`: every byte that is not a continuation
+/// byte (`10xxxxxx`) starts one scalar.
+fn utf8_chars(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|b| (**b & 0xC0) != 0x80).count()
+}
+
+/// Paints a text field's value one glyph cell per scalar (v2.68.0). ASCII keeps
+/// its glyph; a non-ASCII scalar renders as `?` because the PSF console font
+/// carries no Unicode glyphs yet (docs/BUGS.md, scalable-font backlog). The
+/// string never crosses `max_px`, so it stays inside the field frame.
+fn draw_field_text(fb: &Framebuffer, x: usize, y: usize, s: &str, max_px: usize) {
+    let mut px = x;
+    for ch in s.chars() {
+        if px + console::GLYPH_W > max_px {
+            break;
+        }
+        let byte = if ch.is_ascii() { ch as u8 } else { b'?' };
+        tui::draw_glyph(fb, px, y, byte, TEXT, NET_BOX_BG);
+        px += console::GLYPH_W;
+    }
 }
 
 /// Serial proof line for a finished resize drag: final geometry of the
@@ -4843,13 +4911,8 @@ fn net_key(sc: u8) -> bool {
     }
 }
 
-/// Paints the Network window body (v2.38.34): five status lines on the
-/// 16 px grid from `y+24`, the mode row with its feedback word, the seven
-/// field captions and values (the widget layer draws their borders), the
-/// Wi-Fi status line and up to three scan rows. Everything clips at
-/// `max_px`, i.e. the window's own right edge.
 /// Body painter of the Widget Lab (v2.47.0): the header, the hint/status lines.
-/// The field frames, list, scrollbar and menu are painted afterwards by
+/// The field frames, list, scrollbar, menu and slider are painted afterwards by
 /// [`draw_widgets`], and each field draws its own value and caret.
 fn draw_lab(fb: &Framebuffer, win: &Window, max_px: usize) {
     let x = win.x + 8;
@@ -4858,6 +4921,7 @@ fn draw_lab(fb: &Framebuffer, win: &Window, max_px: usize) {
     };
     at(TITLE_H + 8, "Widget Lab", TEXT);
     at(300, "Tab focus  n/p list  enter pick", TEXT_DIM);
+    at(314, "ctrl+c/x/v copy/cut/paste", TEXT_DIM);
     if lab_menu() == LAB_NO {
         let f = lab_form();
         if f.msg_len > 0 {
@@ -4950,6 +5014,11 @@ fn draw_lab_scrollbar(fb: &Framebuffer, ax: usize, ay: usize, h: usize, list_id:
     }
 }
 
+/// Paints the Network window body (v2.38.34): five status lines on the 16 px
+/// grid from `y+24`, the mode row with its feedback word, the seven field
+/// captions and values (the widget layer draws their borders), the Wi-Fi status
+/// line and up to three scan rows. Everything clips at `max_px`, i.e. the
+/// window's own right edge.
 fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     let x = win.x + 8;
     let d = unsafe { *core::ptr::addr_of!(NET_DRAFT) };
@@ -5174,7 +5243,10 @@ fn task_switch() {
         return;
     };
     let Some(i) = find_kind(kind) else {
-        crate::kprintln!("[gui] tasks switch: {} gone", win_label(kind, win_title(kind)));
+        crate::kprintln!(
+            "[gui] tasks switch: {} gone",
+            win_label(kind, win_title(kind))
+        );
         return;
     };
     crate::kprintln!("[gui] tasks switch {}", win_label(kind, win_title(kind)));
@@ -5202,8 +5274,6 @@ fn task_key(sc: u8) -> bool {
     task_switch();
     true
 }
-
-
 
 /// Toggles checkbox `i` in `host`'s form store and returns the new state.
 fn form_check_toggle(host: WinKind, i: usize) -> bool {
@@ -5247,6 +5317,107 @@ fn form_slider_set(host: WinKind, id: u8, value: u8) {
     }
 }
 
+/// Capacity of the GUI clipboard in bytes (v2.68.0).
+const CLIP_CAP: usize = 128;
+
+/// GUI clipboard (v2.68.0): UTF-8 bytes shared by every widget host, filled by
+/// `Ctrl+C`/`Ctrl+X` and drained by `Ctrl+V`. Kernel-internal only — it is not
+/// the firmware/desktop clipboard of any host OS.
+static mut CLIP: [u8; CLIP_CAP] = [0; CLIP_CAP];
+/// Used byte length of [`CLIP`].
+static mut CLIP_LEN: usize = 0;
+
+/// Used byte length of the GUI clipboard.
+fn clip_len() -> usize {
+    unsafe { *core::ptr::addr_of!(CLIP_LEN) }
+}
+
+/// Copies `bytes` into the GUI clipboard, truncating to [`CLIP_CAP`], and
+/// returns the stored length.
+fn clip_store(bytes: &[u8]) -> usize {
+    let n = bytes.len().min(CLIP_CAP);
+    unsafe {
+        let clip = &mut *core::ptr::addr_of_mut!(CLIP);
+        clip[..n].copy_from_slice(&bytes[..n]);
+        *core::ptr::addr_of_mut!(CLIP_LEN) = n;
+    }
+    n
+}
+
+/// Bytes currently in the GUI clipboard.
+fn clip_bytes() -> &'static [u8] {
+    let n = clip_len();
+    unsafe { &(&*core::ptr::addr_of!(CLIP))[..n] }
+}
+
+/// Copies the focused text field of `host` into the clipboard (v2.68.0).
+/// Returns the copied byte count, or `None` when no text field has focus (the
+/// status line then says `no field`).
+fn form_clip_copy(host: WinKind) -> Option<usize> {
+    let (id, n) = {
+        let f = form(host);
+        let id = f.focus as usize;
+        if id >= LAB_FIELD_N {
+            (id, 0)
+        } else {
+            (id, clip_store(&f.fields[id][..f.lens[id] as usize]))
+        }
+    };
+    if id >= LAB_FIELD_N {
+        form_msg(host, "no field");
+        return None;
+    }
+    form_msg(host, "copied");
+    crate::kprintln!("[gui] clipboard copy {} bytes", n);
+    Some(n)
+}
+
+/// Copies the focused text field into the clipboard and clears it (`Ctrl+X`).
+fn form_clip_cut(host: WinKind) -> Option<usize> {
+    let n = form_clip_copy(host)?;
+    let f = form(host);
+    let id = f.focus as usize;
+    f.lens[id] = 0;
+    f.fields[id] = [0; LAB_FIELD_CAP];
+    form_msg(host, "cut");
+    crate::kprintln!("[gui] clipboard cut {} bytes", n);
+    Some(n)
+}
+
+/// Appends the clipboard to the focused text field (`Ctrl+V`, v2.68.0),
+/// honouring [`LAB_FIELD_CAP`] and never splitting a UTF-8 scalar. Returns the
+/// pasted byte count (`0` when the clipboard is empty or the field is full).
+fn form_clip_paste(host: WinKind) -> Option<usize> {
+    let id = {
+        let f = form(host);
+        let id = f.focus as usize;
+        if id >= LAB_FIELD_N {
+            form_msg(host, "no field");
+            return None;
+        }
+        id
+    };
+    let clip = clip_bytes();
+    if clip.is_empty() {
+        form_msg(host, "empty");
+        return Some(0);
+    }
+    let n = {
+        let f = form(host);
+        let len = f.lens[id] as usize;
+        let mut n = clip.len().min(LAB_FIELD_CAP.saturating_sub(len));
+        while n > 0 && n < clip.len() && (clip[n] & 0xC0) == 0x80 {
+            n -= 1;
+        }
+        f.fields[id][len..len + n].copy_from_slice(&clip[..n]);
+        f.lens[id] = (len + n) as u8;
+        n
+    };
+    form_msg(host, if n == 0 { "full" } else { "pasted" });
+    crate::kprintln!("[gui] clipboard paste {} bytes", n);
+    Some(n)
+}
+
 /// Advances the focus across text fields of `host`'s form.
 fn form_focus_cycle(host: WinKind) {
     let f = form(host);
@@ -5257,34 +5428,45 @@ fn form_focus_cycle(host: WinKind) {
     }
 }
 
-/// Deletes the last character of the focused text field, if any.
+/// Deletes the last UTF-8 scalar of the focused text field, if any (v2.68.0:
+/// whole scalar, not one byte, so a multi-byte character never half-disappears).
 fn form_backspace(host: WinKind) {
     let f = form(host);
     let id = f.focus as usize;
     if id < LAB_FIELD_N && f.lens[id] > 0 {
-        f.lens[id] -= 1;
-        f.fields[id][f.lens[id] as usize] = 0;
+        let end = f.lens[id] as usize;
+        let mut start = end - 1;
+        while start > 0 && (f.fields[id][start] & 0xC0) == 0x80 {
+            start -= 1;
+        }
+        for b in &mut f.fields[id][start..end] {
+            *b = 0;
+        }
+        f.lens[id] = start as u8;
     }
 }
 
-/// Types `c` into the focused text field.
+/// Types `c` into the focused text field as UTF-8 bytes (v2.68.0). A scalar is
+/// appended only when it fits whole in [`LAB_FIELD_CAP`]; otherwise the field is
+/// left untouched rather than truncated mid-character.
 fn form_type_char(host: WinKind, c: char) {
-    let b = c as u8;
     let f = form(host);
     let id = f.focus as usize;
     if id < LAB_FIELD_N {
+        let mut buf = [0u8; 4];
+        let enc = c.encode_utf8(&mut buf).as_bytes();
         let len = f.lens[id] as usize;
-        if len < LAB_FIELD_CAP {
-            f.fields[id][len] = b;
-            f.lens[id] += 1;
+        if len + enc.len() <= LAB_FIELD_CAP {
+            f.fields[id][len..len + enc.len()].copy_from_slice(enc);
+            f.lens[id] += enc.len() as u8;
         }
         return;
     }
     if host == WinKind::Widgets && id == 2 {
         let count = LAB_ITEMS.len();
-        let sel = match b {
-            b'n' => (f.sel as usize + 1).min(count.saturating_sub(1)),
-            b'p' => (f.sel as usize).saturating_sub(1),
+        let sel = match c {
+            'n' => (f.sel as usize + 1).min(count.saturating_sub(1)),
+            'p' => (f.sel as usize).saturating_sub(1),
             _ => return,
         };
         f.sel = sel as u8;
@@ -5330,5 +5512,3 @@ fn form_menu_set(host: WinKind, m: u8) {
 fn form_focus(host: WinKind) -> u8 {
     form(host).focus
 }
-
-

@@ -36,6 +36,11 @@ static KEY_FIFO: [AtomicU8; 256] = [const { AtomicU8::new(0) }; 256];
 /// Network window SSID/password fields — sees uppercase and shifted symbols.
 pub static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
 pub static SHIFTED: AtomicBool = AtomicBool::new(false);
+/// Ctrl-key state (v2.68.0): set/cleared from the make/break bytes of the left
+/// (`0x1D`/`0x9D`) and right (`0xE0 0x1D`/`0xE0 0x9D`) control keys on PS/2 and
+/// from HID modifier bit 0/4 on USB. The GUI reads it to consume the clipboard
+/// shortcuts (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`) and to keep Ctrl combos from typing.
+pub static CTRL_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// Set by the IRQ32 handler on the first PIT interrupt it actually receives.
 ///
