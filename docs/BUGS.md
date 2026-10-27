@@ -1,5 +1,22 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.68.1): `FC_PROTECTED = 0x0040` deviated from IEEE 802.11
+
+- **Status:** RESOLVED in v2.68.1 (was OPEN through v2.68.0).
+- **Symptom:** the sim radio tagged protected data frames with `0x0040` — the
+  Probe Request subtype — instead of Frame Control bit 14 (`0x4000`), and
+  `ccmp_aad` masked the same wrong bit. The station and the AP derived the AAD
+  from the same constant, so CCMP stayed symmetric and every smoke passed, but
+  the frame was malformed for any standards-aware peer.
+- **Fix:** `FC_PROTECTED` is `0x4000`; `ccmp_aad` now masks the Protected,
+  Retry, Pwr Mgmt, More Data and Order bits out per 802.11-2016 12.5.3.3.3, so
+  the AAD bytes match the pre-fix trace exactly; a `const` assertion rejects
+  any future alias with `FC_PROBE_REQ`.
+- **Verification:** kernel build + clippy clean; no runtime change is expected
+  by construction (AAD bytes identical). The C smoke needs QEMU — re-run it on
+  a machine that has `qemu-system-x86_64` to confirm the WPA2 lines still
+  match.
+
 ## RESOLVED (v2.68.0): USB keyboard ignored HID modifiers and the GUI had no clipboard
 
 - **Status:** RESOLVED in v2.68.0.
@@ -791,14 +808,6 @@
 - **Workaround/proof:** the A2 smoke saves a static config, then issues a
   warm HMP `system_reset` *within the same QEMU process* and greps for
   `config loaded from cmos` plus the second `static ip` line (count = 2).
-
-## OPEN (v2.38.34): `FC_PROTECTED = 0x0040` deviates from IEEE 802.11 (bit 14 = 0x4000)
-- The sim radio uses `0x0040` for the protected-frame bit in both the
-  station and the AP paths, so CCMP AAD/decrypt stay symmetric and every
-  smoke passes — but the constant is not the IEEE value. If a real
-  802.11 controller ever backs `wifi.rs`, flip it to `0x4000` and re-run
-  the C smoke (both ends derive AAD from the same constant, so the change
-  is one line plus re-verification).
 
 ## RESOLVED (v2.38.37): `real_file_io::test_recovery_log_entries` failed on every run (raw bincode records split on `0x0A`)
 - **Status:** RESOLVED in v2.38.37 — records now framed as

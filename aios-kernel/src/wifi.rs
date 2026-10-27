@@ -50,7 +50,14 @@ const FC_AUTH: u16 = 0x00B0;
 const FC_DEAUTH: u16 = 0x00C0;
 const FC_DATA_TODS: u16 = 0x0108;
 const FC_DATA_FROMDS: u16 = 0x0208;
-const FC_PROTECTED: u16 = 0x0040;
+/// IEEE 802.11 Frame Control Protected Frame flag: bit 14 (v2.68.1). It used
+/// to be `0x0040` - the Probe Request subtype - so every protected data frame
+/// carried a non-standard flag; the sim peer masked the same bit out of its
+/// AAD, which is why the WPA2 smoke still matched.
+const FC_PROTECTED: u16 = 0x4000;
+/// The v2.38.34 bug was this constant aliasing the Probe Request subtype, so a
+/// standards-aware peer saw a probe instead of a protected data frame.
+const _: () = assert!(FC_PROTECTED & FC_PROBE_REQ == 0);
 
 const KEY_INFO_M1: u16 = 0x008A;
 const KEY_INFO_M2: u16 = 0x010A;
@@ -1455,7 +1462,11 @@ fn snap_plain(plain: &mut [u8], ethertype: u16, payload: &[u8]) -> Result<usize,
 }
 
 fn ccmp_aad(fc: u16, a1: [u8; 6], a2: [u8; 6], a3: [u8; 6], seqctl: u16, out: &mut [u8]) {
-    let fc_aad = (fc & (0x0100 | 0x0200 | 0x0400 | 0x4000)) | 0x0008;
+    // CCMP AAD masks the Protected, Retry, Pwr Mgmt, More Data and Order bits
+    // out (802.11-2016 12.5.3.3.3), so the `FC_PROTECTED` bit set on the wire
+    // must not enter the AAD; the mask is symmetric on both ends, which keeps
+    // the WPA2 trace byte-identical to the pre-v2.68.1 one.
+    let fc_aad = (fc & (0x0100 | 0x0200 | 0x0400)) | 0x0008;
     out[0..2].copy_from_slice(&fc_aad.to_be_bytes());
     out[2..8].copy_from_slice(&a1);
     out[8..14].copy_from_slice(&a2);

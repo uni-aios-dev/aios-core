@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## v2.68.1 — `FC_PROTECTED` aligned with IEEE 802.11 (2026-10-27)
+
+### Fixed
+- **Protected-frame flag** (`aios-kernel/src/wifi.rs`): `FC_PROTECTED` was
+  `0x0040` — the Probe Request subtype — instead of Frame Control bit 14
+  (`0x4000`), so every CCMP data frame carried a non-standard flag. The sim
+  peer masked the same bit out of its AAD, which is why the WPA2 trace still
+  matched and no smoke went red. The constant is now `0x4000`, `ccmp_aad`
+  masks the Protected, Retry, Pwr Mgmt, More Data and Order bits per
+  802.11-2016 12.5.3.3.3, and a `const` assertion rejects any future alias
+  with `FC_PROBE_REQ`. The WPA2 AAD bytes are unchanged, so a standards-aware
+  peer would now see a correct protected frame while the sim trace stays
+  byte-identical.
+
 ## v2.68.0 — Clipboard, UTF-8 text fields and USB modifiers (2026-10-26)
 
 ### Added
