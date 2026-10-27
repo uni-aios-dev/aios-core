@@ -1,5 +1,21 @@
 # AIOS Development Log
 
+## v2.68.2 — USB pointer press now settles pending motion (2026-10-27)
+
+### Fixed
+- **Short / missed USB clicks** (`aios-kernel/src/main.rs`): the xHCI input
+  band drained one step-clamped delta and then dispatched a press edge with
+  only that partial motion applied, so a press arriving behind a backlog
+  landed short of the target — the same defect the PS/2 band fixed in
+  v2.38.35. The USB band now drains the parked remainder (up to 64 steps)
+  before `deliver_pointer`, so a USB pointer cannot start a click or a title
+  drag at a position it has not reached yet.
+- **Stale socket-layer note** (`docs/BUGS.md`, `docs/BUGS.ru.md`): the
+  v2.50.0 limits item still claimed `cwnd`/`ssthresh` were "not yet exposed
+  through `SYS_SOCK_STATUS`", but `sock::cc_info` has filled the syscall's
+  10-byte scratch extension since v2.57.0. The entry now states that and keeps
+  only the real gaps (stop-and-wait, peer window-scale parsed but unused).
+
 ## v2.68.1 — `FC_PROTECTED` aligned with IEEE 802.11 (2026-10-27)
 
 ### Fixed

@@ -115,14 +115,18 @@
 
 - **Status:** OPEN — by design scope + verification gap; not a regression.
 - **Limits:**
-  1. **TCP is intentionally thin**: stop-and-wait (no fast retransmit), a fixed
-     `TCP_WINDOW = 64240`, and no runtime window-scaling/congestion-control
-     negotiation — `cwnd`/`ssthresh` follow a static Reno-style policy (v2.54.0)
-     that is not yet exposed through `SYS_SOCK_STATUS`. The backlog is bounded by
-     `MAX_SOCKS` (raised 8 → 16 in v2.55.0; each SYN allocates a child slot until
-     `accept`). Server (`listen`/`accept`) and client (active open) sides
-     both exist since v2.50.0; the in-kernel `socktest` shells exercise them over
-     loopback.
+  1. **TCP is intentionally thin**: stop-and-wait (no fast retransmit, no
+     SACK), a fixed `TCP_WINDOW = 64240` shifted by our offered window-scale
+     option (the peer's shift is parsed into `peer_wscale` for inspection but
+     never applied to a send), and a static Reno-style `cwnd`/`ssthresh`
+     policy (v2.54.0/v2.57.0) that `sock::cc_info` exports to ring 3 through
+     the `SYS_SOCK_STATUS` 10-byte scratch extension since v2.57.0 (an older
+     revision of this entry wrongly said it was not exposed). The backlog is
+     bounded by `MAX_SOCKS` (raised 8 → 16 in v2.55.0; each SYN allocates a
+     child slot until `accept`). Server (`listen`/`accept`) and client (active
+     open) sides both exist since v2.50.0; the in-kernel `socktest` shells
+     exercise them over loopback.
+
   2. **UDP** has no per-packet error reporting; broadcast (`255.255.255.255`)
      and multicast (class D) fan-out work since v2.56.0 but only over loopback /
      the destination port's member sockets — there is no external routing of
@@ -541,7 +545,7 @@
 
 - **Status:** OPEN
 - **Symptom:** after G5–G7 (drag down / drag further / drag back) the Network
-  window sits ~15 px below the position G's hardcoded widget rows assume
+  window sits ~15 px above the position G's hardcoded widget rows assume
   (title bar measured at y=578 instead of the expected 593), and the final
   `[gui] widget Network/Scan click` / `scan done (3 networks)` checks fail.
   G passed once (v2.38.39 batch) and now fails on BOTH the current ISO and
@@ -556,6 +560,11 @@
 - **Next:** isolate where deltas are dropped (i8042 overflow drop vs GUI
   title-drag band vs packet timing around `mouse_button 0`), or make G
   measure the window position per run.
+- **Mitigation (v2.68.2):** the xHCI input band settles its parked step-clamp
+  remainder before dispatching a press edge (the PS/2 band has done this since
+  v2.38.35), so a USB pointer can no longer begin a click or a title drag from
+  a partial position. Scenario G drives the PS/2 mouse, so this does not close
+  the item by itself — the drift analysis above still stands.
 
 ## RESOLVED (v2.38.35): pointer jump — cursor teleports across the desktop onto the task bar (overflow packets + unbounded backlog)
 - **Status:** RESOLVED in v2.38.35 — whole-packet drop of 8042 overflow

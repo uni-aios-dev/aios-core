@@ -1093,10 +1093,24 @@ pub fn idle_loop() -> ! {
             let seq = xhci::MOUSE_SEQ.load(Ordering::Relaxed);
             let seq_changed = seq != last_mouse_seq;
             last_mouse_seq = seq;
-            let (dx, dy) = xhci::take_mouse_delta();
+            let (mut dx, mut dy) = xhci::take_mouse_delta();
             let buttons = xhci::MOUSE_BUTTONS.load(Ordering::Relaxed) as u8;
             let edge_press = xhci::take_button_edges() & 0x01 != 0;
             let btn_changed = seq_changed && buttons != last_mouse_buttons;
+            if edge_press || btn_changed {
+                // Same press-settles-motion rule as the PS/2 band below: a
+                // per-drain step clamp parks a backlog, so dispatching the
+                // click with a partial delta lands it short of the target and
+                // drifts during a USB-pointer title drag (v2.68.2).
+                for _ in 0..64 {
+                    let (rx, ry) = xhci::take_mouse_delta();
+                    dx += rx;
+                    dy += ry;
+                    if rx == 0 && ry == 0 {
+                        break;
+                    }
+                }
+            }
             if dx != 0 || dy != 0 || btn_changed || edge_press {
                 // Runaway gate first: a suppressed stream must cost nothing at
                 // all — no log line, no cursor work, no repaint (v2.38.33).
