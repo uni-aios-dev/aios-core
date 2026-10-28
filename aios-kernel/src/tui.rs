@@ -1061,8 +1061,9 @@ fn draw_status(fb: &Framebuffer) {
         crate::interrupts::pit_count()
     );
     draw_text(fb, 0, y, &helm, TEXT_DIM, STATUS_BG, midx);
+    let tmark = if crate::thermal::simulated() { "~" } else { "" };
     let right = format!(
-        "k=0x{:02x} uk={} pk={} m={} pm={} lid={} T={}c",
+        "k=0x{:02x} uk={} pk={} m={} pm={} lid={} T={}c{}",
         LAST_SCANCODE.load(Ordering::Relaxed),
         crate::xhci::KEY_SEQ.load(Ordering::Relaxed),
         crate::ps2::key_seq(),
@@ -1070,6 +1071,7 @@ fn draw_status(fb: &Framebuffer) {
         crate::ps2::mouse_seq(),
         lid_state(),
         crate::thermal::temp_c(),
+        tmark,
     );
     draw_text(
         fb,

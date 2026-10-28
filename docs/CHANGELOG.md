@@ -1,5 +1,31 @@
 # AIOS Development Log
 
+## v2.68.4 — Honest CPU temperature: synthetic reading labelled, real DTS hardened (2026-10-27)
+
+### Fixed
+- **Wrong-looking CPU temperature** (`aios-kernel/src/thermal.rs`): the UI showed
+  whatever the module held without saying where it came from. On QEMU (and any
+  CPU whose thermal MSRs fault) the 45..92 °C demo wave was drawn exactly like a
+  real measurement, and a failed `0x19C` read after a successful init silently
+  reported `TjMax` (typically 100 °C) or 0 °C.
+  Now a synthetic reading is marked `~` in the TUI status bar
+  (`temp …c~ (simulated)` in the GUI System window; the System tab already
+  shows `sim=1`), the wave stays at 45..60 °C and never crosses the gate, and a
+  fault, the status word's invalid-readout bit (31) or an implausible delta
+  counts as *no reading* — the module switches to the labelled wave and logs
+  it instead of displaying a made-up value.
+- **DTS fallback hardening** (`aios-kernel/src/thermal.rs`): when
+  `IA32_TEMPERATURE_TARGET` (0x1A2) is missing, faults or holds an implausible
+  TjMax, the module assumes the documented 100 °C and keeps using the real
+  `0x19C` readout instead of discarding a working sensor.
+- **DTS enumeration** (`aios-kernel/src/thermal.rs`): the capability gate now
+  asks CPUID.06H:EAX[0] (SDM 14.7.5.1) and keeps the legacy leaf-1 EDX bit 22
+  marker as a fallback, so DTS-capable CPUs that do not set the older flag no
+  longer land on the synthetic wave.
+- **Thermal gate** (`aios-kernel/src/thermal.rs`): `critical()` now requires a
+  real DTS reading, so the scheduler no longer pauses ring-3 tasks on a
+  synthetic value. The 90 °C threshold is unchanged.
+
 ## v2.68.3 — PIT time base fixed; uptime no longer runs fast (2026-10-27)
 
 ### Fixed

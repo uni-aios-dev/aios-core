@@ -4481,19 +4481,20 @@ fn draw_system(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
         WIN_BG,
         max_px,
     );
-    text_line(
-        fb,
-        x,
-        y,
-        &format!(
+    let temp = if crate::thermal::simulated() {
+        format!(
+            "temp {}c~  lid {} (simulated)",
+            crate::thermal::temp_c(),
+            tui::lid_state()
+        )
+    } else {
+        format!(
             "temp {}c  lid {}",
             crate::thermal::temp_c(),
             tui::lid_state()
-        ),
-        TEXT,
-        WIN_BG,
-        max_px,
-    );
+        )
+    };
+    text_line(fb, x, y, &temp, TEXT, WIN_BG, max_px);
     text_line(
         fb,
         x,

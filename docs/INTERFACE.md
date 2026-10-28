@@ -1087,7 +1087,7 @@ The bottom `GLYPH_H` strip hosts a two-sided status bar (version, active
 scancode `k=0x..`, USB key `uk=…` and PS/2/USB mouse sequences `m=`/`pm=`,
 lid state `lid=…`, live CPU temperature `T=…c` on the right) that leaves the
 central cell free for the boot-time green 'A' glyph and the far-right 2 Hz
-heartbeat square. The top-right timer tick bar is untouched.
+heartbeat square. The top-right timer tick bar is untouched. A `~` suffix on the temperature marks a synthetic reading.
 
 ### Platform sensors (v2.38.20)
 
@@ -1101,10 +1101,15 @@ PS/2 i8042 pair (`ps2`, `[ps2] aux/mouse up id=…` + `[ps2] i8042 ready
 - **Lid**: shown as `lid=0`/`lid=1` (closed/open) in the status bar and System
   tab, driven by the EC RAM scan heuristic. On boards without an ACPI EC the
   value stays `--` (e.g. QEMU logs `[lid] ec unresponsive (0 bytes), lid n/a`).
-- **Temperature**: `T=…c` in the status bar and `temp=… tjmax=… sim=…` in the
-  System tab. When the CPU has no DTS (or the MSR faults), `sim=1` marks the
-  synthetic 45..92 °C demo wave; at ≥ 90 °C the scheduler pauses ring-3 tasks
-  (`[serial] [thermal] CRITICAL temp=… (ring-3 paused)` ↔ resumed).
+- **Temperature**: `T=…c` in the status bar (a `~` suffix marks a synthetic
+  reading) and `temp=… tjmax=… sim=…` in the System tab; the GUI System window
+  prints `temp …c~ (simulated)` in that case. With usable DTS MSRs the die
+  temperature is `TjMax - delta` (TjMax from 0x1A2, or a documented 100 °C when
+  that register is unreadable/implausible); an invalid status word (bit 31) or
+  an implausible delta counts as no reading instead of showing a fake 0 °C or
+  TjMax. Without a usable DTS the synthetic 45..60 °C wave is drawn (`sim=1`)
+  and never drives the scheduler gate; at ≥ 90 °C of a *real* reading ring-3
+  tasks pause (`[serial] [thermal] CRITICAL temp=… (ring-3 paused)` ↔ resumed).
 - **Touchpad/keyboard**: the laptop's native PS/2 devices feed the same input
   paths as USB — keys reach `handle_scancode` (Shell tab, tab switching), the
   touchpad relocates the mouse arrow and left-click switches tabs. The PS/2

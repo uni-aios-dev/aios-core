@@ -1,5 +1,27 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.68.4): CPU temperature shown wrong — fake reading presented as real
+
+- **Status:** RESOLVED in v2.68.4.
+- **Symptom:** the TUI status bar and the GUI System window showed a CPU
+  temperature that did not match the machine — on QEMU-like platforms a
+  45..92 °C sawtooth labelled plainly as `temp`, and after a transient MSR
+  failure the value could jump to `TjMax` (≈100 °C) or 0 °C.
+- **Root cause:** the synthetic fallback carried no UI marker, and
+  `real_temp()` mapped a failed `0x19C` read to `delta = 0` (so the reading
+  became TjMax) without validating the status word. A missing or invalid
+  `0x1A2` also threw away a working sensor.
+- **Fix:** `thermal` tags synthetic values (`~` in the status bar, `sim=1`,
+  `temp …c~ (simulated)`), assumes 100 °C TjMax when 0x1A2 is unusable,
+  treats the invalid-readout bit (31) or an implausible delta as "no reading"
+  (falling back to the labelled wave), keeps the synthetic wave at 45..60 °C
+  so it never trips the 90 °C gate, and lets `critical()` honour real DTS
+  readings only.
+- **Verification:** kernel build + clippy clean. On a QEMU boot expect
+  `[thermal] no usable dts, simulated temp 45..60 (90C gate applies to real
+  readings only)` and `T=…c~` in the TUI; on real DTS hardware
+  `[thermal] dts tjmax=100 temp=… (msr 0x1a2/0x19c)` with no `~`.
+
 ## RESOLVED (v2.68.3): uptime ran fast — square-wave PIT and reload-straddling deltas
 
 - **Status:** RESOLVED in v2.68.3.
