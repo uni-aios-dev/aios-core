@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -173,9 +173,9 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
             if let Err(e) = env::set_current_dir(&path) { eprintln!("cd: {}: {}", path.display(), e); }
         }
         "help" | "?" => {
-            println!("\x1b[1;36m╔════════════════════════════════════════════════════════════╗\x1b[0m");
-            println!("\x1b[1;36m║                    AIOS Shell v2.2                        ║\x1b[0m");
-            println!("\x1b[1;36m╚════════════════════════════════════════════════════════════╝\x1b[0m");
+            println!("\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m");
+            println!("\x1b[1;36mтХС                    AIOS Shell v2.2                        тХС\x1b[0m");
+            println!("\x1b[1;36mтХЪтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЭ\x1b[0m");
             println!("\n\x1b[1;33m[BUILTIN]\x1b[0m exit,quit,clear,pwd,cd,env,export,unset,history,alias,unalias,source,type,echo,exec,jobs,fg,bg");
             println!("\x1b[1;33m[FILES]\x1b[0m ls,cat,head,tail,less,grep,find,wc,cp,mv,rm,mkdir,touch,chmod,chown,ln,stat,file");
             println!("\x1b[1;33m[SYSTEM]\x1b[0m ps,top,htop,free,df,du,uname,uptime,whoami,id,date,dmesg,kernel,lsmod,modinfo");
@@ -293,7 +293,7 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
         "logs" => {
             for f in ["/var/log/syslog","/var/log/messages","/var/log/dmesg","/tmp/xorg.log","/var/log/xorg.log","/var/log/auth.log"] {
                 if Path::new(f).exists() {
-                    println!("\x1b[1;33m═══ {} ═══\x1b[0m", f);
+                    println!("\x1b[1;33mтХРтХРтХР {} тХРтХРтХР\x1b[0m", f);
                     if let Ok(mut file)=File::open(f) {
                         let mut content=String::new();
                         let _=file.read_to_string(&mut content);
@@ -306,27 +306,27 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
             }
         }
         "hw" | "hardware" | "info" => {
-            println!("\x1b[1;36m═══ System Information ═══\x1b[0m");
+            println!("\x1b[1;36mтХРтХРтХР System Information тХРтХРтХР\x1b[0m");
             let _=Command::new("uname").args(["-a"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
-            println!("\n\x1b[1;36m═══ CPU ═══\x1b[0m");
+            println!("\n\x1b[1;36mтХРтХРтХР CPU тХРтХРтХР\x1b[0m");
             let _=Command::new("sh").args(["-c","cat /proc/cpuinfo | grep -E 'model name|processor|cores' | head -20"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
-            println!("\n\x1b[1;36m═══ Memory ═══\x1b[0m");
+            println!("\n\x1b[1;36mтХРтХРтХР Memory тХРтХРтХР\x1b[0m");
             let _=Command::new("free").args(["-h"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
-            println!("\n\x1b[1;36m═══ Disks ═══\x1b[0m");
+            println!("\n\x1b[1;36mтХРтХРтХР Disks тХРтХРтХР\x1b[0m");
             let _=Command::new("lsblk").args(["-o","NAME,SIZE,TYPE,MOUNTPOINT"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
-            println!("\n\x1b[1;36m═══ PCI Devices ═══\x1b[0m");
+            println!("\n\x1b[1;36mтХРтХРтХР PCI Devices тХРтХРтХР\x1b[0m");
             let _=Command::new("lspci").args(["-nnk"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
-            println!("\n\x1b[1;36m═══ USB Devices ═══\x1b[0m");
+            println!("\n\x1b[1;36mтХРтХРтХР USB Devices тХРтХРтХР\x1b[0m");
             let _=Command::new("lsusb").stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
         }
         "services" => {
-            println!("\x1b[1;36m═══ Running Processes ═══\x1b[0m");
+            println!("\x1b[1;36mтХРтХРтХР Running Processes тХРтХРтХР\x1b[0m");
             let _=Command::new("ps").args(["auxf"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
         }
         "kernel" => {
-            println!("\x1b[1;36m═══ Kernel Info ═══\x1b[0m");
+            println!("\x1b[1;36mтХРтХРтХР Kernel Info тХРтХРтХР\x1b[0m");
             let _=Command::new("uname").args(["-r","-v"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
-            println!("\n\x1b[1;36m═══ Loaded Modules ═══\x1b[0m");
+            println!("\n\x1b[1;36mтХРтХРтХР Loaded Modules тХРтХРтХР\x1b[0m");
             let _=Command::new("lsmod").stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
         }
         "which" => { if let Some(n)=parts.next(){ let _=Command::new("which").arg(n).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status(); } }
@@ -464,10 +464,10 @@ fn main() {
     let mut aliases = load_aliases();
     load_shellrc_simple(&mut aliases);
     
-    println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;36m║                AIOS Shell v2.2                    ║\x1b[0m");
-    println!("\x1b[1;36m║        Full-Featured Command Interface            ║\x1b[0m");
-    println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m");
+    println!("\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m");
+    println!("\x1b[1;36mтХС                AIOS Shell v2.2                    тХС\x1b[0m");
+    println!("\x1b[1;36mтХС        Full-Featured Command Interface            тХС\x1b[0m");
+    println!("\x1b[1;36mтХЪтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЭ\x1b[0m");
     println!("\x1b[2mType 'help' for all commands | TAB completion enabled\x1b[0m\n");
     
     let config = Config::builder()
