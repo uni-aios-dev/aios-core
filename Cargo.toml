@@ -28,6 +28,7 @@ aios-net = { path = "aios-net" }
 aios-browser = { path = "aios-browser" }
 aios-search = { path = "aios-search" }
 aios-updater = { path = "aios-updater" }
+aios-shell = { path = "aios-shell" }
 aios-store = { path = "aios-store" }
 aios-net-config = { path = "aios-net-config" }
 aios-telemetry = { path = "aios-telemetry" }

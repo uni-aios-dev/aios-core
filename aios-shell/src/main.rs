@@ -206,10 +206,12 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, _rl: &mut Defa
         "which" => { if let Some(n)=parts.next(){ let _=Command::new("which").arg(n).status(); } }
         "type" => {
             if let Some(n)=parts.next() {
-                if aliases.contains_key(n){ println!("{} is aliased to '{}'",n,aliases.get(n).unwrap()); continue; }
-                let builtins=["exit","clear","pwd","cd","help","env","export","unset","history","alias","unalias","gui","tui","aios","logs","dmesg","hw","services","which","exec","source","echo","type","ps","free","df","uname","uptime","whoami","date"];
-                if builtins.contains(&n){ println!("{} is a shell builtin",n); continue; }
-                let _=Command::new("which").arg(n).status();
+                if aliases.contains_key(n){ println!("{} is aliased to '{}'",n,aliases.get(n).unwrap()); }
+                else {
+                    let builtins=["exit","clear","pwd","cd","help","env","export","unset","history","alias","unalias","gui","tui","aios","logs","dmesg","hw","services","which","exec","source","echo","type","ps","free","df","uname","uptime","whoami","date","ls","cat","grep","find"];
+                    if builtins.contains(&n){ println!("{} is a shell builtin",n); }
+                    else { let _=Command::new("which").arg(n).status(); }
+                }
             }
         }
         "exec" => {
@@ -315,8 +317,8 @@ fn main() {
                     run_command(cmd,&mut aliases,&mut rl);
                 }
             }
-            Err(ReadlineError::Interrupted)=>{println!("^C");continue;}
-            Err(ReadlineError::Eof)=>break;
+            Err(ReadlineError::Interrupted)=>{println!("^C");}
+            Err(ReadlineError::Eof)=>break,
             Err(e)=>{eprintln!("err: {:?}",e);break;}
         }
     }
