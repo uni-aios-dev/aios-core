@@ -4,8 +4,9 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio, exit};
+use std::collections::HashSet;
+use std::cell::RefCell;
 
-use rustyline::completion::FilenameCompleter;
 use rustyline::error::ReadlineError;
 use rustyline::history::FileHistory;
 use rustyline::{Config, EditMode, Editor};
@@ -91,19 +92,41 @@ fn save_aliases(map: &HashMap<String, String>) {
 }
 
 fn expand_aliases(line: &str, aliases: &HashMap<String, String>) -> String {
-    let mut parts = line.splitn(2, char::is_whitespace);
-    let first = match parts.next() {
-        Some(x) => x,
-        None => return line.to_string(),
-    };
-    if let Some(a) = aliases.get(first) {
-        match parts.next() {
-            Some(rest) => format!("{} {}", a, rest.trim()),
-            None => a.clone(),
+    let mut result = line.to_string();
+    let mut depth = 0;
+    let max_depth = 10;
+    loop {
+        if depth >= max_depth {
+            break;
         }
-    } else {
-        line.to_string()
+        let mut parts = result.splitn(2, char::is_whitespace);
+        let first = match parts.next() {
+            Some(x) => x.to_string(),
+            None => break,
+        };
+        if let Some(a) = aliases.get(&first) {
+            // prevent self-reference
+            if a.split_whitespace().next() == Some(first.as_str()) && depth > 0 {
+                break;
+            }
+            match parts.next() {
+                Some(rest) => {
+                    result = format!("{} {}", a, rest.trim());
+                }
+                None => {
+                    // check if alias expands to itself
+                    if a.split_whitespace().next() == Some(first.as_str()) {
+                        break;
+                    }
+                    result = a.clone();
+                }
+            }
+            depth += 1;
+        } else {
+            break;
+        }
     }
+    result
 }
 
 fn is_gui_app(name: &str) -> bool {
@@ -111,6 +134,11 @@ fn is_gui_app(name: &str) -> bool {
 }
 
 fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec<Job>, job_counter: &mut usize) {
+    // Clean up completed jobs
+    #[cfg(unix)]
+    {
+        jobs.retain(|j| unsafe { libc::kill(j.pid as i32, 0) == 0 });
+    }
     let expanded = expand_aliases(line, aliases);
     let mut parts = expanded.split_whitespace();
     let cmd = match parts.next() {
@@ -119,7 +147,7 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
     };
     
     // Background execution
-    let bg = expanded.ends_with(" &") || cmd.ends_with("&");
+    let bg = expanded.ends_with(" &");
     let cmd_clean = if bg { cmd.trim_end_matches('&').to_string() } else { cmd.clone() };
     
     match cmd_clean.as_str() {
@@ -198,11 +226,53 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
             if let Some(k)=parts.next() { aliases.remove(k); save_aliases(aliases); }
         }
         "jobs" => {
+            // Clean up completed jobs
+            jobs.retain(|j| {
+                #[cfg(unix)]
+                {
+                    let res = unsafe { libc::kill(j.pid as i32, 0) };
+                    res == 0
+                }
+                #[cfg(not(unix))]
+                {
+                    true
+                }
+            });
             if jobs.is_empty() { println!("No jobs"); } else {
                 for j in jobs.iter() { println!("[{}]+ Running        {}", j.id, j.cmd); }
             }
         }
-        "fg" | "bg" => { println!("{}: job control not fully implemented", cmd_clean); }
+        "fg" => {
+            #[cfg(unix)]
+            {
+                if let Some(j) = jobs.last().cloned() {
+                    let _ = unsafe { libc::kill(j.pid as i32, libc::SIGCONT) };
+                    println!("[{}]+ Running        {}", j.id, j.cmd);
+                    jobs.clear();
+                } else {
+                    println!("fg: no current job");
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                println!("fg: not supported on this platform");
+            }
+        }
+        "bg" => {
+            #[cfg(unix)]
+            {
+                if let Some(j) = jobs.last().cloned() {
+                    let _ = unsafe { libc::kill(j.pid as i32, libc::SIGCONT) };
+                    println!("[{}]+ Running        &{}", j.id, j.cmd);
+                } else {
+                    println!("bg: no current job");
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                println!("bg: not supported on this platform");
+            }
+        }
         "gui" => { 
             if let Ok(child) = Command::new("aios-gui").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).env("DISPLAY", env::var("DISPLAY").unwrap_or_else(|_|":0".to_string())).spawn() {
                 println!("Started aios-gui [PID {}]", child.id());
@@ -279,13 +349,25 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
         }
         "source" | "." => {
             if let Some(f)=parts.next(){
-                if let Ok(content)=fs::read_to_string(f){
-                    for line in content.lines(){
-                        let l=line.trim();
-                        if l.is_empty()||l.starts_with('#'){continue;}
-                        run_command(l,aliases,jobs,job_counter);
+                thread_local! { static SOURCING: RefCell<HashSet<String>> = RefCell::new(HashSet::new()); }
+                SOURCING.with(|s| {
+                    let mut set = s.borrow_mut();
+                    let key = f.to_string();
+                    if set.contains(&key) {
+                        eprintln!("source: {}: recursion detected", f);
+                        return;
                     }
-                } else { eprintln!("source: {}: No such file", f); }
+                    set.insert(key.clone());
+                    if let Ok(content)=fs::read_to_string(f){
+                        for line in content.lines(){
+                            let l=line.trim();
+                            if l.is_empty()||l.starts_with('#'){continue;}
+                            if l == "exit" || l == "quit" { continue; }
+                            run_command(l,aliases,jobs,job_counter);
+                        }
+                    } else { eprintln!("source: {}: No such file", f); }
+                    set.remove(&key);
+                });
             }
         }
         "echo" => {
@@ -367,6 +449,8 @@ fn load_shellrc_simple(aliases: &mut HashMap<String, String>) {
                     if let Some((k,v))=rest.split_once('=') {
                         aliases.insert(k.trim().to_string(), v.trim().trim_matches('\'').trim_matches('"').to_string());
                     }
+                } else if l == "exit" || l == "quit" {
+                    continue; // don't exit on shellrc load
                 } else {
                     run_command(l,aliases,&mut jobs,&mut jc);
                 }
