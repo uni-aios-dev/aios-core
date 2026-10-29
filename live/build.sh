@@ -21,39 +21,32 @@ apk add --no-cache \
 
 command -v grub-mkrescue >/dev/null 2>&1 || apk add --no-cache grub-bios
 
-echo "=== [1] building aios + aios-gui (musl, webview engine ON, dynamic) ==="
+echo "=== [1] building aios + aios-gui + aios-shell (musl, webview engine ON, dynamic) ==="
 cd /src
-# The engine-enabled binaries are linked dynamically against the Alpine
-# rootfs (musl + libwebkit2gtk-4.1.so): crt-static must be off so wry's
-# pkg-config deps resolve as shared libraries.
 CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
-  cargo build -p aios --release
+  cargo build -p aios-gui --release 2>&1 | tail -30
 CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
-  cargo build -p aios-gui --release
-# Fully static engine-less TUI kept in the initramfs: it is what aios-init
-# falls back to (exit 127) when the squashfs userspace is missing and the
-# dynamic binary cannot exec. Must be crt-static: the initramfs carries no
-# ld-musl loader. Note: RUSTFLAGS=-crt-static must NOT be applied to the
-# whole build - proc-macro crates (async-trait et al.) cannot be produced
-# statically on a musl host. So deps are built normally and only the final
-# crate is re-linked with the static CRT via `cargo rustc`'s pass-through
-# flags.
-CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features --features base-all
+  cargo build -p aios-shell --release 2>&1 | tail -15
+CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features --features base-all 2>&1 | tail -20
 CARGO_TARGET_DIR=/tmp/target cargo rustc -p aios --release --no-default-features --features base-all \
   -- -C target-feature=+crt-static
 cp /tmp/target-dyn/release/aios "$W/aios-bin"
 cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
-cp /tmp/target/release/aios "$W/aios-static-bin"
-ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-static-bin"
-file "$W/aios-bin" 2>/dev/null || true
+cp /tmp/target-dyn/release/aios-shell "$W/aios-shell-bin" 2>/dev/null || true
+ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-shell-bin" "$W/aios-static-bin" 2>&1
 file "$W/aios-gui-bin" 2>/dev/null || true
+
+cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
+cp /tmp/target-dyn/release/aios-shell "$W/aios-shell-bin" 2>/dev/null || true
+ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-shell-bin" "$W/aios-static-bin" 2>&1
+file "$W/aios-gui-bin" 2>/dev/null || true
+
 file "$W/aios-static-bin" 2>/dev/null || true
-# The browser only works if the primary binaries really link libwebkit2gtk;
-# a silent crt-static regression would ship a TUI-only ISO.
+# The browser only works if the primary binaries really link libwebkit2gtk
 grep -aq "libwebkit2gtk-4.1" "$W/aios-bin" || { echo "FATAL: aios not linked against libwebkit2gtk-4.1"; exit 1; }
 grep -aq "libwebkit2gtk-4.1" "$W/aios-gui-bin" || { echo "FATAL: aios-gui not linked against libwebkit2gtk-4.1"; exit 1; }
-# The static fallback must not reference a dynamic loader that the initramfs
-# does not ship (that made /init fail with exec: ENOENT -> kernel panic).
+[ -f "$W/aios-shell-bin" ] && echo "[build.sh] aios-shell built" || echo "[build.sh] aios-shell missing"
+# The static fallback must not reference a dynamic loader
 grep -aq "/lib/ld-musl" "$W/aios-static-bin" && { echo "FATAL: aios-static-bin is dynamically linked (initramfs has no ld-musl)"; exit 1; }
 
 echo "=== [2] building rootfs ==="
@@ -93,6 +86,9 @@ done
 mkdir -p "$W/rootfs/usr/local/bin" "$W/rootfs/etc/init.d" "$W/rootfs/root" "$W/rootfs/boot"
 cp "$W/aios-bin" "$W/rootfs/usr/local/bin/aios"
 cp "$W/aios-gui-bin" "$W/rootfs/usr/local/bin/aios-gui"
+[ -f "$W/aios-shell-bin" ] && cp "$W/aios-shell-bin" "$W/rootfs/usr/local/bin/aios-shell" && cp "$W/aios-shell-bin" "$W/rootfs/bin/aios-shell" 2>/dev/null
+[ -x "$W/rootfs/usr/local/bin/aios-shell" ] && strip --strip-all "$W/rootfs/usr/local/bin/aios-shell" 2>/dev/null
+
 cp "/work/aios-install" "$W/rootfs/usr/local/bin/aios-install"
 cp "/work/aios-launch" "$W/rootfs/usr/local/bin/aios-launch"
 chmod +x "$W/rootfs/usr/local/bin/aios" "$W/rootfs/usr/local/bin/aios-gui" "$W/rootfs/usr/local/bin/aios-install" "$W/rootfs/usr/local/bin/aios-launch"

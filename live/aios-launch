@@ -9,9 +9,22 @@ mkdir -p /run "$AIOS_DATA_DIR" "$XDG_RUNTIME_DIR"
 if [ -z "${DISPLAY:-}" ] && command -v Xorg >/dev/null 2>&1; then
   export DISPLAY=:0
   if [ ! -e /tmp/.X11-unix/X0 ]; then
+    mkdir -p /tmp/.X11-unix
+    chmod 1777 /tmp/.X11-unix 2>/dev/null
     /usr/bin/Xorg :0 vt7 -nolisten tcp >/dev/null 2>&1 &
     sleep 2
   fi
+fi
+
+# Boot straight to GUI if available
+if [ -x /usr/local/bin/aios-gui ] && [ -n "${DISPLAY:-}" ]; then
+  for i in 1 2 3; do
+    [ -e /tmp/.X11-unix/X0 ] && break
+    sleep 1
+  done
+  command -v openbox >/dev/null 2>&1 && { openbox & sleep 1; }
+  command -v jwm >/dev/null 2>&1 && { jwm & sleep 1; }
+  exec /usr/local/bin/aios-gui
 fi
 
 exec /usr/local/bin/aios

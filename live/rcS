@@ -1,5 +1,5 @@
 #!/bin/sh
-export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin
 hostname aios
 mount -t tmpfs tmpfs /tmp 2>/dev/null
 mount -t tmpfs tmpfs /var/tmp 2>/dev/null
@@ -7,11 +7,19 @@ mkdir -p /run
 mount -t tmpfs tmpfs /run 2>/dev/null
 mount -t tmpfs tmpfs /var/log 2>/dev/null
 ip link set lo up 2>/dev/null
-for iface in /sys/class/net/e* /sys/class/net/w*; do
+for iface in /sys/class/net/e* /sys/class/net/w* /sys/class/net/en* /sys/class/net/eth*; do
   [ -e "$iface" ] || continue
   ifname=$(basename "$iface")
   [ "$ifname" = "lo" ] && continue
   ip link set "$ifname" up 2>/dev/null
-  udhcpc -i "$ifname" -q -n 2>/dev/null
+  udhcpc -i "$ifname" -q -n 2>/dev/null &
 done
+
+# Start GUI if X is running
+if [ -n "$DISPLAY" ] || [ -e /tmp/.X11-unix/X0 ]; then
+  export DISPLAY=:0
+  command -v openbox >/dev/null 2>&1 && openbox >/dev/null 2>&1 &
+  [ -x /usr/local/bin/aios-gui ] && aios-gui >/dev/null 2>&1 &
+fi
+
 echo "AIOS Live: system ready."

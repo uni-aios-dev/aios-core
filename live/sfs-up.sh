@@ -237,7 +237,30 @@ fi
   log "watchdog Xmode: $(DISPLAY=:0 xrandr --current 2>/dev/null | grep -E '\*' | tr '\n' ' ' | cut -c1-300)"
 ) &
 
-echo "AIOS: userspace ready (DISPLAY=:0)"
-log "userspace ready (DISPLAY=:0)"
-: > /run/aios-ready
-exit 0
+# Start AIOS GUI directly as the desktop session
+if [ -x /usr/local/bin/aios-gui ]; then
+  for i in 1 2 3 4 5 6 7 8; do
+    [ -e /tmp/.X11-unix/X0 ] && break
+    sleep 1
+  done
+  if command -v openbox >/dev/null 2>&1; then
+    openbox &
+    sleep 1
+  elif command -v jwm >/dev/null 2>&1; then
+    jwm &
+    sleep 1
+  elif command -v fluxbox >/dev/null 2>&1; then
+    fluxbox &
+    sleep 1
+  elif command -v dwm >/dev/null 2>&1; then
+    dwm &
+    sleep 1
+  fi
+  export DISPLAY=:0
+  exec /usr/local/bin/aios-gui
+elif [ -x /usr/local/bin/aios ]; then
+  export DISPLAY=:0
+  exec /usr/local/bin/aios
+fi
+
+exec /bin/sh /etc/inittab 2>/dev/null || exec getty 38400 tty1 linux
