@@ -3,6 +3,7 @@ mod crash_dialog;
 mod runtime;
 mod tabs;
 mod theme;
+mod voice;
 mod widgets;
 
 use aios_hal::ai_tier::AiTier;

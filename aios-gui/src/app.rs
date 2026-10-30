@@ -2,6 +2,7 @@ use crate::crash_dialog::CrashDialogState;
 use crate::runtime::GuiRuntime;
 use crate::tabs;
 use crate::theme::AiosTheme;
+use crate::voice::VoiceControl;
 
 use aios_block_mgr::loader::BlockLoader;
 use aios_core::block::BlockId;
