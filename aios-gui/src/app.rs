@@ -229,6 +229,9 @@ pub struct AiosApp {
     pub sys_snap: aios_sys_control::SysStatusSnapshot,
     /// Rate-limit gate for hub polls (one refresh per 2 seconds).
     sys_last_poll: std::time::Instant,
+
+    /// Voice control: microphone capture + external STT + command dispatch.
+    pub voice: VoiceControl,
 }
 
 /// Active modal input mode of the GUI Files tab.
@@ -338,6 +341,7 @@ impl AiosApp {
                 .ok(),
             sys_snap: aios_sys_control::SysStatusSnapshot::default(),
             sys_last_poll: std::time::Instant::now(),
+            voice: VoiceControl::default(),
         }
     }
 
@@ -1858,6 +1862,42 @@ impl eframe::App for AiosApp {
                             .color(theme.muted)
                             .size(11.0),
                     );
+                    ui.separator();
+                    let label = if self.voice.listening {
+                        "\u{1f399} Слушаю..."
+                    } else {
+                        "\u{1f3a4} Голос"
+                    };
+                    if ui
+                        .button(egui::RichText::new(label).size(11.0))
+                        .on_hover_text("Голосовая команда: «открой калькулятор», «смени обои»...")
+                        .clicked()
+                    {
+                        self.voice.toggle_listen();
+                        if self.voice.listening {
+                            self.add_log("Голос: слушаю...".into());
+                        }
+                    }
+                    let hint = if self.voice.stt.is_some() {
+                        "Команда..."
+                    } else {
+                        "STT нет — введите команду"
+                    };
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.voice.manual_input)
+                            .hint_text(hint)
+                            .desired_width(150.0),
+                    );
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.voice.submit_manual();
+                    }
+                    if !self.voice.last_response.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&self.voice.last_response)
+                                .color(theme.accent)
+                                .size(11.0),
+                        );
+                    }
                 });
             });
         });

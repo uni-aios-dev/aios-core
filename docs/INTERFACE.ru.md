@@ -473,6 +473,41 @@ Top-bar после RAM-сепаратора дополняется сегмен�
 - Клик по кнопкам для действий (Убить, Приостановить, Загрузить и т.д.)
 - Ввод в полях поиска (Маркетплейс)
 
+### Голосовое управление
+
+В нижней панели есть кнопка `🎤 Голос` (во время записи она показывает
+`🎙 Слушаю...`) и поле ручного ввода команды.
+
+- **Запись**: первый клик открывает устройство ввода по умолчанию через `cpal`,
+  второй — останавливает. Звук сводится в моно, ресемплируется в 16 кГц и
+  сохраняется в `AIOS_DATA_DIR/voice.wav`.
+- **Распознавание**: WAV передаётся внешнему STT-движку — команде из
+  `AIOS_STT_CMD`, если она задана, иначе первому найденному в `PATH` из
+  `whisper-cli`, `whisper`, `main`, `vosk-transcriber`. Временные метки
+  whisper.cpp отбрасываются автоматически.
+- **Текстовый фолбэк**: если движок не установлен, кнопка сообщает об этом, а
+  поле ввода принимает команду текстом (Enter — выполнить), так что функция
+  работает и без речевого движка.
+- **Действия**: фраза сопоставляется без учёта регистра (русские и английские
+  ключевые слова):
+
+| Фраза | Действие |
+|-------|----------|
+| `калькулятор` / `calculator` | `galculator`, `gnome-calculator`, `kcalc`, `xcalc`, `calc` |
+| `настройки` / `settings` | `gnome-control-center`, `systemsettings`, `xfce4-settings-manager` |
+| `браузер` / `browser` | `firefox`, `chromium`, `google-chrome`, `epiphany` |
+| `терминал` / `terminal` | `xterm`, `gnome-terminal`, `konsole`, `alacritty`, `foot` |
+| `файлы` / `files` | `thunar`, `pcmanfm`, `nautilus`, `nemo`, `dolphin` |
+| `звук` / `volume` | `pavucontrol`, `alsamixer` |
+| `сеть` / `network` | `nm-connection-editor`, `gnome-control-center` |
+| `редактор` / `editor` | `gedit`, `mousepad`, `leafpad`, `kate` |
+| `скриншот` / `screenshot` | `gnome-screenshot`, `spectacle`, `scrot` |
+| `обои` / `wallpaper` | переключает изображение из `/usr/share/backgrounds`, `/usr/share/wallpapers`, `/usr/share/pixmaps` или `AIOS_WALLPAPERS` через `feh`/`xwallpaper`/`hsetroot`/`nitrogen` |
+| `перезагрузка` / `выключение` | не выполняется автоматически — GUI отсылает в системное меню (нужен root) |
+
+Результат (что запущено или почему не вышло) показывается рядом с кнопкой и
+добавляется в журнал активности.
+
 ### Вкладки
 
 #### System Dashboard (F1)

@@ -36,7 +36,6 @@ egui = { workspace = true }
 eframe = { workspace = true }
 cpal = "0.15"
 hound = "3.5"
-reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 [[bin]]
 name = "aios-gui"

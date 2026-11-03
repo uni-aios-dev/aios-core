@@ -470,6 +470,41 @@ The top bar appends system-control segments after the RAM separator: Wi-Fi state
 - Click buttons for actions (Kill, Suspend, Load, etc.)
 - Type in search boxes (Marketplace)
 
+### Voice control
+
+The bottom bar has a `🎤 Голос` button (it turns into `🎙 Слушаю...` while the
+microphone is open) and a command text field.
+
+- **Recording**: the first click opens the default input device via `cpal`; the
+  second click stops it. Audio is downmixed to mono, resampled to 16 kHz and
+  written to `AIOS_DATA_DIR/voice.wav`.
+- **Transcription**: the WAV is passed to an external STT engine — the
+  `AIOS_STT_CMD` command line if set, otherwise the first of `whisper-cli`,
+  `whisper`, `main`, `vosk-transcriber` found on `PATH`. whisper.cpp timestamp
+  prefixes are stripped automatically.
+- **Text fallback**: when no engine is installed the button reports it and the
+  text field accepts the command directly (Enter submits), so the feature still
+  works without a speech engine.
+- **Actions**: the transcript is matched case-insensitively (Russian and
+  English keywords) and dispatched:
+
+| Phrase | Action |
+|--------|--------|
+| `калькулятор` / `calculator` | `galculator`, `gnome-calculator`, `kcalc`, `xcalc`, `calc` |
+| `настройки` / `settings` | `gnome-control-center`, `systemsettings`, `xfce4-settings-manager` |
+| `браузер` / `browser` | `firefox`, `chromium`, `google-chrome`, `epiphany` |
+| `терминал` / `terminal` | `xterm`, `gnome-terminal`, `konsole`, `alacritty`, `foot` |
+| `файлы` / `files` | `thunar`, `pcmanfm`, `nautilus`, `nemo`, `dolphin` |
+| `звук` / `volume` | `pavucontrol`, `alsamixer` |
+| `сеть` / `network` | `nm-connection-editor`, `gnome-control-center` |
+| `редактор` / `editor` | `gedit`, `mousepad`, `leafpad`, `kate` |
+| `скриншот` / `screenshot` | `gnome-screenshot`, `spectacle`, `scrot` |
+| `обои` / `wallpaper` | rotates an image from `/usr/share/backgrounds`, `/usr/share/wallpapers`, `/usr/share/pixmaps` or `AIOS_WALLPAPERS` via `feh`/`xwallpaper`/`hsetroot`/`nitrogen` |
+| `перезагрузка` / `выключение` | not executed automatically — the GUI points to the system menu (root required) |
+
+The result (what was launched or why it failed) is shown next to the button and
+appended to the activity log.
+
 ### Tabs
 
 #### System Dashboard (F1)

@@ -1,5 +1,29 @@
 # AIOS Development Log
 
+## v2.68.5 — GUI voice control: microphone button, external STT, desktop actions (2026-11-03)
+
+### Added
+- **Voice control in `aios-gui`** (`aios-gui/src/voice.rs`, bottom bar): a
+  `🎤 Голос` button opens the default microphone via `cpal` and a second click
+  stops it. Audio is downmixed to mono, resampled to 16 kHz and written to
+  `AIOS_DATA_DIR/voice.wav`.
+- **External STT**: the WAV is transcribed by `AIOS_STT_CMD` when set, otherwise
+  by the first of `whisper-cli` / `whisper` / `main` / `vosk-transcriber` found
+  on `PATH`; whisper.cpp timestamp prefixes are stripped before matching.
+- **Command dispatch** (Russian and English keywords): calculator, settings,
+  browser, terminal, file manager, sound, network, editor, screenshot, wallpaper
+  rotation, plus shutdown/reboot hints. Each action reports its result next to
+  the button and in the activity log.
+- **Text fallback**: when no STT engine is installed the command field accepts
+  text directly, so the UI remains usable without a speech engine.
+- **Tests**: `voice::tests` covers transcript cleanup, intent matching, unknown
+  phrases and the 48 kHz → 16 kHz resampler (29 GUI tests total, all green).
+
+### Notes
+- `cpal` and `hound` are new `aios-gui` dependencies; no extra system libraries
+  are required. Without an STT binary the button states what to install instead
+  of silently doing nothing.
+
 ## v2.68.4 — Honest CPU temperature: synthetic reading labelled, real DTS hardened (2026-10-27)
 
 ### Fixed
