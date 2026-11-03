@@ -1,11 +1,11 @@
-﻿use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio, exit};
-use std::collections::HashSet;
-use std::cell::RefCell;
+use std::process::{exit, Command, Stdio};
 
 use rustyline::error::ReadlineError;
 use rustyline::history::FileHistory;
@@ -73,13 +73,27 @@ fn load_aliases() -> HashMap<String, String> {
             }
         }
     }
-    if !map.contains_key("ll") { map.insert("ll".to_string(), "ls -la".to_string()); }
-    if !map.contains_key("la") { map.insert("la".to_string(), "ls -la".to_string()); }
-    if !map.contains_key("l") { map.insert("l".to_string(), "ls -CF".to_string()); }
-    if !map.contains_key("gs") { map.insert("gs".to_string(), "git status".to_string()); }
-    if !map.contains_key("gd") { map.insert("gd".to_string(), "git diff".to_string()); }
-    if !map.contains_key("gl") { map.insert("gl".to_string(), "git log --oneline -10".to_string()); }
-    if !map.contains_key("grep") { map.insert("grep".to_string(), "grep --color=auto".to_string()); }
+    if !map.contains_key("ll") {
+        map.insert("ll".to_string(), "ls -la".to_string());
+    }
+    if !map.contains_key("la") {
+        map.insert("la".to_string(), "ls -la".to_string());
+    }
+    if !map.contains_key("l") {
+        map.insert("l".to_string(), "ls -CF".to_string());
+    }
+    if !map.contains_key("gs") {
+        map.insert("gs".to_string(), "git status".to_string());
+    }
+    if !map.contains_key("gd") {
+        map.insert("gd".to_string(), "git diff".to_string());
+    }
+    if !map.contains_key("gl") {
+        map.insert("gl".to_string(), "git log --oneline -10".to_string());
+    }
+    if !map.contains_key("grep") {
+        map.insert("grep".to_string(), "grep --color=auto".to_string());
+    }
     map
 }
 
@@ -130,10 +144,31 @@ fn expand_aliases(line: &str, aliases: &HashMap<String, String>) -> String {
 }
 
 fn is_gui_app(name: &str) -> bool {
-    matches!(name, "aios-gui"|"firefox"|"chromium"|"xterm"|"rxvt"|"aterm"|"mlterm"|"gimp"|"thunar"|"pcmanfm"|"nautilus"|"geany"|"mousepad"|"leafpad")
+    matches!(
+        name,
+        "aios-gui"
+            | "firefox"
+            | "chromium"
+            | "xterm"
+            | "rxvt"
+            | "aterm"
+            | "mlterm"
+            | "gimp"
+            | "thunar"
+            | "pcmanfm"
+            | "nautilus"
+            | "geany"
+            | "mousepad"
+            | "leafpad"
+    )
 }
 
-fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec<Job>, job_counter: &mut usize) {
+fn run_command(
+    line: &str,
+    aliases: &mut HashMap<String, String>,
+    jobs: &mut Vec<Job>,
+    job_counter: &mut usize,
+) {
     // Clean up completed jobs
     #[cfg(unix)]
     {
@@ -145,11 +180,15 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
         Some(c) => c.to_string(),
         None => return,
     };
-    
+
     // Background execution
     let bg = expanded.ends_with(" &");
-    let cmd_clean = if bg { cmd.trim_end_matches('&').to_string() } else { cmd.clone() };
-    
+    let cmd_clean = if bg {
+        cmd.trim_end_matches('&').to_string()
+    } else {
+        cmd.clone()
+    };
+
     match cmd_clean.as_str() {
         "exit" | "quit" | "q" => exit(0),
         "clear" | "cls" => {
@@ -165,12 +204,20 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
             let path = if target == "~" {
                 dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
             } else if target == "-" {
-                if let Ok(old) = env::var("OLDPWD") { PathBuf::from(old) } else { return; }
+                if let Ok(old) = env::var("OLDPWD") {
+                    PathBuf::from(old)
+                } else {
+                    return;
+                }
             } else {
                 PathBuf::from(target)
             };
-            if let Ok(cur) = env::current_dir() { env::set_var("OLDPWD", cur); }
-            if let Err(e) = env::set_current_dir(&path) { eprintln!("cd: {}: {}", path.display(), e); }
+            if let Ok(cur) = env::current_dir() {
+                env::set_var("OLDPWD", cur);
+            }
+            if let Err(e) = env::set_current_dir(&path) {
+                eprintln!("cd: {}: {}", path.display(), e);
+            }
         }
         "help" | "?" => {
             println!("\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m");
@@ -189,32 +236,51 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
         }
         "env" => {
             let mut envs: Vec<_> = env::vars().collect();
-            envs.sort_by(|a,b| a.0.cmp(&b.0));
-            for (k,v) in envs { println!("{}={}", k,v); }
+            envs.sort_by(|a, b| a.0.cmp(&b.0));
+            for (k, v) in envs {
+                println!("{}={}", k, v);
+            }
         }
         "export" => {
             if let Some(a) = parts.next() {
-                if let Some((k,v)) = a.split_once('=') { env::set_var(k,v); println!("export {}={}",k,v); }
-                else if let Ok(v)=env::var(a) { println!("{}={}", a,v); }
-            } else { run_command("env", aliases, jobs, job_counter); }
+                if let Some((k, v)) = a.split_once('=') {
+                    env::set_var(k, v);
+                    println!("export {}={}", k, v);
+                } else if let Ok(v) = env::var(a) {
+                    println!("{}={}", a, v);
+                }
+            } else {
+                run_command("env", aliases, jobs, job_counter);
+            }
         }
-        "unset" => { if let Some(k)=parts.next() { env::remove_var(k); } }
+        "unset" => {
+            if let Some(k) = parts.next() {
+                env::remove_var(k);
+            }
+        }
         "history" => {
-            if let Some(h)=history_path() {
-                if let Ok(c)=fs::read_to_string(&h) {
-                    for (i,l) in c.lines().enumerate() { if !l.is_empty(){ println!("{:5}: {}",i+1,l); } }
+            if let Some(h) = history_path() {
+                if let Ok(c) = fs::read_to_string(&h) {
+                    for (i, l) in c.lines().enumerate() {
+                        if !l.is_empty() {
+                            println!("{:5}: {}", i + 1, l);
+                        }
+                    }
                 }
             }
         }
         "alias" => {
-            let rest: Vec<String>=parts.map(|x|x.to_string()).collect();
+            let rest: Vec<String> = parts.map(|x| x.to_string()).collect();
             if rest.is_empty() {
-                let mut keys: Vec<_>=aliases.keys().collect(); keys.sort();
-                for k in keys { println!("alias {}='{}'", k, aliases.get(k).unwrap()); }
+                let mut keys: Vec<_> = aliases.keys().collect();
+                keys.sort();
+                for k in keys {
+                    println!("alias {}='{}'", k, aliases.get(k).unwrap());
+                }
             } else {
                 for a in rest {
-                    if let Some((k,v))=a.split_once('=') {
-                        let v=v.trim_matches('\'').trim_matches('"').to_string();
+                    if let Some((k, v)) = a.split_once('=') {
+                        let v = v.trim_matches('\'').trim_matches('"').to_string();
                         aliases.insert(k.to_string(), v);
                         println!("alias {}='{}'", k, aliases.get(k).unwrap());
                     }
@@ -223,7 +289,10 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
             }
         }
         "unalias" => {
-            if let Some(k)=parts.next() { aliases.remove(k); save_aliases(aliases); }
+            if let Some(k) = parts.next() {
+                aliases.remove(k);
+                save_aliases(aliases);
+            }
         }
         "jobs" => {
             // Clean up completed jobs
@@ -235,11 +304,16 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
                 }
                 #[cfg(not(unix))]
                 {
+                    let _ = j;
                     true
                 }
             });
-            if jobs.is_empty() { println!("No jobs"); } else {
-                for j in jobs.iter() { println!("[{}]+ Running        {}", j.id, j.cmd); }
+            if jobs.is_empty() {
+                println!("No jobs");
+            } else {
+                for j in jobs.iter() {
+                    println!("[{}]+ Running {} (pid {})", j.id, j.cmd, j.pid);
+                }
             }
         }
         "fg" => {
@@ -273,33 +347,74 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
                 println!("bg: not supported on this platform");
             }
         }
-        "gui" => { 
-            if let Ok(child) = Command::new("aios-gui").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).env("DISPLAY", env::var("DISPLAY").unwrap_or_else(|_|":0".to_string())).spawn() {
+        "gui" => {
+            if let Ok(child) = Command::new("aios-gui")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .env(
+                    "DISPLAY",
+                    env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
+                )
+                .spawn()
+            {
                 println!("Started aios-gui [PID {}]", child.id());
-                if bg { *job_counter+=1; jobs.push(Job{id:*job_counter, cmd:"aios-gui".to_string(), pid:child.id()}); }
+                if bg {
+                    *job_counter += 1;
+                    jobs.push(Job {
+                        id: *job_counter,
+                        cmd: "aios-gui".to_string(),
+                        pid: child.id(),
+                    });
+                }
             }
         }
-        "tui" => { 
-            if let Ok(_child) = Command::new("aios").stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).spawn() {
+        "tui" => {
+            if let Ok(_child) = Command::new("aios")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+            {
                 println!("Starting aios...");
             }
         }
         "aios" => {
-            let args: Vec<String>=parts.map(|x|x.to_string()).collect();
-            let mut c=Command::new("aios"); c.args(&args).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
-            let _=c.status();
+            let args: Vec<String> = parts.map(|x| x.to_string()).collect();
+            let mut c = Command::new("aios");
+            c.args(&args)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+            let _ = c.status();
         }
-        "aios-shell-reload" => { println!("Reloading shellrc..."); load_shellrc_simple(aliases); }
+        "aios-shell-reload" => {
+            println!("Reloading shellrc...");
+            load_shellrc_simple(aliases);
+        }
         "logs" => {
-            for f in ["/var/log/syslog","/var/log/messages","/var/log/dmesg","/tmp/xorg.log","/var/log/xorg.log","/var/log/auth.log"] {
+            for f in [
+                "/var/log/syslog",
+                "/var/log/messages",
+                "/var/log/dmesg",
+                "/tmp/xorg.log",
+                "/var/log/xorg.log",
+                "/var/log/auth.log",
+            ] {
                 if Path::new(f).exists() {
                     println!("\x1b[1;33mтХРтХРтХР {} тХРтХРтХР\x1b[0m", f);
-                    if let Ok(mut file)=File::open(f) {
-                        let mut content=String::new();
-                        let _=file.read_to_string(&mut content);
-                        let lines: Vec<&str>=content.lines().collect();
-                        let s=if lines.len()>60{lines.len()-60}else{0};
-                        for l in &lines[s..]{println!("{}",l);}
+                    if let Ok(mut file) = File::open(f) {
+                        let mut content = String::new();
+                        let _ = file.read_to_string(&mut content);
+                        let lines: Vec<&str> = content.lines().collect();
+                        let s = if lines.len() > 60 {
+                            lines.len() - 60
+                        } else {
+                            0
+                        };
+                        for l in &lines[s..] {
+                            println!("{}", l);
+                        }
                     }
                     println!();
                 }
@@ -307,48 +422,126 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
         }
         "hw" | "hardware" | "info" => {
             println!("\x1b[1;36mтХРтХРтХР System Information тХРтХРтХР\x1b[0m");
-            let _=Command::new("uname").args(["-a"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("uname")
+                .args(["-a"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
             println!("\n\x1b[1;36mтХРтХРтХР CPU тХРтХРтХР\x1b[0m");
-            let _=Command::new("sh").args(["-c","cat /proc/cpuinfo | grep -E 'model name|processor|cores' | head -20"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("sh")
+                .args([
+                    "-c",
+                    "cat /proc/cpuinfo | grep -E 'model name|processor|cores' | head -20",
+                ])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
             println!("\n\x1b[1;36mтХРтХРтХР Memory тХРтХРтХР\x1b[0m");
-            let _=Command::new("free").args(["-h"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("free")
+                .args(["-h"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
             println!("\n\x1b[1;36mтХРтХРтХР Disks тХРтХРтХР\x1b[0m");
-            let _=Command::new("lsblk").args(["-o","NAME,SIZE,TYPE,MOUNTPOINT"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("lsblk")
+                .args(["-o", "NAME,SIZE,TYPE,MOUNTPOINT"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
             println!("\n\x1b[1;36mтХРтХРтХР PCI Devices тХРтХРтХР\x1b[0m");
-            let _=Command::new("lspci").args(["-nnk"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("lspci")
+                .args(["-nnk"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
             println!("\n\x1b[1;36mтХРтХРтХР USB Devices тХРтХРтХР\x1b[0m");
-            let _=Command::new("lsusb").stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("lsusb")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
         }
         "services" => {
             println!("\x1b[1;36mтХРтХРтХР Running Processes тХРтХРтХР\x1b[0m");
-            let _=Command::new("ps").args(["auxf"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("ps")
+                .args(["auxf"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
         }
         "kernel" => {
             println!("\x1b[1;36mтХРтХРтХР Kernel Info тХРтХРтХР\x1b[0m");
-            let _=Command::new("uname").args(["-r","-v"]).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("uname")
+                .args(["-r", "-v"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
             println!("\n\x1b[1;36mтХРтХРтХР Loaded Modules тХРтХРтХР\x1b[0m");
-            let _=Command::new("lsmod").stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+            let _ = Command::new("lsmod")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
         }
-        "which" => { if let Some(n)=parts.next(){ let _=Command::new("which").arg(n).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status(); } }
+        "which" => {
+            if let Some(n) = parts.next() {
+                let _ = Command::new("which")
+                    .arg(n)
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status();
+            }
+        }
         "type" => {
-            if let Some(n)=parts.next() {
-                if aliases.contains_key(n){ println!("{} is aliased to '{}'",n,aliases.get(n).unwrap()); }
-                else {
-                    let builtins=["exit","clear","pwd","cd","help","env","export","unset","history","alias","unalias","gui","tui","aios","logs","hw","services","kernel","which","exec","source","echo","type","ps","free","df","uname","uptime","whoami","date","ls","cat","grep","find","jobs","fg","bg"];
-                    if builtins.contains(&n){ println!("{} is a shell builtin",n); }
-                    else { let _=Command::new("which").arg(n).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status(); }
+            if let Some(n) = parts.next() {
+                if aliases.contains_key(n) {
+                    println!("{} is aliased to '{}'", n, aliases.get(n).unwrap());
+                } else {
+                    let builtins = [
+                        "exit", "clear", "pwd", "cd", "help", "env", "export", "unset", "history",
+                        "alias", "unalias", "gui", "tui", "aios", "logs", "hw", "services",
+                        "kernel", "which", "exec", "source", "echo", "type", "ps", "free", "df",
+                        "uname", "uptime", "whoami", "date", "ls", "cat", "grep", "find", "jobs",
+                        "fg", "bg",
+                    ];
+                    if builtins.contains(&n) {
+                        println!("{} is a shell builtin", n);
+                    } else {
+                        let _ = Command::new("which")
+                            .arg(n)
+                            .stdin(Stdio::inherit())
+                            .stdout(Stdio::inherit())
+                            .stderr(Stdio::inherit())
+                            .status();
+                    }
                 }
             }
         }
         "exec" => {
-            let rest: Vec<String>=parts.map(|x|x.to_string()).collect();
-            if rest.is_empty(){eprintln!("exec: missing");return;}
-            let mut c=Command::new(&rest[0]); if rest.len()>1{c.args(&rest[1..]);}
-            c.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
-            let _=c.status();
+            let rest: Vec<String> = parts.map(|x| x.to_string()).collect();
+            if rest.is_empty() {
+                eprintln!("exec: missing");
+                return;
+            }
+            let mut c = Command::new(&rest[0]);
+            if rest.len() > 1 {
+                c.args(&rest[1..]);
+            }
+            c.stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+            let _ = c.status();
         }
         "source" | "." => {
-            if let Some(f)=parts.next(){
+            if let Some(f) = parts.next() {
                 thread_local! { static SOURCING: RefCell<HashSet<String>> = RefCell::new(HashSet::new()); }
                 SOURCING.with(|s| {
                     let mut set = s.borrow_mut();
@@ -358,101 +551,163 @@ fn run_command(line: &str, aliases: &mut HashMap<String, String>, jobs: &mut Vec
                         return;
                     }
                     set.insert(key.clone());
-                    if let Ok(content)=fs::read_to_string(f){
-                        for line in content.lines(){
-                            let l=line.trim();
-                            if l.is_empty()||l.starts_with('#'){continue;}
-                            if l == "exit" || l == "quit" { continue; }
-                            run_command(l,aliases,jobs,job_counter);
+                    if let Ok(content) = fs::read_to_string(f) {
+                        for line in content.lines() {
+                            let l = line.trim();
+                            if l.is_empty() || l.starts_with('#') {
+                                continue;
+                            }
+                            if l == "exit" || l == "quit" {
+                                continue;
+                            }
+                            run_command(l, aliases, jobs, job_counter);
                         }
-                    } else { eprintln!("source: {}: No such file", f); }
+                    } else {
+                        eprintln!("source: {}: No such file", f);
+                    }
                     set.remove(&key);
                 });
             }
         }
         "echo" => {
-            let rest: Vec<String>=parts.map(|x|{
-                if x.starts_with('$'){
-                    let v=&x[1..];
-                    if let Some((k,d))=v.split_once('-'){ env::var(k).unwrap_or_else(|_|d.to_string()) }
-                    else if let Some((k,d))=v.split_once(':'){ env::var(k).unwrap_or_else(|_|d.to_string()) }
-                    else { env::var(v).unwrap_or_default() }
-                }else{x.to_string()}
-            }).collect();
+            let rest: Vec<String> = parts
+                .map(|x| {
+                    if x.starts_with('$') {
+                        let v = x.strip_prefix('$').unwrap_or(x);
+                        if let Some((k, d)) = v.split_once('-') {
+                            env::var(k).unwrap_or_else(|_| d.to_string())
+                        } else if let Some((k, d)) = v.split_once(':') {
+                            env::var(k).unwrap_or_else(|_| d.to_string())
+                        } else {
+                            env::var(v).unwrap_or_default()
+                        }
+                    } else {
+                        x.to_string()
+                    }
+                })
+                .collect();
             println!("{}", rest.join(" "));
         }
-        "ps"|"free"|"df"|"du"|"uname"|"uptime"|"whoami"|"id"|"date"|"ls"|"cat"|"head"|"tail"|"grep"|"find"|"wc"|"cp"|"mv"|"rm"|"mkdir"|"touch"|"chmod"|"chown"|"ln"|"stat"|"file"|"tar"|"gzip"|"gunzip"|"bzip2"|"xz"|"zip"|"unzip"|"curl"|"wget"|"ping"|"ip"|"ss"|"netstat"|"route"|"arp"|"nslookup"|"dig"|"traceroute"|"nc"|"kill"|"killall"|"top"|"htop"|"lsof"|"strace"|"lscpu"|"lsblk"|"lsusb"|"lspci"|"dmidecode"|"hdparm"|"iostat"|"vmstat"|"dmesg"|"git"|"make"|"cmake"|"gcc"|"g++"|"rustc"|"cargo"|"python"|"python3"|"node"|"npm"|"pip"|"pip3"|"vi"|"vim"|"nano"|"emacs"|"micro"|"less"|"more"|"hexdump"|"xxd"|"md5sum"|"sha256sum"|"mount"|"umount"|"modprobe"|"insmod"|"rmmod"|"lsmod" => {
-            let mut c=Command::new(&cmd_clean);
-            let args: Vec<String>=parts.map(|x|x.to_string()).collect();
+        "ps" | "free" | "df" | "du" | "uname" | "uptime" | "whoami" | "id" | "date" | "ls"
+        | "cat" | "head" | "tail" | "grep" | "find" | "wc" | "cp" | "mv" | "rm" | "mkdir"
+        | "touch" | "chmod" | "chown" | "ln" | "stat" | "file" | "tar" | "gzip" | "gunzip"
+        | "bzip2" | "xz" | "zip" | "unzip" | "curl" | "wget" | "ping" | "ip" | "ss" | "netstat"
+        | "route" | "arp" | "nslookup" | "dig" | "traceroute" | "nc" | "kill" | "killall"
+        | "top" | "htop" | "lsof" | "strace" | "lscpu" | "lsblk" | "lsusb" | "lspci"
+        | "dmidecode" | "hdparm" | "iostat" | "vmstat" | "dmesg" | "git" | "make" | "cmake"
+        | "gcc" | "g++" | "rustc" | "cargo" | "python" | "python3" | "node" | "npm" | "pip"
+        | "pip3" | "vi" | "vim" | "nano" | "emacs" | "micro" | "less" | "more" | "hexdump"
+        | "xxd" | "md5sum" | "sha256sum" | "mount" | "umount" | "modprobe" | "insmod" | "rmmod"
+        | "lsmod" => {
+            let mut c = Command::new(&cmd_clean);
+            let args: Vec<String> = parts.map(|x| x.to_string()).collect();
             c.args(&args);
-            c.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+            c.stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
             if bg {
-                if let Ok(child)=c.spawn() {
-                    *job_counter+=1;
-                    jobs.push(Job{id:*job_counter, cmd:expanded.trim_end_matches(" &").to_string(), pid:child.id()});
-                    println!("[{}] {} {}", *job_counter, child.id(), expanded.trim_end_matches(" &"));
+                if let Ok(child) = c.spawn() {
+                    *job_counter += 1;
+                    jobs.push(Job {
+                        id: *job_counter,
+                        cmd: expanded.trim_end_matches(" &").to_string(),
+                        pid: child.id(),
+                    });
+                    println!(
+                        "[{}] {} {}",
+                        *job_counter,
+                        child.id(),
+                        expanded.trim_end_matches(" &")
+                    );
                 }
             } else {
-                let _=c.status();
+                let _ = c.status();
             }
         }
         _ => {
             // Try to run as GUI app in X if in X session
             if env::var("DISPLAY").is_ok() && is_gui_app(&cmd_clean) {
-                let mut c=Command::new(&cmd_clean);
-                let args: Vec<String>=parts.map(|x|x.to_string()).collect();
+                let mut c = Command::new(&cmd_clean);
+                let args: Vec<String> = parts.map(|x| x.to_string()).collect();
                 c.args(&args);
-                c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-                if let Ok(child)=c.spawn() {
+                c.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                if let Ok(child) = c.spawn() {
                     println!("Launched {} [PID {}]", cmd_clean, child.id());
-                    if bg { *job_counter+=1; jobs.push(Job{id:*job_counter, cmd:expanded.clone(), pid:child.id()}); }
+                    if bg {
+                        *job_counter += 1;
+                        jobs.push(Job {
+                            id: *job_counter,
+                            cmd: expanded.clone(),
+                            pid: child.id(),
+                        });
+                    }
                 }
                 return;
             }
             // Try direct exec
             let mut p2 = expanded.split_whitespace();
-            if let Some(first)=p2.next(){
+            if let Some(first) = p2.next() {
                 let first_clean = first.trim_end_matches('&');
-                let args: Vec<String>=p2.map(|x|x.to_string()).filter(|x|x!="&").collect();
-                let mut c=Command::new(first_clean);
+                let args: Vec<String> = p2.map(|x| x.to_string()).filter(|x| x != "&").collect();
+                let mut c = Command::new(first_clean);
                 c.args(&args);
-                c.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+                c.stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit());
                 if bg {
-                    if let Ok(child)=c.spawn() {
-                        *job_counter+=1;
-                        jobs.push(Job{id:*job_counter, cmd:expanded.trim_end_matches(" &").to_string(), pid:child.id()});
-                        println!("[{}] {} {}", *job_counter, child.id(), expanded.trim_end_matches(" &"));
+                    if let Ok(child) = c.spawn() {
+                        *job_counter += 1;
+                        jobs.push(Job {
+                            id: *job_counter,
+                            cmd: expanded.trim_end_matches(" &").to_string(),
+                            pid: child.id(),
+                        });
+                        println!(
+                            "[{}] {} {}",
+                            *job_counter,
+                            child.id(),
+                            expanded.trim_end_matches(" &")
+                        );
                     }
                     return;
                 }
-                if c.status().is_err(){
-                    let mut c2=Command::new("sh");
-                    c2.args(["-c",&expanded]);
-                    c2.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
-                    let _=c2.status();
+                if c.status().is_err() {
+                    let mut c2 = Command::new("sh");
+                    c2.args(["-c", &expanded]);
+                    c2.stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit());
+                    let _ = c2.status();
                 }
-                return;
             }
         }
     }
 }
 
 fn load_shellrc_simple(aliases: &mut HashMap<String, String>) {
-    if let Some(p)=config_path() {
-        if let Ok(content)=fs::read_to_string(p) {
-            let mut jobs=vec![]; let mut jc=0;
+    if let Some(p) = config_path() {
+        if let Ok(content) = fs::read_to_string(p) {
+            let mut jobs = vec![];
+            let mut jc = 0;
             for line in content.lines() {
-                let l=line.trim();
-                if l.is_empty()||l.starts_with('#'){continue;}
+                let l = line.trim();
+                if l.is_empty() || l.starts_with('#') {
+                    continue;
+                }
                 if l.starts_with("alias ") {
-                    let rest=l.strip_prefix("alias ").unwrap_or("");
-                    if let Some((k,v))=rest.split_once('=') {
-                        aliases.insert(k.trim().to_string(), v.trim().trim_matches('\'').trim_matches('"').to_string());
+                    let rest = l.strip_prefix("alias ").unwrap_or("");
+                    if let Some((k, v)) = rest.split_once('=') {
+                        aliases.insert(
+                            k.trim().to_string(),
+                            v.trim().trim_matches('\'').trim_matches('"').to_string(),
+                        );
                     }
                 } else if l == "exit" || l == "quit" {
                     continue; // don't exit on shellrc load
                 } else {
-                    run_command(l,aliases,&mut jobs,&mut jc);
+                    run_command(l, aliases, &mut jobs, &mut jc);
                 }
             }
             save_aliases(aliases);
@@ -463,58 +718,91 @@ fn load_shellrc_simple(aliases: &mut HashMap<String, String>) {
 fn main() {
     let mut aliases = load_aliases();
     load_shellrc_simple(&mut aliases);
-    
+
     println!("\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m");
     println!("\x1b[1;36mтХС                AIOS Shell v2.2                    тХС\x1b[0m");
     println!("\x1b[1;36mтХС        Full-Featured Command Interface            тХС\x1b[0m");
     println!("\x1b[1;36mтХЪтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЭ\x1b[0m");
     println!("\x1b[2mType 'help' for all commands | TAB completion enabled\x1b[0m\n");
-    
+
     let config = Config::builder()
         .history_ignore_space(true)
         .completion_type(rustyline::CompletionType::List)
         .edit_mode(EditMode::Emacs)
         .build();
-    
-    let mut rl: Editor<(), FileHistory> = Editor::with_config(config).expect("Failed to init readline");
-    if let Some(h)=history_path(){ let _=rl.load_history(&h); }
 
-    
+    let mut rl: Editor<(), FileHistory> =
+        Editor::with_config(config).expect("Failed to init readline");
+    if let Some(h) = history_path() {
+        let _ = rl.load_history(&h);
+    }
+
     let mut jobs: Vec<Job> = vec![];
     let mut job_counter: usize = 0;
-    
+
     loop {
-        let pwd = env::current_dir().unwrap_or_else(|_|PathBuf::from("/"));
-        let user = env::var("USER").unwrap_or_else(|_|env::var("LOGNAME").unwrap_or_else(|_|"root".to_string()));
-        let host = env::var("HOSTNAME").unwrap_or_else(|_|"aios".to_string());
-        let short_pwd = if pwd.to_string_lossy() == "/" { "/".to_string() } else {
-            pwd.file_name().and_then(|n|n.to_str()).unwrap_or("/").to_string()
+        let pwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let user = env::var("USER")
+            .unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_else(|_| "root".to_string()));
+        let host = env::var("HOSTNAME").unwrap_or_else(|_| "aios".to_string());
+        let short_pwd = if pwd.to_string_lossy() == "/" {
+            "/".to_string()
+        } else {
+            pwd.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("/")
+                .to_string()
         };
-        let prompt = format!("\x1b[1;32m{}@{}\x1b[0m:\x1b[1;34m{}\x1b[0m$ ", user, host, if pwd.to_string_lossy().len()>20 { format!(".../{}", short_pwd) } else { pwd.display().to_string() });
+        let prompt = format!(
+            "\x1b[1;32m{}@{}\x1b[0m:\x1b[1;34m{}\x1b[0m$ ",
+            user,
+            host,
+            if pwd.to_string_lossy().len() > 20 {
+                format!(".../{}", short_pwd)
+            } else {
+                pwd.display().to_string()
+            }
+        );
         match rl.readline(&prompt) {
             Ok(line) => {
-                let line=line.trim();
-                if line.is_empty(){continue;}
-                let _=rl.add_history_entry(line);
-                if let Some(h)=history_path(){ let _=rl.save_history(&h); }
-                for cmd in line.split([';']){
-                    let cmd=cmd.trim();
-                    if cmd.is_empty(){continue;}
-                    // Handle && 
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = rl.add_history_entry(line);
+                if let Some(h) = history_path() {
+                    let _ = rl.save_history(&h);
+                }
+                for cmd in line.split([';']) {
+                    let cmd = cmd.trim();
+                    if cmd.is_empty() {
+                        continue;
+                    }
+                    // Handle &&
                     if cmd.contains("&&") {
                         for sub in cmd.split("&&") {
-                            let sub=sub.trim();
-                            if sub.is_empty(){continue;}
-                            run_command(sub,&mut aliases,&mut jobs,&mut job_counter);
+                            let sub = sub.trim();
+                            if sub.is_empty() {
+                                continue;
+                            }
+                            run_command(sub, &mut aliases, &mut jobs, &mut job_counter);
                         }
                     } else {
-                        run_command(cmd,&mut aliases,&mut jobs,&mut job_counter);
+                        run_command(cmd, &mut aliases, &mut jobs, &mut job_counter);
                     }
                 }
             }
-            Err(ReadlineError::Interrupted)=>{println!("^C");}
-            Err(ReadlineError::Eof)=>{println!("logout"); break;}
-            Err(e)=>{eprintln!("Error: {:?}",e);break;}
+            Err(ReadlineError::Interrupted) => {
+                println!("^C");
+            }
+            Err(ReadlineError::Eof) => {
+                println!("logout");
+                break;
+            }
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                break;
+            }
         }
     }
 }
