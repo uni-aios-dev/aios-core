@@ -1,6 +1,28 @@
 # AIOS Known Bugs & Workarounds
 
-## RESOLVED (v2.68.4): CPU temperature shown wrong — fake reading presented as real
+## RESOLVED (v2.68.6): Live ISO CI build failed (missing ALSA headers, broken static/dynamic split)
+
+- **Status:** RESOLVED in v2.68.6.
+- **Symptom:** GitHub Actions workflow `Live ISO` (run 41573844056, `f341d08`)
+  failed during the `aios-gui` build with `alsa-sys` pkg-config errors
+  (`alsa.pc` not found). Earlier iterations also failed with
+  `cp: can't stat '/tmp/target-dyn/release/aios'` / a missing
+  `aios-static-bin` because the script rebuilt `aios` in a different target dir
+  and never produced the initramfs-static binary.
+- **Root cause:** `live/build.sh` did not install `alsa-lib-dev` (required by
+  `cpal`/`alsa-sys`), piped `cargo build` through `tail` (hiding the real error
+  and obscuring failure context), overwrote the dynamic `aios` with a static
+  rebuild in `/tmp/target` without copying a separate `aios-static-bin`, and
+  relied on a pinned Alpine minirootfs path that could resolve to an empty name.
+- **Fix:** installed `alsa-lib-dev`, removed `| tail` masking, built dynamic
+  `aios`/`aios-gui`/`aios-shell` in `/tmp/target-dyn` and a static `aios` in
+  `/tmp/target` copied as `aios-static-bin`, and made the minirootfs lookup use
+  `${ALPINE_BRANCH:-latest-stable}` with a hard failure on empty resolution.
+  `scripts/build-live-iso.sh` now drops `-it` when no TTY is present.
+- **Verification:** commit pushed to `main` triggers `.github/workflows/live-iso.yml`;
+  the successful run uploads the `aios-live-iso` artifact.
+
+
 
 - **Status:** RESOLVED in v2.68.4.
 - **Symptom:** the TUI status bar and the GUI System window showed a CPU

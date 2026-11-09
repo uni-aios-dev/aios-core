@@ -17,6 +17,7 @@ apk add --no-cache \
   libxcb-dev libxkbcommon-dev libxi-dev libxrandr-dev libxcursor-dev \
   libxinerama-dev libx11-dev mesa-dev wayland-dev \
   fontconfig-dev libxft-dev libxrender-dev eudev-dev \
+  alsa-lib-dev \
   webkit2gtk-4.1-dev gtk+3.0-dev
 
 command -v grub-mkrescue >/dev/null 2>&1 || apk add --no-cache grub-bios
@@ -24,24 +25,25 @@ command -v grub-mkrescue >/dev/null 2>&1 || apk add --no-cache grub-bios
 echo "=== [1] building aios + aios-gui + aios-shell (musl, webview engine ON, dynamic) ==="
 cd /src
 CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
-  cargo build -p aios-gui --release 2>&1 | tail -30
+  cargo build -p aios --release --no-default-features --features base-all,webview
 CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
-  cargo build -p aios-shell --release 2>&1 | tail -15
-CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features --features base-all 2>&1 | tail -20
+  cargo build -p aios-gui --release
+CARGO_TARGET_DIR=/tmp/target-dyn RUSTFLAGS="-C target-feature=-crt-static" \
+  cargo build -p aios-shell --release
+
+echo "=== [1b] building static aios for the initramfs (no ld-musl available there) ==="
+CARGO_TARGET_DIR=/tmp/target cargo build -p aios --release --no-default-features --features base-all
 CARGO_TARGET_DIR=/tmp/target cargo rustc -p aios --release --no-default-features --features base-all \
   -- -C target-feature=+crt-static
+
 cp /tmp/target-dyn/release/aios "$W/aios-bin"
 cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
-cp /tmp/target-dyn/release/aios-shell "$W/aios-shell-bin" 2>/dev/null || true
+cp /tmp/target-dyn/release/aios-shell "$W/aios-shell-bin"
+cp /tmp/target/release/aios "$W/aios-static-bin"
 ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-shell-bin" "$W/aios-static-bin" 2>&1
 file "$W/aios-gui-bin" 2>/dev/null || true
-
-cp /tmp/target-dyn/release/aios-gui "$W/aios-gui-bin"
-cp /tmp/target-dyn/release/aios-shell "$W/aios-shell-bin" 2>/dev/null || true
-ls -la "$W/aios-bin" "$W/aios-gui-bin" "$W/aios-shell-bin" "$W/aios-static-bin" 2>&1
-file "$W/aios-gui-bin" 2>/dev/null || true
-
 file "$W/aios-static-bin" 2>/dev/null || true
+
 # The browser only works if the primary binaries really link libwebkit2gtk
 grep -aq "libwebkit2gtk-4.1" "$W/aios-bin" || { echo "FATAL: aios not linked against libwebkit2gtk-4.1"; exit 1; }
 grep -aq "libwebkit2gtk-4.1" "$W/aios-gui-bin" || { echo "FATAL: aios-gui not linked against libwebkit2gtk-4.1"; exit 1; }
@@ -53,9 +55,12 @@ echo "=== [2] building rootfs ==="
 rm -rf "$W/rootfs" "$W/iso" "$W/initramfs" "$W/out"
 mkdir -p "$W/rootfs" "$W/iso/boot/grub" "$W/out"
 
-MINI=$(wget -qO- https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/ 2>/dev/null | grep -oE 'alpine-minirootfs-[0-9.]+-x86_64\.tar\.gz' | sort -uV | tail -1)
-echo "download minirootfs: $MINI"
-wget -q -O "/tmp/$MINI" "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/$MINI"
+ALPINE_BRANCH="${ALPINE_BRANCH:-latest-stable}"
+ALPINE_BASE="https://dl-cdn.alpinelinux.org/alpine/$ALPINE_BRANCH/releases/x86_64"
+MINI=$(wget -qO- "$ALPINE_BASE/" 2>/dev/null | grep -oE 'alpine-minirootfs-[0-9.]+-x86_64\.tar\.gz' | sort -u | tail -1)
+echo "download minirootfs ($ALPINE_BRANCH): $MINI"
+[ -n "$MINI" ] || { echo "FATAL: could not find minirootfs in $ALPINE_BASE"; exit 1; }
+wget -q -O "/tmp/$MINI" "$ALPINE_BASE/$MINI"
 tar xzf "/tmp/$MINI" -C "$W/rootfs"
 cp /etc/resolv.conf "$W/rootfs/etc/resolv.conf" 2>/dev/null || true
 mount --bind /dev "$W/rootfs/dev" 2>/dev/null || true
@@ -172,16 +177,16 @@ if [ "${USE_BUSYBOX_INIT:-0}" = "1" ]; then
   cp "/work/grub.cfg" "$W/iso/boot/grub/grub.cfg"
 else
   cat > "$W/iso/boot/grub/grub.cfg" <<'EOF'
-set timeout=10
+set timeout=3
 set default=0
 
 menuentry "AIOS (aios-init kernel TUI)" {
-  linux /boot/vmlinuz init=/init console=tty0
+  linux /boot/vmlinuz init=/init console=tty0 quiet loglevel=3
   initrd /boot/initramfs.gz
 }
 
 menuentry "AIOS (verbose)" {
-  linux /boot/vmlinuz init=/init console=tty0
+  linux /boot/vmlinuz init=/init console=tty0 loglevel=7
   initrd /boot/initramfs.gz
 }
 EOF

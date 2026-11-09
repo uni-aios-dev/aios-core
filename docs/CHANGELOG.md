@@ -1,6 +1,32 @@
 # AIOS Development Log
 
-## v2.68.5 — GUI voice control: microphone button, external STT, desktop actions (2026-11-03)
+## v2.68.6 — Live ISO build fixed for CI (ALSA, static/dynamic split, no tail masking) (2026-11-09)
+
+### Fixed
+- **`live/build.sh` (CI / GitHub Actions)**: added `alsa-lib-dev` to the Alpine
+  toolchain so `aios-gui` can build with the new `cpal` voice dependency
+  (fixed `alsa-sys` pkg-config failure that broke the last Live ISO workflow run).
+- **Static vs dynamic `aios` binaries**: the script now builds a dynamic
+  `aios-bin` (target `target-dyn`, linked against `libwebkit2gtk-4.1` for the
+  rootfs/browser) and a separate fully static `aios-static-bin` (target `target`,
+  `+crt-static`) for the initramfs where no `ld-musl` loader exists. Previously
+  the dynamic build was overwritten and `aios-static-bin` was never produced,
+  tripping the FATAL static check / missing copy.
+- **Failure visibility**: removed `2>&1 | tail -N` from `cargo build` steps so a
+  failing compile aborts with the real error instead of a silent/hidden non-zero
+  through the pipeline.
+- **Minirootfs fetch**: switched to `${ALPINE_BRANCH:-latest-stable}` and fail
+  loudly when the minirootfs filename cannot be resolved (replaces the pinned
+  `v3.24` lookup that could return an empty name).
+
+### Changed
+- `scripts/build-live-iso.sh`: omit Docker `-it` flags when no TTY is attached,
+  so the wrapper runs cleanly on CI runners.
+- `.github/workflows/live-iso.yml` (existing): builds the ISO on `ubuntu-latest`
+  and uploads `aios-live-iso` as an artifact — used to produce the image when
+  local Docker/WSL2 is unavailable.
+
+
 
 ### Added
 - **Voice control in `aios-gui`** (`aios-gui/src/voice.rs`, bottom bar): a

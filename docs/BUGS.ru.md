@@ -1,6 +1,29 @@
 # AIOS: Известные баги и обходные пути
 
-## RESOLVED (v2.68.4): температура CPU показывалась неверно — подделка выдавалась за реальность
+## RESOLVED (v2.68.6): сборка Live ISO в CI падала (нет заголовков ALSA, сломан split static/dynamic)
+
+- **Статус:** RESOLVED в v2.68.6.
+- **Симптом:** workflow GitHub Actions `Live ISO` (прогон 41573844056, `f341d08`)
+  падал при сборке `aios-gui` с ошибками pkg-config `alsa-sys`
+  (`alsa.pc` не найден). В более ранних итерациях также падало
+  `cp: can't stat '/tmp/target-dyn/release/aios'` / отсутствовал
+  `aios-static-bin`, потому что скрипт пересобирал `aios` в другом target-каталоге
+  и не создавал статический бинарник для initramfs.
+- **Причина:** в `live/build.sh` не устанавливался `alsa-lib-dev` (нужен
+  `cpal`/`alsa-sys`), `cargo build` прогонялся через `tail` (скрывая реальную
+  ошибку), динамический `aios` затирался статической пересборкой в `/tmp/target`
+  без отдельного копирования `aios-static-bin`, а поиск Alpine minirootfs
+  опирался на жёсткий путь, который мог дать пустое имя.
+- **Исправление:** установлен `alsa-lib-dev`, убрано маскирование `| tail`,
+  динамические `aios`/`aios-gui`/`aios-shell` собираются в `/tmp/target-dyn`, а
+  статический `aios` — в `/tmp/target` и копируется как `aios-static-bin`;
+  поиск minirootfs использует `${ALPINE_BRANCH:-latest-stable}` с жёстким FATAL
+  при пустом результате. `scripts/build-live-iso.sh` больше не передаёт `-it`
+  без TTY.
+- **Проверка:** коммит в `main` запускает `.github/workflows/live-iso.yml`;
+  успешный прогон выкладывает артефакт `aios-live-iso`.
+
+
 
 - **Статус:** RESOLVED в v2.68.4.
 - **Симптом:** статус-бар TUI и окно System в GUI показывали температуру CPU,

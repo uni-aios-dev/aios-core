@@ -31,8 +31,12 @@ mkdir -p "$OUT" "$REG"
 echo "=== pulling/checking rust:alpine base image ==="
 "$ENGINE" pull rust:alpine
 
+# `-it` only when a real terminal is attached; CI runners have no TTY.
+TTY_FLAGS=""
+if [ -t 0 ] && [ -t 1 ]; then TTY_FLAGS="-it"; fi
+
 echo "=== launching live/build.sh (aios static-musl + rootfs + initramfs + GRUB ISO) ==="
-"$ENGINE" run --rm -it \
+"$ENGINE" run --rm $TTY_FLAGS \
     -e CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE:-false}" \
     -v "$ROOT:/src" \
     -v "$LIVE:/work" \
