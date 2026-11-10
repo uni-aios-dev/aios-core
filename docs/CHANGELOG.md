@@ -31,6 +31,10 @@
 - **Virtio block devices** (`live/sfs-up.sh`): the `virtio`/`virtio_blk` modules
   are loaded as well, so the image can be booted under QEMU with a virtio disk
   (used for the local boot verification of this release).
+- **CI workflow** (`.github/workflows/ci.yml`): added `libasound2-dev` to the
+  system packages of the check/clippy/test/coverage jobs. `cpal` (voice control)
+  pulls in `alsa-sys`, whose build script panicked without ALSA headers, so every
+  CI run had been failing since the voice feature landed.
 
 ### Verified
 - The ISO was booted in QEMU (kernel 6.18.62-0-lts, `-cdrom`): initramfs
