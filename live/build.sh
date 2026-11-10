@@ -160,6 +160,26 @@ else
   ln -sf busybox "$W/initramfs/bin/sh"
   cp "/work/sfs-up.sh" "$W/initramfs/sfs-up.sh"
   chmod +x "$W/initramfs/sfs-up.sh"
+
+  # Minimal rescue shell used by the GRUB "rescue shell" entry (rdinit=).
+  # It only needs busybox and lets the user inspect /proc, /sys and /dev.
+  cat > "$W/initramfs/rescue.sh" <<'RESCUE'
+#!/bin/sh
+export PATH=/bin
+/bin/busybox --install -s /bin 2>/dev/null
+mount -t proc proc /proc 2>/dev/null
+mount -t sysfs sys /sys 2>/dev/null
+mount -t devtmpfs dev /dev 2>/dev/null
+echo "--- AIOS initramfs rescue shell ---"
+echo "cmdline: $(cat /proc/cmdline 2>/dev/null)"
+echo "block devices: $(ls /dev/sd* /dev/nvme* /dev/vd* /dev/sr* 2>/dev/null | tr '\n' ' ')"
+echo "modules: $(cat /proc/modules 2>/dev/null | cut -d' ' -f1 | tr '\n' ' ')"
+echo "dmesg tail:"
+dmesg | tail -20 2>/dev/null
+echo "--- type 'poweroff -f' to shut down ---"
+exec /bin/sh
+RESCUE
+  chmod +x "$W/initramfs/rescue.sh"
 fi
 
 cd "$W/initramfs"
@@ -177,16 +197,36 @@ if [ "${USE_BUSYBOX_INIT:-0}" = "1" ]; then
   cp "/work/grub.cfg" "$W/iso/boot/grub/grub.cfg"
 else
   cat > "$W/iso/boot/grub/grub.cfg" <<'EOF'
-set timeout=3
+set timeout=20
 set default=0
 
-menuentry "AIOS (aios-init kernel TUI)" {
-  linux /boot/vmlinuz init=/init console=tty0 quiet loglevel=3
+menuentry "AIOS Live (recommended)" {
+  linux /boot/vmlinuz init=/init console=tty0 quiet loglevel=3 pcie_ports=compat
   initrd /boot/initramfs.gz
 }
 
-menuentry "AIOS (verbose)" {
+menuentry "AIOS Live (verbose)" {
+  linux /boot/vmlinuz init=/init console=tty0 loglevel=7 pcie_ports=compat
+  initrd /boot/initramfs.gz
+}
+
+menuentry "AIOS Live (verbose, NO PCIe workaround)" {
   linux /boot/vmlinuz init=/init console=tty0 loglevel=7
+  initrd /boot/initramfs.gz
+}
+
+menuentry "AIOS Live (diagnose: initcall_debug)" {
+  linux /boot/vmlinuz init=/init console=tty0 ignore_loglevel loglevel=8 initcall_debug
+  initrd /boot/initramfs.gz
+}
+
+menuentry "AIOS Live (safe: nomodeset, no ACPI PCI)" {
+  linux /boot/vmlinuz init=/init console=tty0 loglevel=4 nomodeset pci=noacpi pcie_ports=compat
+  initrd /boot/initramfs.gz
+}
+
+menuentry "AIOS Live (rescue shell in initramfs)" {
+  linux /boot/vmlinuz rdinit=/rescue.sh console=tty0 loglevel=4
   initrd /boot/initramfs.gz
 }
 EOF

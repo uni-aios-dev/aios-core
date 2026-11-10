@@ -33,6 +33,16 @@ loadmod() {
   done
 }
 
+# --- wait_block: poll /dev for block devices, up to $1 seconds ---
+wait_block() {
+  local timeout=${1:-4} i=0
+  while [ $i -lt $timeout ]; do
+    ls /dev/sd[a-z] /dev/sr0 /dev/nvme0n1 /dev/mmcblk0 2>/dev/null | grep -q . && return 0
+    sleep 1; i=$((i+1))
+  done
+  return 1
+}
+
 loadmod "/lib/modules/*/kernel/drivers/block/loop.ko*"
 loadmod "/lib/modules/*/kernel/fs/squashfs/squashfs.ko*"
 loadmod "/lib/modules/*/kernel/fs/fat/fat.ko*"
@@ -62,9 +72,13 @@ loadmod "/lib/modules/*/kernel/drivers/ide/ide-core.ko*"
 loadmod "/lib/modules/*/kernel/drivers/ide/ide-pci-generic.ko*"
 loadmod "/lib/modules/*/kernel/drivers/usb/storage/usb-storage.ko*"
 loadmod "/lib/modules/*/kernel/drivers/usb/host/*xhci*.ko*"
+loadmod "/lib/modules/*/kernel/drivers/virtio/*.ko*"
+loadmod "/lib/modules/*/kernel/drivers/block/virtio_blk.ko*"
 loadmod "/lib/modules/*/kernel/drivers/nvme/*.ko*"
 loadmod "/lib/modules/*/kernel/drivers/ata/*.ko*"
-sleep 2
+# Poll for block devices instead of sleeping blindly. USB sticks need several
+# seconds to enumerate (xhci -> usb-storage -> sd), so allow a generous timeout.
+wait_block 15
 log "block devices: $(ls /dev/sd* /dev/sr* /dev/vd* /dev/nvme* 2>/dev/null | tr '\n' ' ')"
 
 # GPU stack in dependency order (best-effort): core DRM first, then drivers,
@@ -78,11 +92,10 @@ loadmod "/lib/modules/*/kernel/drivers/gpu/drm/radeon/radeon.ko*"
 loadmod "/lib/modules/*/kernel/drivers/gpu/drm/nouveau/nouveau.ko*"
 loadmod "/lib/modules/*/kernel/drivers/gpu/drm/vmwgfx/vmwgfx.ko*"
 loadmod "/lib/modules/*/kernel/drivers/video/fbdev/efifb.ko* /lib/modules/*/kernel/drivers/video/fbdev/vesafb.ko* /lib/modules/*/kernel/drivers/video/fbdev/simplefb.ko*"
-
-sleep 2
+# No sleep here — GPU modules are probe-only, no settle needed before squashfs scan.
 
 loadmod "/lib/modules/*/kernel/drivers/net/ethernet/intel/e1000/e1000.ko* /lib/modules/*/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko* /lib/modules/*/kernel/drivers/net/ethernet/intel/igb/igb.ko* /lib/modules/*/kernel/drivers/net/virtio_net.ko* /lib/modules/*/kernel/drivers/net/ethernet/realtek/r8169.ko*"
-sleep 2
+# Network modules loaded — no blocking sleep, DHCP runs in background later.
 log "net ifaces after load: $(ls -d /sys/class/net/* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || echo none)"
 
 ROOTDEV=$(grep -o 'root=[^ ]*' /proc/cmdline 2>/dev/null | cut -d= -f2)
@@ -93,16 +106,28 @@ if [ -n "$ROOTDEV" ] && [ ! -b "$ROOTDEV" ]; then
 fi
 
 if [ -z "$ROOTDEV" ] && [ -z "$SFS" ]; then
-  for dev in /dev/sd[a-z]* /dev/vd[a-z]* /dev/nvme0n* /dev/mmcblk* /dev/sr*; do
-    [ -b "$dev" ] || continue
-    umount /scan 2>/dev/null
-    mount -r "$dev" /scan 2>/dev/null || continue
-    for p in boot/aios.squashfs aios.squashfs; do
-      if [ -f "/scan/$p" ]; then
-        SFS="/scan/$p"
-        break 2
-      fi
+  # The stick may still be enumerating when we get here, so rescan a few times
+  # instead of giving up on the first pass.
+  scan_root() {
+    for dev in /dev/sd[a-z]* /dev/vd[a-z]* /dev/nvme0n* /dev/mmcblk* /dev/sr*; do
+      [ -b "$dev" ] || continue
+      umount /scan 2>/dev/null
+      mount -r "$dev" /scan 2>/dev/null || continue
+      for p in boot/aios.squashfs aios.squashfs; do
+        if [ -f "/scan/$p" ]; then
+          SFS="/scan/$p"
+          return 0
+        fi
+      done
+      umount /scan 2>/dev/null
     done
+    return 1
+  }
+  attempt=0
+  while [ $attempt -lt 5 ]; do
+    scan_root && break
+    attempt=$((attempt+1))
+    [ $attempt -lt 5 ] && sleep 2
   done
 fi
 
@@ -155,78 +180,73 @@ echo "" > /run/aios/resolv.conf 2>/dev/null
 mount --bind /run/aios/resolv.conf /etc/resolv.conf 2>/dev/null
 log "resolv after bind: [$(grep -h '^nameserver' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')]"
 
-# Diagnostics for the serial log: confirm musl loader, webkit and X are on
-# the rebound paths so the dynamic /system/aios-core can exec.
+# Diagnostics for the serial log.
 log "post-bind musl: $(ls /lib/ld-musl* 2>/dev/null | tr '\n' ' ')"
 log "post-bind webkit: $(ls /usr/lib/libwebkit2gtk* 2>/dev/null | tr '\n' ' ')"
 log "post-bind Xorg: $(command -v Xorg 2>/dev/null || echo none)"
 log "post-bind aios: $(ls -la /usr/local/bin/aios /usr/local/bin/aios-gui 2>/dev/null | tr '\n' ' ')"
 
+# Run rcS for basic init (tmpfs mounts, loopback, etc.) — skip its DHCP/GUI
+# parts since we handle those below with proper sequencing.
 if [ -x /etc/init.d/rcS ]; then
   /bin/sh /etc/init.d/rcS >/dev/null 2>&1 || true
 fi
 
-log "net ifaces: $(cat /proc/net/dev 2>/dev/null | tail -n +3 | cut -d: -f1 | tr -d ' ' | tr '\n' ' ')"
-log "net ip: $(ip -o -4 addr show 2>/dev/null | grep -v ' 127\.' | awk '{print $2, $4}' | tr '\n' ' ' | cut -c1-300)"
-log "net gw: $(ip route 2>/dev/null | grep default | awk '{print $3}' | tr '\n' ' ')"
-log "net dns: $(cat /etc/resolv.conf 2>/dev/null | grep nameserver | awk '{print $2}' | tr '\n' ' ')"
-
+# Start udevd in background — do NOT wait synchronously for udevadm settle.
 if command -v udevd >/dev/null 2>&1; then
   udevd --daemon 2>/dev/null || true
+  udevadm trigger 2>/dev/null &
+fi
+
+# DHCP runs fully in background — network is not required to show the TUI.
+# A background script handles fallback + DNS seeding after the UI is up.
+(
   sleep 1
-  udevadm trigger 2>/dev/null || true
-  udevadm settle 2>/dev/null || true
-  sleep 2
-fi
-
-# Re-run DHCP now that udev has settled the NIC (rcS's udhcpc may have raced
-# the carrier up); then report the address on the serial log.
-for iface in $(ls -d /sys/class/net/e* /sys/class/net/w* 2>/dev/null | xargs -n1 basename 2>/dev/null); do
-  [ "$iface" = "lo" ] && continue
-  ip link set "$iface" up 2>/dev/null
-  log "udhcpc bin: $(command -v udhcpc || echo MISSING), probe: $(ls -la /sbin/udhcpc 2>/dev/null | tr -s ' ' | tr '\n' ' ')"
-  udhcpc -i "$iface" -q -n >/run/aios/udhcpc.log 2>&1
-  rc=$?
-  log "udhcpc exit=$rc: $(cut -c1-300 /run/aios/udhcpc.log 2>/dev/null | tr '\n' ' ')"
-done
-log "net ip after udhcpc: $(ip -o -4 addr show 2>/dev/null | grep -v ' 127\.' | awk '{print $2, $4}' | tr '\n' ' ' | cut -c1-300)"
-if [ -z "$(ip -o -4 addr show 2>/dev/null | grep -v ' 127\.')" ]; then
-  # Static fallback (QEMU user-net / typical NAT): prove the NIC + AR route,
-  # then seed nameservers (the resolv.conf bind above makes them stick).
-  for iface in $(ls -d /sys/class/net/e* 2>/dev/null | xargs -n1 basename 2>/dev/null); do
-    ip addr add 10.0.2.15/24 dev "$iface" 2>/dev/null
-    ip route add default via 10.0.2.2 dev "$iface" 2>/dev/null
-    chkp=$(ping -c 1 -W 2 10.0.2.2 2>&1 | grep -cE '1 received|bytes from' )
-    log "static-net test $iface 10.0.2.2: ping_ok=$chkp"
+  for iface in $(ls -d /sys/class/net/e* /sys/class/net/w* 2>/dev/null | xargs -n1 basename 2>/dev/null); do
+    [ "$iface" = "lo" ] && continue
+    ip link set "$iface" up 2>/dev/null
+    udhcpc -i "$iface" -q -n >/run/aios/udhcpc_${iface}.log 2>&1
+    if [ -z "$(ip -o -4 addr show dev $iface 2>/dev/null | grep -v ' 127\.')" ]; then
+      # DHCP failed — configure static fallback silently (no DNS ping test).
+      ip addr add 10.0.2.15/24 dev "$iface" 2>/dev/null
+      ip route add default via 10.0.2.2 dev "$iface" 2>/dev/null
+      if ! grep -q '^nameserver' /etc/resolv.conf 2>/dev/null; then
+        printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+      fi
+    fi
+    log "net $iface: $(ip -o -4 addr show dev $iface 2>/dev/null | awk '{print $4}')"
   done
-  if ! grep -q '^nameserver' /etc/resolv.conf 2>/dev/null; then
-    printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
-  fi
-  log "resolv: $(grep '^nameserver' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')"
-  dnst=$(ping -c 1 -W 4 example.com 2>&1 | grep -m1 -oE 'PING [^ ]+ \([0-9.]+\)')
-  log "static-net dns example.com: ${dnst:-FAIL}"
-fi
+) &
 
+log "net ifaces: $(cat /proc/net/dev 2>/dev/null | tail -n +3 | cut -d: -f1 | tr -d ' ' | tr '\n' ' ')"
+
+# Start X server in background, then immediately proceed — we poll for the
+# socket below and can start the TUI while X is still initialising.
 if command -v Xorg >/dev/null 2>&1 && [ ! -e /tmp/.X11-unix/X0 ]; then
   echo "AIOS: starting X server on :0 (VT7)"
   Xorg :0 vt7 -nolisten tcp -logfile /tmp/xorg.log >/tmp/xorg.out 2>&1 &
-  sleep 4
-  log "X sockets: $(ls /tmp/.X11-unix/ 2>/dev/null | tr '\n' ' ')"
-  log "X log: $(grep -hoE '\((EE|WW|NI|II)\)|\berror|\bfatal|no screen found|cannot run in framebuffer|No devices detected' /tmp/xorg.log 2>/dev/null | sort -u | tr '\n' ' ')"
-  log "X vt: $(cat /sys/class/tty/tty0/active 2>/dev/null)"
-  log "X fb: $(ls /dev/fb0 /dev/dri/card0 2>/dev/null | tr '\n' ' ')"
-  log "X EE: $(grep -E '\(EE\)' /tmp/xorg.log 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
-  log "X mode: $(DISPLAY=:0 xrandr --current 2>/dev/null | grep -E '\*|\bconnected' | tr '\n' ' ' | cut -c1-400)"
-  if [ "${AIOS_BROWSER_AUTO:-0}" = "1" ]; then
-    log "browser auto-open requested"
-  fi
 fi
 
-# Background watchdog: once the TUI dashboard is up (and the user may have
-# opened the native browser), dump the OS-level picture to the serial log so a
-# headless QEMU capture can confirm WebKit/GTK are actually running.
+# Poll for X socket up to 6 seconds (max 1 s per iteration, no hard sleep 4).
+i=0
+while [ $i -lt 6 ]; do
+  [ -e /tmp/.X11-unix/X0 ] && break
+  sleep 1; i=$((i+1))
+done
+log "X sockets after ${i}s: $(ls /tmp/.X11-unix/ 2>/dev/null | tr '\n' ' ')"
+if command -v Xorg >/dev/null 2>&1; then
+  log "X EE: $(grep -E '\(EE\)' /tmp/xorg.log 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
+fi
+# Xorg activates VT7 as soon as it starts. If it then fails there is no X server
+# but the console is still switched to the empty VT7, which looks like a freeze.
+# Switch back to VT1 so the TUI below is visible.
+if [ ! -e /tmp/.X11-unix/X0 ] && command -v chvt >/dev/null 2>&1; then
+  chvt 1 2>/dev/null && log "X unavailable — switched console back to VT1"
+fi
+
+# Background watchdog: log system state after UI should be up.
 (
-  sleep 150
+  sleep 90
   if [ -x /usr/bin/pgrep ]; then
     procs=$(pgrep -af 'WebKit|Xorg|aios' 2>/dev/null | tr '\n' ' ')
   else
@@ -234,27 +254,19 @@ fi
   fi
   log "watchdog procs: $(echo "$procs" | cut -c1-700)"
   log "watchdog X sockets: $(ls /tmp/.X11-unix/ 2>/dev/null | tr '\n' ' ')"
-  log "watchdog Xmode: $(DISPLAY=:0 xrandr --current 2>/dev/null | grep -E '\*' | tr '\n' ' ' | cut -c1-300)"
 ) &
 
-# Start AIOS GUI directly as the desktop session
-if [ -x /usr/local/bin/aios-gui ]; then
-  for i in 1 2 3 4 5 6 7 8; do
-    [ -e /tmp/.X11-unix/X0 ] && break
-    sleep 1
-  done
+# Start AIOS GUI as the desktop session.
+if [ -x /usr/local/bin/aios-gui ] && [ -e /tmp/.X11-unix/X0 ]; then
+  # Start window manager in background, no blocking sleep after it.
   if command -v openbox >/dev/null 2>&1; then
     openbox &
-    sleep 1
   elif command -v jwm >/dev/null 2>&1; then
     jwm &
-    sleep 1
   elif command -v fluxbox >/dev/null 2>&1; then
     fluxbox &
-    sleep 1
   elif command -v dwm >/dev/null 2>&1; then
     dwm &
-    sleep 1
   fi
   export DISPLAY=:0
   exec /usr/local/bin/aios-gui

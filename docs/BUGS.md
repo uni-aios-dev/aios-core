@@ -1,5 +1,33 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.68.7): Live ISO stalls on real hardware during PCIe hotplug init
+
+- **Status:** OPEN - a workaround is shipped, the root cause is not confirmed on
+  the affected machine yet.
+- **Symptom:** booting the Live ISO on the physical machine stops right after
+  `pcieport 0000:00:07.0: pciehp: Slot #0 AttnBtn- PwrCtrl- MRL- ... LLActRep-`
+  (~0.61 s). Neither `Run /init as init process` nor any `AIOS:` line appears.
+  The very same ISO boots to the desktop in QEMU.
+- **Cause (suspected):** kernel 6.18.62-0-lts blocks while probing native PCIe
+  hotplug on that firmware. Ruled out: image/flash corruption (initramfs
+  gzip/cpio intact, `/init` and busybox are static ELF, `modprobe` loads
+  `.ko.gz` modules, QEMU boot reaches the TUI/GUI).
+- **Workaround:** boot the "AIOS Live (recommended)" entry (`pcie_ports=compat`,
+  native `pciehp` disabled) or "safe" (`nomodeset pci=noacpi`).
+- **Diagnostics:** "verbose, NO PCIe workaround" reproduces the stall;
+  "diagnose: initcall_debug" makes the kernel print every initcall, so the last
+  line before the stall names the function; "rescue shell" (`rdinit=/rescue.sh`)
+  shows whether `/init` is reachable at all.
+
+## RESOLVED (v2.68.7): blank console after a failed Xorg, late USB stick missed
+
+- **Status:** RESOLVED in v2.68.7.
+- **Symptom:** on machines where `Xorg` cannot start the console stayed on the
+  empty VT7 instead of showing the TUI; on slow USB enumeration the stick was
+  not found and the system fell back to TUI-only mode.
+- **Fix:** `live/sfs-up.sh` switches back to VT1 when no X socket appears, polls
+  block devices for 15 s and retries the squashfs scan five times.
+
 ## RESOLVED (v2.68.6): Live ISO CI build failed (missing ALSA headers, broken static/dynamic split)
 
 - **Status:** RESOLVED in v2.68.6.

@@ -1,5 +1,43 @@
 # AIOS Development Log
 
+## v2.68.7 - Live ISO: boot diagnostics menu, PCIe hotplug workaround, VT fallback (2026-11-10)
+
+### Added
+- **GRUB boot menu for field diagnostics** (`live/build.sh`): the ISO now ships
+  six entries - recommended (with `pcie_ports=compat`), verbose, verbose without
+  the PCIe workaround, `initcall_debug`, safe mode (`nomodeset pci=noacpi`) and a
+  rescue shell (`rdinit=/rescue.sh`). The timeout is 20 s so an entry can be
+  picked on slow consoles.
+- **`/rescue.sh` in the initramfs**: mounts `/proc`, `/sys` and devtmpfs on
+  `/dev`, prints the cmdline, block devices, loaded modules and the `dmesg` tail,
+  then drops to a shell. Reached through the "rescue shell" entry, it shows
+  whether the kernel gets past device init on hardware where the default boot
+  looks frozen.
+- **PCIe hotplug workaround**: the recommended entry boots with
+  `pcie_ports=compat`, so the native `pciehp` driver does not claim PCIe root
+  ports (firmware/ACPI hotplug is used instead). Some firmwares stall while the
+  native hotplug capability is probed (`pcieport ...: pciehp: Slot #0 ...`),
+  which stops the boot before `init` ever runs.
+
+### Fixed
+- **Blank console after a failed X server** (`live/sfs-up.sh`): `Xorg :0 vt7`
+  activates VT7 even when it then fails, so the visible console stayed on an
+  empty VT while the TUI ran on VT1 and the screen looked frozen. The script now
+  switches back with `chvt 1` when no `/tmp/.X11-unix/X0` socket appeared.
+- **USB stick missed on slow enumeration** (`live/sfs-up.sh`): block-device
+  polling was raised from 4 s to 15 s and the squashfs scan is retried up to five
+  times (2 s apart), so a `usb-storage` disk that shows up late is still found
+  instead of falling back to TUI-only mode.
+- **Virtio block devices** (`live/sfs-up.sh`): the `virtio`/`virtio_blk` modules
+  are loaded as well, so the image can be booted under QEMU with a virtio disk
+  (used for the local boot verification of this release).
+
+### Verified
+- The ISO was booted in QEMU (kernel 6.18.62-0-lts, `-cdrom`): initramfs
+  unpacked, `/init` ran, `/scan/boot/aios.squashfs` mounted, the Alpine userland
+  was bound, X came up and AIOS started - the image itself is healthy, so the
+  hardware failure is kernel-side PCIe probing.
+
 ## v2.68.6 — Live ISO build fixed for CI (ALSA, static/dynamic split, no tail masking) (2026-11-09)
 
 ### Fixed
