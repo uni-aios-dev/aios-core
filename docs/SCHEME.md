@@ -33,8 +33,8 @@
  aios-persistence · aios-optim                  │  hw protection: mpk/iommu/tee
 ═══════════════════════════════════════════════════════════════════════
  BARE-METAL TRACK (standalone, excluded from workspace):
- live ISO → aios-init (static-musl PID 1) → aios-kernel (x86_64-unknown-none,
- milestones M0–M4 done) ← aios-kernel-run (QEMU)
+ aios-boot (own UEFI loader) → aios-bootinfo (BootInfo contract) → aios-kernel
+ aios-image (GPT + FAT32 ESP image, QEMU/OVMF) ← aios-kernel-run (legacy ISO)
 ```
 
 ## 2. Boot Flow (`aios` kernel binary)

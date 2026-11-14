@@ -1,0 +1,14 @@
+# aios-image: the AIOS disk-image builder.
+#
+# Standalone host crate (std, no external dependencies): builds `aios-boot` and
+# `aios-kernel`, then assembles a GPT disk with a FAT32 EFI System Partition
+# containing the loader, the kernel and the boot modules. No limine, xorriso,
+# mtools or MSYS is involved: the GPT and the FAT32 volume are written directly.
+[package]
+name = "aios-image"
+version = "0.1.0"
+edition = "2021"
+description = "Builds the AIOS UEFI boot image: GPT + FAT32 ESP with aios-boot, aios-kernel and the boot modules"
+license = "AGPL-3.0-or-later"
+
+[dependencies]

@@ -274,7 +274,7 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
             // LAPIC timer tick: same bookkeeping as the PIT path, but with the
             // LAPIC EOI instead of the PIC one. Only logs the very first firing
             // (with the interrupt-frame CS/SS, proving the kernel reloaded its
-            // own GDT selectors after the Limine handoff) so the 100 Hz serial
+            // own GDT selectors after the bootloader handoff) so the 100 Hz serial
             // stream from the PIT path is not duplicated.
             if !LAPIC_TICK_LOGGED.swap(true, Ordering::Relaxed) {
                 kprintln!(

@@ -1450,6 +1450,55 @@ Shared system-control plane consumed by the TUI, GUI, bridge and integration tes
 - `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
 
 Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet). Since v2.46.0 the gate also serves `SYS_PING` (id 7, the cooperative hang-watchdog heartbeat) and `SYS_FAULT_POLL` (id 8, which drains the kernel fault event ring for a ring-3 monitor — the freestanding twin of the host `FaultReport` IPC). Since v2.49.0 it serves the `SYS_SOCK_*` family (ids 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — the last two from v2.50.0 — and `SYS_SOCK_ADDR`, v2.51.0, which hands ring-3 its own bound IPv4), the ring-3 face of the kernel socket layer; every buffer argument is copied byte-by-byte through `memory::translate` and each call is gated on socket ownership (`sock::owner(fd) == pid`). Since v2.51.0 the fifth ring-3 demo task (program E) exercises the whole family from userspace over loopback — a UDP ping-pong plus, since v2.52.0, a TCP `listen`/`connect`/`accept`/echo round per loop (`sock-e ok` / `sock-t ok`; see the `user` bullet).
+## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-image`) — v2.69.0
+
+AIOS boots on bare metal without Linux, Windows or a third-party boot loader:
+`aios-boot` is its own UEFI application, `aios-bootinfo` is the loader/kernel
+contract, and `aios-image` writes the disk image from scratch on the build
+machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
+
+- `aios-boot` (`boot/aios-boot`, target `x86_64-unknown-uefi`, `uefi` 0.41 with
+  `alloc`/`global_allocator`/`panic_handler`) produces one PE32+ image,
+  `\EFI\BOOT\BOOTX64.EFI` (~64 KiB). The crate is split so most of it is
+  host-testable:
+  - `config` — parses `\aios\boot.conf` (`kernel`, `config`, `block` keys) and
+    reads the `\aios\config\*.conf` and `\aios\blocks\*` payloads from the ESP;
+  - `elf` — validates and loads the static `ET_EXEC` kernel (`PT_LOAD`
+    segments, `p_offset`/`p_vaddr`/`p_memsz`, zero-filled `.bss` pages);
+  - `paging` — own `FramePool` and 4-level tables: kernel image at
+    `0xffff_ffff_8000_0000` in PML4[511], HHDM
+    (`0xffff_8000_0000_0000`) in PML4[256], kernel heap/MMIO in PML4[510],
+    the 64 KiB boot stack (`0xffff_fe00_0000_0000`) in PML4[508]; 2 MiB and
+    4 KiB mappings with `PTE_NX`/`PTE_PCD`;
+  - `BootError` — one error enum shared by every loader step.
+  UEFI-only modules: `main` (GOP framebuffer, `ExitBootServices`, `BootInfo`
+  fill), `framebuffer`, `serial` (COM1) and `runtime` (the `wcslen` libcall
+  that LLVM's loop idiom emits for `CStr16::from_ptr`).
+- Hand-off: the final `mov cr3` + `jmp` runs from a 4 KiB identity-mapped stub
+  page. It loads the kernel page tables, sets `rsp = BOOT_STACK_TOP - 8` (the
+  SysV entry alignment the kernel expects) and jumps to `_start` with
+  `rdi = HHDM_BASE + phys(BootInfo)`; `cr3`, `cli` and the jump are the last
+  things the firmware-provided environment sees.
+- `aios-bootinfo` (`boot/aios-bootinfo`, `no_std`, used by both sides):
+  `#[repr(C)] BootInfo { magic = AIOSBOOT, version = 1, size, hhdm_offset,
+  kernel_phys/virt/size, rsdp, framebuffer, memory_region_count,
+  module_count, memory_regions[128], modules[64] }`. Fixed layout, 8800 bytes,
+  no pointers; `memory_regions()`/`modules()` return the valid prefixes and
+  `is_valid()` re-checks magic, version and size.
+- `aios-image` (`boot/aios-image`, pure Rust, no `mkfs.vfat`/`diskpart`):
+  builds the loader and the kernel, then writes a GPT disk with a 320 MiB
+  FAT32 ESP (4 KiB clusters, 2 FATs, 32 reserved sectors, VFAT long names plus
+  generated 8.3 aliases such as `EMPTY~1.WAS`) and re-parses MBR, GPT header,
+  FAT32 boot sector and the required paths (`/EFI/BOOT/BOOTX64.EFI`,
+  `/aios/kernel.elf`, `/aios/config/system.conf`, `/aios/blocks/empty.wasm`).
+  `--headless` boots the image under QEMU/OVMF, captures COM1 to
+  `boot/out/serial.log` and prints it; `--no-run` only builds and verifies.
+- Stack alignment invariant: every kernel stack top must be 16-byte aligned.
+  `[u8; N]` statics only have alignment 1, and `core::fmt::Arguments` marks its
+  "static `&str`" encoding with `args & 1`; an odd argument-array address is
+  decoded as a multi-exabyte string. `sched::stack_top()` rounds stack tops
+  down to `STACK_ALIGN` and `spawn_kernel`/`spawn_user` assert the invariant.
+
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 
 A fresh `x86_64-unknown-none` microkernel. Since **v2.34.0** it boots as a **Limine-protocol** ELF from a hybrid BIOS+UEFI ISO (the same Limine the Live image uses) and renders through a native **GOP/VBE framebuffer** console; the earlier `bootloader::BiosBoot` + VGA-text path was removed. It is the seed of a self-hosted kernel and provides console I/O, interrupts (GDT/TSS, IDT, PIC remap, PIT + Local APIC timers, PS/2 keyboard), paging (own page-table walker + frame allocator + kernel heap), preemption and kernel IPC.

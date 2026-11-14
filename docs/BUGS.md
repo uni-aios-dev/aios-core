@@ -1,5 +1,25 @@
 # AIOS Known Bugs & Workarounds
 
+## RESOLVED (v2.69.0): `{:08x}` page fault - odd kernel stack top
+
+- **Status:** RESOLVED in v2.69.0.
+- **Symptom:** after the ring-3 tasks started, one `kprintln!` call
+  (`[serial] [net] dhcp discover xid={:08x}`) ended in
+  `PAGE FAULT: addr=0xffffffff80127000 ip=0xffffffff800445c5 err=0x0` and the
+  kernel stopped. Everything printed with `{}` kept working.
+- **Cause:** the idle task ran on `IDLE_STACK`, a `[u8; 32 KiB]` static at
+  `0xffffffff800c2ae7`. A byte array has alignment 1, so its top
+  (`base + 32 KiB`) was the odd address `0xffffffff800caae7`. `core::fmt`
+  stores the `Arguments` array at `rsp + 0x10` and encodes
+  `Arguments::from_str` in the low bit of that pointer (`args & 1`). With an
+  odd array address `as_str()` returned `Some(str { ptr: template,
+  len: args >> 1 })` - a ~2^62-byte string over the format template - so the
+  serial writer read forward through `.rodata`/`.data` until the first
+  unmapped page after the kernel image (`0xffffffff80127000`).
+- **Fix:** every kernel stack top is rounded down to 16 bytes by
+  `sched::stack_top()` (idle stack, worker stack, double-fault IST) and
+  `spawn_kernel`/`spawn_user` assert `stack_top.is_multiple_of(16)`.
+
 ## OPEN (v2.68.7): Live ISO stalls on real hardware during PCIe hotplug init
 
 - **Status:** OPEN - a workaround is shipped, the root cause is not confirmed on

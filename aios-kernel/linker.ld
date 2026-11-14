@@ -39,10 +39,6 @@ SECTIONS
     .got : { *(.got) } :data
     .got.plt : { *(.got.plt) } :data
     .data : {
-        /* Limine requests. */
-        KEEP(*(.requests_start))
-        KEEP(*(.requests))
-        KEEP(*(.requests_end))
         *(.data .data.* .sdata .sdata.*)
     } :data
 

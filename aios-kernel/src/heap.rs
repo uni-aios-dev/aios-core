@@ -6,8 +6,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Base virtual address of the kernel heap.
 ///
-/// Lives in the unused PML4 slot 510 (below the kernel image at slot 511 and
-/// above Limine's HHDM window), so it never collides with the direct map.
+/// Lives in PML4 slot 510 (below the kernel image at slot 511 and above the
+/// direct-map window in slot 256), so it never collides with the direct map.
 pub const HEAP_START: u64 = 0xFFFF_FF00_0000_0000;
 /// Heap size: 4 MiB (v2.38.33, was 2 MiB). The freelist now coalesces every
 /// adjacent pair on free (see [`FreeListAllocator::dealloc`]), but the larger

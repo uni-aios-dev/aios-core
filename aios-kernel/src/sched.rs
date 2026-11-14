@@ -143,6 +143,24 @@ static mut LAST_ACTIVITY: [u64; MAX_TASKS] = [0; MAX_TASKS];
 /// stack frames.
 static mut BOOT_ACTIVE: bool = true;
 
+/// Required alignment of every kernel stack top, in bytes.
+///
+/// `[u8; N]` statics only have alignment 1, so their natural end address can be
+/// odd. A task entered with an odd `rsp` executes every frame misaligned, and
+/// `core::fmt::Arguments` stores the argument array at `rsp + 0x10` and detects
+/// its "static `&str`" encoding through `args & 1`; an odd argument pointer is
+/// therefore misread as a multi-exabyte string and the writer walks off the end
+/// of the kernel image. Keep every stack top 16-byte aligned.
+pub const STACK_ALIGN: u64 = 16;
+
+/// Returns the 16-byte aligned top of the stack region that starts at `base`
+/// and is `len` bytes long.
+///
+/// Stack tops are rounded *down* so the whole region stays inside the array.
+pub const fn stack_top(base: u64, len: usize) -> u64 {
+    (base + len as u64) & !(STACK_ALIGN - 1)
+}
+
 /// Marks the end of boot: re-anchors slot 0 to a fresh `idle_loop` entry on
 /// its own dedicated kernel stack and deregisters the boot context so its
 /// stack frames are never resumed. Call right before `kernel_main` parks
@@ -151,7 +169,7 @@ pub fn boot_finished() {
     unsafe {
         #[allow(static_mut_refs)]
         {
-            let idle_top = IDLE_STACK.as_ptr() as usize as u64 + IDLE_STACK.len() as u64;
+            let idle_top = stack_top(IDLE_STACK.as_ptr() as u64, IDLE_STACK.len());
             let t = tasks();
             t[0].present = true;
             t[0].valid_frame = true;
@@ -235,7 +253,11 @@ pub fn init() {
 }
 
 /// Register a kernel thread that starts at `entry` running on `stack_top`.
+///
+/// `stack_top` must satisfy [`STACK_ALIGN`]; misaligned stacks corrupt
+/// `core::fmt` argument detection (see [`STACK_ALIGN`]).
 pub fn spawn_kernel(entry: u64, stack_top: u64) -> Option<usize> {
+    assert!(stack_top.is_multiple_of(STACK_ALIGN));
     spawn_with(|frame| {
         frame.rip = entry;
         frame.cs = 0x08;
@@ -247,8 +269,10 @@ pub fn spawn_kernel(entry: u64, stack_top: u64) -> Option<usize> {
 }
 
 /// Register a ring-3 task starting at `entry` with `stack_top` (both must be
-/// user-mapped pages prepared by `user::spawn_program`).
+/// user-mapped pages prepared by `user::spawn_program`, and `stack_top` must
+/// satisfy [`STACK_ALIGN`]).
 pub fn spawn_user(entry: u64, stack_top: u64, arg1: u64, arg2: u64) -> Option<usize> {
+    assert!(stack_top.is_multiple_of(STACK_ALIGN));
     spawn_with(|frame| {
         frame.rip = entry;
         frame.cs = USER_CS as u64;

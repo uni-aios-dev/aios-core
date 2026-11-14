@@ -1,5 +1,52 @@
 # AIOS Development Log
 
+## v2.69.0 - Native UEFI boot chain: own loader, BootInfo, GPT/FAT32 image builder (2026-11-14)
+
+### Added
+- **`aios-boot` - AIOS's own UEFI loader** (`boot/aios-boot`, target
+  `x86_64-unknown-uefi`, `uefi` 0.41): reads `/aios/boot.conf` plus the
+  `config/*.conf` and `blocks/*` payloads from the ESP, loads the static kernel
+  ELF, builds its own 4-level page tables (kernel at `0xffffffff80000000` in
+  PML4[511], HHDM `0xffff800000000000` in PML4[256], heap/MMIO in PML4[510],
+  64 KiB boot stack at `0xfffffe0000000000` in PML4[508]), calls
+  `ExitBootServices` and hands off from a 4 KiB identity-mapped stub page with
+  the new CR3, `rsp = BOOT_STACK_TOP - 8` and `rdi = HHDM + phys(BootInfo)`.
+  The host-testable lib holds `config`, `elf`, `paging` and `BootError`
+  (11 unit tests); only `main`, `framebuffer`, `serial` and `runtime` need UEFI.
+- **`aios-bootinfo` - the loader/kernel contract** (`boot/aios-bootinfo`,
+  `no_std`): `#[repr(C)] BootInfo` with magic `AIOSBOOT`, version 1, kernel
+  physical/virtual/size, RSDP, GOP framebuffer, 128 memory regions and 64
+  module descriptors; 8800 bytes, fixed layout, no pointers.
+- **`aios-image` - pure-Rust image builder** (`boot/aios-image`): builds the
+  loader and kernel, then writes a GPT disk with a 320 MiB FAT32 ESP (4 KiB
+  clusters, 2 FATs, 32 reserved sectors, VFAT long names plus generated 8.3
+  aliases) and re-verifies MBR, GPT header, FAT32 boot sector and the required
+  payload paths. `--headless` boots the image under QEMU/OVMF and captures COM1
+  to `boot/out/serial.log`; `--no-run` only builds and verifies.
+
+### Fixed
+- **Page fault inside `{:08x}` on the idle kernel stack**: `IDLE_STACK` is a
+  `[u8; 32 KiB]` static (alignment 1), so its top was the odd address
+  `0xffffffff800caae7`. `core::fmt::Arguments` stores its argument array at
+  `rsp + 0x10` and marks the "static `&str`" form with `args & 1`, so the odd
+  array address was decoded as a multi-exabyte string and the serial writer
+  walked off the end of the kernel image (`addr=0xffffffff80127000`). Every
+  kernel stack top is now 16-byte aligned through `sched::stack_top()` and
+  `spawn_kernel`/`spawn_user` assert the invariant.
+- **Stale `BootInfo` layout test**: `layout_is_stable` still expected 8832 bytes
+  while the structure is 8800 bytes; it now derives the expected size from the
+  header (96) plus the two arrays and also checks `BootInfo::new().size`.
+
+### Verified
+- Headless QEMU/OVMF boot of the generated image: clean serial log for the full
+  30 s timeout, `dhcp discover xid=00a10546` formatted by `{:08x}`,
+  `scheduler online`, five ring-3 tasks, GUI and socket demos running, no
+  `PAGE FAULT`, no `FATAL`.
+- `cargo fmt`, `cargo clippy -- -D warnings` (kernel for
+  `x86_64-unknown-none`, loader for `x86_64-unknown-uefi` and the host lib,
+  image tool for all targets) and the unit suites: loader lib 11/11, BootInfo
+  5/5, image 10/10.
+
 ## v2.68.7 - Live ISO: boot diagnostics menu, PCIe hotplug workaround, VT fallback (2026-11-10)
 
 ### Added

@@ -5,6 +5,7 @@ extern crate alloc;
 
 mod acpi;
 mod ahci;
+mod boot;
 mod console;
 mod ec;
 mod fault;
@@ -37,13 +38,9 @@ mod wifi;
 mod xhci;
 
 use crate::framebuffer::{colors, Framebuffer};
+use aios_bootinfo::BootInfo;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
-use limine::request::{
-    EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, RsdpRequest,
-    StackSizeRequest,
-};
-use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
 // Driver status published for the TUI dashboard: -1 = no controller, 0 = init
 // failed, 1 = online, 2 = online and a sector read-back succeeded.
@@ -52,50 +49,10 @@ pub static G_NVME: AtomicI32 = AtomicI32::new(-1);
 pub static G_XHCI: AtomicI32 = AtomicI32::new(-1);
 pub static G_NET: AtomicI32 = AtomicI32::new(-1);
 
-// --- Limine boot protocol requests ----------------------------------------
-//
-// All of these live in the `.requests*` sections that `linker.ld` keeps alive.
-// Limine scans them between the start/end markers and fills in the response
-// pointers before entering `_start`.
-
-#[used]
-#[link_section = ".requests_start"]
-static REQUESTS_START: RequestsStartMarker = RequestsStartMarker::new();
-
-#[used]
-#[link_section = ".requests"]
-static BASE_REVISION: BaseRevision = BaseRevision::new();
-
-#[used]
-#[link_section = ".requests"]
-static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
-
-#[used]
-#[link_section = ".requests"]
-static MEMMAP_REQUEST: MemmapRequest = MemmapRequest::new();
-
-#[used]
-#[link_section = ".requests"]
-static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
-
-#[used]
-#[link_section = ".requests"]
-static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
-
-#[used]
-#[link_section = ".requests"]
-static STACK_SIZE_REQUEST: StackSizeRequest = StackSizeRequest::new(64 * 1024);
-
-#[used]
-#[link_section = ".requests"]
-static ENTRY_POINT_REQUEST: EntryPointRequest = EntryPointRequest::new(_start);
-
-#[used]
-#[link_section = ".requests_end"]
-static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
-
-/// Requested kernel stack size, in bytes.
+/// Size of the kernel double-fault stack, in bytes.
 const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
+/// Size of the kernel worker thread stack, in bytes.
+const WORKER_STACK_SIZE: usize = 16 * 1024;
 /// Upper bound on usable memory regions handed to the frame allocator.
 const MAX_USABLE_REGIONS: usize = 64;
 /// Upper bound on PCI functions recorded during enumeration.
@@ -109,7 +66,7 @@ struct DoubleFaultStack([u8; DOUBLE_FAULT_STACK_SIZE]);
 static DOUBLE_FAULT_STACK: DoubleFaultStack = DoubleFaultStack([0; DOUBLE_FAULT_STACK_SIZE]);
 
 /// Returns the current stack pointer (captured at kernel entry, i.e. the top of
-/// the stack Limine provided).
+/// the stack `aios-boot` set up for the kernel).
 #[inline(always)]
 fn current_rsp() -> u64 {
     let rsp: u64;
@@ -134,13 +91,23 @@ fn print_step(n: u8, msg: &str) {
 }
 ///
 /// # Safety
-/// Called exactly once by the bootloader with the Limine requests resolved.
+/// Called exactly once by `aios-boot` with a pointer to a [`BootInfo`] in
+/// `rdi`. The loader has already enabled the kernel page tables (higher-half
+/// kernel + higher-half direct map) and set `rsp` to a mapped kernel stack.
 #[no_mangle]
-pub unsafe extern "C" fn _start() -> ! {
+pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     let kernel_stack_top = current_rsp();
 
     serial::init();
-    serial::_print(format_args!("[serial] aios-kernel: Limine handoff\n"));
+    serial::_print(format_args!("[serial] aios-kernel: aios-boot handoff\n"));
+
+    let info = match unsafe { boot::init(bootinfo) } {
+        Ok(info) => info,
+        Err(err) => {
+            serial::_print(format_args!("[serial] FATAL: {}\n", err));
+            halt_loop();
+        }
+    };
 
     let mut seg_cs: u16 = 0;
     let mut seg_ss: u16 = 0;
@@ -157,21 +124,11 @@ pub unsafe extern "C" fn _start() -> ! {
         seg_ds
     );
 
-    if !BASE_REVISION.is_supported() {
-        kprintln!(
-            "[serial] Limine base revision unsupported (actual {:?})",
-            BASE_REVISION.actual_revision()
-        );
-    }
+    let hhdm_offset = boot::hhdm_offset();
+    let rsdp = boot::rsdp();
+    let fb_info = boot::framebuffer();
 
-    let hhdm_offset = HHDM_REQUEST.response().map(|r| r.offset).unwrap_or(0);
-    let rsdp = RSDP_REQUEST.response().map(|r| r.address as u64);
-
-    let limine_fb = FRAMEBUFFER_REQUEST
-        .response()
-        .and_then(|r| r.framebuffers().first().copied());
-
-    console::init(limine_fb);
+    console::init(fb_info.as_ref(), hhdm_offset);
     console::clear();
 
     interrupts::check_f8();
@@ -183,10 +140,31 @@ pub unsafe extern "C" fn _start() -> ! {
     }
 
     print_step(1, "serial online");
-    vprintln!("AIOS bare-metal kernel (Limine + GOP)");
-    vprintln!("====================================");
-    kprintln!("[serial] aios-kernel: Limine + GOP boot");
-    kprintln!("[serial] HHDM offset = 0x{:x}", hhdm_offset);
+    vprintln!("AIOS bare-metal kernel (aios-boot + GOP)");
+    vprintln!("=======================================");
+    kprintln!("[serial] aios-kernel: aios-boot handoff");
+    kprintln!("[serial] hhdm offset = 0x{:x}", hhdm_offset);
+    kprintln!(
+        "[serial] kernel phys=0x{:x} virt=0x{:x} size={}",
+        info.kernel_phys,
+        info.kernel_virt,
+        info.kernel_size
+    );
+    for module in boot::modules() {
+        kprintln!(
+            "[serial] module '{}' kind={} phys=0x{:x} size={}",
+            module.name_str().unwrap_or("<invalid>"),
+            module.kind_str(),
+            module.phys,
+            module.size
+        );
+    }
+    kprintln!(
+        "[serial] modules = {} ({} config, {} wasm)",
+        boot::modules().len(),
+        boot::config_count(),
+        boot::block_count()
+    );
     match rsdp {
         Some(addr) => {
             vprintln!("ACPI RSDP: 0x{:x}", addr);
@@ -203,8 +181,8 @@ pub unsafe extern "C" fn _start() -> ! {
     // alias, which needs PHYS_OFFSET); the direct colour test below does not.
     let mut fb_base: u64 = 0;
     let mut fb_bytes: u64 = 0;
-    if let Some(fb) = limine_fb {
-        let fb = Framebuffer::new(fb);
+    if let Some(fb_info) = fb_info {
+        let fb = Framebuffer::new(&fb_info, hhdm_offset);
         fb_base = fb.base_addr();
         fb_bytes = (fb.pitch().saturating_mul(fb.height())) as u64;
         kprintln!(
@@ -316,25 +294,33 @@ pub unsafe extern "C" fn _start() -> ! {
     print_step(3, "memory map");
     let mut usable = [memory::MemRegion { start: 0, end: 0 }; MAX_USABLE_REGIONS];
     let mut usable_count = 0usize;
-    if let Some(resp) = MEMMAP_REQUEST.response() {
-        for entry in resp.entries() {
-            if entry.type_ != limine::memmap::MEMMAP_USABLE {
-                continue;
-            }
-            if usable_count >= MAX_USABLE_REGIONS {
-                break;
-            }
-            usable[usable_count] = memory::MemRegion {
-                start: entry.base,
-                end: entry.base + entry.length,
-            };
-            usable_count += 1;
+    for region in info.memory_regions() {
+        if !region.is_usable() {
+            continue;
         }
-        vprintln!("Memory map: {} usable regions", usable_count);
-        kprintln!("[serial] usable memory regions = {}", usable_count);
-    } else {
+        if usable_count >= MAX_USABLE_REGIONS {
+            break;
+        }
+        usable[usable_count] = memory::MemRegion {
+            start: region.start,
+            end: region.end,
+        };
+        usable_count += 1;
+    }
+    if usable_count == 0 {
         vprintln!("Memory map: none!");
         kprintln!("[serial] memory map missing");
+    } else {
+        vprintln!("Memory map: {} usable regions", usable_count);
+        kprintln!("[serial] usable memory regions = {}", usable_count);
+        for region in &usable[..usable_count] {
+            kprintln!(
+                "[serial]   usable 0x{:x}-0x{:x} ({} KiB)",
+                region.start,
+                region.end,
+                (region.end - region.start) / 1024
+            );
+        }
     }
 
     memory::init(hhdm_offset, &usable[..usable_count]);
@@ -351,8 +337,8 @@ pub unsafe extern "C" fn _start() -> ! {
     // --- GOP VRAM mapping verification -------------------------------------
     // Now that `memory::init` set the HHDM offset, walk the live page tables
     // over the whole framebuffer range and prove it is mapped present +
-    // writable. The framebuffer address Limine hands out already carries the
-    // HHDM offset, so it must be used as-is (adding it again would fault).
+    // writable. The framebuffer address is the direct-map alias of the GOP
+    // physical base, so it must be used as-is.
     if fb_base != 0 {
         let chk = memory::verify_region(fb_base, fb_bytes);
         kprintln!(
@@ -390,8 +376,10 @@ pub unsafe extern "C" fn _start() -> ! {
     vprintln!("Paging + kernel heap online");
 
     // --- GDT / IDT / interrupts -------------------------------------------
-    let double_fault_stack_top =
-        &DOUBLE_FAULT_STACK as *const DoubleFaultStack as u64 + DOUBLE_FAULT_STACK_SIZE as u64;
+    let double_fault_stack_top = sched::stack_top(
+        &DOUBLE_FAULT_STACK as *const DoubleFaultStack as u64,
+        DOUBLE_FAULT_STACK_SIZE,
+    );
 
     idt::init();
     gdt::init(double_fault_stack_top);
@@ -684,8 +672,8 @@ pub unsafe extern "C" fn _start() -> ! {
     print_step(11, "scheduler init");
     sched::init();
 
-    static mut WORKER_STACK: [u8; 16 * 1024] = [0; 16 * 1024];
-    let worker_top = core::ptr::addr_of!(WORKER_STACK) as u64 + 16 * 1024;
+    static mut WORKER_STACK: [u8; WORKER_STACK_SIZE] = [0; WORKER_STACK_SIZE];
+    let worker_top = sched::stack_top(core::ptr::addr_of!(WORKER_STACK) as u64, WORKER_STACK_SIZE);
     match sched::spawn_kernel(kernel_worker as *const () as u64, worker_top) {
         Some(slot) => {
             vprintln!("[sched] kernel worker spawned (slot {})", slot);

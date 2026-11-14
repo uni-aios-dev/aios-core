@@ -33,8 +33,8 @@
  aios-persistence · aios-optim                 │  защита HW: mpk/iommu/tee
 ═══════════════════════════════════════════════════════════════════════
  BARE-METAL-ВЕТКА (отдельно, вне воркспейса):
- live ISO → aios-init (статический musl PID 1) → aios-kernel (x86_64-unknown-none,
- вехи M0–M4 выполнены) ← aios-kernel-run (QEMU)
+ aios-boot (свой UEFI-загрузчик) → aios-bootinfo (контракт BootInfo) → aios-kernel
+ aios-image (образ GPT + FAT32 ESP, QEMU/OVMF) ← aios-kernel-run (старый ISO)
 ```
 
 ## 2. Порядок загрузки (бинарник `aios`)

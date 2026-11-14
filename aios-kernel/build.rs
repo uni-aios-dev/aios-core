@@ -147,4 +147,12 @@ aios_restore_ring3:
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("irq_stubs.S");
     fs::write(&out, asm).expect("failed to write irq_stubs.S");
     println!("cargo:rerun-if-changed=build.rs");
+
+    // Pass the linker script by absolute path: `.cargo/config.toml` cannot
+    // expand workspace-relative paths, and a relative `-Tlinker.ld` depends on
+    // the linker's working directory (which differs between hosts).
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let linker_script = manifest_dir.join("linker.ld");
+    println!("cargo:rerun-if-changed=linker.ld");
+    println!("cargo:rustc-link-arg-bins=-T{}", linker_script.display());
 }

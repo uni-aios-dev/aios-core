@@ -1445,6 +1445,59 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
 Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
+## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-image`) — v2.69.0
+
+AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
+`aios-boot` — собственное UEFI-приложение, `aios-bootinfo` — контракт
+загрузчика и ядра, `aios-image` — сборщик дискового образа на машине сборки.
+Только UEFI (GPT + ESP, путь BIOS/El Torito в v1 не нужен).
+
+- `aios-boot` (`boot/aios-boot`, таргет `x86_64-unknown-uefi`, `uefi` 0.41 с
+  `alloc`/`global_allocator`/`panic_handler`) собирается в один PE32+-образ
+  `\EFI\BOOT\BOOTX64.EFI` (~64 КиБ). Крейт разделён так, что большая часть
+  тестируется на хосте:
+  - `config` — разбирает `\aios\boot.conf` (ключи `kernel`, `config`,
+    `block`) и читает с ESP файлы `\aios\config\*.conf` и `\aios\blocks\*`;
+  - `elf` — проверяет и загружает статический `ET_EXEC`-образ ядра
+    (сегменты `PT_LOAD`, `p_offset`/`p_vaddr`/`p_memsz`, страницы `.bss`
+    заливаются нулями);
+  - `paging` — собственные `FramePool` и 4-уровневые таблицы: образ ядра по
+    `0xffff_ffff_8000_0000` в PML4[511], HHDM (`0xffff_8000_0000_0000`) в
+    PML4[256], куча/MMIO ядра в PML4[510], загрузочный стек 64 КиБ
+    (`0xffff_fe00_0000_0000`) в PML4[508]; маппинги по 2 МиБ и 4 КиБ с
+    `PTE_NX`/`PTE_PCD`;
+  - `BootError` — общий enum ошибок всех шагов загрузчика.
+  Только для UEFI: `main` (GOP-фреймбуфер, `ExitBootServices`, заполнение
+  `BootInfo`), `framebuffer`, `serial` (COM1) и `runtime` (libcall `wcslen`,
+  который LLVM генерирует для `CStr16::from_ptr`).
+- Передача управления: финальные `mov cr3` + `jmp` выполняются из
+  identity-mapped stub-страницы 4 КиБ. Она загружает таблицы страниц ядра,
+  ставит `rsp = BOOT_STACK_TOP - 8` (выравнивание входа SysV, которого ждёт
+  ядро) и прыгает в `_start` с `rdi = HHDM_BASE + phys(BootInfo)`; `cr3`,
+  `cli` и прыжок — последнее, что видит окружение прошивки.
+- `aios-bootinfo` (`boot/aios-bootinfo`, `no_std`, используется обеими
+  сторонами): `#[repr(C)] BootInfo { magic = AIOSBOOT, version = 1, size,
+  hhdm_offset, kernel_phys/virt/size, rsdp, framebuffer,
+  memory_region_count, module_count, memory_regions[128], modules[64] }`.
+  Фиксированная раскладка, 8800 байт, без указателей; `memory_regions()` и
+  `modules()` возвращают корректные префиксы, `is_valid()` заново проверяет
+  магию, версию и размер.
+- `aios-image` (`boot/aios-image`, чистый Rust, без `mkfs.vfat`/`diskpart`):
+  собирает загрузчик и ядро, затем пишет GPT-диск с ESP на 320 МиБ
+  (кластеры 4 КиБ, 2 FAT, 32 зарезервированных сектора, длинные имена VFAT
+  плюс сгенерированные псевдонимы 8.3 вроде `EMPTY~1.WAS`) и заново
+  разбирает MBR, заголовок GPT, boot-сектор FAT32 и обязательные пути
+  (`/EFI/BOOT/BOOTX64.EFI`, `/aios/kernel.elf`, `/aios/config/system.conf`,
+  `/aios/blocks/empty.wasm`). `--headless` загружает образ в QEMU/OVMF,
+  сохраняет COM1 в `boot/out/serial.log` и печатает его; `--no-run` только
+  собирает и проверяет.
+- Инвариант выравнивания стеков: вершина любого стека ядра должна быть
+  выровнена на 16 байт. Статики `[u8; N]` имеют выравнивание 1, а
+  `core::fmt::Arguments` помечает свою форму «статическая `&str`» битом
+  `args & 1`; нечётный адрес массива аргументов декодируется как строка
+  размером в эксабайты. `sched::stack_top()` округляет вершины стеков вниз до
+  `STACK_ALIGN`, а `spawn_kernel`/`spawn_user` проверяют инвариант.
+
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 
 Микроядро `x86_64-unknown-none`. С **v2.34.0** оно грузится как ELF по протоколу **Limine** с гибридного BIOS+UEFI ISO (тот же Limine, что и у Live-образа) и выводит текст через нативную консоль на **framebuffer GOP/VBE**; прежний путь `bootloader::BiosBoot` + текстовый VGA удалён. Это основа самодостаточного ядра; сейчас предоставляет консольный ввод-вывод, прерывания (GDT/TSS, IDT, ремап PIC, таймер PIT, клавиатура PS/2), paging (собственный обход таблиц страниц + аллокатор кадров + куча ядра), вытеснение и IPC ядра.

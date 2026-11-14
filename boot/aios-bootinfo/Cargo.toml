@@ -1,0 +1,13 @@
+# aios-bootinfo: the boot hand-off contract shared by aios-boot and aios-kernel.
+#
+# Standalone, no_std, dependency-free crate: the bootloader writes it, the
+# kernel reads it. Keeping it separate means neither side owns the layout and
+# the structure can be validated by version.
+[package]
+name = "aios-bootinfo"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS boot hand-off structure shared by aios-boot and aios-kernel"
+license = "AGPL-3.0-or-later"
+
+[dependencies]

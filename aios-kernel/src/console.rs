@@ -11,9 +11,9 @@
 
 use crate::font8x8::BASIC;
 use crate::framebuffer::{colors, Framebuffer};
+use aios_bootinfo::FramebufferInfo;
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicBool, Ordering};
-use limine::framebuffer::Framebuffer as LimineFramebuffer;
 
 /// Integer render scale applied to each 8x8 glyph.
 pub const SCALE: usize = 2;
@@ -45,8 +45,8 @@ impl Console {
         }
     }
 
-    fn init(&mut self, fb: Option<&LimineFramebuffer>) {
-        self.fb = fb.map(Framebuffer::new);
+    fn init(&mut self, fb: Option<&FramebufferInfo>, hhdm_offset: u64) {
+        self.fb = fb.map(|fb| Framebuffer::new(fb, hhdm_offset));
         if let Some(fb) = self.fb.as_ref().filter(|fb| fb.is_usable()) {
             self.cols = fb.width() / GLYPH_W;
             // Keep a compact boot/log strip on top (CONSOLE_TOP_ROWS); the
@@ -177,14 +177,15 @@ impl SpinLock {
 static CONSOLE_LOCK: SpinLock = SpinLock::new();
 static mut CONSOLE: Console = Console::new();
 
-/// Installs the Limine framebuffer as the kernel console.
+/// Installs the bootloader framebuffer as the kernel console.
 ///
 /// Passing `None` keeps the console inactive (all output then goes to serial
-/// only), which is useful on headless systems.
-pub fn init(fb: Option<&LimineFramebuffer>) {
+/// only), which is useful on headless systems. `hhdm_offset` is the base of the
+/// direct map used to reach the physical GOP address.
+pub fn init(fb: Option<&FramebufferInfo>, hhdm_offset: u64) {
     CONSOLE_LOCK.lock();
     let console = unsafe { &mut *core::ptr::addr_of_mut!(CONSOLE) };
-    console.init(fb);
+    console.init(fb, hhdm_offset);
     CONSOLE_LOCK.unlock();
 }
 

@@ -1,0 +1,32 @@
+# aios-boot: the AIOS UEFI bootloader.
+#
+# Standalone crate: targets `x86_64-unknown-uefi` and is excluded from the host
+# workspace. It is the first program the firmware runs; it reads the AIOS
+# partition, loads the kernel ELF and the configuration/block modules, builds
+# the page tables and jumps to the kernel with `aios-bootinfo`.
+[package]
+name = "aios-boot"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS UEFI bootloader: loads aios-kernel and the boot modules, hands off via aios-bootinfo"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+aios-bootinfo = { path = "../aios-bootinfo" }
+
+# Firmware bindings are needed only by the UEFI binary. The library half is
+# host-testable, so the dependency is target-scoped.
+[target.'cfg(target_os = "uefi")'.dependencies]
+uefi = { version = "0.41.0", default-features = false, features = [
+    "alloc",
+    "global_allocator",
+    "panic_handler",
+] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+lto = false

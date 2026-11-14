@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// A usable physical memory region, `[start, end)`, page-aligned by the caller.
 ///
-/// Built by `main.rs` from the Limine memory map (`MEMMAP_USABLE` entries only),
+/// Built by `main.rs` from the `aios-boot` memory map (usable entries only),
 /// which keeps this module independent of the boot protocol.
 #[derive(Clone, Copy)]
 pub struct MemRegion {
@@ -367,9 +367,8 @@ const fn is_page_aligned(addr: u64) -> bool {
 /// Virtual address used by the paging self-test.
 ///
 /// Deliberately placed in the otherwise-unused PML4 slot just below the kernel
-/// image (index 510) so the test never collides with Limine's HHDM (which fills
-/// the lower half of the kernel half of the address space) nor with the kernel
-/// image itself (slot 511).
+/// image (index 510) so the test never collides with the direct map (slot 256)
+/// nor with the kernel image itself (slot 511).
 const SELFTEST_ADDR: u64 = 0xFFFF_FF00_1000_0000;
 const SELFTEST_PATTERN: u64 = 0xDEAD_BEEF_CAFE_F00D;
 

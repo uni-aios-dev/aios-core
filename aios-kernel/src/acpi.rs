@@ -87,7 +87,7 @@ fn find_entry(root_phys: u64, entry_size: usize, want: &[u8; 4]) -> Option<u64> 
     found
 }
 
-/// Walks the ACPI table tree starting at the Limine-provided RSDP physical
+/// Walks the ACPI table tree starting at the bootloader-provided RSDP physical
 /// address and publishes the FADT/DSDT facts. Cheap and side-effect free
 /// besides the serial log lines.
 pub fn init(rsdp_phys: u64) {

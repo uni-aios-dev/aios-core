@@ -49,7 +49,7 @@ hex = "0.4"
 
 [workspace]
 resolver = "2"
-exclude = ["aios-init", "aios-kernel", "aios-kernel-run"]
+exclude = ["aios-init", "aios-kernel", "aios-kernel-run", "boot/aios-boot", "boot/aios-bootinfo", "boot/aios-image"]
 members = [
     "aios-core",
     "aios-ipc",

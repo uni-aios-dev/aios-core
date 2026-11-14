@@ -1,13 +1,14 @@
-# Bare-metal target: link the Limine kernel with the bundled LLVM linker
-# (rust-lld, gnu flavor) via a small wrapper so no system toolchain is needed.
+# Bare-metal target: let rustc drive the linker bundled with the toolchain
+# (rust-lld with the target's default `ld.lld` flavor). No system toolchain
+# and no absolute paths: the build is reproducible on any host. `build.rs`
+# passes the absolute path of `linker.ld`, so the crate does not depend on the
+# linker's working directory either.
 [target.x86_64-unknown-none]
 rustflags = [
-    "-C", "link-arg=-Tlinker.ld",
     "-C", "link-arg=--gc-sections",
     "-C", "codegen-units=1",
-    "-C", "linker-flavor=ld",
+    "-C", "relocation-model=static",
 ]
-linker = "C:/tmp/ld_wrapper.cmd"
 
 # Host target (used only to compile/run the build script). Left to rustc's
 # default MinGW `gcc` linker; the bare-metal linker script must NOT be applied

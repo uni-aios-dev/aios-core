@@ -1,16 +1,16 @@
 //! Linear framebuffer drawing primitives for the AIOS kernel.
 //!
-//! The framebuffer is handed to the kernel by Limine via the
-//! `FramebufferRequest` (see `linker.ld` and `main.rs`). Under UEFI this is the
-//! GOP linear framebuffer; under legacy BIOS it is the VBE linear framebuffer.
-//! The kernel owns the pixels directly — there is no `fbcon`, no DRM and no
-//! firmware blob anywhere in the path.
+//! The framebuffer is handed to the kernel by `aios-boot` in the
+//! [`aios_bootinfo::BootInfo`] (GOP linear framebuffer under UEFI). The kernel
+//! owns the pixels directly — there is no `fbcon`, no DRM and no firmware blob
+//! anywhere in the path.
 //!
 //! Colours passed to this module use the conventional `0x00RRGGBB` layout and
 //! are converted to the hardware's pixel format using the packed masks reported
-//! by Limine, so the same drawing code works on 32/24/16-bit RGB framebuffers.
+//! by the bootloader, so the same drawing code works on 32/24/16-bit RGB
+//! framebuffers.
 
-use limine::framebuffer::Framebuffer as LimineFramebuffer;
+use aios_bootinfo::FramebufferInfo;
 
 /// A `0x00RRGGBB` colour.
 pub type Color = u32;
@@ -32,7 +32,7 @@ pub mod colors {
 
 /// A linear framebuffer with helper drawing primitives.
 ///
-/// This is a thin, allocation-free wrapper over the raw Limine framebuffer. It
+/// This is a thin, allocation-free wrapper over the raw GOP framebuffer. It
 /// is deliberately `Copy`-free and stored once (inside the console), so the raw
 /// pointer is never duplicated.
 pub struct Framebuffer {
@@ -64,23 +64,25 @@ fn scale(value: u32, size: u8) -> u32 {
 }
 
 impl Framebuffer {
-    /// Builds a framebuffer handle from Limine's description.
+    /// Builds a framebuffer handle from the bootloader description.
     ///
-    /// Only `bpp` of 16, 24 or 32 are supported; anything else is reported to
-    /// the caller via [`Self::is_usable`].
-    pub fn new(fb: &LimineFramebuffer) -> Self {
+    /// `hhdm_offset` is the base of the higher-half direct map: the physical
+    /// GOP address is reachable at `hhdm_offset + address`. Only `bpp` of 16,
+    /// 24 or 32 are supported; anything else is reported to the caller via
+    /// [`Self::is_usable`].
+    pub fn new(fb: &FramebufferInfo, hhdm_offset: u64) -> Self {
         Self {
-            base: fb.address() as *mut u8,
+            base: (hhdm_offset + fb.address) as *mut u8,
             width: fb.width as usize,
             height: fb.height as usize,
             pitch: fb.pitch as usize,
             bytes_per_pixel: usize::from(fb.bpp) / 8,
-            red_shift: fb.red_mask_shift,
-            red_size: fb.red_mask_size,
-            green_shift: fb.green_mask_shift,
-            green_size: fb.green_mask_size,
-            blue_shift: fb.blue_mask_shift,
-            blue_size: fb.blue_mask_size,
+            red_shift: fb.red_shift,
+            red_size: fb.red_size,
+            green_shift: fb.green_shift,
+            green_size: fb.green_size,
+            blue_shift: fb.blue_shift,
+            blue_size: fb.blue_size,
         }
     }
 
@@ -109,12 +111,12 @@ impl Framebuffer {
         self.bytes_per_pixel
     }
 
-    /// Virtual (HHDM) address of the framebuffer base.
+    /// Virtual (direct-map) address of the framebuffer base.
     ///
-    /// Limine already adds the higher-half direct map offset to the physical
-    /// framebuffer address before handing it over (`address + hhdm_offset`),
-    /// so the value is directly usable as a raw pointer — no extra translation
-    /// is needed and the offset must NOT be added a second time.
+    /// The bootloader reports the physical GOP address; [`Self::new`] adds the
+    /// direct-map offset once, so the value here is directly usable as a raw
+    /// pointer — no extra translation is needed and the offset must NOT be
+    /// added a second time.
     pub fn base_addr(&self) -> u64 {
         self.base as u64
     }
