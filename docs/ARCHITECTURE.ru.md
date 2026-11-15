@@ -1445,7 +1445,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
 Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
-## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-image`) — v2.69.0
+## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-image`) — v2.70.0
 
 AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
 `aios-boot` — собственное UEFI-приложение, `aios-bootinfo` — контракт
@@ -1457,7 +1457,11 @@ AIOS грузится на голом железе без Linux, Windows и ст
   `\EFI\BOOT\BOOTX64.EFI` (~64 КиБ). Крейт разделён так, что большая часть
   тестируется на хосте:
   - `config` — разбирает `\aios\boot.conf` (ключи `kernel`, `config`,
-    `block`) и читает с ESP файлы `\aios\config\*.conf` и `\aios\blocks\*`;
+    `block`) и находит drop-in-файлы в `\aios\config\*.conf` и
+    `\aios\blocks\*.wasm` (`BootConfig::discover`): только простые имена
+    файлов, фильтр по расширению, дедупликация с явными записями
+    ASCII-сравнением без учёта регистра (ESP — это FAT32) и сортировка по
+    имени, чтобы загрузка была детерминированной;
   - `elf` — проверяет и загружает статический `ET_EXEC`-образ ядра
     (сегменты `PT_LOAD`, `p_offset`/`p_vaddr`/`p_memsz`, страницы `.bss`
     заливаются нулями);
@@ -1497,6 +1501,27 @@ AIOS грузится на голом железе без Linux, Windows и ст
   `args & 1`; нечётный адрес массива аргументов декодируется как строка
   размером в эксабайты. `sched::stack_top()` округляет вершины стеков вниз до
   `STACK_ALIGN`, а `spawn_kernel`/`spawn_user` проверяют инвариант.
+- `aios-config` (`boot/aios-config`, `no_std`, без аллокаций, v2.70.0): единый
+  ридер `key = value` для обеих сторон — комментарии `#`, ключи после trim из
+  ASCII-букв/цифр/`. _ -`, необязательные кавычки `"`/`'`, пустое значение
+  допустимо, некорректная строка пропускается, повтор ключа — last-one-wins.
+  `Config` только заимствует текст и разбирает его лениво
+  (`entries`/`get`/`get_u32`/`get_bool`/`count`/`duplicates`), а
+  `parse_u32`/`parse_bool` декодируют отдельное значение (десятичное или hex
+  `0x`, `true/yes/on/1` и `false/no/off/0`) — ядро никогда не копирует и не
+  аллоцирует файл настройки.
+- Слои настройки (M2, v2.70.0): `boot.conf` только запускает загрузку;
+  каждый остальной `\aios\config\*.conf` находится автоматически и передаётся
+  как `MODULE_CONFIG`, а каждый `\aios\blocks\*.wasm` — как `MODULE_BLOCK`.
+  Модуль `config` ядра (`aios-kernel/src/config.rs`) разбирает каждый слой на
+  месте через HHDM, логирует `[cfg] layer '<name>' = N key(s)`, каждую пару
+  `key = "value" (layer)` и дубли ключей, а поиск идёт от последнего слоя к
+  первому — поэтому drop-in вроде `config/net.conf` переопределяет базовый
+  `system.conf` без его правки. `scheduler.tick_hz` и
+  `memory.heap_min_kib` сверяются с `interrupts::TIMER_HZ` и
+  `heap::HEAP_SIZE`, и расхождение логируется, а не игнорируется молча; в
+  штатном образе `net.conf` не указан в `boot.conf` и служит доказательством
+  работы drop-in.
 
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 

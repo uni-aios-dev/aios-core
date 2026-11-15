@@ -6,6 +6,7 @@ extern crate alloc;
 mod acpi;
 mod ahci;
 mod boot;
+mod config;
 mod console;
 mod ec;
 mod fault;
@@ -165,6 +166,85 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
         boot::config_count(),
         boot::block_count()
     );
+
+    // --- System configuration (M2) -----------------------------------------
+    // The loader handed every `/aios/config/*.conf` file over as a
+    // `MODULE_CONFIG` module; the kernel parses them in place (no copy) and the
+    // last layer wins. A value the kernel cannot honour is reported instead of
+    // being silently ignored.
+    let cfg = config::init();
+    for (layer, entry) in config::entries() {
+        kprintln!(
+            "[serial] [cfg] {} = \"{}\" ({})",
+            entry.key,
+            entry.value,
+            layer
+        );
+    }
+    let system_name = config::get("system.name").unwrap_or("AIOS");
+    let system_version = config::get("system.version").unwrap_or(env!("CARGO_PKG_VERSION"));
+    let system_arch = config::get("system.arch").unwrap_or("x86_64");
+    vprintln!(
+        "Config: {} {} {} ({} layer(s), {} key(s))",
+        system_name,
+        system_version,
+        system_arch,
+        cfg.layers,
+        cfg.entries
+    );
+    kprintln!(
+        "[serial] [cfg] system = {} {} {} ({} layer(s), {} key(s), {} invalid)",
+        system_name,
+        system_version,
+        system_arch,
+        cfg.layers,
+        cfg.entries,
+        cfg.invalid
+    );
+    match config::get_u32("scheduler.tick_hz") {
+        Some(hz) if u64::from(hz) == interrupts::TIMER_HZ => {
+            kprintln!(
+                "[serial] [cfg] scheduler.tick_hz = {} Hz (matches the kernel timer)",
+                hz
+            );
+        }
+        Some(hz) => {
+            kprintln!(
+                "[serial] [cfg] scheduler.tick_hz = {} Hz but the kernel timer runs at {} Hz (not applied)",
+                hz,
+                interrupts::TIMER_HZ
+            );
+        }
+        None => {}
+    }
+    match config::get_u32("memory.heap_min_kib") {
+        Some(kib) if u64::from(kib) <= heap::HEAP_SIZE / 1024 => {
+            kprintln!(
+                "[serial] [cfg] memory.heap_min_kib = {} KiB ({} KiB kernel heap)",
+                kib,
+                heap::HEAP_SIZE / 1024
+            );
+        }
+        Some(kib) => {
+            kprintln!(
+                "[serial] [cfg] memory.heap_min_kib = {} KiB exceeds the {} KiB kernel heap (not applied)",
+                kib,
+                heap::HEAP_SIZE / 1024
+            );
+        }
+        None => {}
+    }
+    // Drop-in proof: `net.conf` is not listed in `boot.conf`, so a value from it
+    // can only be here because the loader discovered the file.
+    if let (Some(dhcp), Some((layer, _))) =
+        (config::get_bool("net.dhcp"), config::source("net.dhcp"))
+    {
+        kprintln!(
+            "[serial] [cfg] net.dhcp = {} (from '{}', discovered drop-in)",
+            dhcp,
+            layer
+        );
+    }
     match rsdp {
         Some(addr) => {
             vprintln!("ACPI RSDP: 0x{:x}", addr);

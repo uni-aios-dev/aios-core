@@ -32,7 +32,10 @@ use aios_boot::paging::{
 use aios_boot::BootError;
 use aios_bootinfo::{
     BootInfo, FramebufferInfo, MemoryRegion, MAX_MEMORY_REGIONS, MAX_MODULE_NAME, MEM_USABLE,
+    MODULE_BLOCK, MODULE_CONFIG,
 };
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::arch::asm;
 use uefi::boot::{AllocateType, MemoryType};
 use uefi::fs::FileSystem;
@@ -81,9 +84,45 @@ fn boot() -> Result<(), BootError> {
     let boot_conf = fs
         .read_to_string(cstr16!("\\aios\\boot.conf"))
         .map_err(|_| BootError::Config)?;
-    let config = config::parse(&boot_conf)?;
+    let mut config = config::parse(&boot_conf)?;
     drop(boot_conf);
     sprintln!("aios-boot: kernel = {}", config.kernel);
+
+    // Drop-in discovery: every `*.conf` in `\aios\config` and every `*.wasm`
+    // in `\aios\blocks` is booted even when it is not listed in `boot.conf`.
+    // Files that are listed are not loaded twice.
+    let config_added = discover(
+        &mut fs,
+        &mut config,
+        cstr16!("\\aios\\config"),
+        config::CONFIG_DIR,
+        config::CONFIG_EXTENSION,
+        MODULE_CONFIG,
+    )?;
+    let block_added = discover(
+        &mut fs,
+        &mut config,
+        cstr16!("\\aios\\blocks"),
+        config::BLOCK_DIR,
+        config::BLOCK_EXTENSION,
+        MODULE_BLOCK,
+    )?;
+    sprintln!(
+        "aios-boot: modules = {} ({} conf, {} wasm; +{} / +{} discovered)",
+        config.modules.len(),
+        config
+            .modules
+            .iter()
+            .filter(|module| module.kind == MODULE_CONFIG)
+            .count(),
+        config
+            .modules
+            .iter()
+            .filter(|module| module.kind == MODULE_BLOCK)
+            .count(),
+        config_added,
+        block_added
+    );
 
     let kernel_path =
         CString16::try_from(config.kernel_uefi_path().as_str()).map_err(|_| BootError::Config)?;
@@ -265,6 +304,39 @@ fn build_and_jump(args: BuildArgs<'_>) -> ! {
             args.elf.entry,
         )
     }
+}
+
+/// Adds every file of `uefi_dir` that ends in `extension` to `config`.
+///
+/// A missing directory is not an error: an image without drop-ins still boots
+/// from `boot.conf` alone.
+fn discover(
+    fs: &mut FileSystem,
+    config: &mut BootConfig,
+    uefi_dir: &uefi::CStr16,
+    posix_dir: &str,
+    extension: &str,
+    kind: u32,
+) -> Result<usize, BootError> {
+    let names = match fs.read_dir(uefi::fs::Path::new(uefi_dir)) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|entry| entry.is_regular_file())
+            .map(|entry| alloc::format!("{}", entry.file_name()))
+            .collect::<Vec<String>>(),
+        Err(_) => {
+            sprintln!("aios-boot: no {} directory, no drop-ins", posix_dir);
+            return Ok(0);
+        }
+    };
+    let added = config.discover(posix_dir, extension, kind, &names)?;
+    sprintln!(
+        "aios-boot: {} holds {} file(s), +{} new module(s)",
+        posix_dir,
+        names.len(),
+        added
+    );
+    Ok(added)
 }
 
 fn load_modules(

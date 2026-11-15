@@ -1,0 +1,13 @@
+# aios-config: the AIOS `key = value` configuration reader.
+#
+# Standalone, `no_std`, allocation-free crate shared by the UEFI loader and the
+# kernel: both parse the same `/aios/config/*.conf` files with the same rules,
+# so a value that the loader accepts is never rejected by the kernel.
+[package]
+name = "aios-config"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS configuration reader: no_std, allocation-free `key = value` parser shared by aios-boot and aios-kernel"
+license = "AGPL-3.0-or-later"
+
+[dependencies]

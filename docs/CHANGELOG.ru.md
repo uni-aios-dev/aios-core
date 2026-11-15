@@ -1,5 +1,58 @@
 # Журнал разработки AIOS
 
+## v2.70.0 - Собственная загрузка M2: общий ридер настроек, автопоиск drop-in, слой config в ядре (2026-11-14)
+
+### Добавлено
+- **`aios-config` — общий ридер настроек** (`boot/aios-config`, `no_std`, без
+  аллокаций, 9 юнит-тестов): `key = value` с комментариями `#`, ключами после
+  trim (`[A-Za-z0-9._-]`), необязательными кавычками `"`/`'`, пустыми
+  значениями, пропуском некорректных строк и last-one-wins для дублей.
+  `Config` заимствует текст и разбирает его лениво (`entries`, `get`,
+  `get_u32`, `get_bool`, `count`, `duplicates`); `parse_u32`/`parse_bool`
+  декодируют отдельное значение (десятичное или hex `0x`,
+  `true/yes/on/1`, `false/no/off/0`). Загрузчик и ядро используют один крейт,
+  поэтому значение, принятое загрузчиком, ядро разбирает так же.
+- **Автопоиск drop-in в загрузчике** (`boot/aios-boot/src/config.rs`,
+  `BootConfig::discover`, 5 новых тестов): `boot.conf` теперь только запускает
+  загрузку — каждый остальной `\aios\config\*.conf` передаётся ядру как
+  `MODULE_CONFIG`, а каждый `\aios\blocks\*.wasm` как `MODULE_BLOCK`. Только
+  простые имена файлов (без разделителей и dot-файлов), фильтр по расширению,
+  явные записи `boot.conf` главнее при ASCII-сравнении без учёта регистра
+  (FAT32), найденные файлы сортируются по имени. Отсутствующий каталог — не
+  ошибка, превышение `MAX_MODULES` — ошибка. `main.rs` перечисляет оба
+  каталога через `FileSystem::read_dir` и логирует
+  `modules = N (C conf, W wasm; +a / +b discovered)`.
+- **Слой настроек в ядре** (`aios-kernel/src/config.rs`, M2): каждый модуль
+  `MODULE_CONFIG` читается на месте через direct map (без копирования и
+  аллокаций, с проверкой `hhdm_offset`), логируется как
+  `[cfg] layer '<name>' = N key(s)`, выводится как
+  `[cfg] key = "value" (layer)` с предупреждениями о дублях и разрешается от
+  последнего слоя к первому, поэтому drop-in переопределяет базовый файл.
+  `scheduler.tick_hz` сверяется с `interrupts::TIMER_HZ`, а
+  `memory.heap_min_kib` с `heap::HEAP_SIZE`; оба расхождения логируются, а не
+  игнорируются молча.
+- **`boot/assets/aios/config/net.conf`**: drop-in, намеренно отсутствующий в
+  `boot.conf` (`net.dhcp`, `net.hostname`, `net.mtu`), сквозное
+  доказательство автопоиска — в логе загрузки появляется
+  `[serial] [cfg] net.dhcp = true (from 'config/net.conf', discovered
+  drop-in)`.
+- **Проверка образа** (`boot/aios-image`): `verify_image` дополнительно
+  требует drop-in `net.conf` в `/aios/config`, поэтому образ, молча
+  потерявший полезную нагрузку автопоиска, падает на сборке, а не грузится без
+  неё.
+
+### Проверено
+- Headless-загрузка QEMU/OVMF сгенерированного образа: загрузчик сообщает
+  `/aios/config holds 2 file(s), +1 new module(s)`, ядро — 2 слоя и 11 ключей,
+  `net.dhcp` берётся из drop-in, обе сверки совпадают (`100 Hz`,
+  `4096 KiB`), `scheduler online`, пять ring-3 задач, `sock-t ok`, нет
+  `PAGE FAULT` и `FATAL`.
+- `cargo fmt` для каждого затронутого крейта; `cargo clippy -- -D warnings`
+  чисто для `aios-config` (`--all-targets`), `aios-boot` (host `--lib` и
+  `x86_64-unknown-uefi`), `aios-kernel` (`x86_64-unknown-none --release`) и
+  `aios-image` (`--all-targets`); юнит-наборы: `aios-config` 9/9,
+  библиотека `aios-boot` 16/16, `aios-bootinfo` 5/5, `aios-image` 10/10.
+
 ## v2.69.0 - Собственная цепочка загрузки UEFI: свой загрузчик, BootInfo, сборщик GPT/FAT32-образа (2026-11-14)
 
 ### Добавлено

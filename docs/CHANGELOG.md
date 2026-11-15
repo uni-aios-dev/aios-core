@@ -1,5 +1,54 @@
 # AIOS Development Log
 
+## v2.70.0 - Native boot M2: shared config reader, drop-in discovery, kernel config layer (2026-11-14)
+
+### Added
+- **`aios-config` — the shared configuration reader** (`boot/aios-config`,
+  `no_std`, allocation-free, 9 unit tests): `key = value` with `#` comments,
+  trimmed keys (`[A-Za-z0-9._-]`), optional `"`/`'` quotes, empty values,
+  malformed lines skipped and last-one-wins duplicates. `Config` borrows the
+  text and parses lazily (`entries`, `get`, `get_u32`, `get_bool`, `count`,
+  `duplicates`); `parse_u32`/`parse_bool` decode a bare value (decimal or `0x`
+  hex, `true/yes/on/1`, `false/no/off/0`). The loader and the kernel share it,
+  so a value the loader accepts is never parsed differently by the kernel.
+- **Drop-in discovery in the loader** (`boot/aios-boot/src/config.rs`,
+  `BootConfig::discover`, 5 new tests): `boot.conf` now only bootstraps the
+  boot — every other `\aios\config\*.conf` is handed to the kernel as
+  `MODULE_CONFIG` and every `\aios\blocks\*.wasm` as `MODULE_BLOCK`. Bare file
+  names only (no separators, no dotfiles), extension filtered, explicit
+  `boot.conf` entries win with an ASCII case-insensitive compare (FAT32) and
+  discovered files are sorted by name. A missing directory is not an error, and
+  exceeding `MAX_MODULES` is. `main.rs` lists both directories through
+  `FileSystem::read_dir` and logs `modules = N (C conf, W wasm; +a / +b
+  discovered)`.
+- **Kernel configuration layer** (`aios-kernel/src/config.rs`, M2): every
+  `MODULE_CONFIG` module is read in place through the direct map (no copy, no
+  allocation, checked against `hhdm_offset`), logged as
+  `[cfg] layer '<name>' = N key(s)`, dumped as `[cfg] key = "value" (layer)`
+  with duplicate warnings, and resolved last-to-first so a drop-in overrides the
+  base file. `scheduler.tick_hz` is compared with `interrupts::TIMER_HZ` and
+  `memory.heap_min_kib` with `heap::HEAP_SIZE`; both mismatches are logged
+  instead of being silently ignored.
+- **`boot/assets/aios/config/net.conf`**: a drop-in deliberately absent from
+  `boot.conf` (`net.dhcp`, `net.hostname`, `net.mtu`), proving the discovery
+  path end to end — the boot log shows `[serial] [cfg] net.dhcp = true (from
+  'config/net.conf', discovered drop-in)`.
+- **Image verification** (`boot/aios-image`): `verify_image` additionally
+  requires the `net.conf` drop-in in `/aios/config`, so an image that silently
+  loses the discovery payload fails the build instead of booting without it.
+
+### Verified
+- Headless QEMU/OVMF boot of the generated image: loader reports
+  `/aios/config holds 2 file(s), +1 new module(s)`, the kernel reports 2 layers
+  and 11 keys, `net.dhcp` resolves from the drop-in, both cross-checks match
+  (`100 Hz`, `4096 KiB`), `scheduler online`, five ring-3 tasks, `sock-t ok`,
+  no `PAGE FAULT`, no `FATAL`.
+- `cargo fmt` on every touched crate; `cargo clippy -- -D warnings` clean for
+  `aios-config` (`--all-targets`), `aios-boot` (host `--lib` and
+  `x86_64-unknown-uefi`), `aios-kernel` (`x86_64-unknown-none --release`) and
+  `aios-image` (`--all-targets`); unit suites: `aios-config` 9/9, `aios-boot`
+  lib 16/16, `aios-bootinfo` 5/5, `aios-image` 10/10.
+
 ## v2.69.0 - Native UEFI boot chain: own loader, BootInfo, GPT/FAT32 image builder (2026-11-14)
 
 ### Added

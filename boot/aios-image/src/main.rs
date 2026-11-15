@@ -304,12 +304,17 @@ fn verify_image(path: &Path) -> Result<(), Box<dyn Error>> {
     let config_cluster =
         directory_cluster(&aios, "CONFIG").ok_or("/aios has no config directory")?;
     let config = read_cluster(&mut file, &geometry, config_cluster)?;
-    if !directory_names(&config)
-        .iter()
-        .any(|name| name.starts_with("SYSTEM"))
-    {
+    let config_names = directory_names(&config);
+    if !config_names.iter().any(|name| name.starts_with("SYSTEM")) {
         return Err("/aios/config does not contain system.conf".into());
     }
+    // The drop-in must be in the image even though `boot.conf` does not list it:
+    // the loader finds it by itself, so a missing file would silently disable
+    // the discovery path.
+    if !config_names.iter().any(|name| name.starts_with("NET")) {
+        return Err("/aios/config does not contain the net.conf drop-in".into());
+    }
+    println!("aios-image: verified GPT + FAT32, /aios/config entries: {config_names:?}");
     let blocks_cluster =
         directory_cluster(&aios, "BLOCKS").ok_or("/aios has no blocks directory")?;
     let blocks = read_cluster(&mut file, &geometry, blocks_cluster)?;
