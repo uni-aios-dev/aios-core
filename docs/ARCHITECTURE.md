@@ -1538,7 +1538,7 @@ machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
   `idle`) and the ABI imports `aios.log(ptr, len)`, `aios.exit(code)`,
   `aios.now_ms() -> i32` and `aios.yield()`; a token that does not grant the
   matching right turns the call into `Trap::Denied`. The crate has no hardware
-  dependency: 42 unit tests and one doc test cover the parser, validator,
+  dependency: 43 unit tests and one doc test cover the parser, validator,
   rights, arithmetic, locals, loops/branches, calls, memory, fuel, start/exit
   and the traps, so the kernel can rely on it before M3.2 wires it in.
 - Kernel block runner (`aios-kernel/src/blocks.rs`, v2.72.0, M3.2): called once
