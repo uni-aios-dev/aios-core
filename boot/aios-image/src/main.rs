@@ -314,6 +314,11 @@ fn verify_image(path: &Path) -> Result<(), Box<dyn Error>> {
     if !config_names.iter().any(|name| name.starts_with("NET")) {
         return Err("/aios/config does not contain the net.conf drop-in".into());
     }
+    // Same for the block policy and the block itself: both are discovered, so a
+    // missing file would silently disable the sandbox proof.
+    if !config_names.iter().any(|name| name.starts_with("BLOCKS")) {
+        return Err("/aios/config does not contain the blocks.conf drop-in".into());
+    }
     println!("aios-image: verified GPT + FAT32, /aios/config entries: {config_names:?}");
     let blocks_cluster =
         directory_cluster(&aios, "BLOCKS").ok_or("/aios has no blocks directory")?;
@@ -323,6 +328,12 @@ fn verify_image(path: &Path) -> Result<(), Box<dyn Error>> {
         .any(|name| name.starts_with("EMPTY"))
     {
         return Err("/aios/blocks does not contain empty.wasm".into());
+    }
+    if !directory_names(&blocks)
+        .iter()
+        .any(|name| name.starts_with("HELLO"))
+    {
+        return Err("/aios/blocks does not contain the hello.wasm block".into());
     }
     println!("aios-image: verified kernel + modules (/aios{aios_names:?})");
     Ok(())

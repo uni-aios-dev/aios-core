@@ -1,5 +1,46 @@
 # AIOS Development Log
 
+## v2.72.0 - Native boot M3.2: the kernel runs sandboxed blocks (2026-11-16)
+
+### Added
+- **Kernel block runner** (`aios-kernel/src/blocks.rs`): `blocks::init()` walks
+  every `MODULE_BLOCK`, derives the stem from the module name
+  (`blocks/hello.wasm` → `hello`), reads `blocks.<stem>.rights` and
+  `blocks.<stem>.fuel` through the `config` layer, parses the image in place
+  through the HHDM (`aios-wasmhost`), refuses a block that needs a right the
+  token does not grant, allocates one linear memory of `pages × 64 KiB` from the
+  kernel heap, instantiates the module (data segments + start function) and
+  calls its `run` or `_start` export. `SerialEnv` implements the host `Env`:
+  `aios.log` becomes `[serial] [block] <name>: <text>`, `aios.now_ms` reads
+  `interrupts::TICKS` at `TIMER_HZ`. Every block logs a proof line
+  (`ran: entry 'run' (N page(s))`, `used X of Y instruction(s)`), `Trap::Exited`
+  is a normal stop, and bad blocks are counted as skipped/failed instead of
+  stopping the kernel.
+- **Boot ordering**: the runner is step 6 of `_start`, between `heap online` and
+  the GDT/IDT, so a block runs single-threaded and only the fuel budget limits
+  it; the remaining steps are renumbered 7-15.
+- **Stock proof**: `boot/assets/aios/blocks/hello.wasm` (95 bytes: import
+  `aios.log`, one memory page, one data segment, export `run`) is discovered by
+  the loader (not listed in `boot.conf`) and prints `hello from aios-wasmhost`;
+  the discovered `boot/assets/aios/config/blocks.conf` grants `log` and a
+  20000-instruction budget. `aios-image` now verifies both files are in the
+  image, and `aios-wasmhost` has a permanent test that the shipped block parses
+  and runs.
+
+### Verified
+- Headless QEMU/OVMF boot: `aios-boot: /aios/blocks holds 2 file(s), +1 new
+  module(s)`, `[cfg] blocks.hello.rights = "log" (config/blocks.conf)`,
+  `[block] blocks/empty.wasm ran: start() only (0 page(s))`,
+  `[block] blocks/hello.wasm: hello from aios-wasmhost`,
+  `[block] blocks/hello.wasm ran: entry 'run' (1 page(s))`,
+  `[block] blocks/hello.wasm used 5 of 20000 instruction(s)`,
+  `[block] 2 block(s): 2 ran, 0 skipped, 0 failed, 5 instruction(s)`, then
+  `scheduler online` and 15 s of ticks with no `PAGE FAULT`/`FATAL`.
+- `cargo test` in `aios-wasmhost` 43/43 + doc test 1/1, `cargo clippy
+  --all-targets -- -D warnings` clean for `aios-wasmhost` and `aios-image`,
+  `cargo clippy --target x86_64-unknown-none --release -- -D warnings` clean for
+  `aios-kernel`, `cargo fmt --check` clean for all three.
+
 ## v2.71.0 - Native boot M3.1: sandboxed WebAssembly host for blocks (2026-11-16)
 
 ### Added

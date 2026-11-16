@@ -5,6 +5,7 @@ extern crate alloc;
 
 mod acpi;
 mod ahci;
+mod blocks;
 mod boot;
 mod config;
 mod console;
@@ -88,7 +89,7 @@ fn print_step(n: u8, msg: &str) {
             fb.fill_rect(x, y, 8, 8, colors::STEP);
         }
     }
-    vprintln!("STEP {}/14: {}", n, msg);
+    vprintln!("STEP {}/15: {}", n, msg);
 }
 ///
 /// # Safety
@@ -455,6 +456,13 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     kprintln!("[serial] heap online.");
     vprintln!("Paging + kernel heap online");
 
+    // --- Sandboxed WASM blocks (M3.2) --------------------------------------
+    // Every `MODULE_BLOCK` is parsed, validated and run once here, before the
+    // scheduler and the interrupt sources come up, so a block cannot race with
+    // another CPU-side task and the fuel budget is its only time limit.
+    print_step(6, "wasm blocks");
+    blocks::init();
+
     // --- GDT / IDT / interrupts -------------------------------------------
     let double_fault_stack_top = sched::stack_top(
         &DOUBLE_FAULT_STACK as *const DoubleFaultStack as u64,
@@ -481,7 +489,7 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     // otherwise keep double-incrementing alongside the LAPIC ticks.
     let lapic_active = lapic::init();
     interrupts::set_pit_masked(lapic_active);
-    print_step(6, "interrupts online");
+    print_step(7, "interrupts online");
     vprintln!("Interrupts online (GDT/TSS, IDT, PIC, PIT, keyboard)");
     kprintln!(
         "[serial] interrupts online. timer={}",
@@ -491,7 +499,7 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     unsafe {
         core::arch::asm!("sti", options(nostack, preserves_flags));
     }
-    print_step(7, "sti executed");
+    print_step(8, "sti executed");
 
     // --- ACPI / EC / thermal / PS/2 (platform sensors & input) ------------
     // No IRQ wiring required: the ACPI walk reads tables, the thermal probe
@@ -555,7 +563,7 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     // int 0x20 soft-int has been replaced by a harmless serial-only probe (RAW gate dump above).
     // (the old asm!("int 0x20") was a GP#13 discriminator; on real hardware it fires, so it is disabled. Booting normally.)
     // --- AHCI SATA driver --------------------------------------------------
-    print_step(8, "AHCI");
+    print_step(9, "AHCI");
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
         .find(|dev| dev.class == pci::CLASS_STORAGE && dev.subclass == 0x06)
@@ -625,7 +633,7 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     }
 
     // --- NVMe driver -------------------------------------------------------
-    print_step(9, "NVMe");
+    print_step(10, "NVMe");
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
         .find(|dev| dev.class == pci::CLASS_STORAGE && dev.subclass == 0x08)
@@ -687,7 +695,7 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     }
 
     // --- xHCI (USB) driver ------------------------------------------------
-    print_step(10, "xHCI");
+    print_step(11, "xHCI");
     if let Some(controller) = pci_devices[..pci_count]
         .iter()
         .find(|dev| dev.class == pci::CLASS_SERIAL_BUS && dev.subclass == 0x03)
@@ -749,7 +757,7 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     }
 
     // --- Scheduler + ring-3 demo tasks + IPC ------------------------------
-    print_step(11, "scheduler init");
+    print_step(12, "scheduler init");
     sched::init();
 
     static mut WORKER_STACK: [u8; WORKER_STACK_SIZE] = [0; WORKER_STACK_SIZE];
@@ -772,15 +780,15 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
             kprintln!("[serial] [user] FAILED: {}", e);
         }
     }
-    print_step(12, "user init done");
+    print_step(13, "user init done");
 
-    print_step(13, "scheduler armed");
+    print_step(14, "scheduler armed");
     vprintln!("Preemptive round-robin scheduler + ring 3 armed");
     vprintln!("Kernel IPC mailboxes behind the int 0x80 gate");
     vprintln!("User syscalls (write/getpid/sleep) + idle fallback");
     kprintln!("[serial] scheduler online, IPC + user syscalls armed.");
 
-    print_step(14, "ring-3 idle handoff");
+    print_step(15, "ring-3 idle handoff");
     sched::boot_finished();
     sched::yield_kernel();
     loop {

@@ -1445,7 +1445,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
 Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
-## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-image`) — v2.70.0
+## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-image`) — v2.72.0
 
 AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
 `aios-boot` — собственное UEFI-приложение, `aios-bootinfo` — контракт
@@ -1543,6 +1543,26 @@ AIOS грузится на голом железе без Linux, Windows и ст
   один doc-тест покрывают парсер, валидатор, права, арифметику, локальные
   переменные, циклы/ветвления, вызовы, память, топливо, start/exit и все
   ловушки, поэтому ядро может на него опираться ещё до подключения в M3.2.
+- Запуск блоков в ядре (`aios-kernel/src/blocks.rs`, v2.72.0, M3.2): вызывается
+  один раз из `_start` шагом 6, сразу после `heap online` и до GDT/IDT и
+  планировщика, поэтому блок исполняется в одном потоке и его ничто не
+  вытесняет. Для каждого `MODULE_BLOCK` он выводит имя из имени модуля
+  (`blocks/hello.wasm` → `hello`), читает `blocks.<stem>.rights` (через запятую
+  `log`/`exit`/`clock`/`yield`, отсутствие = нет доступа к хосту) и
+  `blocks.<stem>.fuel` (отсутствие = `DEFAULT_FUEL`) через слой `config`,
+  разбирает образ на месте через HHDM, отвергает блок, чьи
+  `required_rights()` не покрыты токеном, выделяет в куче ядра один
+  `Vec<u8>` размером `pages × 64 КиБ`, инстанцирует его (сегменты данных и
+  start-функция) и вызывает экспорт `run` или `_start` без аргументов.
+  `Env` реализует `SerialEnv`: `aios.log` превращается в
+  `[serial] [block] <name>: <text>`, `aios.now_ms` читает `interrupts::TICKS`
+  с частотой `TIMER_HZ`. На каждый блок пишется строка-доказательство
+  (`ran: entry 'run' (N page(s))`, `used X of Y instruction(s)`),
+  `Trap::Exited` считается нормальной остановкой, skip и fail считаются
+  отдельно, и плохой блок никогда не останавливает ядро. Штатный образ
+  доказывает всю цепочку блоком `blocks/hello.wasm` (найден автопоиском, не
+  указан в `boot.conf`), который печатает `hello from aios-wasmhost`, а
+  политику задаёт найденный `config/blocks.conf`.
 
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 

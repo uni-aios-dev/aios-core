@@ -1,5 +1,48 @@
 # Журнал разработки AIOS
 
+## v2.72.0 - Собственная загрузка M3.2: ядро исполняет блоки в песочнице (2026-11-16)
+
+### Добавлено
+- **Запуск блоков в ядре** (`aios-kernel/src/blocks.rs`): `blocks::init()`
+  обходит все `MODULE_BLOCK`, выводит имя из имени модуля
+  (`blocks/hello.wasm` → `hello`), читает `blocks.<stem>.rights` и
+  `blocks.<stem>.fuel` через слой `config`, разбирает образ на месте через HHDM
+  (`aios-wasmhost`), отвергает блок, которому нужно право, не выданное
+  токеном, выделяет в куче ядра одну линейную память `pages × 64 КиБ`,
+  инстанцирует модуль (сегменты данных и start-функция) и вызывает его экспорт
+  `run` или `_start`. `SerialEnv` реализует `Env` хоста: `aios.log`
+  превращается в `[serial] [block] <name>: <text>`, `aios.now_ms` читает
+  `interrupts::TICKS` с частотой `TIMER_HZ`. Каждый блок пишет строку-
+  доказательство (`ran: entry 'run' (N page(s))`,
+  `used X of Y instruction(s)`), `Trap::Exited` считается нормальной
+  остановкой, а плохие блоки считаются как skipped/failed и не останавливают
+  ядро.
+- **Порядок загрузки**: запуск блоков — шаг 6 `_start`, между `heap online` и
+  GDT/IDT, поэтому блок исполняется в одном потоке и его ограничивает только
+  бюджет топлива; остальные шаги перенумерованы 7-15.
+- **Доказательство в штатном образе**: `boot/assets/aios/blocks/hello.wasm`
+  (95 байт: импорт `aios.log`, одна страница памяти, один сегмент данных,
+  экспорт `run`) находится загрузчиком автопоиском (не указан в `boot.conf`) и
+  печатает `hello from aios-wasmhost`; найденный
+  `boot/assets/aios/config/blocks.conf` выдаёт право `log` и бюджет 20000
+  инструкций. `aios-image` теперь проверяет наличие обоих файлов в образе, а в
+  `aios-wasmhost` есть постоянный тест, что штатный блок разбирается и
+  исполняется.
+
+### Проверено
+- Headless-загрузка QEMU/OVMF: `aios-boot: /aios/blocks holds 2 file(s), +1 new
+  module(s)`, `[cfg] blocks.hello.rights = "log" (config/blocks.conf)`,
+  `[block] blocks/empty.wasm ran: start() only (0 page(s))`,
+  `[block] blocks/hello.wasm: hello from aios-wasmhost`,
+  `[block] blocks/hello.wasm ran: entry 'run' (1 page(s))`,
+  `[block] blocks/hello.wasm used 5 of 20000 instruction(s)`,
+  `[block] 2 block(s): 2 ran, 0 skipped, 0 failed, 5 instruction(s)`, затем
+  `scheduler online` и 15 с тиков без `PAGE FAULT`/`FATAL`.
+- `cargo test` в `aios-wasmhost` 43/43 + doc-тест 1/1, `cargo clippy
+  --all-targets -- -D warnings` чисто для `aios-wasmhost` и `aios-image`,
+  `cargo clippy --target x86_64-unknown-none --release -- -D warnings` чисто для
+  `aios-kernel`, `cargo fmt --check` чисто для всех трёх.
+
 ## v2.71.0 - Собственная загрузка M3.1: хост WebAssembly в песочнице для блоков (2026-11-16)
 
 ### Добавлено

@@ -1,5 +1,21 @@
 # AIOS Known Bugs & Workarounds
 
+## LIMITS (v2.72.0): blocks run once at boot, not as scheduled processes
+
+- **Status:** by design for M3.2, not a defect. `blocks::init()` executes every
+  `MODULE_BLOCK` once, as boot step 6 in `_start`, before the GDT/IDT and the
+  scheduler come up.
+- **Consequences:** a block cannot be preempted or suspended, so its only time
+  limit is the fuel budget; it cannot block on I/O, wait for another block or be
+  restarted later; its linear memory is a transient `Vec<u8>` freed when
+  `blocks::init()` returns, so state does not survive between blocks; and the
+  kernel heap must hold the largest block memory (up to 1 MiB) on top of its
+  own allocations. A block that needs to run while the system is up waits for
+  the scheduler integration.
+- **Mitigation:** every block is validated before it runs and a trap, an
+  out-of-fuel stop or a rejected rights check is logged and counted, never
+  allowed to stop the kernel.
+
 ## LIMITS (v2.71.0): the `aios-wasmhost` subset is deliberately small
 
 - **Status:** by design, not a defect. The kernel sandbox does not implement

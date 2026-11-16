@@ -15,6 +15,7 @@ description = "AIOS standalone bare-metal kernel (x86_64, no_std) — aios-boot 
 [dependencies]
 aios-bootinfo = { path = "../boot/aios-bootinfo" }
 aios-config = { path = "../boot/aios-config" }
+aios-wasmhost = { path = "../boot/aios-wasmhost" }
 
 [profile.dev]
 panic = "abort"
