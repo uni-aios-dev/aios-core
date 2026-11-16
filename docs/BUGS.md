@@ -1,5 +1,23 @@
 # AIOS Known Bugs & Workarounds
 
+## LIMITS (v2.71.0): the `aios-wasmhost` subset is deliberately small
+
+- **Status:** by design, not a defect. The kernel sandbox does not implement
+  full WebAssembly.
+- **Scope:** `i64`/`f32`/`f64` values, tables, globals, `call_indirect`, bulk
+  memory, threads, reference types, WASI and JIT compilation are rejected at
+  parse time; each block gets one `i32` linear memory of at most 16 pages
+  (1 MiB), 16 imports, 64 functions, 16 exports, 16 data segments and 64 KiB of
+  value/locals state; one run has a fuel budget (`DEFAULT_FUEL` = 100_000,
+  configurable per block), 16 nested calls and a 96-slot value stack.
+- **Consequence:** a block that needs more must be split, and a module built by
+  a full `wasm32` toolchain usually has to be reduced to the subset (no
+  `memory.copy`/`memory.fill`, no globals). EasyLang → WASM (M3.3) targets
+  exactly this subset.
+- **Validation is structural, not typed:** the value stack is not type-checked
+  ahead of time, so a malformed body that passes validation can still stop with
+  `Trap::Underflow`/`Trap::BadInstruction` instead of being rejected at load.
+
 ## RESOLVED (v2.69.0): `{:08x}` page fault - odd kernel stack top
 
 - **Status:** RESOLVED in v2.69.0.

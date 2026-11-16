@@ -1,0 +1,8 @@
+[package]
+name = "aios-wasmhost"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS WebAssembly host for sandboxed blocks: module parser, validator, i32 interpreter and capability gate (no_std, kernel-safe)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]

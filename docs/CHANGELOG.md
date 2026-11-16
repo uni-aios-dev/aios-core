@@ -1,5 +1,45 @@
 # AIOS Development Log
 
+## v2.71.0 - Native boot M3.1: sandboxed WebAssembly host for blocks (2026-11-16)
+
+### Added
+- **`aios-wasmhost` - the sandbox runtime** (`boot/aios-wasmhost`, standalone
+  `no_std` + `alloc` crate, 42 unit tests + 1 doc test): `module` parses and
+  statically validates the binary subset in place - `i32`-only signatures
+  (max 8 params, 1 result), one memory of at most 16 pages (1 MiB), at most
+  16 imports / 64 functions / 16 exports / 16 data segments, balanced
+  `block`/`loop`/`if` and every opcode, branch, local and function index
+  checked; table, global, element and data-count sections are rejected rather
+  than silently ignored.
+- **Capability gate** (`cap`): `Rights` (`log`, `exit`, `clock`, `yield` -
+  the same spelling as `*.conf`) with `from_names`/`Display`/`BitOr`, and
+  `Token { block, rights, fuel }`; `Host` refuses an import the token does not
+  grant with `Trap::Denied`.
+- **Deterministic interpreter** (`interp`): no recursion on the Rust stack -
+  fixed 16 call frames, a 96-slot value stack, 64 locals and 64 control
+  frames; every instruction spends one unit of fuel, `aios.log` costs
+  `1 + len/64`, and every load/store is bounds-checked against the declared
+  pages. The only host surface is `Env` (`log`, `now_ms`, `idle`) behind the
+  imports `aios.log(ptr, len)`, `aios.exit(code)`, `aios.now_ms() -> i32`,
+  `aios.yield()`.
+- **Host-side test assembler** (`test_asm`): LEB128, sections, types,
+  imports, functions, memory, exports, start, code, data and `i32.const`
+  helpers, so every test builds a real module instead of a hex blob.
+
+### Fixed
+- `br`/`br_if` out of a `block`/`if` resumed on the already-consumed `end`
+  and popped the parent control frame; the branch now skips that `end`
+  (`interp::Host::branch`).
+- The reader test for a length-prefixed name declared a 5-byte string as
+  3 bytes, and a memory test encoded `i32.const 100` as one byte `0x64`
+  (signed LEB128 reads that as -28); both fixtures are corrected, not the
+  decoder.
+
+### Verified
+- `cargo test` 42/42 + doc-test 1/1, `cargo clippy --all-targets --
+  -D warnings` clean, `cargo fmt --check` clean; the crate is registered in
+  the root `workspace.exclude`, so the host workspace is unaffected.
+
 ## v2.70.0 - Native boot M2: shared config reader, drop-in discovery, kernel config layer (2026-11-14)
 
 ### Added

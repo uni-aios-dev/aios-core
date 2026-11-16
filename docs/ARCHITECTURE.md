@@ -1521,6 +1521,26 @@ machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
   `heap::HEAP_SIZE` and a mismatch is logged instead of being silently
   ignored; the stock image ships `net.conf` unlisted in `boot.conf` as the
   drop-in proof.
+- `aios-wasmhost` (`boot/aios-wasmhost`, `no_std` + `alloc`, v2.71.0, M3.1):
+  the sandboxed WebAssembly host for `MODULE_BLOCK`. `module` parses and
+  statically validates the binary in place (no copy): `i32`-only signatures with
+  at most 8 parameters and 1 result, one linear memory of at most 16 pages
+  (1 MiB), at most 16 imports, 64 functions, 16 exports and 16 data segments;
+  every opcode, branch depth, local/function index and `if`/`else` balance is
+  checked, and the table, global, element and data-count sections are rejected
+  instead of being ignored. `cap` is the capability gate: `Rights` (`log`,
+  `exit`, `clock`, `yield`, with the same spelling as `*.conf`) plus
+  `Token { block, rights, fuel }`. `interp` executes the validated body without
+  recursing on the Rust stack: fixed call frames 16 deep, a 96-slot value
+  stack, 64 locals and 64 control frames; every instruction spends one unit of
+  fuel (`aios.log` costs `1 + len/64`) and every load/store is checked against
+  the declared pages. The only host surface is `Env` (`log`, `now_ms`,
+  `idle`) and the ABI imports `aios.log(ptr, len)`, `aios.exit(code)`,
+  `aios.now_ms() -> i32` and `aios.yield()`; a token that does not grant the
+  matching right turns the call into `Trap::Denied`. The crate has no hardware
+  dependency: 42 unit tests and one doc test cover the parser, validator,
+  rights, arithmetic, locals, loops/branches, calls, memory, fuel, start/exit
+  and the traps, so the kernel can rely on it before M3.2 wires it in.
 
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 
