@@ -12,8 +12,10 @@
 //! ```
 //!
 //! The ESP contains `/EFI/BOOT/BOOTX64.EFI` (the loader), `/aios/kernel.elf`,
-//! `/aios/boot.conf` and the module tree from `boot/assets`. Both the GPT and
-//! the FAT32 volume are written by this crate; no external tool is involved.
+//! `/aios/boot.conf`, the module tree from `boot/assets` and the initial
+//! generation of the persistent store (`/aios/store`, A/B slots with two
+//! checksummed manifest copies). Both the GPT and the FAT32 volume are written
+//! by this crate; no external tool is involved.
 //!
 //! Usage:
 //!
@@ -32,6 +34,7 @@ mod crc32;
 mod fat32;
 mod gpt;
 
+use aios_bootinfo::MODULE_BLOCK;
 use std::env;
 use std::error::Error;
 use std::fs::{self, File};
@@ -282,7 +285,76 @@ fn create_image(
     let aios = fat.create_dir(fat32::ROOT_CLUSTER, "aios")?;
     fat.write_file(aios, "kernel.elf", &fs::read(kernel)?)?;
     copy_tree(&mut fat, aios, &assets.join("aios"), "")?;
+    write_store(&mut fat, aios, &assets.join("aios").join("blocks"))?;
     fat.finish()?;
+    Ok(())
+}
+
+/// Writes the initial persistent store generation.
+///
+/// Slot 0 carries every staged `*.wasm` block; slot 1 is empty and ready for the
+/// first live update. Both manifest copies are identical and start at sequence
+/// 1, and each slot has a checksummed header. The loader falls back to the
+/// drop-in `/aios/blocks` discovery when the store is missing or invalid.
+fn write_store(
+    fat: &mut fat32::Fat32<File>,
+    aios: u32,
+    blocks: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let store = fat.create_dir(aios, "store")?;
+    let slot0 = fat.create_dir(store, aios_bootstore::SLOT_DIRS[0])?;
+    let slot1 = fat.create_dir(store, aios_bootstore::SLOT_DIRS[1])?;
+
+    let mut entries = Vec::new();
+    if blocks.is_dir() {
+        let mut files = fs::read_dir(blocks)?.collect::<Result<Vec<_>, _>>()?;
+        files.sort_by_key(|entry| entry.file_name());
+        for entry in files {
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.to_ascii_lowercase().ends_with(".wasm") {
+                continue;
+            }
+            let data = fs::read(entry.path())?;
+            let module = format!("blocks/{name}");
+            entries.push(
+                aios_bootstore::Entry::new(&module, MODULE_BLOCK as u8, 0, &data)
+                    .map_err(|error| format!("{module}: {error}"))?,
+            );
+            fat.write_file(slot0, &name, &data)?;
+            println!(
+                "aios-image:   /aios/store/slot0/{name} ({} bytes)",
+                data.len()
+            );
+        }
+    }
+
+    let mut manifest = aios_bootstore::Manifest::new(1, 0, 1);
+    manifest
+        .set_entries(&entries)
+        .map_err(|error| format!("initial store manifest: {error}"))?;
+    let manifest_bytes = manifest.encode();
+    let manifest_crc = aios_bootstore::crc32::ieee(&manifest_bytes);
+    let active = aios_bootstore::SlotHeader::new(
+        aios_bootstore::SlotState::Active,
+        manifest.sequence,
+        manifest_crc,
+        u16::try_from(entries.len())?,
+    );
+    fat.write_file(slot0, aios_bootstore::SLOT_HEADER_FILE, &active.encode())?;
+    fat.write_file(
+        slot1,
+        aios_bootstore::SLOT_HEADER_FILE,
+        &aios_bootstore::SlotHeader::EMPTY.encode(),
+    )?;
+    fat.write_file(store, aios_bootstore::MANIFEST_FILES[0], &manifest_bytes)?;
+    fat.write_file(store, aios_bootstore::MANIFEST_FILES[1], &manifest_bytes)?;
+    println!(
+        "aios-image: store sequence 1: {} block(s) in slot0, slot1 empty",
+        entries.len()
+    );
     Ok(())
 }
 
@@ -396,6 +468,48 @@ fn verify_image(path: &Path) -> Result<(), Box<dyn Error>> {
         return Err("/aios/blocks does not contain the hello.wasm block".into());
     }
     println!("aios-image: verified kernel + modules (/aios{aios_names:?})");
+    verify_store(&mut file, &geometry, &aios)?;
+    Ok(())
+}
+
+/// Reads back the persistent store and validates its headers and manifest.
+fn verify_store(
+    file: &mut File,
+    geometry: &fat32::Geometry,
+    aios: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    let store_cluster = directory_cluster(aios, "STORE").ok_or("/aios has no store directory")?;
+    let store = read_cluster(file, geometry, store_cluster)?;
+    for expected in ["MANIFEST.A", "MANIFEST.B", "SLOT0", "SLOT1"] {
+        if !directory_names(&store).iter().any(|name| name == expected) {
+            return Err(format!("/aios/store does not contain {expected}").into());
+        }
+    }
+
+    let (manifest_cluster, manifest_size) =
+        directory_entry(&store, "MANIFEST.A").ok_or("the store has no manifest.a entry")?;
+    let manifest_bytes = read_fat_file(file, geometry, manifest_cluster, manifest_size)?;
+    let manifest = aios_bootstore::Manifest::decode(&manifest_bytes)
+        .map_err(|error| format!("store manifest.a: {error}"))?;
+
+    let (slot0_cluster, _) = directory_entry(&store, "SLOT0").ok_or("the store has no slot0")?;
+    let slot0 = read_cluster(file, geometry, slot0_cluster)?;
+    let (header_cluster, header_size) =
+        directory_entry(&slot0, "HEADER").ok_or("slot0 has no header")?;
+    let header_bytes = read_fat_file(file, geometry, header_cluster, header_size)?;
+    let header = aios_bootstore::SlotHeader::decode(&header_bytes)
+        .map_err(|error| format!("store slot0 header: {error}"))?;
+    let manifest_crc = aios_bootstore::crc32::ieee(&manifest.encode());
+    if !header.matches(0, &manifest, manifest_crc) {
+        return Err("slot0 header does not match the manifest".into());
+    }
+    if manifest.entry_count_for(0) == 0 {
+        return Err("the initial store generation has no slot0 entries".into());
+    }
+    println!(
+        "aios-image: verified store sequence {}, slot0 header {} entries",
+        manifest.sequence, header.entry_count
+    );
     Ok(())
 }
 
@@ -426,6 +540,11 @@ fn directory_names(cluster: &[u8]) -> Vec<String> {
 
 /// Cluster number of the directory entry called `name`, if present.
 fn directory_cluster(cluster: &[u8], name: &str) -> Option<u32> {
+    directory_entry(cluster, name).map(|(cluster, _)| cluster)
+}
+
+/// First cluster and size of the directory entry called `name`, if present.
+fn directory_entry(cluster: &[u8], name: &str) -> Option<(u32, u32)> {
     for entry in cluster.chunks(32) {
         if entry[0] == 0 {
             break;
@@ -435,13 +554,40 @@ fn directory_cluster(cluster: &[u8], name: &str) -> Option<u32> {
         }
         let base = String::from_utf8_lossy(&entry[0..8]);
         let base = base.trim_end();
-        if base == name {
+        let extension = String::from_utf8_lossy(&entry[8..11]);
+        let extension = extension.trim_end();
+        let full = if extension.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}.{extension}")
+        };
+        if full == name {
             let high = u32::from(u16::from_le_bytes([entry[20], entry[21]])) << 16;
             let low = u32::from(u16::from_le_bytes([entry[26], entry[27]]));
-            return Some(high | low);
+            let size = u32::from_le_bytes([entry[28], entry[29], entry[30], entry[31]]);
+            return Some((high | low, size));
         }
     }
     None
+}
+
+/// Reads a small FAT32 file that fits in one cluster.
+fn read_fat_file(
+    file: &mut File,
+    geometry: &fat32::Geometry,
+    cluster: u32,
+    size: u32,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let cluster_bytes = (fat32::SECTOR_SIZE * u64::from(geometry.sectors_per_cluster)) as usize;
+    if size as usize > cluster_bytes {
+        return Err("a store metadata file spans more than one cluster".into());
+    }
+    if size == 0 {
+        return Ok(Vec::new());
+    }
+    let mut data = read_cluster(file, geometry, cluster)?;
+    data.truncate(size as usize);
+    Ok(data)
 }
 
 /// Reads the 4 KiB cluster `cluster` of the ESP.

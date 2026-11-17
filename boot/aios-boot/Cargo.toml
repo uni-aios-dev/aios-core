@@ -13,6 +13,7 @@ license = "AGPL-3.0-or-later"
 
 [dependencies]
 aios-bootinfo = { path = "../aios-bootinfo" }
+aios-bootstore = { path = "../aios-bootstore" }
 
 # Firmware bindings are needed only by the UEFI binary. The library half is
 # host-testable, so the dependency is target-scoped.

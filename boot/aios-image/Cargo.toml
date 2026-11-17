@@ -12,4 +12,6 @@ description = "Builds the AIOS UEFI boot image: GPT + FAT32 ESP with aios-boot, 
 license = "AGPL-3.0-or-later"
 
 [dependencies]
+aios-bootinfo = { path = "../aios-bootinfo" }
+aios-bootstore = { path = "../aios-bootstore" }
 aios-easylang = { path = "../aios-easylang" }

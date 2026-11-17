@@ -1,5 +1,16 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.74.0): `aios-image` could not find `MANIFEST.A` in the store
+
+- **Symptom:** `verify_store` failed with "the store has no manifest.a entry"
+  even though the file had just been written by `write_store`.
+- **Cause:** the FAT32 directory lookup compared only the 8.3 base name, so the
+  expected name `MANIFEST.A` was reduced to `MANIFEST` and never matched the
+  on-disk entry (base `MANIFEST`, extension `A`).
+- **Fix:** `directory_entry` now rebuilds the full 8.3 name (`base.extension`,
+  with the extension omitted when empty) and compares that against the expected
+  name. Covered by the `aios-image` store verification run in QEMU/OVMF.
+
 ## LIMITS (v2.73.0): EasyLang Core is a small language with a boot-time runtime
 
 - **Status:** by design for M3.3, not a defect.

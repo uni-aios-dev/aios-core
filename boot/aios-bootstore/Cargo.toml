@@ -1,0 +1,17 @@
+# aios-bootstore: the AIOS persistent boot store.
+#
+# Standalone, `no_std`, dependency-free crate shared by `aios-boot` (reader),
+# `aios-image` (initial writer) and later the on-disk updater. It defines the
+# byte layout of the A/B store: two manifest copies and two slot headers, both
+# checksummed, plus the sequence rules that make an interrupted update safe.
+[package]
+name = "aios-bootstore"
+version = "0.1.0"
+edition = "2021"
+description = "AIOS persistent boot store: A/B slots, two manifest copies, CRC32, crash-safe commit planning"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+
+[profile.release]
+panic = "abort"

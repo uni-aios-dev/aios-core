@@ -4,14 +4,17 @@
 //!
 //! 1. open the AIOS partition and read `/aios/boot.conf`;
 //! 2. load the kernel ELF and every module listed in `boot.conf`;
-//! 3. query GOP and the ACPI RSDP from the firmware;
-//! 4. call `ExitBootServices`;
-//! 5. build a private set of page tables: a higher-half direct map of all
+//! 3. consult the persistent store in `/aios/store`; a valid generation
+//!    replaces the `/aios/blocks` drop-in discovery and can fall back to the
+//!    previous slot after an interrupted update;
+//! 4. query GOP and the ACPI RSDP from the firmware;
+//! 5. call `ExitBootServices`;
+//! 6. build a private set of page tables: a higher-half direct map of all
 //!    physical memory and a W^X mapping of the kernel at its link address;
-//! 6. publish a [`aios_bootinfo::BootInfo`] and jump to the kernel entry with
+//! 7. publish a [`aios_bootinfo::BootInfo`] and jump to the kernel entry with
 //!    the structure pointer in `rdi`.
 //!
-//! No firmware service is used after step 4: the kernel runs on its own page
+//! No firmware service is used after step 5: the kernel runs on its own page
 //! tables and the firmware is completely out of the picture.
 
 #![no_std]
@@ -23,7 +26,7 @@ mod framebuffer;
 mod runtime;
 mod serial;
 
-use aios_boot::config::{self, BootConfig};
+use aios_boot::config::{self, BootConfig, Module};
 use aios_boot::elf::Elf;
 use aios_boot::paging::{
     FramePool, PageTables, BOOT_STACK_VIRT, HHDM_BASE, HUGE_PAGE_SIZE, PAGE_SIZE, PTE_NX, PTE_PCD,
@@ -34,7 +37,11 @@ use aios_bootinfo::{
     BootInfo, FramebufferInfo, MemoryRegion, MAX_MEMORY_REGIONS, MAX_MODULE_NAME, MEM_USABLE,
     MODULE_BLOCK, MODULE_CONFIG,
 };
-use alloc::string::String;
+use aios_bootstore::{
+    Entry, SlotHeader, Store, MANIFEST_FILES, SLOT_DIRS, SLOT_HEADER_FILE, STORE_DIR,
+};
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::arch::asm;
 use uefi::boot::{AllocateType, MemoryType};
@@ -99,16 +106,27 @@ fn boot() -> Result<(), BootError> {
         config::CONFIG_EXTENSION,
         MODULE_CONFIG,
     )?;
-    let block_added = discover(
-        &mut fs,
-        &mut config,
-        cstr16!("\\aios\\blocks"),
-        config::BLOCK_DIR,
-        config::BLOCK_EXTENSION,
-        MODULE_BLOCK,
-    )?;
+    // The persistent store, when valid, is the authoritative block set: it is a
+    // complete generation, so mixing it with `\aios\blocks` would run two
+    // versions of the same block. A missing or broken store falls back to the
+    // drop-in directory.
+    let store = read_store(&mut fs);
+    let (block_added, store_added) = match &store {
+        Some(store) => (0, add_store_modules(&mut config, store)?),
+        None => (
+            discover(
+                &mut fs,
+                &mut config,
+                cstr16!("\\aios\\blocks"),
+                config::BLOCK_DIR,
+                config::BLOCK_EXTENSION,
+                MODULE_BLOCK,
+            )?,
+            0,
+        ),
+    };
     sprintln!(
-        "aios-boot: modules = {} ({} conf, {} wasm; +{} / +{} discovered)",
+        "aios-boot: modules = {} ({} conf, {} wasm; +{} / +{} discovered, +{} from store)",
         config.modules.len(),
         config
             .modules
@@ -121,7 +139,8 @@ fn boot() -> Result<(), BootError> {
             .filter(|module| module.kind == MODULE_BLOCK)
             .count(),
         config_added,
-        block_added
+        block_added,
+        store_added
     );
 
     let kernel_path =
@@ -337,6 +356,149 @@ fn discover(
         added
     );
     Ok(added)
+}
+
+/// One verified store generation selected by the loader.
+struct LoadedStore {
+    /// Slot directory that supplied the blocks.
+    slot: u8,
+    /// Verified block entries of that slot.
+    entries: Vec<Entry>,
+}
+
+/// Reads `/aios/store` and returns the first slot that fully verifies.
+///
+/// The active slot is tried first and the previous slot second, which is the
+/// rollback path after an interrupted update. A missing, malformed or
+/// checksum-mismatched store is not a boot error: the caller falls back to the
+/// `/aios/blocks` drop-in discovery.
+fn read_store(fs: &mut FileSystem) -> Option<LoadedStore> {
+    let dir = STORE_DIR.replace('/', "\\");
+    let copy_a = match read_store_file(fs, &format!("{dir}\\{}", MANIFEST_FILES[0])) {
+        Some(data) => data,
+        None => {
+            sprintln!("aios-boot: no store manifest, using drop-in blocks");
+            return None;
+        }
+    };
+    let copy_b = read_store_file(fs, &format!("{dir}\\{}", MANIFEST_FILES[1])).unwrap_or_default();
+    let store = match Store::load(&copy_a, &copy_b) {
+        Ok(store) => store,
+        Err(error) => {
+            sprintln!(
+                "aios-boot: store manifest rejected ({}), using drop-in blocks",
+                error
+            );
+            return None;
+        }
+    };
+    sprintln!(
+        "aios-boot: store manifest sequence {} (copy {}), active slot {}, previous slot {}",
+        store.manifest().sequence,
+        store.copy(),
+        store.active_slot(),
+        store.previous_slot()
+    );
+
+    let order = store.boot_order();
+    for (index, slot) in order.iter().enumerate() {
+        if index == 1 && order[1] == order[0] {
+            continue;
+        }
+        match load_store_slot(fs, &store, *slot) {
+            Ok(entries) => {
+                sprintln!(
+                    "aios-boot: store slot {} verified at sequence {} ({} block(s))",
+                    slot,
+                    store.manifest().sequence,
+                    entries.len()
+                );
+                return Some(LoadedStore {
+                    slot: *slot,
+                    entries,
+                });
+            }
+            Err(reason) => sprintln!("aios-boot: store slot {} unusable: {}", slot, reason),
+        }
+    }
+    sprintln!("aios-boot: no usable store slot, using drop-in blocks");
+    None
+}
+
+/// Verifies the header and every payload of `slot`.
+///
+/// A slot is usable only when its header matches the selected manifest and all
+/// payload files have the recorded size and CRC32. The whole generation is
+/// accepted or rejected as one unit, so a partially copied update is never run.
+fn load_store_slot(
+    fs: &mut FileSystem,
+    store: &Store,
+    slot: u8,
+) -> Result<Vec<Entry>, &'static str> {
+    let slot_dir = SLOT_DIRS
+        .get(slot as usize)
+        .ok_or("slot number is out of range")?;
+    let dir = format!("{}\\{}", STORE_DIR.replace('/', "\\"), slot_dir);
+    let header_data = read_store_file(fs, &format!("{dir}\\{}", SLOT_HEADER_FILE))
+        .ok_or("slot header is unreadable")?;
+    let header = SlotHeader::decode(&header_data).map_err(|_| "slot header is invalid")?;
+    if !header.matches(slot, store.manifest(), store.manifest_crc()) {
+        return Err("slot header does not match the manifest");
+    }
+
+    let mut entries = Vec::new();
+    for entry in store.manifest().entries_for(slot) {
+        let file = entry.file_name().ok_or("entry has no file name")?;
+        let data =
+            read_store_file(fs, &format!("{dir}\\{file}")).ok_or("payload file is unreadable")?;
+        if !entry.matches(&data) {
+            return Err("payload checksum mismatch");
+        }
+        entries.push(*entry);
+    }
+    Ok(entries)
+}
+
+/// Adds the verified store blocks to the boot configuration.
+///
+/// Store entries carry module names such as `blocks/hello.wasm`, so the kernel
+/// derives the same capability keys (`blocks.hello.rights`) as for drop-ins.
+/// Names already present in `boot.conf` are not added twice.
+fn add_store_modules(config: &mut BootConfig, store: &LoadedStore) -> Result<usize, BootError> {
+    let slot_dir = SLOT_DIRS
+        .get(store.slot as usize)
+        .ok_or(BootError::Config)?;
+    let mut added = 0;
+    for entry in &store.entries {
+        if entry.kind != MODULE_BLOCK as u8 {
+            continue;
+        }
+        let name = entry.name_str().ok_or(BootError::Config)?;
+        let file = entry.file_name().ok_or(BootError::Config)?;
+        if config
+            .modules
+            .iter()
+            .any(|module| module.name.eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
+        if config.modules.len() >= aios_bootinfo::MAX_MODULES {
+            return Err(BootError::Config);
+        }
+        config.modules.push(Module {
+            name: name.to_string(),
+            path: format!("/aios/store/{slot_dir}/{file}"),
+            kind: MODULE_BLOCK,
+        });
+        added += 1;
+    }
+    Ok(added)
+}
+
+/// Reads a UEFI file, returning `None` for any failure.
+fn read_store_file(fs: &mut FileSystem, path: &str) -> Option<Vec<u8>> {
+    let path = CString16::try_from(path).ok()?;
+    fs.read(path.as_ref()).ok()
 }
 
 fn load_modules(

@@ -1,5 +1,52 @@
 # AIOS Development Log
 
+## v2.74.0 - Native boot M4.1: persistent A/B store on the ESP (2026-11-17)
+
+### Added
+- **`aios-bootstore`** (`boot/aios-bootstore`, standalone `no_std` crate with
+  no dependencies outside `core`, 24 unit tests): the on-disk contract of the
+  persistent store in `/aios/store`. `manifest` defines the fixed 1000-byte
+  little-endian manifest (40-byte header + 16 entries of 60 bytes, CRC32 over
+  the whole buffer) written as two copies, `slot` defines the 32-byte
+  checksummed slot header and the `SlotState` machine
+  (`Empty`/`Staging`/`Active`/`Retired`/`Bad`), and `Store` selects the newest
+  valid manifest, names the stale copy a writer must replace and produces an
+  `UpdatePlan` for an update or a rollback. The crate never touches a
+  filesystem, so the format and the crash-safe commit order are host-testable.
+- **Commit protocol** documented and encoded in the crate: payload files →
+  `Staging` header → `Active` header → stale manifest copy → `Retired` header.
+  A crash before the manifest write keeps the old generation bootable, a crash
+  after it keeps the new one; the loader falls back to `previous_slot` when the
+  active slot does not verify.
+- **Image-time store generation**: `aios-image` writes `/aios/store` with slot 0
+  holding every staged `*.wasm` block, slot 1 empty for the first live update,
+  both manifest copies at sequence 1 and per-slot headers, then reads the store
+  back (`manifest.a`, slot-0 header, CRC, entry count) as part of image
+  verification.
+- **Loader integration**: `aios-boot` reads both manifest copies, picks the
+  newest valid one, verifies the slot header and every payload (size + CRC32),
+  tries the active slot then `previous_slot`, and logs
+  `+N from store`. A valid store becomes the authoritative block set, so
+  `/aios/blocks` discovery is skipped; `block = ...` entries from `boot.conf`
+  are preserved. A missing or invalid store falls back to drop-in discovery
+  without failing the boot.
+
+### Fixed
+- `aios-image` directory lookup compared only the 8.3 base name, so
+  `MANIFEST.A` was searched as `MANIFEST` and never found; the lookup now
+  compares the full 8.3 name including the extension.
+
+### Verified
+- `aios-bootstore` 24/24, `aios-boot --lib` 16/16, `aios-image` 10/10;
+  `cargo clippy -D warnings` and `cargo fmt --check` clean for all three
+  crates plus the `x86_64-unknown-uefi` loader build.
+- Headless QEMU/OVMF boot: `aios-image: verified store sequence 1, slot0 header
+  2 entries`, `aios-boot: store manifest sequence 1 (copy 0), active slot 0,
+  previous slot 1`, `store slot 0 verified at sequence 1 (2 block(s))`,
+  `modules = 5 (3 conf, 2 wasm; +2 / +0 discovered, +1 from store)`,
+  `hello from aios-wasmhost`, `2 block(s): 2 ran`, `scheduler online`, no
+  `PAGE FAULT`/`FATAL`.
+
 ## v2.73.0 - Native boot M3.3: EasyLang Core compiles blocks at image time (2026-11-16)
 
 ### Added

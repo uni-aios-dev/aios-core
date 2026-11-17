@@ -1450,7 +1450,7 @@ Shared system-control plane consumed by the TUI, GUI, bridge and integration tes
 - `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
 
 Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet). Since v2.46.0 the gate also serves `SYS_PING` (id 7, the cooperative hang-watchdog heartbeat) and `SYS_FAULT_POLL` (id 8, which drains the kernel fault event ring for a ring-3 monitor — the freestanding twin of the host `FaultReport` IPC). Since v2.49.0 it serves the `SYS_SOCK_*` family (ids 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — the last two from v2.50.0 — and `SYS_SOCK_ADDR`, v2.51.0, which hands ring-3 its own bound IPv4), the ring-3 face of the kernel socket layer; every buffer argument is copied byte-by-byte through `memory::translate` and each call is gated on socket ownership (`sock::owner(fd) == pid`). Since v2.51.0 the fifth ring-3 demo task (program E) exercises the whole family from userspace over loopback — a UDP ping-pong plus, since v2.52.0, a TCP `listen`/`connect`/`accept`/echo round per loop (`sock-e ok` / `sock-t ok`; see the `user` bullet).
-## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`) — v2.73.0
+## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`) — v2.74.0
 
 AIOS boots on bare metal without Linux, Windows or a third-party boot loader:
 `aios-boot` is its own UEFI application, `aios-bootinfo` is the loader/kernel
@@ -1580,6 +1580,67 @@ machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
   reference. The `aios-easylang` binary is the same compiler for the command
   line (`aios-easylang hello.easy [-o out.wasm] [--check]`). 21 unit tests
   compile, validate and run programs through `aios-wasmhost`.
+- `aios-bootstore` (`boot/aios-bootstore`, `no_std` without `alloc`, v2.74.0,
+  M4.1): the persistent store format and commit policy shared by the loader and
+  the image builder. Nothing in it touches a filesystem, so the whole contract
+  is unit-testable on the host (24 tests). The store lives in `/aios/store`:
+
+  ```text
+  /aios/store/manifest.a    manifest copy A
+  /aios/store/manifest.b    manifest copy B
+  /aios/store/slot0/header  slot 0 commit record
+  /aios/store/slot0/...     payload files of slot 0
+  /aios/store/slot1/header  slot 1 commit record
+  /aios/store/slot1/...     payload files of slot 1
+  ```
+
+  - `manifest` — a fixed 1000-byte little-endian structure: 40-byte header
+    (`AIMS` magic, version, header size, `sequence`, `generation`,
+    `active_slot`, `previous_slot`, slot count, `entry_count`) and 16 entries of
+    60 bytes (48-byte NUL-padded module name such as `blocks/hello.wasm`,
+    32-bit size, CRC-32, kind, slot, flags). The CRC32 covers the whole buffer
+    with the checksum field treated as zero; names are validated (relative,
+    no `..`/`\`/NUL) and must be unique ignoring case.
+  - `slot` — a 32-byte header per slot: `AISL` magic, version, size,
+    `SlotState` (`Empty`/`Staging`/`Active`/`Retired`/`Bad`), `sequence`,
+    `manifest_crc` and `entry_count`, plus its own CRC32. A header only
+    "matches" when it is bootable, carries the selected manifest's sequence and
+    CRC, and counts exactly the manifest entries of its slot. The CRC binding
+    means a header cannot vouch for a different manifest generation.
+  - `Store::load(copy_a, copy_b)` picks the valid copy with the highest
+    `sequence`; a single valid copy wins regardless of sequence, and a tie
+    prefers copy A. `stale_copy()` always returns the copy a writer must
+    replace (the lower sequence, or the invalid one), so an interrupted write
+    can never destroy the newest manifest.
+  - `UpdatePlan` (from `plan_update`/`plan_rollback`) carries the new manifest
+    bytes, the target slot and the copy to overwrite. `staging_header`,
+    `active_header` and `retired_header` derive the exact slot headers, with
+    `plan_update` keeping the still-active entries in the manifest so a later
+    rollback can point at them without rereading payloads.
+  - Commit order (documented on the crate root): payload files → `Staging`
+    header → `Active` header → stale manifest copy → `Retired` header for the
+    old slot. A crash before the manifest write leaves the old generation
+    valid; a crash after it leaves the new one valid.
+- Store integration (M4.1):
+  - `aios-image` writes the initial generation while building the image: slot 0
+    receives every staged `*.wasm` block, slot 1 is left empty for the first
+    live update, both manifest copies are identical at sequence 1, slot 0 has
+    an `Active` header and slot 1 an `Empty` one. It then reads the store back
+    (manifest, slot-0 header, CRC and entry count) before the image is accepted.
+  - `aios-boot` reads `manifest.a`/`manifest.b`, selects the newest copy, tries
+    the active slot first and falls back to `previous_slot` (the rollback path),
+    and verifies the slot header plus the size and CRC32 of every payload file.
+    A generation is accepted or rejected as a whole, so a partially copied slot
+    is never run. When the store is valid it replaces `/aios/blocks` discovery
+    (the store is the authoritative complete set, so mixing versions is
+    impossible) and logs `+N from store`; `block = ...` entries from `boot.conf`
+    are preserved. A missing or broken store is not a boot error: the loader
+    logs the reason and falls back to the drop-in directory.
+  - The stock QEMU/OVMF image proves the chain: `aios-image: verified store
+    sequence 1, slot0 header 2 entries`, `aios-boot: store manifest sequence 1
+    (copy 0), active slot 0, previous slot 1`, `store slot 0 verified at
+    sequence 1 (2 block(s))`, `modules = 5 (3 conf, 2 wasm; ... +1 from store)`
+    and the block still prints `hello from aios-wasmhost`.
 
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 
