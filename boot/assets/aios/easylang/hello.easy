@@ -1,0 +1,5 @@
+# hello.easy: the stock demo block.
+#
+# `aios-image` compiles every file in this directory into blocks/<stem>.wasm.
+# The block runs once at boot and needs the `log` right (see config/blocks.conf).
+log "hello from aios-wasmhost"

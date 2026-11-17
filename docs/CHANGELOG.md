@@ -1,5 +1,59 @@
 # AIOS Development Log
 
+## v2.73.0 - Native boot M3.3: EasyLang Core compiles blocks at image time (2026-11-16)
+
+### Added
+- **`aios-easylang` - the EasyLang Core compiler** (`boot/aios-easylang`,
+  standalone `no_std` + `alloc` library plus a host CLI, 21 unit tests): an
+  imperative `i32` language for blocks (`let`, assignment, `log "text"`,
+  `exit`, `yield`, `if`/`else`, `while`, `and`/`or`/`not`, comparisons,
+  arithmetic, `now_ms()`, `true`/`false`, `#` comments, newline/`;`
+  separators) that targets exactly the `aios-wasmhost` subset - one exported
+  `run`, only the imports the program uses (`aios.log`, `aios.exit`,
+  `aios.now_ms`, `aios.yield`), up to 16 function-scoped variables, no user
+  functions, and all string literals in one data segment on one page.
+- **Two-pass code generator**: `lexer`/`parser` build a positioned AST;
+  analysis resolves names, rejects duplicates/unknown variables and packs the
+  string blob; emission interns types, orders the imports `log, exit, now_ms,
+  yield`, writes the type/import/function/memory/export/code/data sections and
+  lowers `while` to `block`/`loop`, `if`/`else` to `0x04`/`0x05`, `and`/`or`
+  to short-circuit-free normalized `i32.and`/`i32.or` and unary minus to
+  `0 - x`. Errors carry `line:column`.
+- **Image pipeline**: `aios-image` stages `boot/assets` in `boot/out/assets`,
+  compiles every `aios/easylang/*.easy` into `aios/blocks/<stem>.wasm`,
+  removes the source directory from the ESP and verifies that
+  `/aios/blocks/hello.wasm` is present. `boot/assets/aios/easylang/hello.easy`
+  is now the only source of truth for the stock block.
+- **CLI**: `aios-easylang <input.easy> [-o output.wasm] [--check]`; the output
+  defaults to the input path with a `.wasm` extension.
+- **Reference**: `docs/EASYLANG.md` and `docs/EASYLANG.ru.md`.
+
+### Changed
+- The committed `boot/assets/aios/blocks/hello.wasm` is deleted; the
+  `aios-wasmhost` stock test that included it is removed, and the
+  compile-validate-run test now lives in `aios-easylang` (dev dependency
+  direction stays acyclic). `boot/aios-easylang` is added to
+  `workspace.exclude`.
+
+### Fixed
+- Parser: an `if` without `else` consumed the newline after `}`, so a valid
+  following statement was reported as a missing separator; the parser now
+  looks ahead over newlines and keeps them when no `else` follows.
+- Lexer: the `%` token reported the column after the operator instead of the
+  operator column.
+- `now_ms()` was lexed as an identifier but never parsed; it is now a primary
+  expression with a mandatory empty argument list.
+
+### Verified
+- `cargo test` in `aios-easylang` 21/21; `aios-wasmhost` 42/42 + 1 doc test;
+  `cargo clippy --all-targets -- -D warnings` clean for `aios-easylang`,
+  `aios-image` and `aios-wasmhost`; `cargo fmt --check` clean.
+- Headless QEMU/OVMF boot: `aios-image: compiled hello.easy ->
+  blocks/hello.wasm (95 bytes)`, `[block] blocks/hello.wasm: hello from
+  aios-wasmhost`, `ran: entry 'run' (1 page(s))`, `used 5 of 20000
+  instruction(s)`, `2 block(s): 2 ran, 0 skipped, 0 failed`, then
+  `scheduler online` and 16 s of ticks with no `PAGE FAULT`/`FATAL`.
+
 ## v2.72.0 - Native boot M3.2: the kernel runs sandboxed blocks (2026-11-16)
 
 ### Added

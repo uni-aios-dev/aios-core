@@ -71,7 +71,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let options = Options::parse(&boot_dir)?;
     let loader = build_loader(&boot_dir)?;
     let kernel = build_kernel(&core_dir)?;
-    create_image(&options.out, &loader, &kernel, &boot_dir.join("assets"))?;
+    let assets = stage_assets(&boot_dir.join("assets"))?;
+    create_image(&options.out, &loader, &kernel, &assets)?;
     verify_image(&options.out)?;
     println!(
         "aios-image: {} ({:.0} MiB)",
@@ -182,6 +183,65 @@ fn build_kernel(core_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
         .join("aios-kernel");
     require_file(&path)?;
     Ok(path)
+}
+
+/// Copies the boot assets into a fresh staging directory and compiles every
+/// EasyLang source into a WASM block.
+///
+/// The staging tree is `boot/out/assets`, so the committed tree stays the
+/// single source of truth: `aios/easylang/*.easy` is compiled to
+/// `aios/blocks/<stem>.wasm` and the source directory is not put on the ESP.
+fn stage_assets(assets: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let parent = assets.parent().ok_or("boot/assets has no parent")?;
+    let staging = parent.join("out").join("assets");
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    copy_dir(assets, &staging)?;
+
+    let easylang = staging.join("aios").join("easylang");
+    if easylang.is_dir() {
+        let blocks = staging.join("aios").join("blocks");
+        fs::create_dir_all(&blocks)?;
+        let mut sources = fs::read_dir(&easylang)?.collect::<Result<Vec<_>, _>>()?;
+        sources.sort_by_key(|entry| entry.file_name());
+        for entry in sources {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("easy") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or("an EasyLang file has no usable name")?;
+            let source = fs::read_to_string(&path)?;
+            let bytes = aios_easylang::compile(&source)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            fs::write(blocks.join(format!("{stem}.wasm")), &bytes)?;
+            println!(
+                "aios-image: compiled {stem}.easy -> blocks/{stem}.wasm ({} bytes)",
+                bytes.len()
+            );
+        }
+        fs::remove_dir_all(&easylang)?;
+    }
+    Ok(staging)
+}
+
+/// Recursively copies `from` into `to`.
+fn copy_dir(from: &Path, to: &Path) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(to)?;
+    let mut entries = fs::read_dir(from)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 fn create_image(

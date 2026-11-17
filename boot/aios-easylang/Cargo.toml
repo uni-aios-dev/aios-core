@@ -1,0 +1,24 @@
+# aios-easylang: EasyLang Core, a small language for AIOS WASM blocks.
+#
+# Standalone crate (NOT a workspace member): the library is `no_std` + `alloc`
+# so the kernel can compile a block in place later, and the `aios-easylang`
+# binary is a host tool that packs sources into `.wasm` for the disk image.
+
+[package]
+name = "aios-easylang"
+version = "0.1.0"
+edition = "2021"
+description = "EasyLang Core: a small imperative language compiled to the AIOS WASM block subset"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "aios-easylang"
+path = "src/bin/aios-easylang.rs"
+
+[dependencies]
+aios-wasmhost = { path = "../aios-wasmhost" }
+
+[profile.release]
+panic = "abort"

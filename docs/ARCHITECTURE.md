@@ -1450,7 +1450,7 @@ Shared system-control plane consumed by the TUI, GUI, bridge and integration tes
 - `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
 
 Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet). Since v2.46.0 the gate also serves `SYS_PING` (id 7, the cooperative hang-watchdog heartbeat) and `SYS_FAULT_POLL` (id 8, which drains the kernel fault event ring for a ring-3 monitor — the freestanding twin of the host `FaultReport` IPC). Since v2.49.0 it serves the `SYS_SOCK_*` family (ids 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — the last two from v2.50.0 — and `SYS_SOCK_ADDR`, v2.51.0, which hands ring-3 its own bound IPv4), the ring-3 face of the kernel socket layer; every buffer argument is copied byte-by-byte through `memory::translate` and each call is gated on socket ownership (`sock::owner(fd) == pid`). Since v2.51.0 the fifth ring-3 demo task (program E) exercises the whole family from userspace over loopback — a UDP ping-pong plus, since v2.52.0, a TCP `listen`/`connect`/`accept`/echo round per loop (`sock-e ok` / `sock-t ok`; see the `user` bullet).
-## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-image`) — v2.72.0
+## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`) — v2.73.0
 
 AIOS boots on bare metal without Linux, Windows or a third-party boot loader:
 `aios-boot` is its own UEFI application, `aios-bootinfo` is the loader/kernel
@@ -1489,11 +1489,14 @@ machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
   no pointers; `memory_regions()`/`modules()` return the valid prefixes and
   `is_valid()` re-checks magic, version and size.
 - `aios-image` (`boot/aios-image`, pure Rust, no `mkfs.vfat`/`diskpart`):
-  builds the loader and the kernel, then writes a GPT disk with a 320 MiB
+  builds the loader and the kernel, stages `boot/assets` in `boot/out/assets`,
+  compiles every `aios/easylang/*.easy` into `aios/blocks/<stem>.wasm` (M3.3)
+  and drops the sources from the ESP, then writes a GPT disk with a 320 MiB
   FAT32 ESP (4 KiB clusters, 2 FATs, 32 reserved sectors, VFAT long names plus
   generated 8.3 aliases such as `EMPTY~1.WAS`) and re-parses MBR, GPT header,
   FAT32 boot sector and the required paths (`/EFI/BOOT/BOOTX64.EFI`,
-  `/aios/kernel.elf`, `/aios/config/system.conf`, `/aios/blocks/empty.wasm`).
+  `/aios/kernel.elf`, `/aios/config/system.conf`, `/aios/blocks/empty.wasm`,
+  `/aios/blocks/hello.wasm`).
   `--headless` boots the image under QEMU/OVMF, captures COM1 to
   `boot/out/serial.log` and prints it; `--no-run` only builds and verifies.
 - Stack alignment invariant: every kernel stack top must be 16-byte aligned.
@@ -1538,7 +1541,7 @@ machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
   `idle`) and the ABI imports `aios.log(ptr, len)`, `aios.exit(code)`,
   `aios.now_ms() -> i32` and `aios.yield()`; a token that does not grant the
   matching right turns the call into `Trap::Denied`. The crate has no hardware
-  dependency: 43 unit tests and one doc test cover the parser, validator,
+  dependency: 42 unit tests and one doc test cover the parser, validator,
   rights, arithmetic, locals, loops/branches, calls, memory, fuel, start/exit
   and the traps, so the kernel can rely on it before M3.2 wires it in.
 - Kernel block runner (`aios-kernel/src/blocks.rs`, v2.72.0, M3.2): called once
@@ -1561,6 +1564,22 @@ machine. UEFI-only (GPT + ESP, no BIOS/El Torito path in v1).
   `blocks/hello.wasm` (discovered, not listed in `boot.conf`) printing
   `hello from aios-wasmhost`, and the policy comes from the discovered
   `config/blocks.conf`.
+- `aios-easylang` (`boot/aios-easylang`, `no_std` + `alloc` library plus a host
+  CLI, v2.73.0, M3.3): the EasyLang Core compiler, the source language for
+  blocks. The language is an imperative `i32` DSL — `let`, assignment,
+  `log "text"`, `exit`, `yield`, `if`/`else`, `while`, `and`/`or`/`not`,
+  comparisons and arithmetic, `now_ms()`, `true`/`false`, `#` comments and
+  newline/`;` separators. `lexer` and `parser` build a positioned AST;
+  `codegen` runs two passes (analysis resolves names, chooses the imports and
+  packs the strings; emission writes the sections) and targets exactly the
+  `aios-wasmhost` subset: one exported `run`, only the host imports the
+  program uses (in `log`, `exit`, `now_ms`, `yield` order), at most 16
+  function-scoped variables, `while` as `block`/`loop`, `and`/`or` normalized
+  to 0/1, and every string literal in one data segment on one page. A compile
+  error carries `line:column`. See [`docs/EASYLANG.md`](EASYLANG.md) for the
+  reference. The `aios-easylang` binary is the same compiler for the command
+  line (`aios-easylang hello.easy [-o out.wasm] [--check]`). 21 unit tests
+  compile, validate and run programs through `aios-wasmhost`.
 
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 

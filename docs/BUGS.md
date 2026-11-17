@@ -1,5 +1,25 @@
 # AIOS Known Bugs & Workarounds
 
+## LIMITS (v2.73.0): EasyLang Core is a small language with a boot-time runtime
+
+- **Status:** by design for M3.3, not a defect.
+- **Language scope:** no user-defined functions, arrays, pointers, structs or
+  string values - `log` takes a literal only, and a program is a flat list of
+  statements with at most 16 function-scoped variables (no shadowing; a name
+  must be declared before it is used). Values are `i32` only (no
+  `i64`/floats). Comparisons and the logical operators yield `0`/`1`;
+  `and`/`or` evaluate both operands (no short-circuit); `/` and `%` trap on a
+  zero divisor and `i32::MIN / -1` traps with `IntegerOverflow`, while `+`,
+  `-` and `*` wrap.
+- **Packaging:** every `*.easy` becomes `blocks/<stem>.wasm`, so two sources
+  with the same stem in one directory collide and the later file wins. All
+  strings of one program share one 64 KiB page and one data segment; a program
+  whose logged text exceeds that is rejected at compile time.
+- **Runtime:** blocks still run once at boot (see LIMITS v2.72.0), so an
+  EasyLang program cannot be scheduled, suspended or restarted; the only time
+  limit is its fuel budget. There is no `sleep`, no I/O other than `log`, and
+  no access to configuration values.
+
 ## LIMITS (v2.72.0): blocks run once at boot, not as scheduled processes
 
 - **Status:** by design for M3.2, not a defect. `blocks::init()` executes every

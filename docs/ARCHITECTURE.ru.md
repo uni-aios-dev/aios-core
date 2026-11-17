@@ -1445,7 +1445,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
 Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
-## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-image`) — v2.72.0
+## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`) — v2.73.0
 
 AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
 `aios-boot` — собственное UEFI-приложение, `aios-bootinfo` — контракт
@@ -1487,12 +1487,14 @@ AIOS грузится на голом железе без Linux, Windows и ст
   `modules()` возвращают корректные префиксы, `is_valid()` заново проверяет
   магию, версию и размер.
 - `aios-image` (`boot/aios-image`, чистый Rust, без `mkfs.vfat`/`diskpart`):
-  собирает загрузчик и ядро, затем пишет GPT-диск с ESP на 320 МиБ
+  собирает загрузчик и ядро, стейджит `boot/assets` в `boot/out/assets`,
+  компилирует каждый `aios/easylang/*.easy` в `aios/blocks/<stem>.wasm` (M3.3)
+  и убирает исходники с ESP, затем пишет GPT-диск с ESP на 320 МиБ
   (кластеры 4 КиБ, 2 FAT, 32 зарезервированных сектора, длинные имена VFAT
   плюс сгенерированные псевдонимы 8.3 вроде `EMPTY~1.WAS`) и заново
   разбирает MBR, заголовок GPT, boot-сектор FAT32 и обязательные пути
   (`/EFI/BOOT/BOOTX64.EFI`, `/aios/kernel.elf`, `/aios/config/system.conf`,
-  `/aios/blocks/empty.wasm`). `--headless` загружает образ в QEMU/OVMF,
+  `/aios/blocks/empty.wasm`, `/aios/blocks/hello.wasm`). `--headless` загружает образ в QEMU/OVMF,
   сохраняет COM1 в `boot/out/serial.log` и печатает его; `--no-run` только
   собирает и проверяет.
 - Инвариант выравнивания стеков: вершина любого стека ядра должна быть
@@ -1539,7 +1541,7 @@ AIOS грузится на голом железе без Linux, Windows и ст
   страницам. Единственная поверхность хоста — `Env` (`log`, `now_ms`,
   `idle`) и импорты ABI `aios.log(ptr, len)`, `aios.exit(code)`,
   `aios.now_ms() -> i32`, `aios.yield()`; токен без нужного права превращает
-  вызов в `Trap::Denied`. У крейта нет зависимости от железа: 43 юнит-теста и
+  вызов в `Trap::Denied`. У крейта нет зависимости от железа: 42 юнит-теста и
   один doc-тест покрывают парсер, валидатор, права, арифметику, локальные
   переменные, циклы/ветвления, вызовы, память, топливо, start/exit и все
   ловушки, поэтому ядро может на него опираться ещё до подключения в M3.2.
@@ -1563,6 +1565,22 @@ AIOS грузится на голом железе без Linux, Windows и ст
   доказывает всю цепочку блоком `blocks/hello.wasm` (найден автопоиском, не
   указан в `boot.conf`), который печатает `hello from aios-wasmhost`, а
   политику задаёт найденный `config/blocks.conf`.
+- `aios-easylang` (`boot/aios-easylang`, библиотека `no_std` + `alloc` и
+  host-CLI, v2.73.0, M3.3): компилятор EasyLang Core — исходного языка блоков.
+  Это императивный DSL над `i32`: `let`, присваивание, `log "текст"`, `exit`,
+  `yield`, `if`/`else`, `while`, `and`/`or`/`not`, сравнения и арифметика,
+  `now_ms()`, `true`/`false`, комментарии `#` и разделители newline/`;`.
+  `lexer` и `parser` строят AST с позициями; `codegen` делает два прохода
+  (анализ разрешает имена, выбирает импорты и упаковывает строки; эмиссия
+  пишет секции) и нацелен ровно на подмножество `aios-wasmhost`: один экспорт
+  `run`, только реально использованные host-импорты (в порядке `log`, `exit`,
+  `now_ms`, `yield`), не более 16 переменных на функцию, `while` через
+  `block`/`loop`, `and`/`or` с нормализацией в 0/1 и все строковые литералы в
+  одном data-сегменте на одной странице. Ошибка компиляции содержит
+  `line:column`. Справочник — [`docs/EASYLANG.ru.md`](EASYLANG.ru.md). Бинарь
+  `aios-easylang` — тот же компилятор для командной строки
+  (`aios-easylang hello.easy [-o out.wasm] [--check]`). 21 юнит-тест
+  компилирует, валидирует и исполняет программы через `aios-wasmhost`.
 
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 

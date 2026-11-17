@@ -1,5 +1,59 @@
 # Журнал разработки AIOS
 
+## v2.73.0 - Собственная загрузка M3.3: EasyLang Core компилирует блоки при сборке образа (2026-11-16)
+
+### Добавлено
+- **`aios-easylang` — компилятор EasyLang Core** (`boot/aios-easylang`,
+  отдельная библиотека `no_std` + `alloc` и host-CLI, 21 юнит-тест):
+  императивный язык над `i32` для блоков (`let`, присваивание, `log "текст"`,
+  `exit`, `yield`, `if`/`else`, `while`, `and`/`or`/`not`, сравнения,
+  арифметика, `now_ms()`, `true`/`false`, комментарии `#`, разделители
+  newline/`;`), нацеленный ровно на подмножество `aios-wasmhost`: один экспорт
+  `run`, только реально использованные импорты (`aios.log`, `aios.exit`,
+  `aios.now_ms`, `aios.yield`), не более 16 переменных на функцию, без
+  пользовательских функций и все строковые литералы в одном data-сегменте на
+  одной странице.
+- **Двухпроходный генератор кода**: `lexer`/`parser` строят AST с позициями;
+  анализ разрешает имена, отвергает дубли и неизвестные переменные и
+  упаковывает строковый блоб; эмиссия интернирует типы, упорядочивает импорты
+  `log, exit, now_ms, yield`, пишет секции type/import/function/memory/export/
+  code/data и понижает `while` в `block`/`loop`, `if`/`else` в `0x04`/`0x05`,
+  `and`/`or` — в нормализованные `i32.and`/`i32.or` без короткого замыкания, а
+  унарный минус — в `0 - x`. Ошибки содержат `line:column`.
+- **Конвейер образа**: `aios-image` стейджит `boot/assets` в `boot/out/assets`,
+  компилирует каждый `aios/easylang/*.easy` в `aios/blocks/<stem>.wasm`,
+  убирает каталог исходников с ESP и проверяет наличие
+  `/aios/blocks/hello.wasm`. Теперь `boot/assets/aios/easylang/hello.easy` —
+  единственный источник правды для штатного блока.
+- **CLI**: `aios-easylang <input.easy> [-o output.wasm] [--check]`; по
+  умолчанию вывод — входной путь с расширением `.wasm`.
+- **Справочник**: `docs/EASYLANG.md` и `docs/EASYLANG.ru.md`.
+
+### Изменено
+- Закоммиченный `boot/assets/aios/blocks/hello.wasm` удалён; stock-тест
+  `aios-wasmhost`, который его включал, убран, а тест «скомпилировать,
+  провалидировать, запустить» теперь живёт в `aios-easylang` (направление
+  dev-зависимости остаётся ацикличным). `boot/aios-easylang` добавлен в
+  `workspace.exclude`.
+
+### Исправлено
+- Парсер: `if` без `else` съедал перевод строки после `}`, поэтому следующая
+  корректная инструкция считалась ошибкой разделителя; теперь парсер
+  просматривает переводы строк вперёд и оставляет их, если `else` нет.
+- Лексер: токен `%` сообщал колонку после оператора, а не колонку оператора.
+- `now_ms()` лексился как идентификатор, но не разбирался; теперь это
+  первичное выражение с обязательным пустым списком аргументов.
+
+### Проверено
+- `cargo test` в `aios-easylang` 21/21; `aios-wasmhost` 42/42 + 1 doc-тест;
+  `cargo clippy --all-targets -- -D warnings` чисто для `aios-easylang`,
+  `aios-image` и `aios-wasmhost`; `cargo fmt --check` чисто.
+- Headless QEMU/OVMF: `aios-image: compiled hello.easy -> blocks/hello.wasm
+  (95 bytes)`, `[block] blocks/hello.wasm: hello from aios-wasmhost`,
+  `ran: entry 'run' (1 page(s))`, `used 5 of 20000 instruction(s)`,
+  `2 block(s): 2 ran, 0 skipped, 0 failed`, затем `scheduler online` и 16 с
+  тиков без `PAGE FAULT`/`FATAL`.
+
 ## v2.72.0 - Собственная загрузка M3.2: ядро исполняет блоки в песочнице (2026-11-16)
 
 ### Добавлено
