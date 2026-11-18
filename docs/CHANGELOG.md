@@ -1,5 +1,37 @@
 # AIOS Development Log
 
+## v2.76.0 - Native boot M5.1: Rust installer for the UEFI disk image (2026-11-18)
+
+### Added
+- **`aios-install`** (`boot/aios-install`, standalone `std` crate, 6 unit
+  tests): a host-side installer that validates the GPT/ESP image produced by
+  `aios-image` and writes it verbatim to a raw file or a Windows
+  `\\.\PhysicalDriveN`. It checks the protective MBR, both GPT headers and their
+  CRCs, the `AIOS ESP` entry, the FAT32 signature and the exact image size before
+  touching the target. A larger target is accepted and its tail is preserved.
+  Every 1 MiB chunk is read back through a separate handle and compared, then
+  the target prefix is re-inspected and CRC32-fingerprinted.
+- **Safe CLI by default**: `aios-install --list` probes physical disks read-only;
+  `--image <IMG> --device <PATH>` only validates and prints the plan (size,
+  CRC32, GPT backup LBA, ESP range, target kind and size); writing requires
+  `--write --yes`. A target smaller than the image or equal to the source file
+  is rejected. No PowerShell, diskpart or third-party flasher is needed.
+
+### Fixed
+- `inspect()` assumed `last_usable = backup_lba - ENTRY_ARRAY_SECTORS`, but
+  `aios-image` reserves one extra sector for the backup GPT header. The check
+  now requires `last_usable + ENTRY_ARRAY_SECTORS + 1 == backup_lba` and also
+  verifies that the backup header points at the backup entry array, so real
+  images are accepted while inconsistent GPTs are still rejected.
+
+### Verified
+- 6/6 installer tests, `cargo fmt --check` and `cargo clippy --all-targets
+  -D warnings` clean.
+- Dry run on the real 321 MiB image: CRC32 `466BA1BB`, backup LBA 657440,
+  ESP LBA 2048..657407. A 400 MiB file-backed target was written
+  (336609792 bytes, all chunks read back, CRC32 `466BA1BB`) and then booted
+  under QEMU/OVMF: the kernel printed scheduler/IPC/socket lines for 25 s.
+
 ## v2.75.0 - Native boot M4.2: live-update writer and rollback on the ESP (2026-11-18)
 
 ### Added

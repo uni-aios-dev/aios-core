@@ -1,0 +1,16 @@
+# aios-install: write a built AIOS disk image to a target disk.
+#
+# Standalone host tool (std, no external crates): validates the GPT/ESP image
+# produced by `aios-image`, then writes it verbatim to a raw file or to a
+# physical disk (`\\.\PhysicalDriveN` on Windows). No PowerShell, diskpart or
+# third-party flasher is needed. Writing is opt-in: without `--write` the tool
+# only prints the plan, and a physical disk additionally needs `--yes`.
+[package]
+name = "aios-install"
+version = "0.1.0"
+edition = "2021"
+description = "Validates and writes the AIOS UEFI disk image to a raw file or physical disk"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+aios-bootstore = { path = "../aios-bootstore" }

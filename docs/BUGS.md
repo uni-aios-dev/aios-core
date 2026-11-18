@@ -1,5 +1,22 @@
 # AIOS Known Bugs & Workarounds
 
+## LIMITS (v2.76.0): `flash-usb.ps1` is not a validator for the native UEFI image
+
+- **Symptom:** `scripts/flash-usb.ps1` writes any image to a physical disk and
+  only checks SHA-256 plus the `55 AA` MBR marker afterwards. A truncated or
+  non-AIOS GPT image passes the marker check and leaves an unbootable disk.
+- **Cause:** the script predates the native UEFI-only image (GPT + ESP) and was
+  written for the hybrid Limine ISO; it neither parses the GPT/ESP structure
+  nor compares the written bytes with the source.
+- **Workaround:** use `boot/aios-install` for the native image. It validates the
+  GPT/ESP layout before writing, reads every chunk back and re-verifies the
+  target prefix. Writing is opt-in (`--write --yes`), and a target larger than
+  the image is allowed.
+- **Status:** open as a limitation of the legacy script; it is not used by the
+  native boot chain. Unmount the target volumes first — `std` has no volume-lock
+  API, so `aios-install` cannot do that for you. On virtualised hosts `--list`
+  may show no physical disks; use a file-backed target there.
+
 ## FIXED (v2.75.0): a retired slot could not be used as a rollback target
 
 - **Symptom:** after a successful `update`, corrupting the new active payload

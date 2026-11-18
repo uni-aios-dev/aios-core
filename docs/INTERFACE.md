@@ -1,5 +1,29 @@
 # AIOS Interface — Usage Guide
 
+## Native UEFI image (host tools)
+
+The UEFI-only image built by `aios-image` (`boot/out/aios-esp.img`) is written
+to a disk from the build/service machine with `aios-install`:
+
+```
+aios-install --list
+aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2          # validate only
+aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2 --write --yes
+```
+
+- Without `--write` the command only validates the image and prints the plan
+  (image size, CRC32, GPT backup LBA, ESP range, target kind and size); nothing
+  is modified. Writing additionally requires `--yes` and destroys data on the
+  target.
+- `<PATH>` may also be a raw file (for tests and file-backed disks). A target
+  larger than the image is accepted; bytes after the image are preserved.
+- Before writing to a physical disk, unmount all of its volumes — `std` has no
+  volume-lock API, so the tool cannot do this for you. `--list` probes
+  `\\.\PhysicalDriveN` read-only on Windows and may be empty on virtualised
+  hosts.
+
+---
+
 ## Live USB (bootable stick)
 
 The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight into the AIOS kernel TUI on `tty1`. There is no login prompt. Kernel console, the TUI, the installer and the rescue shell are shown on the VGA screen (`console=ttyS0 console=tty0` in `limine.conf`); the serial head is kept for diagnostics.
