@@ -1,5 +1,31 @@
 # Журнал разработки AIOS
 
+## v2.77.1 - Проверка на Legacy BIOS: на флешку записан гибридный Limine-образ (2026-11-18)
+
+### Проверено
+- Целевой ноут — **AMI Legacy BIOS 2008 года** (`A163NSMS` v1.04,
+  Intel Core 2 Duo T5750), без пунктов UEFI/CSM/Secure Boot в Setup. Образ
+  UEFI-only GPT/ESP там загрузиться не может: защитный MBR имеет нулевой
+  bootstrap-код, поэтому прошивка останавливается на мигающем курсоре чёрного
+  экрана.
+- Флешка Kingston DataTraveler 3.0 (`\\.\PhysicalDrive3`) очищена через
+  `diskpart clean` и перезаписана **гибридным Limine-образом**
+  `aios-kernel-run/out/aios-kernel-usb.img` (4 683 776 байт). Образ начинается с
+  `EB 3C 90 LIMIT` (MBR-стадия Limine, сигнатура `55 AA`) и грузится через Legacy
+  BIOS thanks `limine bios-install`. Полная перечитанная SHA-256 совпала:
+  `F5E8EB7E459D7309FEA4FDCBE258BF13B1DD47A4F6A33A992FD2FFB808DA420B`.
+  Windows после записи видит диск как MBR. Предыдущий UEFI-образ намеренно
+  уничтожен; теперь флешка грузит микроядро `aios-kernel` (framebuffer/serial)
+  на старом ноуте.
+
+### Заметки
+- Перед записью потребовался `diskpart clean`: пока GPT был смонтирован,
+  `CreateFileW` отвергал запись с `ERROR_ACCESS_DENIED` после первого чанка.
+  `scripts/flash-usb.ps1` на этом хосте не работает (открывает устройство с
+  `FileShare.None`), поэтому использован собственный writer через `CreateFileW`.
+- Исходный код и сборки не менялись: M5.2 (Secure Boot и проверка загрузки на
+  реальном железе) по-прежнему ждёт результата загрузки на ноуте.
+
 ## v2.77.0 - Собственная загрузка: упразднён старый Linux Live USB-путь (2026-11-18)
 
 ### Удалено

@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## v2.77.1 - Legacy BIOS validation: Limine hybrid image flashed to the USB stick (2026-11-18)
+
+### Verified
+- The target laptop has a **2008 AMI Legacy BIOS** (`A163NSMS` v1.04,
+  Intel Core 2 Duo T5750), with no UEFI/CSM/Secure Boot setup options. The
+  UEFI-only GPT/ESP image therefore cannot boot there: the Protective MBR has
+  a zero bootstrap, so firmware drops to a blinking cursor on a black screen.
+- The Kingston DataTraveler 3.0 (`\\.\PhysicalDrive3`) was wiped with
+  `diskpart clean` and rewritten with the **Limine isohybrid** image
+  `aios-kernel-run/out/aios-kernel-usb.img` (4 683 776 bytes). The image starts
+  with `EB 3C 90 LIMIT` (Limine MBR stage, `55 AA` signature) and boots on
+  Legacy BIOS via `limine bios-install`. Full readback SHA-256 matches
+  `F5E8EB7E459D7309FEA4FDCBE258BF13B1DD47A4F6A33A992FD2FFB808DA420B`.
+  Windows reports the disk as MBR after the write. The previous UEFI-only image
+  was intentionally destroyed; this stick now boots the `aios-kernel` microkernel
+  (framebuffer/serial console) on the old laptop.
+
+### Notes
+- The write required `diskpart clean` first: with the GPT still mounted,
+  `CreateFileW` writes were rejected with `ERROR_ACCESS_DENIED` after the first
+  chunk. `scripts/flash-usb.ps1` is not usable on this host because it opens the
+  device with `FileShare.None`; a raw `CreateFileW` writer was used instead.
+- This does not change the build outputs or source code: M5.2 (Secure Boot and
+  real-hardware boot validation) still waits for the boot result on the laptop.
+
 ## v2.77.0 - Native boot: retire the legacy Linux Live USB path (2026-11-18)
 
 ### Removed
