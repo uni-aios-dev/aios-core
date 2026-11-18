@@ -7,7 +7,7 @@
 //! # AIOS system configuration
 //! system.name = AIOS
 //! system.version = "0.1.0"
-//! scheduler.tick_hz = 100
+//! scheduler.tick_hz = 1000
 //! memory.heap_min_kib = 0x1000
 //! boot.debug = false
 //! ```
@@ -247,7 +247,7 @@ system.arch = x86_64    # inline comment
 boot.console = serial
 boot.debug = false
 
-scheduler.tick_hz = 100
+scheduler.tick_hz = 1000
 memory.heap_min_kib = 0x1000
 ";
 

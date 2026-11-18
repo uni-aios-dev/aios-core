@@ -3,7 +3,7 @@
 //! syscall family.
 //!
 //! Everything is tick driven and lock-free (single CPU): [`tick`] is called
-//! from [`crate::net::poll`] each 10 ms and advances retransmit/time-wait
+//! from [`crate::net::poll`] on every timer tick and advances retransmit/time-wait
 //! timers, while inbound segments are demultiplexed by
 //! [`deliver_udp`]/[`deliver_tcp`] from the IPv4 receive path. Outbound frames
 //! go through [`crate::net::emit_ipv4`], which resolves the next-hop MAC via the

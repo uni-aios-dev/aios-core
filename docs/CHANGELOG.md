@@ -1,5 +1,43 @@
 # AIOS Development Log
 
+## v2.78.2 - Raise the kernel timer to 1000 Hz for sharper input (2026-11-18)
+
+### Root cause of the perceived slowdown
+- The 06.10.2026 USB build predates `b995771` (v2.68.3), which fixed the PIT
+  reload handling and the LAPIC bus-clock calibration. Its "100 Hz" timer fired
+  roughly 5-7x faster than wall time: `bus_hz=73,922,492` and
+  `init_count=739,224` instead of the corrected `bus_hz≈1,005,733,407` and
+  `init_count≈10,057,334`. In an identical 20 s QEMU run its uptime reached
+  `tick 105s`, versus `tick 14s` for the corrected kernel.
+- Everything driven by `TICKS` ran at that inflated rate: the idle loop woke on
+  every tick (`hlt`), the GUI gate was one tick, preemptive switches happened
+  every 25 ticks and the ring-3 demo tasks slept 20 ticks. The old stick felt
+  faster because its clock was fast, not because its renderer was better.
+
+### Changed
+- `interrupts::TIMER_HZ` is now 1000. PIT/LAPIC divisors, `SWITCH_DIVIDER`, the
+  hang watchdog, socket timers and the uptime display all derive from it, so
+  real-time intervals stay the same while input polling becomes ~10x sharper.
+- Render/sensor gates are expressed in `TIMER_HZ` units: GUI 100 Hz, TUI 20 Hz,
+  lid and thermal probes 20 Hz. Mouse reports still trigger an immediate render.
+- Ring-3 demo sleeps derive from `TIMER_HZ` (200 ms startup/sleeper, 60 ms GUI
+  client) instead of hard-coded 20/6 ticks.
+- `boot/assets/aios/config/system.conf` and the `aios-config` sample now declare
+  `scheduler.tick_hz = 1000`.
+
+### Verified
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `cargo test --workspace` and `cargo build --workspace --release`
+  are all green.
+- The bare-metal kernel was rebuilt with `--features limine` (1 003 280 bytes)
+  and patched into `aios-kernel-run/out/aios-kernel-usb-limine-1000hz.img`
+  (SHA-256 `4054F225B6B669897DBDCC513877A39B910A10169D109859A4F72C18807F13AA`).
+  A 20 s QEMU run logs `periodic 1000 Hz tick armed`, a Limine handoff and no
+  panics; the effective tick rate under TCG emulation is ~500 Hz versus ~75 Hz
+  for the 100 Hz image.
+- The physical USB stick was NOT rewritten; reflashing needs explicit
+  confirmation.
+
 ## v2.78.1 - Reflash the USB stick with the restored Limine kernel (2026-11-18)
 
 ### Verified

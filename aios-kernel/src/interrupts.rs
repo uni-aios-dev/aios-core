@@ -13,7 +13,7 @@ pub const IRQ_MASTER_OFFSET: u8 = 0x20;
 pub const IRQ_SLAVE_OFFSET: u8 = 0x28;
 pub const IRQ_BASE: u8 = IRQ_MASTER_OFFSET;
 pub const IRQ_END: u8 = IRQ_SLAVE_OFFSET + 7;
-pub const TIMER_HZ: u64 = 100;
+pub const TIMER_HZ: u64 = 1000;
 /// Dedicated vector for the Local APIC timer, outside the PIC range (0x20..0x2F).
 ///
 /// The legacy PIT IRQ0 shares vector 32 with the master PIC; the LAPIC timer
@@ -274,8 +274,8 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
             // LAPIC timer tick: same bookkeeping as the PIT path, but with the
             // LAPIC EOI instead of the PIC one. Only logs the very first firing
             // (with the interrupt-frame CS/SS, proving the kernel reloaded its
-            // own GDT selectors after the bootloader handoff) so the 100 Hz serial
-            // stream from the PIT path is not duplicated.
+            // own GDT selectors after the bootloader handoff) so the periodic
+            // serial stream from the PIT path is not duplicated.
             if !LAPIC_TICK_LOGGED.swap(true, Ordering::Relaxed) {
                 kprintln!(
                     "[serial] [lapic] tick cs={:#x} ss={:#x} rip={:#x}",
@@ -414,12 +414,12 @@ pub fn pit_count() -> u16 {
 }
 
 /// Reload value of PIT channel 0 (`0` = free-running 65536 before `init_pit`
-/// programs 100 Hz).
+/// programs `TIMER_HZ`).
 static PIT_DIV: AtomicU32 = AtomicU32::new(0);
 
 /// Elapsed PIT channel-0 clocks between two [`pit_count`] samples (v2.68.3).
 ///
-/// The countdown reloads at the divisor - `11931` (`0x2E9B`) for 100 Hz -
+/// The countdown reloads at the divisor - `1193` (`0x4A9`) for 1000 Hz -
 /// which is *not* a 16-bit wrap: a sample pair that straddles the reload makes
 /// a plain `wrapping_sub` report ~65536 extra clocks (the reloaded value is
 /// interpreted as a wrapped-down one). Reducing the difference modulo

@@ -7,10 +7,10 @@
 //!   prints `u1` to the kernel console through `SYS_WRITE`;
 //! - program B (slot 3): mirrors A with the roles swapped (`u2`);
 //! - program C (slot 4): prints `[usleep] up` and its pid via `SYS_GETPID`,
-//!   then alternates `SYS_SLEEP(20)` with a `*` echo forever;
+//!   then alternates a 200 ms `SYS_SLEEP` with a `*` echo forever;
 //! - program D (slot 5): the ring-3 GUI client — paints a 96x64 pixel buffer
 //!   with a rotating solid colour and presents it to the kernel window server
-//!   via `SYS_GUI` every 6 ticks; each cycle it also drains one input event
+//!   via `SYS_GUI` every 60 ms; each cycle it also drains one input event
 //!   (`SYS_GUI` GET_EVENT) — a key turns the fill red, a body click turns it
 //!   green, echoed back through `SYS_WRITE` (visible only while the GUI
 //!   desktop owns the screen);
@@ -29,13 +29,14 @@
 //! a ping-pong over the per-pid mailboxes whose sampled `[ipc] send/recv`
 //! proof lines appear every 8th transferred value.
 //!
-//! Every program starts by calling `SYS_SLEEP` (20 ticks) so the whole
+//! Every program starts by calling `SYS_SLEEP` (200 ms) so the whole
 //! userspace is briefly asleep at boot — the scheduler must fall back to the
 //! idle context (`[sched] idle`) and wake the five as their deadlines pass,
 //! proving sleep, wake and idle fallback in one QEMU run.
 
 use alloc::vec::Vec;
 
+use crate::interrupts::TIMER_HZ;
 use crate::memory;
 use crate::sched;
 use crate::syscalls::{
@@ -64,19 +65,19 @@ const CODE_BASE: u64 = 0x4000_0000;
 const STACK_TOP: u64 = 0x7F00_0000;
 const STACK_PAGES: u64 = 4;
 
-/// Startup sleep in PIT ticks shared by all user programs so the whole
-/// userspace idles together at boot.
-const BOOT_SLEEP_TICKS: u64 = 20;
-/// Sleep length the pid 3 sleeper repeats in its demo loop.
-const SLEEPER_SLEEP_TICKS: u64 = 20;
+/// Startup sleep in timer ticks shared by all user programs so the whole
+/// userspace idles together at boot (200 ms at any `TIMER_HZ`).
+const BOOT_SLEEP_TICKS: u64 = TIMER_HZ / 5;
+/// Sleep length the pid 3 sleeper repeats in its demo loop (200 ms).
+const SLEEPER_SLEEP_TICKS: u64 = TIMER_HZ / 5;
 /// Number of sleep/wake rounds the pid 3 sleeper performs.
 const SLEEPER_ROUNDS: u64 = 8;
 /// Ring-3 GUI client (pid 4) window: a 96x64 test surface, repainted with a
-/// solid colour that rotates every 6 ticks.
+/// solid colour that rotates every 60 ms.
 const GUI_W: u64 = 96;
 const GUI_H: u64 = 64;
 const GUI_PIXELS: u64 = GUI_W * GUI_H;
-const GUI_SLEEP_TICKS: u64 = 6;
+const GUI_SLEEP_TICKS: u64 = TIMER_HZ * 6 / 100;
 /// Colour added to the client's fill each present round.
 const GUI_COLOR_STEP: u64 = 0x00_11_2a_44;
 /// Fill colour the demo switches to on a key event (red-ish).
@@ -491,7 +492,7 @@ fn build_pid3() -> Vec<u8> {
 }
 
 /// Ring-3 GUI client: fills its 96x64 pixel buffer with a solid colour and
-/// presents it to the kernel window server every 6 ticks, rotating the colour
+/// presents it to the kernel window server every 60 ms, rotating the colour
 /// each round and draining one input event per cycle (`SYS_GUI` GET_EVENT: a
 /// key recolours the fill red, a body click green, each echoed through
 /// `SYS_WRITE`). CREATE runs once after the boot sleep; everything else is a
@@ -530,7 +531,7 @@ fn build_pid4() -> Vec<u8> {
     a.mov_eax(SYS_GUI);
     a.int80();
 
-    // pace so the colour rotation is visible (6 ticks = ~0.06 s)
+    // pace so the colour rotation is visible (60 ms)
     a.mov_eax(SYS_SLEEP);
     a.mov_edi(GUI_SLEEP_TICKS);
     a.int80();

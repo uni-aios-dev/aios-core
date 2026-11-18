@@ -4,7 +4,7 @@
 //! through an unprogrammed IO-APIC), so the PIT interrupt never reaches the
 //! CPU. The PIT countdown itself still runs, but a real *hardware tick* needs
 //! the Local APIC timer. This module brings the LAPIC up, calibrates its
-//! bus-frequency countdown against the PIT, and arms a periodic 100 Hz tick on
+//! bus-frequency countdown against the PIT, and arms a periodic `TIMER_HZ` tick on
 //! a dedicated vector (0x90) that lives outside the PIC range (0x20..=0x2F).
 //!
 //! Register access prefers x2APIC (MSR-based, no MMIO caching pitfalls) and
@@ -52,7 +52,7 @@ pub fn active() -> bool {
     ACTIVE.load(Ordering::Relaxed)
 }
 
-/// Brings the Local APIC timer up and arms a periodic 100 Hz tick on the
+/// Brings the Local APIC timer up and arms a periodic `TIMER_HZ` tick on the
 /// dedicated vector 0x90. Returns true once the timer is live.
 ///
 /// The caller is expected to mask the PIT IRQ0 in the PIC afterwards so a

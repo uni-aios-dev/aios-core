@@ -1,5 +1,28 @@
 # AIOS Known Bugs & Workarounds
 
+## DIAGNOSED (v2.78.2): the old build felt faster because its timer ran too fast
+
+- Symptom: after flashing the v2.78.0 kernel the pointer felt slower, as if the
+  frame rate had dropped. Comparison of the preserved 06.10.2026 image with the
+  new one in identical 20 s QEMU runs showed `bus_hz=73,922,492` /
+  `init_count=739,224` for the old kernel versus `bus_hz≈1,005,733,407` /
+  `init_count≈10,057,334` for the new one, and uptime `tick 105s` versus
+  `tick 14s`.
+- Root cause: the old image predates the v2.68.3 fix in `b995771` (PIT
+  rate-generator reload, reload-aware `pit_elapsed`, corrected LAPIC
+  calibration). Its timer overflowed the intended 100 Hz rate by ~5-7x, so the
+  idle-loop `hlt` wake-up, the one-tick GUI gate, the 25-tick scheduler divider
+  and the 20-tick demo sleeps all ran faster in wall time. No rendering code
+  got slower; the artificial speed-up was removed.
+- Mitigation: `TIMER_HZ` is 1000 and every cadence derives from it, so input is
+  polled ~10x more often while uptime, switch period, watchdog and socket
+  timers keep their real-time values. The render gates are now GUI 100 Hz,
+  TUI 20 Hz, sensors 20 Hz; mouse reports render immediately. Verified in QEMU
+  with `periodic 1000 Hz tick armed` and no panics.
+- The physical USB stick still carries the v2.78.0 (100 Hz) kernel; the 1000 Hz
+  image is staged in `aios-kernel-run/out/aios-kernel-usb-limine-1000hz.img`
+  and has not been flashed.
+
 ## RETIRED (v2.77.0): Linux Live USB path removed
 
 - The Linux initramfs/hybrid-ISO path (`live/` with `build.sh`, `init.rs`,

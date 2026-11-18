@@ -1178,27 +1178,28 @@ pub fn idle_loop() -> ! {
             last_tick_print = ticks;
         }
         stage_check("tickprint", &mut stage_mark);
-        // Monitor: the windowed GUI repaints at (at least) the 60 FPS target —
-        // every tick of the 100 Hz LAPIC/PIT timer with the RAM-backbuffer
-        // damage blit the cost is a memcpy of the live windows only. The TUI
-        // (which redraws straight to VRAM) keeps its ~20 Hz gate, and the lid /
-        // thermal probes refresh on their own 5-tick cadence regardless of the
-        // screen owner. Mouse motion additionally triggers an immediate render
-        // in the report bands below, so pointer feedback never waits a frame.
+        // Monitor: the windowed GUI repaints at 100 Hz, the TUI (which redraws
+        // straight to VRAM) keeps its ~20 Hz gate, and the lid / thermal probes
+        // refresh on that same slow cadence regardless of the screen owner. All
+        // gates derive from TIMER_HZ, so raising the tick rate to 1000 Hz sharpens
+        // input polling without changing any real-time interval. Mouse motion
+        // additionally triggers an immediate render in the report bands below,
+        // so pointer feedback never waits a frame.
         if ticks >= interrupts::TIMER_HZ {
-            if ticks - last_sensor_render >= 5 {
+            let slow_gate = (interrupts::TIMER_HZ / 20).max(1);
+            if ticks - last_sensor_render >= slow_gate {
                 lid::poll();
                 thermal::poll();
                 last_sensor_render = ticks;
             }
             if gui::active() {
                 gui::poll_crash();
-                let gate = (interrupts::TIMER_HZ / 60).max(1);
+                let gate = (interrupts::TIMER_HZ / 100).max(1);
                 if ticks - last_gui_render >= gate {
                     gui::render();
                     last_gui_render = ticks;
                 }
-            } else if ticks - last_tui_render >= 5 {
+            } else if ticks - last_tui_render >= slow_gate {
                 tui::render();
                 last_tui_render = ticks;
             }
@@ -1207,7 +1208,7 @@ pub fn idle_loop() -> ! {
         // Hardware heartbeat: toggles the bottom-right probe square (direct
         // framebuffer write, no CONSOLE_LOCK) so a live CPU is visible even if
         // the lock-based console is wedged. Toggles at 2 Hz (every half-second
-        // tick boundary); a per-iteration toggle would run at ~100 Hz and
+        // tick boundary); a per-iteration toggle would run at ~1000 Hz and
         // integrate into a steady fill that looks "not blinking". Paused while
         // the windowed GUI owns the screen (its desktop covers the strip).
         unsafe {

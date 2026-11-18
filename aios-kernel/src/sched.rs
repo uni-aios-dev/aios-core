@@ -491,7 +491,7 @@ pub fn schedule(frame: &mut InterruptFrame) {
 
     if next == 0 {
         // Rate-limit to one line per second: on a dead-PIC board the idle
-        // task synthesizes a tick every ~10 ms and would spam the console at
+        // task synthesizes a tick every ~1 ms and would spam the console at
         // ~100 lines/s while tasks sleep.
         let do_print = unsafe {
             #[allow(static_mut_refs)]

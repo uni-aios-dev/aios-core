@@ -3,7 +3,7 @@
 //! reachability check and the GUI-facing network state machine.
 //!
 //! The stack is deliberately small and entirely tick driven — [`poll`] runs
-//! from the idle loop every 10 ms tick, drains at most a bounded number of
+//! from the idle loop on every timer tick, drains at most a bounded number of
 //! frames and advances one step of the state machine:
 //!
 //! ```text
@@ -234,7 +234,7 @@ fn ticks() -> u64 {
     TICKS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// Current tick count (10 ms units), for the socket timers.
+/// Current tick count (`TIMER_HZ` units), for the socket timers.
 pub(crate) fn now_ticks() -> u64 {
     ticks()
 }
@@ -319,7 +319,7 @@ pub fn init(devices: &[PciDevice]) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Advances the stack one 10 ms tick: drains inbound frames, then runs the
+/// Advances the stack one timer tick: drains inbound frames, then runs the
 /// current state-machine step and republishes [`State`] for the GUI.
 pub fn poll() {
     let now = ticks();
