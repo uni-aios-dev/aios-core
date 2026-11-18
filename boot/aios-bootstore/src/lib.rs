@@ -27,12 +27,13 @@
 //! 4. Write the new manifest into the copy with the **lower sequence number**
 //!    ([`Store::stale_copy`]), naming the new slot as active and the old one as
 //!    previous.
-//! 5. Mark the old slot header [`SlotState::Retired`].
+//! 5. Mark the old slot header [`SlotState::Retired`], carrying the **new**
+//!    sequence and manifest CRC so the loader can still validate it.
 //!
 //! A crash before step 4 leaves the old manifest valid; a crash after step 4
 //! leaves the new manifest valid. The loader tries [`Manifest::active_slot`]
 //! first and falls back to [`Manifest::previous_slot`], which is the rollback
-//! path.
+//! path; step 5 is what keeps that fallback verifiable.
 //!
 //! # Boundaries
 //!
@@ -322,10 +323,15 @@ impl UpdatePlan {
     }
 
     /// The header to write for the slot the plan moved away from.
+    ///
+    /// The retired header carries the **new** sequence and manifest CRC, not
+    /// the old ones: the loader validates a slot against the manifest it just
+    /// read, so this is what makes the previous slot a usable automatic
+    /// fallback when the active slot fails verification.
     pub fn retired_header(&self) -> SlotHeader {
         SlotHeader::new(
             SlotState::Retired,
-            self.manifest.sequence.saturating_sub(1),
+            self.manifest.sequence,
             crc32::ieee(&self.manifest_bytes),
             u16::try_from(self.manifest.entry_count_for(self.manifest.previous_slot))
                 .unwrap_or(u16::MAX),
@@ -493,6 +499,30 @@ mod tests {
             store.plan_update(&many),
             Err(StoreError::TooManyEntries)
         ));
+    }
+
+    #[test]
+    fn retired_header_keeps_the_previous_slot_bootable() {
+        let store = store(5);
+        let plan = store
+            .plan_update(&[entry("blocks/new.wasm", 1, b"new")])
+            .unwrap();
+        let crc = crc32::ieee(&plan.manifest_bytes);
+        let retired = plan.retired_header();
+        assert_eq!(retired.sequence, plan.manifest.sequence);
+        assert!(retired.matches(0, &plan.manifest, crc));
+        assert_eq!(retired.entry_count, 1);
+    }
+
+    #[test]
+    fn rollback_retires_the_slot_it_moved_away_from() {
+        let store = store(5);
+        let plan = store.plan_rollback().unwrap();
+        let crc = crc32::ieee(&plan.manifest_bytes);
+        assert_eq!(plan.manifest.active_slot, 1);
+        assert_eq!(plan.manifest.previous_slot, 0);
+        assert!(plan.retired_header().matches(0, &plan.manifest, crc));
+        assert!(plan.active_header().matches(1, &plan.manifest, crc));
     }
 
     #[test]

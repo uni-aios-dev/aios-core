@@ -1,5 +1,47 @@
 # AIOS Development Log
 
+## v2.75.0 - Native boot M4.2: live-update writer and rollback on the ESP (2026-11-18)
+
+### Added
+- **`aios-storectl`** (`boot/aios-storectl`, standalone `std` crate, 11 unit
+  tests): the offline writer for `/aios/store`. `StoreIo` abstracts the ESP as
+  a path-keyed store and `DirStore` maps it onto a host directory, so the same
+  code updates a mounted ESP, the staged `boot/out/assets` tree or an in-memory
+  test store. `init` creates the first generation, `commit` copies payloads into
+  the inactive slot and applies `UpdatePlan` in order, `rollback` switches the
+  manifest back without touching payloads, and `verify` repeats the loader's
+  checks and names every rejected slot.
+- **Interruption simulation**: `commit --fail-after
+  payloads|staging|active|manifest|retired` stops after any checkpoint. The
+  returned `Commit::interrupted` and the CLI output name the step, so a power
+  loss is reproducible without real hardware.
+- **Staged store in `aios-image`**: the initial generation is written as real
+  files into `boot/out/assets/aios/store` through `aios-storectl::init`, checked
+  with `aios-storectl::verify` and then copied onto the FAT by `copy_tree`.
+  The duplicated direct FAT writer was removed. `--reuse-assets` builds an image
+  from an already-updated staged tree, keeping the new generation for QEMU.
+- **CLI**: `aios-storectl verify|update|rollback|init --esp <DIR> [--add
+  <module>=<FILE>] [--fail-after STEP] [--sequence N]` with a non-zero exit
+  status when no slot is bootable.
+
+### Fixed
+- `UpdatePlan::retired_header()` used `sequence - 1`, but the loader validates a
+  slot against the selected manifest. After an update the retired slot therefore
+  failed `matches()` and the `previous_slot` fallback could not boot, turning a
+  bad new payload into a bricked block set. It now carries the new sequence and
+  manifest CRC; two regression tests cover update and rollback fallbacks.
+
+### Verified
+- `aios-storectl` 11/11, `aios-bootstore` 26/26, `aios-image` 10/10;
+  `cargo clippy --all-targets -D warnings` and `cargo fmt --check` clean.
+- QEMU/OVMF, successful update: `store manifest sequence 2 (copy 0), active slot
+  1, previous slot 0`, `store slot 1 verified at sequence 2 (1 block(s))`, the
+  new block prints `hello from aios-wasmhost`.
+- QEMU/OVMF, tampered active payload: `store slot 1 unusable: payload checksum
+  mismatch`, `store slot 0 verified at sequence 2 (2 block(s))`, the old block
+  runs. QEMU/OVMF, `--fail-after staging`: the loader still selects sequence 1,
+  slot 0. CLI rollback after a completed update selects slot 0 at sequence 3.
+
 ## v2.74.0 - Native boot M4.1: persistent A/B store on the ESP (2026-11-17)
 
 ### Added

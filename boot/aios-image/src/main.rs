@@ -17,6 +17,11 @@
 //! checksummed manifest copies). Both the GPT and the FAT32 volume are written
 //! by this crate; no external tool is involved.
 //!
+//! The store is first materialised as real files in the staging tree
+//! (`boot/out/assets`) by the same writer `aios-storectl` uses for live updates,
+//! then copied onto the FAT. `--reuse-assets` skips the staging step, which is
+//! how the update/rollback QEMU runs rebuild an image from an edited tree.
+//!
 //! Usage:
 //!
 //! ```text
@@ -26,6 +31,7 @@
 //!   --no-run         build the image only
 //!   --headless       run QEMU without a display, serial on stdio
 //!   --timeout <sec>  stop QEMU after N seconds
+//!   --reuse-assets   reuse boot/out/assets instead of re-staging
 //! ```
 //!
 //! Environment: `AIOS_QEMU`, `AIOS_IMAGE_OUT`.
@@ -74,7 +80,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     let options = Options::parse(&boot_dir)?;
     let loader = build_loader(&boot_dir)?;
     let kernel = build_kernel(&core_dir)?;
-    let assets = stage_assets(&boot_dir.join("assets"))?;
+    let assets = if options.reuse_assets {
+        let staging = boot_dir.join("out").join("assets");
+        if !staging.is_dir() {
+            return Err(format!(
+                "{} does not exist; run without --reuse-assets first",
+                staging.display()
+            )
+            .into());
+        }
+        println!("aios-image: reusing {}", staging.display());
+        staging
+    } else {
+        stage_assets(&boot_dir.join("assets"))?
+    };
+    verify_assets(&assets)?;
     create_image(&options.out, &loader, &kernel, &assets)?;
     verify_image(&options.out)?;
     println!(
@@ -99,6 +119,8 @@ struct Options {
     headless: bool,
     /// Kill QEMU after this many seconds.
     timeout: Option<u64>,
+    /// Reuse `boot/out/assets` instead of rebuilding the staging tree.
+    reuse_assets: bool,
 }
 
 impl Options {
@@ -111,6 +133,7 @@ impl Options {
         let mut timeout = env::var("AIOS_QEMU_TIMEOUT")
             .ok()
             .and_then(|value| value.parse().ok());
+        let mut reuse_assets = false;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -120,6 +143,7 @@ impl Options {
                 }
                 "--no-run" => run = false,
                 "--headless" => headless = true,
+                "--reuse-assets" => reuse_assets = true,
                 "--timeout" => {
                     timeout = Some(
                         args.next()
@@ -130,7 +154,8 @@ impl Options {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "usage: aios-image [--out PATH] [--no-run] [--headless] [--timeout SECS]"
+                        "usage: aios-image [--out PATH] [--no-run] [--headless] \
+                         [--timeout SECS] [--reuse-assets]"
                     );
                     std::process::exit(0);
                 }
@@ -142,6 +167,7 @@ impl Options {
             run,
             headless,
             timeout,
+            reuse_assets,
         })
     }
 }
@@ -228,7 +254,68 @@ fn stage_assets(assets: &Path) -> Result<PathBuf, Box<dyn Error>> {
         }
         fs::remove_dir_all(&easylang)?;
     }
+    let blocks = stage_store(&staging.join("aios"))?;
+    println!("aios-image: store sequence 1: {blocks} block(s) in slot0, slot1 empty");
     Ok(staging)
+}
+
+/// Writes the initial persistent store generation into the staging tree.
+///
+/// Slot 0 carries every staged `*.wasm` block; slot 1 only gets an `Empty`
+/// header and both manifest copies are identical at sequence 1. The writer is
+/// `aios-storectl::init`, so the image and a live update share one commit
+/// implementation instead of duplicating the layout.
+fn stage_store(aios: &Path) -> Result<usize, Box<dyn Error>> {
+    let blocks = aios.join("blocks");
+    let mut payloads = Vec::new();
+    if blocks.is_dir() {
+        let mut files = fs::read_dir(&blocks)?.collect::<Result<Vec<_>, _>>()?;
+        files.sort_by_key(|entry| entry.file_name());
+        for entry in files {
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.to_ascii_lowercase().ends_with(".wasm") {
+                continue;
+            }
+            let module = format!("blocks/{name}");
+            let data = fs::read(entry.path())?;
+            println!(
+                "aios-image:   /aios/store/slot0/{name} ({} bytes)",
+                data.len()
+            );
+            payloads.push(aios_storectl::Payload {
+                name: module,
+                kind: MODULE_BLOCK as u8,
+                data,
+            });
+        }
+    }
+    let root = aios
+        .parent()
+        .ok_or("the staging aios directory has no parent")?;
+    aios_storectl::init(&aios_storectl::DirStore::new(root), &payloads, 1)?;
+    Ok(payloads.len())
+}
+
+/// Runs the loader's store verification against the staging tree.
+///
+/// This catches a broken generation before the FAT is written, and the same
+/// `aios-storectl verify` is what an offline live update checks afterwards.
+fn verify_assets(assets: &Path) -> Result<(), Box<dyn Error>> {
+    let verification = aios_storectl::verify(&aios_storectl::DirStore::new(assets))?;
+    for (slot, reason) in &verification.rejected {
+        println!("aios-image: staged slot {slot} unusable: {reason}");
+    }
+    let slot = verification
+        .boot_slot
+        .ok_or("the staged store has no bootable slot")?;
+    println!(
+        "aios-image: verified staged store sequence {}, slot {} ({} payload(s))",
+        verification.sequence, slot, verification.boot_entries
+    );
+    Ok(())
 }
 
 /// Recursively copies `from` into `to`.
@@ -285,76 +372,7 @@ fn create_image(
     let aios = fat.create_dir(fat32::ROOT_CLUSTER, "aios")?;
     fat.write_file(aios, "kernel.elf", &fs::read(kernel)?)?;
     copy_tree(&mut fat, aios, &assets.join("aios"), "")?;
-    write_store(&mut fat, aios, &assets.join("aios").join("blocks"))?;
     fat.finish()?;
-    Ok(())
-}
-
-/// Writes the initial persistent store generation.
-///
-/// Slot 0 carries every staged `*.wasm` block; slot 1 is empty and ready for the
-/// first live update. Both manifest copies are identical and start at sequence
-/// 1, and each slot has a checksummed header. The loader falls back to the
-/// drop-in `/aios/blocks` discovery when the store is missing or invalid.
-fn write_store(
-    fat: &mut fat32::Fat32<File>,
-    aios: u32,
-    blocks: &Path,
-) -> Result<(), Box<dyn Error>> {
-    let store = fat.create_dir(aios, "store")?;
-    let slot0 = fat.create_dir(store, aios_bootstore::SLOT_DIRS[0])?;
-    let slot1 = fat.create_dir(store, aios_bootstore::SLOT_DIRS[1])?;
-
-    let mut entries = Vec::new();
-    if blocks.is_dir() {
-        let mut files = fs::read_dir(blocks)?.collect::<Result<Vec<_>, _>>()?;
-        files.sort_by_key(|entry| entry.file_name());
-        for entry in files {
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.to_ascii_lowercase().ends_with(".wasm") {
-                continue;
-            }
-            let data = fs::read(entry.path())?;
-            let module = format!("blocks/{name}");
-            entries.push(
-                aios_bootstore::Entry::new(&module, MODULE_BLOCK as u8, 0, &data)
-                    .map_err(|error| format!("{module}: {error}"))?,
-            );
-            fat.write_file(slot0, &name, &data)?;
-            println!(
-                "aios-image:   /aios/store/slot0/{name} ({} bytes)",
-                data.len()
-            );
-        }
-    }
-
-    let mut manifest = aios_bootstore::Manifest::new(1, 0, 1);
-    manifest
-        .set_entries(&entries)
-        .map_err(|error| format!("initial store manifest: {error}"))?;
-    let manifest_bytes = manifest.encode();
-    let manifest_crc = aios_bootstore::crc32::ieee(&manifest_bytes);
-    let active = aios_bootstore::SlotHeader::new(
-        aios_bootstore::SlotState::Active,
-        manifest.sequence,
-        manifest_crc,
-        u16::try_from(entries.len())?,
-    );
-    fat.write_file(slot0, aios_bootstore::SLOT_HEADER_FILE, &active.encode())?;
-    fat.write_file(
-        slot1,
-        aios_bootstore::SLOT_HEADER_FILE,
-        &aios_bootstore::SlotHeader::EMPTY.encode(),
-    )?;
-    fat.write_file(store, aios_bootstore::MANIFEST_FILES[0], &manifest_bytes)?;
-    fat.write_file(store, aios_bootstore::MANIFEST_FILES[1], &manifest_bytes)?;
-    println!(
-        "aios-image: store sequence 1: {} block(s) in slot0, slot1 empty",
-        entries.len()
-    );
     Ok(())
 }
 

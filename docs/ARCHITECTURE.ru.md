@@ -1445,7 +1445,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
 Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
-## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`) — v2.74.0
+## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`) — v2.75.0
 
 AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
 `aios-boot` — собственное UEFI-приложение, `aios-bootinfo` — контракт
@@ -1497,6 +1497,12 @@ AIOS грузится на голом железе без Linux, Windows и ст
   `/aios/blocks/empty.wasm`, `/aios/blocks/hello.wasm`). `--headless` загружает образ в QEMU/OVMF,
   сохраняет COM1 в `boot/out/serial.log` и печатает его; `--no-run` только
   собирает и проверяет.
+  Начиная с M4.2 начальное хранилище сначала материализуется реальными файлами
+  в дереве стейджа через `aios-storectl::init`, и только потом `copy_tree`
+  переносит их в FAT; `verify_assets` проверяет это дерево через
+  `aios-storectl::verify`. Флаг `--reuse-assets` сохраняет уже отредактированное
+  `boot/out/assets` вместо повторного стейджа — так сценарии обновления и
+  отката в QEMU пересобирают образ, не теряя новое поколение.
 - Инвариант выравнивания стеков: вершина любого стека ядра должна быть
   выровнена на 16 байт. Статики `[u8; N]` имеют выравнивание 1, а
   `core::fmt::Arguments` помечает свою форму «статическая `&str`» битом
@@ -1581,10 +1587,10 @@ AIOS грузится на голом железе без Linux, Windows и ст
   `aios-easylang` — тот же компилятор для командной строки
   (`aios-easylang hello.easy [-o out.wasm] [--check]`). 21 юнит-тест
   компилирует, валидирует и исполняет программы через `aios-wasmhost`.
-- `aios-bootstore` (`boot/aios-bootstore`, `no_std` без `alloc`, v2.74.0,
-  M4.1): формат постоянного хранилища и политика коммита, общие для
+- `aios-bootstore` (`boot/aios-bootstore`, `no_std` без `alloc`, v2.75.0,
+  M4.1/M4.2): формат постоянного хранилища и политика коммита, общие для
   загрузчика и сборщика образа. Внутри нет ни одного обращения к файловой
-  системе, поэтому весь контракт тестируется на хосте (24 теста). Хранилище
+  системе, поэтому весь контракт тестируется на хосте (26 тестов). Хранилище
   лежит в `/aios/store`:
 
   ```text
@@ -1648,6 +1654,40 @@ AIOS грузится на голом железе без Linux, Windows и ст
     (copy 0), active slot 0, previous slot 1`, `store slot 0 verified at
     sequence 1 (2 block(s))`, `modules = 5 (3 conf, 2 wasm; ... +1 from store)`,
     а блок по-прежнему печатает `hello from aios-wasmhost`.
+- `aios-storectl` (`boot/aios-storectl`, `std`, отдельный крейт, v2.75.0, M4.2):
+  offline-писатель, который превращает `UpdatePlan` в реальные файлы ESP.
+  `StoreIo` — маленький trait над путями относительно корня ESP
+  (`aios/store/...`); `DirStore` реализует его для каталога на хосте, поэтому
+  инструмент работает с примонтированным ESP, с `boot/out/assets` или с
+  `MemoryStore` в тестах. Публичные операции: `init` (новое поколение в слоте 0),
+  `commit` (новое поколение в неактивный слот), `rollback` (переключить манифест
+  назад без копирования payload) и `verify` (повторить проверки загрузчика).
+  `commit` в точности следует порядку `UpdatePlan`: payload → заголовок
+  `Staging` → заголовок `Active` → устаревшая копия манифеста → заголовок
+  `Retired` старого слота, а `--fail-after
+  payloads|staging|active|manifest|retired` останавливает запись после любой
+  контрольной точки, имитируя обесточивание. `verify` сообщает sequence, оба
+  индекса слотов и каждую причину отказа, а CLI возвращает ненулевой статус,
+  если загружаемого слота нет. 11 модульных тестов покрывают все пять точек
+  прерывания, повреждённый payload с откатом на `previous_slot`, откат,
+  дубликаты/невалидные имена и чередование копий манифеста.
+- Инвариант, исправленный в M4.2: `UpdatePlan::retired_header()` несёт **новый**
+  sequence и новый CRC манифеста (не `sequence - 1`), потому что загрузчик
+  проверяет слот по тому манифесту, который только что выбрал. Без этого
+  активный слот загружался бы, но автоматический откат на `previous_slot`
+  проваливал проверку заголовка: обновление со сломанным новым payload
+  отключало бы блоки вместо отката.
+- Доказательство пути записи в QEMU/OVMF (каждый сценарий пересобирает образ из
+  дерева стейджа с `--reuse-assets`):
+  - успешный `update`: `store manifest sequence 2 (copy 0), active slot 1,
+    previous slot 0`, `store slot 1 verified at sequence 2 (1 block(s))`, новый
+    `blocks/updated.wasm` печатает `hello from aios-wasmhost`;
+  - повреждённый payload в слоте 1: `store slot 1 unusable: payload checksum
+    mismatch`, `store slot 0 verified at sequence 2 (2 block(s))`, вместо него
+    запускается старый `blocks/hello.wasm`;
+  - `update --fail-after staging`: загрузчик по-прежнему видит sequence 1,
+    активный слот 0 и исходный блок. Отдельный `rollback` через CLI возвращает
+    управление слоту 0 на sequence 3 без копирования payload.
 
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 

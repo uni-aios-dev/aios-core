@@ -1,0 +1,16 @@
+# aios-storectl: offline writer for the AIOS persistent boot store.
+#
+# Standalone host tool (std, no external dependencies): applies a live update to
+# a directory tree that mirrors the ESP (`<esp>/aios/store`), following the
+# commit order defined by `aios-bootstore`. It is the reference implementation
+# of the writer the kernel-side updater will reuse.
+[package]
+name = "aios-storectl"
+version = "0.1.0"
+edition = "2021"
+description = "Offline writer for the AIOS A/B boot store: commit, rollback, verify"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+aios-bootinfo = { path = "../aios-bootinfo" }
+aios-bootstore = { path = "../aios-bootstore" }

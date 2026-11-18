@@ -1,5 +1,51 @@
 # Журнал разработки AIOS
 
+## v2.75.0 - Собственная загрузка M4.2: писатель живых обновлений и откат на ESP (2026-11-18)
+
+### Добавлено
+- **`aios-storectl`** (`boot/aios-storectl`, отдельный `std`-крейт, 11
+  юнит-тестов): offline-писатель `/aios/store`. `StoreIo` абстрагирует ESP как
+  хранилище с путями-ключами, а `DirStore` отображает его на каталог хоста, так
+  что один и тот же код обновляет примонтированный ESP, дерево
+  `boot/out/assets` или in-memory тестовое хранилище. `init` создаёт первое
+  поколение, `commit` копирует payload в неактивный слот и применяет
+  `UpdatePlan` по порядку, `rollback` переключает манифест назад без
+  переписывания payload, а `verify` повторяет проверки загрузчика и называет
+  каждую причину отказа слота.
+- **Симуляция прерывания**: `commit --fail-after
+  payloads|staging|active|manifest|retired` останавливается после любой
+  контрольной точки. Возвращаемое `Commit::interrupted` и вывод CLI называют
+  шаг, поэтому обесточивание воспроизводимо без реального железа.
+- **Хранилище в стейдже `aios-image`**: начальное поколение сначала пишется
+  реальными файлами в `boot/out/assets/aios/store` через `aios-storectl::init`,
+  проверяется через `aios-storectl::verify` и лишь затем переносится в FAT
+  функцией `copy_tree`. Дублирующий прямой FAT-писатель удалён. Флаг
+  `--reuse-assets` собирает образ из уже обновлённого дерева стейджа,
+  сохраняя новое поколение для QEMU.
+- **CLI**: `aios-storectl verify|update|rollback|init --esp <DIR> [--add
+  <module>=<FILE>] [--fail-after STEP] [--sequence N]`; ненулевой статус
+  выхода, если загружаемого слота нет.
+
+### Исправлено
+- `UpdatePlan::retired_header()` использовал `sequence - 1`, но загрузчик
+  проверяет слот по выбранному манифесту. После обновления retired-слот не
+  проходил `matches()`, и откат на `previous_slot` не запускался: плохой новый
+  payload оставлял набор блоков нерабочим. Теперь заголовок несёт новый
+  sequence и CRC манифеста; два регрессионных теста покрывают откат после
+  обновления и после rollback.
+
+### Проверено
+- `aios-storectl` 11/11, `aios-bootstore` 26/26, `aios-image` 10/10;
+  `cargo clippy --all-targets -D warnings` и `cargo fmt --check` чисто.
+- QEMU/OVMF, успешное обновление: `store manifest sequence 2 (copy 0), active
+  slot 1, previous slot 0`, `store slot 1 verified at sequence 2 (1 block(s))`,
+  новый блок печатает `hello from aios-wasmhost`.
+- QEMU/OVMF, повреждённый активный payload: `store slot 1 unusable: payload
+  checksum mismatch`, `store slot 0 verified at sequence 2 (2 block(s))`,
+  запускается старый блок. QEMU/OVMF, `--fail-after staging`: загрузчик всё ещё
+  выбирает sequence 1, слот 0. Отдельный `rollback` через CLI после полного
+  обновления выбирает слот 0 на sequence 3.
+
 ## v2.74.0 - Собственная загрузка M4.1: постоянное A/B-хранилище на ESP (2026-11-17)
 
 ### Добавлено

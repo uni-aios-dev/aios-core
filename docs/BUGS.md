@@ -1,5 +1,22 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.75.0): a retired slot could not be used as a rollback target
+
+- **Symptom:** after a successful `update`, corrupting the new active payload
+  left the loader with no bootable slot, even though the manifest still named
+  `previous_slot` and that slot's payload files were intact.
+- **Cause:** `UpdatePlan::retired_header()` wrote `sequence - 1` for the old
+  slot. `SlotHeader::matches` compares the header against the *selected*
+  manifest (new sequence and CRC), so the retired header failed validation and
+  the fallback path rejected the slot before reading its payloads.
+- **Fix:** the retired header now carries the new manifest's sequence and CRC;
+  the commit-protocol docs and two regression tests describe and cover the
+  fallback after both `update` and `rollback`. QEMU/OVMF confirms a tampered
+  slot-1 payload boots slot 0 at the new sequence.
+- **Status:** closed in v2.75.0; there is no workaround needed for current
+  images, but an image built by v2.74.0 should be regenerated so its retired
+  header is verifiable.
+
 ## FIXED (v2.74.0): `aios-image` could not find `MANIFEST.A` in the store
 
 - **Symptom:** `verify_store` failed with "the store has no manifest.a entry"
