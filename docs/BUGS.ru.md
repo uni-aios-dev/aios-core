@@ -1,5 +1,17 @@
 # AIOS: Известные баги и обходные пути
 
+## УПРАЗДНЕНО (v2.77.0): Linux Live USB-путь удалён
+
+- Linux-initramfs/гибридный ISO-путь (`live/` с `build.sh`, `init.rs`,
+  `sfs-up.sh`, `aios-install`, `grub.cfg` и др., а также
+  `scripts/build-live-iso.*`, `scripts/fix-wsl2.ps1`, `scripts/_*.ps1`) намеренно
+  удалён. Более нижние разделы с упоминаниями `live/build.sh`,
+  `live/sfs-up.sh`, `live/aios-install` или `AIOS-LIVE` описывают исторические
+  баги этого упразднённого пути и оставлены без изменений для истории.
+- Текущая загрузка на железо: нативный UEFI-only образ GPT/ESP, который собирает
+  `aios-image` и записывает `aios-install`. Linux ISO, GRUB и initramfs не
+  участвуют. См. раздел Native UEFI Boot Chain в `docs/ARCHITECTURE.md`.
+
 ## FIXED (v2.76.1): `aios-install` не мог писать на физический диск в Windows
 
 - **Симптом:** запущенный с повышенными правами

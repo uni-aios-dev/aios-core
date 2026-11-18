@@ -359,7 +359,7 @@ StatefulBlock::handle_message() → Response(ok|err)             [aios-core::blo
 | `aios-daemon` (`aiosd`, 1 файл · 183 строки) | Headless-режим Docker/сервера | Загрузочные блоки, поток сердцебиений, периодическая запись в redb |
 | `aios-studio` (SPA) | Веб-панель, обслуживается bridge | Командная палитра, WS-график телеметрии, центр безопасности |
 | `aios-init` (отдельный, статический musl) | PID 1 для initramfs | Монтирование VFS, супервизор блоков (3 рестарта), сбор зомби, спасательная оболочка, передача в `/system/aios-core` |
-| Live ISO (`live/build.sh`) | Гибридный BIOS+UEFI образ | aios-init — `/init` по умолчанию; legacy busybox за `USE_BUSYBOX_INIT=1` |
+| Нативный UEFI-образ (`aios-image` → `aios-install`) | UEFI-only образ GPT/ESP | Заменил Linux Live ISO (`live/build.sh`) в v2.77.0 |
 
 ## 10. Bare-metal-ветка микроядра
 

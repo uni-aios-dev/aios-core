@@ -680,7 +680,7 @@ TUI не может отображать настоящие веб-страни�
 - `resolve_target()` реализует правило омнибокса, общее с TUI: полный `http(s)`-URL → как есть, голый хост → `https://`, всё остальное → запрос DuckDuckGo (HTML-версия)
 - Модуль `launcher` находит бинарник `aios-gui` (рядом с текущим исполняемым файлом, затем PATH) и запускает дашборд GUI
 
-**Гейтинг фич (v2.32.0):** движок wry/winit живёт в опциональной фиче `webview` (включена по умолчанию; на Linux она тянет крейт `gtk`). `launcher` и `resolve_target` — на чистом `std` и компилируются всегда, поэтому клавиша `W` в TUI работает даже при выключенном движке; под фичей остаются только `B`/`n` (ядерный `WebBrowser`) и вкладка Browser в GUI. Live-образ собирает `aios`/`aios-gui` с `--no-default-features`, но унификация фич через `aios-tui → aios-webview` снова включает webview: `live/build.sh` проверяет FATAL-ом, что оба основных бинарника слинкованы с `libwebkit2gtk-4.1`, потому что браузер с флешки — это обязательная поставка.
+**Гейтинг фич (v2.32.0):** движок wry/winit живёт в опциональной фиче `webview` (включена по умолчанию; на Linux она тянет крейт `gtk`). `launcher` и `resolve_target` — на чистом `std` и компилируются всегда, поэтому клавиша `W` в TUI работает даже при выключенном движке; под фичей остаются только `B`/`n` (ядерный `WebBrowser`) и вкладка Browser в GUI. Упразднённый Linux Live-образ собирал `aios`/`aios-gui` с `--no-default-features`, но унификация фич через `aios-tui → aios-webview` снова включала webview: удалённый сейчас `live/build.sh` проверял FATAL-ом, что оба основных бинарника слинкованы с `libwebkit2gtk-4.1`, потому что браузер с флешки был обязательной поставкой того пути. В нативном UEFI-образе такой проверки нет.
 
 ### Графический дашборд (`aios-gui`)
 
@@ -1376,30 +1376,16 @@ User Input (TUI)
 
 Браузер работает «из коробки» на новом компьютере: для запуска не нужны ни конфиг-файлы, ни установленный браузер, ни сеть — блок активен в топологии, доступен по IPC, а вкладка Web (`B`/`n`/омнибокс) открывает любой URL в нативном WebView.
 
-## Слой 7: Live USB развёртывание (`live/`)
+## Слой 7: Live USB развёртывание — упразднён (v2.77.0)
 
-### Обзор
-Каталог `live/` собирает гибридный (BIOS+UEFI) ISO-образ, который грузится сразу в TUI `aios` на Linux — без Windows и без предустановленной системы. Образ воспроизводимо собирается в Docker через `live/build.sh` и записывается на флешку.
-
-### Структура и цепочка загрузки
-- `live/build.sh` — сборка в Docker: Alpine 3.24 minirootfs (распаковка, `chroot` apk install), static-musl release сборки `aios` и `aios-gui` (`--no-default-features`, офлайн-крейты через монтирование registry из `CARGO_HOME`, сборка в `/tmp/target` во избежание I/O-ошибок NTFS bind-mount), X.org-юзерспейс в rootfs, squashfs из rootfs, кастомный initramfs, GRUB2
-- `live/init.rs` — init busybox (легаси, `USE_BUSYBOX_INIT=1`): сканирует блочные устройства, loop-mount `boot/aios.squashfs`, `switch_root` в него, запуск `rcS`
-- `live/sfs-up.sh` — скрипт подъёма юзерспейса для режима aios-init (по умолчанию): грузит модули storage/loop/squashfs/ext4 + GPU (DRM в порядке зависимостей с fbdev-фолбэками), находит `aios.squashfs` на флешке (или диск `root=`), bind-монтирует юзерспейс Alpine под `/`, поднимает сеть (`rcS`), eudev и **X.org на `:0` VT7**
-- `live/rcS` — mount proc/sys/dev, DHCP-сеть на всех ethernet/wifi-интерфейсах, запуск TUI AIOS на `tty1`
-- `live/aios-launch` — легаси/установленный режим: при необходимости поднимает X, экспортирует `DISPLAY=:0` + `AIOS_DATA_DIR=/tmp/.aios`, запускает `aios` на `tty1`, перезапуск при падении, откат в шелл
-- `live/aios-install` — интерактивный установщик: список дисков, выбор цели (например `sda`), разметка GPT (512 МБ EFI + ext4 root), копирование системы, выбор опциональных блоков, установка GRUB
-- `live/blocks.conf` + `live/blocks/` — каталог блоков для установщика: `live/blocks/` хранит опциональные payload `{name}_{version}.wasm|.bin` (+ sidecar `.json`), `live/blocks.conf` — выбор по умолчанию (`all`/`none`/список имён). `aios-install` копирует выбранный набор в `/blocks` целевой системы (его читает ядро через `AIOS_BLOCKS_DIR`) и записывает выбор в `/etc/aios/blocks.conf`; `live/build.sh` кладёт каталог в `/usr/share/aios/blocks`
-- `live/grub.cfg` — меню GRUB: **AIOS Live**, **AIOS Live (verbose)**, **AIOS Installer**; 10 с по умолчанию
-- `live/inittab` — без getty: `aios-launch` на tty1, askhell на tty2
-
-### Жизненный цикл
-- Загрузка: BIOS/UEFI → GRUB → initramfs init → `aios-init` (PID 1) монтирует proc/sys/dev/tmp, запускает `sfs-up.sh` (полный юзерспейс: X.org, GUI, инструменты, eudev, сеть через `rcS`), прописывает в окружение наблюдаемых блоков `DISPLAY=:0` / `AIOS_DATA_DIR=/tmp/.aios` / `XDG_RUNTIME_DIR=/run/aios` → ядерный TUI на консоли. `W` находит `aios-gui` по `PATH` (примонтирован из squashfs), наследует `DISPLAY=:0` и открывает дашборд (программный рендер llvmpipe; WebKitGTK не нужен). Корень squashfs только для чтения; `/tmp`, `/run`, `/var/log` на tmpfs. `Esc`/`q` в шелл `#` → `aios-install` для постоянной установки на диск (установленная система грузится с `root=` тем же initramfs и тоже получает GUI)
-- Флаги сборки: `aios`/`aios-gui` собираются с `--no-default-features` для Live-образа. Клавиша запуска GUI `W` продолжает работать, потому что лаунчер `aios-webview` не зависит от wry; выключены только хоткеи браузера `B`/`n` и вкладка Browser в GUI (см. feature `webview`)
-
-### Сборка на Windows (дополнение к v2.31.1)
-- `scripts/build-live-iso.ps1` оборачивает сборку в Docker выше (монтирует репозиторий, `live/` и host-реестр `~/.cargo/registry` как mount офлайн-крейтов) и выводит ISO/SHA256.
-- Если движок Docker не запускается, `scripts/fix-wsl2.ps1` (elevated) готовит бэкенд WSL2: включает `Microsoft-Windows-Subsystem-Linux` / `VirtualMachinePlatform`, ставит ядро WSL2 (`wsl --update` → `wsl --install --no-distribution` → MSI с `aka.ms/wslkernel`), затем запускает Docker Desktop.
-- Предусловие в прошивке: WSL2-ВМ требует **Intel VT-x, включённый в UEFI/BIOS**. При выключенном VT-x движок не поднимется даже после установки функций/ядра (проверка: `VirtualizationFirmwareEnabled` в CIM). Оба скрипта — чистый ASCII, чтобы обойти ANSI-декодирование BOM-less UTF-8 `.ps1` в PowerShell 5.1.
+Linux Live USB-путь (каталог `live/` с `build.sh`, `init.rs`, `sfs-up.sh`,
+`aios-install`, `grub.cfg` и др., а также скрипты `scripts/build-live-iso.*` и
+`scripts/fix-wsl2.ps1`) удалён в v2.77.0. Загрузка на железо теперь использует
+только нативный UEFI-only образ GPT/ESP, описанный в разделе Native UEFI Boot
+Chain: `aios-image` собирает его, `aios-install` записывает на диск. Инструменты
+initramfs `aios-init` из слоя 8 сохранены как отдельный компонент, но больше не
+встроены в поставляемый Linux Live ISO. Прежние вехи с упоминанием `live/`
+остались в журнале изменений как история.
 
 ## Слой 8: `aios-init` и автономный initramfs (`aios-init/`, `build_initramfs.sh`)
 
@@ -1427,8 +1413,8 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 ```
 Скрипт выполняет `cargo build --release --target x86_64-unknown-linux-musl` для `aios-init` и (если не задан `--no-aios-core`/`SKIP_AIOS_CORE=1`) `cargo build -p aios --release --target x86_64-unknown-linux-musl --no-default-features` для реального ядерного TUI. Он формирует структуру в `rootfs/`, копирует `aios-init` в `/init` и `aios` в `/system/aios-core`, затем упаковывает `find . | cpio --null -ov --format=newc | gzip -9`. Защита очистки отказывается удалять путь за пределами каталога скрипта; `--keep-rootfs` сохраняет стейджинг-каталог. Когда присутствует `/system/aios-core`, `aios-init` сразу загружает полный ядерный TUI; спасательный шелл остаётся только запасным вариантом (v2.13.0).
 
-### Вариант Live-образа (aios-init по умолчанию)
-Шаг [4] в `live/build.sh` по умолчанию упаковывает aios-init-initramfs: `aios-init` как `/init`, бинарник `aios` как `/system/aios-core`, busybox только как спасательный шелл + скрипт `sfs-up.sh`, копируемый в initramfs (подъём юзерспейса и X.org в `bring_userspace`) — ядро грузится сразу в полный юзерспейс с ядерным TUI на консоли и GUI-дашбордом по `W`; шаг [5] записывает отдельное GRUB-меню с записями `init=/init console=tty0`. Прежний вариант busybox-initramfs (монтирование squashfs + `switch_root`, `init.rs`) сохранён за флагом-отключением `USE_BUSYBOX_INIT=1` (v2.14.0; в v2.13.0 aios-init включался опционально через `USE_AIOS_INIT=1`).
+### Вариант Live-образа (исторический, удалён в v2.77.0)
+Удалённый `live/build.sh` по умолчанию упаковывал aios-init-initramfs: `aios-init` как `/init`, бинарник `aios` как `/system/aios-core`, busybox только как спасательный шелл + скрипт `sfs-up.sh`, копируемый в initramfs (подъём юзерспейса и X.org в `bring_userspace`) — ядро грузилось сразу в полный юзерспейс с ядерным TUI на консоли и GUI-дашбордом по `W`; отдельное GRUB-меню с записями `init=/init console=tty0` записывалось на шаге [5]. Прежний вариант busybox-initramfs (монтирование squashfs + `switch_root`, `init.rs`) хранился за флагом-отключением `USE_BUSYBOX_INIT=1` (v2.14.0; в v2.13.0 aios-init включался опционально через `USE_AIOS_INIT=1`). Этот путь больше не поставляется; см. пометку об упразднённом слое 7 выше.
 
 ### Параметры ядра Linux
 - GRUB: `menuentry "AIOS" { linux /boot/vmlinuz init=/init console=tty0 quiet; initrd /boot/initramfs.cpio.gz; }`
@@ -2097,9 +2083,10 @@ GPU-модуль создаёт его только через DRM-драйве�
 
 ### Runtime установщика
 
-`/init` или `/installer` — это PID 1 интрамфса; обёртка установщика (`/installer`)
-поднимает proc/sys, `tmpfs` `/dev` с busybox `mdev -s`, затем `exec`-ает
-`aios-install` (`aios-core/live/aios-install`). Подъём устройств без udev:
+`/init` или `/installer` были PID 1 интрамфса упразднённого Linux Live-пути;
+обёртка установщика (`/installer`) поднимала proc/sys, `tmpfs` `/dev` с busybox
+`mdev -s`, затем `exec`-овала старый `aios-install`
+(`aios-core/live/aios-install`, удалён в v2.77.0). Подъём устройств был без udev:
 
 1. модули ядра storage/filesystem грузятся через busybox `modprobe` (в initramfs
    лежит дерево модулей ядра, включая `modules.dep`/`modules.symbols`),

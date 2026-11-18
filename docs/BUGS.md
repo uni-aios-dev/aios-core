@@ -1,5 +1,18 @@
 # AIOS Known Bugs & Workarounds
 
+## RETIRED (v2.77.0): Linux Live USB path removed
+
+- The Linux initramfs/hybrid-ISO path (`live/` with `build.sh`, `init.rs`,
+  `sfs-up.sh`, `aios-install`, `grub.cfg`, etc., and `scripts/build-live-iso.*`,
+  `scripts/fix-wsl2.ps1`, `scripts/_*.ps1`) was intentionally removed. Older
+  sections below that mention `live/build.sh`, `live/sfs-up.sh`,
+  `live/aios-install` or `AIOS-LIVE` describe historical bugs of that retired
+  path and are kept unchanged for the record.
+- Current bare-metal deployment: the native UEFI-only GPT/ESP image built by
+  `aios-image` and written with `aios-install`. No Linux ISO, GRUB or initramfs
+  is involved. See the Native UEFI Boot Chain section in
+  `docs/ARCHITECTURE.md`.
+
 ## FIXED (v2.76.1): `aios-install` could not write to a physical disk on Windows
 
 - **Symptom:** an elevated `aios-install --device \\.\PhysicalDriveN --write

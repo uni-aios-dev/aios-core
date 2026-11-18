@@ -1,5 +1,32 @@
 # Журнал разработки AIOS
 
+## v2.77.0 - Собственная загрузка: упразднён старый Linux Live USB-путь (2026-11-18)
+
+### Удалено
+- Старый Linux Live USB-путь упразднён. Удалён весь каталог `live/`
+  (`build.sh`, `init.rs`, `sfs-up.sh`, `rcS`, `aios-launch`, `aios-install`,
+  `grub.cfg`, `inittab`, `blocks.conf`, `blocks/README.md`,
+  `out/aios-live.iso`), хост-скрипты сборки `scripts/build-live-iso.ps1`,
+  `scripts/build-live-iso.sh`, `scripts/fix-wsl2.ps1`, а также временные
+  `scripts/_*.ps1`, использовавшиеся при отладке M5.1. Удалён мёртвый
+  `.github/workflows/live-iso.yml` (собирал и выкладывал тот ISO) и устаревшее
+  упоминание `live/build.sh` в `aios/Cargo.toml`.
+- Причина: поддерживаемый путь загрузки на железо — это нативный UEFI-only
+  образ GPT/ESP (`aios-image` собирает его, `aios-install` записывает на диск).
+  Linux-initramfs/гибридный ISO-установщик дублировал эту роль и больше не
+  поддерживается. Прежние вехи Limine/AIOS-LIVE остались в истории журнала и в
+  `docs/TODO.md`.
+
+### Сохранено
+- `scripts/install.ps1`, `scripts/install.sh`, `scripts/qemu-smoke.ps1` и
+  `scripts/flash-usb.ps1` (хост-установка/QEMU/запись Limine-флешки) не относятся
+  к Linux Live-пути и остались без изменений.
+
+### Документация
+- `docs/ARCHITECTURE.md`, `docs/INTERFACE.md`, `docs/SCHEME.md`, `docs/TODO.md`
+  и их `.ru.md`-версии теперь описывают только нативный UEFI-путь; исторические
+  записи с упоминанием упразднённого пути оставлены без изменений.
+
 ## v2.76.1 - Собственная загрузка M5.1: реальная запись на USB проверена (2026-11-18)
 
 ### Исправлено

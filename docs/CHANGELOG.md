@@ -1,5 +1,32 @@
 # AIOS Development Log
 
+## v2.77.0 - Native boot: retire the legacy Linux Live USB path (2026-11-18)
+
+### Removed
+- The old Linux Live USB path is gone. Deleted the whole `live/` directory
+  (`build.sh`, `init.rs`, `sfs-up.sh`, `rcS`, `aios-launch`, `aios-install`,
+  `grub.cfg`, `inittab`, `blocks.conf`, `blocks/README.md`, `out/aios-live.iso`)
+  and the host build helpers `scripts/build-live-iso.ps1`,
+  `scripts/build-live-iso.sh` and `scripts/fix-wsl2.ps1`, plus the temporary
+  `scripts/_*.ps1` debug scripts from the M5.1 bring-up. The dead
+  `.github/workflows/live-iso.yml` (which built and uploaded that ISO) was
+  deleted, and the stale `live/build.sh` note in `aios/Cargo.toml` was removed.
+- Rationale: the supported bare-metal path is now the native UEFI-only GPT/ESP
+  image (`aios-image` produces it, `aios-install` writes it to a disk). The
+  Linux initramfs/hybrid-ISO installer duplicated that role and is no longer
+  maintained. The earlier Limine/AIOS-LIVE ISO milestones are kept as history
+  in this log and in `docs/TODO.md`.
+
+### Kept
+- `scripts/install.ps1`, `scripts/install.sh`, `scripts/qemu-smoke.ps1` and
+  `scripts/flash-usb.ps1` (host install/QEMU/Limine-stick tooling) are not part
+  of the Linux Live path and remain unchanged.
+
+### Docs
+- `docs/ARCHITECTURE.md`, `docs/INTERFACE.md`, `docs/SCHEME.md`, `docs/TODO.md`
+  and their `.ru.md` counterparts now describe only the native UEFI path;
+  historical entries that mention the retired path were left intact.
+
 ## v2.76.1 - Native boot M5.1: real USB write verified (2026-11-18)
 
 ### Fixed

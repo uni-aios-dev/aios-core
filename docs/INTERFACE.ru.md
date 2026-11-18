@@ -29,38 +29,12 @@ aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2 --write -
 
 ---
 
-## Live USB (загрузочная флешка)
+## Live USB (упразднён в v2.77.0)
 
-Загрузочная флешка AIOS (`AIOS-LIVE`, гибридный BIOS+UEFI ISO) загружается сразу в TUI ядра AIOS на `tty1`. Промпта входа нет. Консоль ядра, TUI, установщик и аварийный шелл выводятся на VGA-экран (`console=ttyS0 console=tty0` в `limine.conf`); serial-вывод сохранён для диагностики.
-
-- Загрузите машину с флешки (меню загрузки BIOS/UEFI → USB). Limine показывает меню (6 с по умолчанию):
-  1. **AIOS Live (kernel TUI)** — загрузка initramfs AIOS и автозапуск TUI AIOS
-  2. **AIOS Installer** — загрузка того же initramfs с `rdinit=/installer`; установщик запускается автоматически
-- В TUI нажмите `Esc`/`q`, чтобы выйти в шелл `#`. Система только для чтения; записываемы только `/tmp`, `/run`, `/var/log` (tmpfs). Изменения не сохраняются между перезагрузками.
-- Сеть: при загрузке выполняется попытка DHCP на всех ethernet/wifi-интерфейсах (см. вкладку Network в TUI — там адрес).
-- Запись **AIOS Installer** показывает список дисков, запрашивает целевой (например `sda`), требует подтверждения `YES`, затем размечает диск (GPT: 1 МиБ BIOS boot + 512 МиБ EFI + ext4 root), копирует систему, спрашивает, какие опциональные **блоки** установить (см. ниже), и ставит GRUB (BIOS i386-pc + UEFI x86_64 EFI removable). Перезагрузитесь после сообщения об успехе.
-- **Выбор блоков при установке:** установщик читает каталог блоков из `/usr/share/aios/blocks` и выбор по умолчанию из `/etc/aios/blocks.conf` (`all`, `none` или список имён). Он спрашивает `Blocks to install [all/none/name ...]` (Enter берёт значение по умолчанию), копирует выбранные `{name}_{version}.wasm|.bin` (+ sidecar `.json`) в `/blocks` устанавливаемой системы и записывает итоговый список в `/etc/aios/blocks.conf` на цели. Именно эти блоки ядро грузит при загрузке (`AIOS_BLOCKS_DIR`); вкомпилированный базовый набор (`hal`, `browser`, `net_settings`, `ipc_bus`, `scheduler`) есть всегда и в списке не участвует. При автоматической установке (`aios.yes`/`AUTO=1`) берётся выбор по умолчанию без вопроса.
-- Автоматическая установка: передайте `aios.target=<устройство>` и `aios.yes` в командной строке ядра, чтобы пропустить интерактивные запросы (для автоматической/безлюдной установки). `aios.verbose` дополнительно выводит финальную таблицу разделов.
-- Установщик пишет **журнал установки** с метками времени в `/aios-install.log` в корневом разделе целевого диска (каждый шаг вплоть до `AIOS INSTALL COMPLETE`), так что любая ошибка физической установки читается после повторной загрузки с целевого диска. Если корневой раздел уже несёт метку AIOS, интерактивная установка потребует `Type YES to FORCE reinstall` перед затиранием.
-
-### Сборка ISO
-
-На Linux/macOS с Docker:
-
-```
-docker run --rm -it -v "$PWD:/src" -v "$PWD/live:/work" \
-  -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
-  rust:alpine sh /work/build.sh
-```
-
-На Windows c Docker Desktop (бэкенд WSL2 — **Intel VT-x должен быть включён в UEFI/BIOS**):
-
-```
-powershell -ExecutionPolicy Bypass -File scripts\fix-wsl2.ps1        # (1) подготовить WSL2 и запустить движок
-powershell -ExecutionPolicy Bypass -File scripts\build-live-iso.ps1  # (2) собрать live\out\aios-live.iso
-```
-
-Результат — `live/out/aios-live.iso` (гибрид BIOS+UEFI). Запишите его через Rufus/Ventoy.
+Старый Linux Live USB-образ (`AIOS-LIVE`, гибридный BIOS+UEFI ISO, который
+собирался из `live/build.sh`) больше не поставляется: каталог `live/` и скрипты
+`scripts/build-live-iso.*` / `scripts/fix-wsl2.ps1` удалены. Используйте нативный
+UEFI-only образ GPT/ESP и `aios-install`, описанные выше.
 
 ---
 

@@ -359,7 +359,7 @@ Core types: `BridgeContext` (shared subsystem handles), `IntentParser` (RU/EN ke
 | `aios-daemon` (`aiosd`, 1 file · 183 ln) | Headless Docker/server mode | Boot blocks, heartbeat thread, periodic redb persistence |
 | `aios-studio` (SPA) | Web dashboard served by bridge | Command palette, WS telemetry chart, security center |
 | `aios-init` (standalone, musl static) | PID 1 for initramfs | VFS mounts, block supervisor (3 restarts), zombie reaping, rescue shell, handover to `/system/aios-core` |
-| Live ISO (`live/build.sh`) | Hybrid BIOS+UEFI image | aios-init default `/init`; busybox legacy behind `USE_BUSYBOX_INIT=1` |
+| Native UEFI image (`aios-image` → `aios-install`) | UEFI-only GPT/ESP disk image | Replaced the Linux Live ISO (`live/build.sh`) in v2.77.0 |
 
 ## 10. Bare-Metal Microkernel Track
 

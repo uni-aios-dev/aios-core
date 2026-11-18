@@ -29,38 +29,12 @@ aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2 --write -
 
 ---
 
-## Live USB (bootable stick)
+## Live USB (retired in v2.77.0)
 
-The bootable AIOS USB stick (`AIOS-LIVE`, hybrid BIOS+UEFI ISO) boots straight into the AIOS kernel TUI on `tty1`. There is no login prompt. Kernel console, the TUI, the installer and the rescue shell are shown on the VGA screen (`console=ttyS0 console=tty0` in `limine.conf`); the serial head is kept for diagnostics.
-
-- Boot the machine from the USB stick (BIOS/UEFI boot menu → USB). Limine shows a menu (6 s default):
-  1. **AIOS Live (kernel TUI)** — boots the AIOS initramfs and auto-launches the AIOS TUI
-  2. **AIOS Installer** — boots the same initramfs with `rdinit=/installer`; the installer auto-runs
-- Inside the TUI press `Esc`/`q` to exit to the shell prompt `#`. The system is read-only; only `/tmp`, `/run`, `/var/log` are writable (tmpfs). Changes do not persist across reboots.
-- Network: DHCP is attempted on all ethernet/wifi interfaces at boot (see the TUI Network tab for the assigned address).
-- The **AIOS Installer** entry lists the disks, asks for the target (e.g. `sda`), requires confirmation `YES`, then partitions the disk (GPT: 1 MiB BIOS boot + 512 MiB EFI + ext4 root), copies the system, asks which optional **blocks** to install (see below), and installs GRUB (BIOS i386-pc + UEFI x86_64 EFI removable). Reboot after the success message.
-- **Block selection at install time:** the installer reads a block catalog from `/usr/share/aios/blocks` and a default selection from `/etc/aios/blocks.conf` (`all`, `none`, or a name list). It prompts `Blocks to install [all/none/name ...]` (Enter takes the default), copies the chosen `{name}_{version}.wasm|.bin` (+ sidecar `.json`) into the installed system's `/blocks`, and records the final list in `/etc/aios/blocks.conf` on the target. Those are the blocks the kernel loads at boot (`AIOS_BLOCKS_DIR`); the compiled-in base set (`hal`, `browser`, `net_settings`, `ipc_bus`, `scheduler`) is always present and is not listed. In automated installs (`aios.yes`/`AUTO=1`) the default selection is used without prompting.
-- Automated install: pass `aios.target=<dev>` and `aios.yes` on the kernel command line to skip the interactive prompts (used for unattended/scripted installs). `aios.verbose` additionally dumps the final partition table.
-- The installer writes a timestamped **install journal** to `/aios-install.log` on the target root partition (every step up to `AIOS INSTALL COMPLETE`), so any failure of a physical install is readable after booting the target again. If the target root partition already carries the AIOS label, an interactive install asks `Type YES to FORCE reinstall` before wiping.
-
-### Building the ISO
-
-On Linux/macOS with Docker:
-
-```
-docker run --rm -it -v "$PWD:/src" -v "$PWD/live:/work" \
-  -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
-  rust:alpine sh /work/build.sh
-```
-
-On Windows with Docker Desktop (WSL2 backend — **Intel VT-x must be enabled in the UEFI/BIOS**):
-
-```
-powershell -ExecutionPolicy Bypass -File scripts\fix-wsl2.ps1        # (1) provision WSL2 + start the engine
-powershell -ExecutionPolicy Bypass -File scripts\build-live-iso.ps1  # (2) build live\out\aios-live.iso
-```
-
-The result is `live/out/aios-live.iso` (hybrid BIOS+UEFI). Flash it with Rufus/Ventoy.
+The old Linux Live USB image (`AIOS-LIVE`, a hybrid BIOS+UEFI ISO built from
+`live/build.sh`) is no longer shipped: the `live/` directory and the
+`scripts/build-live-iso.*` / `scripts/fix-wsl2.ps1` helpers were removed. Use
+the native UEFI-only GPT/ESP image and `aios-install` described above instead.
 
 ---
 
