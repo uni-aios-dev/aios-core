@@ -6,6 +6,11 @@
 //! (`aios-kernel-usb.img`) is a bootable USB stick: legacy BIOS boots it through
 //! the Limine MBR, UEFI through the ESP partition's `BOOTX64.EFI`.
 //!
+//! The kernel is built with `--features limine` here: Limine resolves its own
+//! requests and the kernel translates them into the shared `BootInfo`. The
+//! UEFI-only image (`boot/aios-image`) builds the very same crate without that
+//! feature, so `aios-boot` keeps supplying `BootInfo` in `rdi`.
+//!
 //! All external tool locations can be overridden with environment variables:
 //!   AIOS_LIMINE_DIR   directory holding limine-bios-cd.bin / limine-uefi-cd.bin
 //!   AIOS_LIMINE_TOOL  path to the `limine` host tool (bios-install)
@@ -84,6 +89,7 @@ fn build_kernel(target_dir: &Path) -> PathBuf {
         .args(["build", "--manifest-path"])
         .arg(&manifest)
         .args(["--target", "x86_64-unknown-none", "--release"])
+        .args(["--features", "limine"])
         .env("CARGO_TARGET_DIR", target_dir)
         .status()
         .expect("failed to spawn cargo for the kernel build");

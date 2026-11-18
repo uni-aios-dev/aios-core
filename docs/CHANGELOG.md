@@ -1,5 +1,52 @@
 # AIOS Development Log
 
+## v2.78.0 - Restore the Limine/legacy BIOS boot path (2026-11-18)
+
+### Fixed
+- The working Legacy image on the laptop was built on 2026-10-06, but the
+  source tree had lost its Limine path: commit `6f03a1a` converted
+  `aios-kernel` to the UEFI-only `aios-boot` hand-off. The Limine branch was
+  therefore not reproducible from the current sources. It is restored as a
+  Cargo feature instead of replacing the UEFI path:
+  - `aios-kernel/Cargo.toml`: optional `limine = "=0.6.5"` dependency,
+    `default = []`, `limine = ["dep:limine"]`.
+  - `linker.ld`: `KEEP`s the `.requests_start` / `.requests` / `.requests_end`
+    sections so Limine can find the requests in the `limine` build.
+  - `main.rs`: the request statics and a no-argument `_start` exist only with
+    `--features limine`; without the feature `_start(bootinfo: *const BootInfo)`
+    is the unchanged `aios-boot` entry point. Both enter a shared `kmain`.
+    `limine_bootinfo()` translates the resolved requests into the existing
+    `BootInfo` contract: HHDM offset, RSDP, the first VBE/GOP framebuffer
+    (physical address = `fb.address() - hhdm`, so `Framebuffer::new` applies
+    the offset exactly once) and the `MEMMAP_USABLE` regions.
+  - `aios-kernel-run` now builds the kernel with `--features limine`; the
+    native UEFI image (`aios-image`) keeps building the same crate with no
+    features. `boot.rs` / `framebuffer.rs` comments now describe both paths.
+
+### Verified
+- `cargo build --release --target x86_64-unknown-none` and the same command with
+  `--features limine` both succeed; `cargo clippy ... -D warnings` is clean for
+  both, as is `cargo fmt`.
+- QEMU with legacy BIOS, booted from a patched copy of the hybrid image (the
+  freshly built kernel was redirected to LBA 32 instead of LBA 1585, leaving
+  the working image untouched): serial log `boot/out/limine-legacy-serial.log`
+  shows `aios-kernel: Limine handoff`, `framebuffer = 1280x800 pitch=5120
+  bpp=4 usable=true addr=0xffff8000fd000000`, `framebuffer self-check OK`,
+  `usable memory regions = 3`, `paging selftest OK.`, heap tests, `interrupts
+  online.`, the scheduler, IPC and socket ping-pong ticks — no panic.
+
+### Notes
+- A full ISO/USB rebuild from current sources is still blocked in this
+  environment: `iso/limine/limine-binary` (`limine-bios-cd.bin`,
+  `limine-uefi-cd.bin`, `limine-bios.sys`, `BOOTX64.EFI`) and `xorriso.exe` are
+  absent and the old `C:\MyProject\AIOS` tree no longer exists. The physical
+  stick in `\\.\PhysicalDrive3` was **not** rewritten: it still carries the
+  working 2026-10-06 Limine image (SHA-256
+  `F5E8EB7E459D7309FEA4FDCBE258BF13B1DD47A4F6A33A992FD2FFB808DA420B`).
+  Re-flashing it requires an explicit confirmation.
+- Limine hands off `modules` and `kernel_phys/virt/size` as zero; `config::init()`
+  handles zero modules, so this is a documented limitation, not a boot failure.
+
 ## v2.77.1 - Legacy BIOS validation: Limine hybrid image flashed to the USB stick (2026-11-18)
 
 ### Verified

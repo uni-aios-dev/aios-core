@@ -1,5 +1,52 @@
 # Журнал разработки AIOS
 
+## v2.78.0 - Восстановлен путь загрузки Limine / Legacy BIOS (2026-11-18)
+
+### Исправлено
+- Рабочий Legacy-образ на ноуте был собран 06.10.2026, но в исходниках путь
+  Limine потерялся: коммит `6f03a1a` перевёл `aios-kernel` на UEFI-only handoff
+  `aios-boot`. Из актуальных исходников ветка не восстанавливалась. Она
+  возвращена через Cargo-feature, не заменяя UEFI-путь:
+  - `aios-kernel/Cargo.toml`: опциональная зависимость `limine = "=0.6.5"`,
+    `default = []`, `limine = ["dep:limine"]`.
+  - `linker.ld`: `KEEP` секций `.requests_start` / `.requests` /
+    `.requests_end`, чтобы Limine находил запросы в сборке с `limine`.
+  - `main.rs`: статики запросов и `_start` без аргументов существуют только при
+    `--features limine`; без feature `_start(bootinfo: *const BootInfo)`
+    остаётся прежней точкой входа `aios-boot`. Обе ведут в общий `kmain`.
+    `limine_bootinfo()` преобразует запросы в существующий контракт `BootInfo`:
+    смещение HHDM, RSDP, первый VBE/GOP-framebuffer (физический адрес =
+    `fb.address() - hhdm`, поэтому `Framebuffer::new` применяет offset ровно
+    один раз) и регионы `MEMMAP_USABLE`.
+  - `aios-kernel-run` теперь собирает ядро с `--features limine`; нативный
+    UEFI-образ (`aios-image`) собирает тот же крейт без features. Комментарии
+    в `boot.rs` / `framebuffer.rs` описывают оба пути.
+
+### Проверено
+- `cargo build --release --target x86_64-unknown-none` и та же команда с
+  `--features limine` проходят; `cargo clippy ... -D warnings` чист для обоих
+  вариантов, как и `cargo fmt`.
+- QEMU с Legacy BIOS, загрузка с пропатченной копии гибридного образа (свежее
+  ядро перенаправлено на LBA 32 вместо 1585, рабочий образ не тронут): serial-лог
+  `boot/out/limine-legacy-serial.log` содержит `aios-kernel: Limine handoff`,
+  `framebuffer = 1280x800 pitch=5120 bpp=4 usable=true addr=0xffff8000fd000000`,
+  `framebuffer self-check OK`, `usable memory regions = 3`, `paging selftest OK.`,
+  тесты кучи, `interrupts online.`, планировщик, IPC и тики socket ping-pong —
+  паники нет.
+
+### Заметки
+- Полная пересборка ISO/USB из актуальных исходников в этом окружении по-прежнему
+  невозможна: отсутствуют `iso/limine/limine-binary` (`limine-bios-cd.bin`,
+  `limine-uefi-cd.bin`, `limine-bios.sys`, `BOOTX64.EFI`) и `xorriso.exe`, а старое
+  дерево `C:\MyProject\AIOS` больше не существует. Флешка
+  `\\.\PhysicalDrive3` **не перезаписывалась**: на ней остался рабочий образ
+  Limine от 06.10.2026 с SHA-256
+  `F5E8EB7E459D7309FEA4FDCBE258BF13B1DD47A4F6A33A992FD2FFB808DA420B`.
+  Для перепрошивки требуется явное подтверждение.
+- Limine передаёт `modules` и `kernel_phys/virt/size` равными нулю;
+  `config::init()` корректно обрабатывает ноль модулей, поэтому это задокументированное
+  ограничение, а не отказ загрузки.
+
 ## v2.77.1 - Проверка на Legacy BIOS: на флешку записан гибридный Limine-образ (2026-11-18)
 
 ### Проверено

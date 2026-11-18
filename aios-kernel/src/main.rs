@@ -44,12 +44,79 @@ use aios_bootinfo::BootInfo;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 
+#[cfg(feature = "limine")]
+use aios_bootinfo::{FramebufferInfo, MemoryRegion, MAX_MEMORY_REGIONS, MEM_USABLE};
+#[cfg(feature = "limine")]
+use limine::request::{
+    EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, RsdpRequest,
+    StackSizeRequest,
+};
+#[cfg(feature = "limine")]
+use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
+
 // Driver status published for the TUI dashboard: -1 = no controller, 0 = init
 // failed, 1 = online, 2 = online and a sector read-back succeeded.
 pub static G_AHCI: AtomicI32 = AtomicI32::new(-1);
 pub static G_NVME: AtomicI32 = AtomicI32::new(-1);
 pub static G_XHCI: AtomicI32 = AtomicI32::new(-1);
 pub static G_NET: AtomicI32 = AtomicI32::new(-1);
+
+/// Loader name shown in the boot log, chosen by the compiled hand-off path.
+#[cfg(feature = "limine")]
+const LOADER_NAME: &str = "Limine";
+/// Loader name shown in the boot log, chosen by the compiled hand-off path.
+#[cfg(not(feature = "limine"))]
+const LOADER_NAME: &str = "aios-boot";
+
+// --- Limine boot protocol requests ----------------------------------------
+//
+// Kept alive by the `.requests*` sections in linker.ld. Limine scans them
+// between the markers and resolves the response pointers before `_start`.
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests_start"]
+static REQUESTS_START: RequestsStartMarker = RequestsStartMarker::new();
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static BASE_REVISION: BaseRevision = BaseRevision::new();
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static MEMMAP_REQUEST: MemmapRequest = MemmapRequest::new();
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static STACK_SIZE_REQUEST: StackSizeRequest = StackSizeRequest::new(64 * 1024);
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests"]
+static ENTRY_POINT_REQUEST: EntryPointRequest = EntryPointRequest::new(_start);
+
+#[cfg(feature = "limine")]
+#[used]
+#[link_section = ".requests_end"]
+static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 
 /// Size of the kernel double-fault stack, in bytes.
 const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
@@ -68,7 +135,7 @@ struct DoubleFaultStack([u8; DOUBLE_FAULT_STACK_SIZE]);
 static DOUBLE_FAULT_STACK: DoubleFaultStack = DoubleFaultStack([0; DOUBLE_FAULT_STACK_SIZE]);
 
 /// Returns the current stack pointer (captured at kernel entry, i.e. the top of
-/// the stack `aios-boot` set up for the kernel).
+/// the stack the boot loader set up for the kernel).
 #[inline(always)]
 fn current_rsp() -> u64 {
     let rsp: u64;
@@ -91,17 +158,18 @@ fn print_step(n: u8, msg: &str) {
     }
     vprintln!("STEP {}/15: {}", n, msg);
 }
+/// Shared kernel entry point. `bootinfo` is either the pointer `aios-boot`
+/// supplied in `rdi` or the address of the Limine-derived [`BootInfo`].
 ///
 /// # Safety
-/// Called exactly once by `aios-boot` with a pointer to a [`BootInfo`] in
-/// `rdi`. The loader has already enabled the kernel page tables (higher-half
-/// kernel + higher-half direct map) and set `rsp` to a mapped kernel stack.
-#[no_mangle]
-pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
-    let kernel_stack_top = current_rsp();
-
+/// Called exactly once by one of the two `#[no_mangle]` entry points below,
+/// with a readable, page-mapped [`BootInfo`] and a mapped kernel stack.
+fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
     serial::init();
-    serial::_print(format_args!("[serial] aios-kernel: aios-boot handoff\n"));
+    serial::_print(format_args!(
+        "[serial] aios-kernel: {} handoff\n",
+        LOADER_NAME
+    ));
 
     let info = match unsafe { boot::init(bootinfo) } {
         Ok(info) => info,
@@ -142,9 +210,9 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
     }
 
     print_step(1, "serial online");
-    vprintln!("AIOS bare-metal kernel (aios-boot + GOP)");
+    vprintln!("AIOS bare-metal kernel ({} + GOP)", LOADER_NAME);
     vprintln!("=======================================");
-    kprintln!("[serial] aios-kernel: aios-boot handoff");
+    kprintln!("[serial] aios-kernel: {} handoff", LOADER_NAME);
     kprintln!("[serial] hhdm offset = 0x{:x}", hhdm_offset);
     kprintln!(
         "[serial] kernel phys=0x{:x} virt=0x{:x} size={}",
@@ -796,6 +864,93 @@ pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
             core::arch::asm!("sti; hlt", options(nomem, nostack));
         }
     }
+}
+
+/// UEFI entry point: `aios-boot` passes [`BootInfo`] in `rdi`.
+///
+/// # Safety
+/// `bootinfo` must point to a valid, mapped [`BootInfo`] supplied by
+/// `aios-boot`; called exactly once as the ELF entry point.
+#[cfg(not(feature = "limine"))]
+#[no_mangle]
+pub unsafe extern "C" fn _start(bootinfo: *const BootInfo) -> ! {
+    let kernel_stack_top = current_rsp();
+    kmain(bootinfo, kernel_stack_top)
+}
+
+/// Limine entry point: Limine enters with no arguments, so the resolved
+/// requests are translated into [`BootInfo`] before entering the shared code.
+///
+/// # Safety
+/// Called exactly once as the ELF entry point after Limine resolved the
+/// requests and set up a mapped kernel stack.
+#[cfg(feature = "limine")]
+#[no_mangle]
+pub unsafe extern "C" fn _start() -> ! {
+    let kernel_stack_top = current_rsp();
+    let info = limine_bootinfo();
+    kmain(info as *const BootInfo, kernel_stack_top)
+}
+
+/// Builds the shared [`BootInfo`] from Limine's responses. Keeping this
+/// translation in one place lets the rest of the kernel stay loader-agnostic.
+///
+/// # Safety
+/// Called once from [`_start`] before any subsystem reads boot information.
+#[cfg(feature = "limine")]
+unsafe fn limine_bootinfo() -> &'static mut BootInfo {
+    static mut LIMINE_BOOTINFO: BootInfo = BootInfo::new();
+
+    let hhdm_offset = HHDM_REQUEST.response().map(|r| r.offset).unwrap_or(0);
+    let info = &mut *core::ptr::addr_of_mut!(LIMINE_BOOTINFO);
+    info.hhdm_offset = hhdm_offset;
+    info.rsdp = RSDP_REQUEST
+        .response()
+        .map(|r| r.address as u64)
+        .unwrap_or(0);
+
+    if let Some(response) = FRAMEBUFFER_REQUEST.response() {
+        if let Some(fb) = response.framebuffers().first() {
+            // Limine reports a HHDM virtual address; BootInfo carries the
+            // physical one and Framebuffer::new adds the offset exactly once.
+            info.framebuffer = FramebufferInfo {
+                address: (fb.address() as u64).saturating_sub(hhdm_offset),
+                width: fb.width as u32,
+                height: fb.height as u32,
+                pitch: fb.pitch as u32,
+                bpp: fb.bpp,
+                red_shift: fb.red_mask_shift,
+                red_size: fb.red_mask_size,
+                green_shift: fb.green_mask_shift,
+                green_size: fb.green_mask_size,
+                blue_shift: fb.blue_mask_shift,
+                blue_size: fb.blue_mask_size,
+                reserved: 0,
+            };
+        }
+    }
+
+    if let Some(response) = MEMMAP_REQUEST.response() {
+        for entry in response.entries() {
+            if entry.type_ != limine::memmap::MEMMAP_USABLE {
+                continue;
+            }
+            let count = info.memory_region_count as usize;
+            if count >= MAX_MEMORY_REGIONS {
+                break;
+            }
+            info.memory_regions[count] = MemoryRegion {
+                start: entry.base,
+                end: entry.base.saturating_add(entry.length),
+                kind: MEM_USABLE,
+                reserved: 0,
+            };
+            info.memory_region_count += 1;
+        }
+    }
+
+    let _ = BASE_REVISION.is_supported();
+    info
 }
 
 /// Synthesises a PSF2 font from `font8x8::BASIC`, parses it back through the

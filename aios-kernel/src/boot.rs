@@ -1,10 +1,11 @@
-//! Boot hand-off from `aios-boot`, the AIOS UEFI loader.
+//! Boot hand-off shared by `aios-boot` (UEFI) and the Limine-protocol path.
 //!
-//! The loader validates and loads the kernel ELF, builds the page tables
-//! (higher-half kernel + higher-half direct map) and jumps to [`crate::_start`]
-//! with a pointer to [`aios_bootinfo::BootInfo`] in `rdi`. This module owns the
-//! one-time validation and the typed accessors the rest of the kernel uses:
-//! the direct-map offset, the physical memory map, the ACPI RSDP, the GOP
+//! The loader validates and loads the kernel ELF, sets up higher-half paging
+//! and enters [`crate::_start`]. `aios-boot` passes a pointer to
+//! [`aios_bootinfo::BootInfo`] in `rdi`; the Limine build translates its
+//! resolved requests into the same structure. This module owns the one-time
+//! validation and the typed accessors the rest of the kernel uses: the
+//! direct-map offset, the physical memory map, the ACPI RSDP, the linear
 //! framebuffer and the configuration/block modules.
 //!
 //! The kernel does not depend on the loader's internal types: everything here
@@ -18,9 +19,9 @@ static BOOT_INFO_PTR: AtomicUsize = AtomicUsize::new(0);
 /// Validates the boot hand-off and publishes it for the rest of the kernel.
 ///
 /// # Safety
-/// `ptr` must point to a readable, page-mapped [`BootInfo`] written by
-/// `aios-boot`. Called exactly once, before any other subsystem uses the boot
-/// information.
+/// `ptr` must point to a readable, page-mapped [`BootInfo`] written by the boot
+/// loader (or translated from Limine's responses). Called exactly once, before
+/// any other subsystem uses the boot information.
 pub unsafe fn init(ptr: *const BootInfo) -> Result<&'static BootInfo, &'static str> {
     if ptr.is_null() {
         return Err("boot: null BootInfo pointer");
@@ -53,7 +54,7 @@ pub fn rsdp() -> Option<u64> {
     info().and_then(|info| (info.rsdp != 0).then_some(info.rsdp))
 }
 
-/// The GOP framebuffer described by the loader, if one was found.
+/// The linear framebuffer described by the loader, if one was found.
 pub fn framebuffer() -> Option<FramebufferInfo> {
     info()
         .map(|info| info.framebuffer)

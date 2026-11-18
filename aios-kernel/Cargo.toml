@@ -12,10 +12,17 @@ version = "0.3.0"
 edition = "2021"
 description = "AIOS standalone bare-metal kernel (x86_64, no_std) — aios-boot hand-off + UEFI GOP framebuffer"
 
+[features]
+default = []
+# Limine-protocol boot path for the hybrid BIOS+UEFI ISO/USB image. The
+# default build keeps the aios-boot UEFI hand-off unchanged.
+limine = ["dep:limine"]
+
 [dependencies]
 aios-bootinfo = { path = "../boot/aios-bootinfo" }
 aios-config = { path = "../boot/aios-config" }
 aios-wasmhost = { path = "../boot/aios-wasmhost" }
+limine = { version = "=0.6.5", optional = true }
 
 [profile.dev]
 panic = "abort"

@@ -1,9 +1,9 @@
 //! Linear framebuffer drawing primitives for the AIOS kernel.
 //!
-//! The framebuffer is handed to the kernel by `aios-boot` in the
-//! [`aios_bootinfo::BootInfo`] (GOP linear framebuffer under UEFI). The kernel
-//! owns the pixels directly — there is no `fbcon`, no DRM and no firmware blob
-//! anywhere in the path.
+//! The framebuffer is handed to the kernel in [`aios_bootinfo::BootInfo`]: a
+//! GOP linear framebuffer under `aios-boot`/UEFI, or a VBE linear framebuffer
+//! translated from Limine's response on legacy BIOS. The kernel owns the pixels
+//! directly — there is no `fbcon`, no DRM and no firmware blob anywhere in the path.
 //!
 //! Colours passed to this module use the conventional `0x00RRGGBB` layout and
 //! are converted to the hardware's pixel format using the packed masks reported
@@ -67,7 +67,7 @@ impl Framebuffer {
     /// Builds a framebuffer handle from the bootloader description.
     ///
     /// `hhdm_offset` is the base of the higher-half direct map: the physical
-    /// GOP address is reachable at `hhdm_offset + address`. Only `bpp` of 16,
+    /// framebuffer address is reachable at `hhdm_offset + address`. Only `bpp` of 16,
     /// 24 or 32 are supported; anything else is reported to the caller via
     /// [`Self::is_usable`].
     pub fn new(fb: &FramebufferInfo, hhdm_offset: u64) -> Self {

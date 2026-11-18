@@ -39,6 +39,10 @@ SECTIONS
     .got : { *(.got) } :data
     .got.plt : { *(.got.plt) } :data
     .data : {
+        /* Limine boot requests (present only in the `limine` feature build). */
+        KEEP(*(.requests_start))
+        KEEP(*(.requests))
+        KEEP(*(.requests_end))
         *(.data .data.* .sdata .sdata.*)
     } :data
 

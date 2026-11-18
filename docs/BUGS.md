@@ -13,6 +13,31 @@
   is involved. See the Native UEFI Boot Chain section in
   `docs/ARCHITECTURE.md`.
 
+## FIXED (v2.78.0): the Limine/legacy BIOS kernel could not be rebuilt from source
+
+- **Symptom:** the working Legacy image on the laptop was dated 2026-10-06,
+  while a fresh `cargo run --release` in `aios-kernel-run` produced a kernel
+  that no longer booted through Limine. Commit `6f03a1a` had converted
+  `aios-kernel` to the UEFI-only `aios-boot` hand-off, so the Limine path
+  existed only in the old binary, not in the source tree.
+- **Cause:** the two boot paths were mutually exclusive: the crate had a single
+  `_start(bootinfo: *const BootInfo)` entry point and no Limine requests or
+  `.requests*` linker sections in the current sources.
+- **Fix:** a Cargo feature `limine` (`default = []`) selects the Limine path.
+  The `limine` build adds the request statics and a no-argument `_start`, keeps
+  the `.requests*` sections in `linker.ld`, and translates Limine responses into
+  `BootInfo` (HHDM, RSDP, first framebuffer with its address converted back to
+  physical, usable memory regions). The default build keeps the `aios-boot`
+  entry point; both paths share `kmain`. `aios-kernel-run` enables the feature.
+- **Status:** closed in v2.78.0. Both feature configurations build and pass
+  clippy with `-D warnings`; QEMU legacy BIOS on a patched image copy reaches
+  the scheduler, IPC and socket ticks with a valid framebuffer and no panic.
+  The full ISO/USB rebuild is still blocked by missing external tools
+  (`iso/limine/limine-binary`, `xorriso.exe`; see CHANGELOG v2.78.0), and the
+  physical stick still carries the old 2026-10-06 image. On the Limine path
+  `modules` and `kernel_phys/virt/size` are zero — `config::init()` accepts
+  zero modules, so configuration is empty but boot is unaffected.
+
 ## FIXED (v2.76.1): `aios-install` could not write to a physical disk on Windows
 
 - **Symptom:** an elevated `aios-install --device \\.\PhysicalDriveN --write
