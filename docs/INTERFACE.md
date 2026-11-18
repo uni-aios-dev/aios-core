@@ -27,6 +27,49 @@ aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2 --write -
   PowerShell started "As Administrator" (UAC confirmation is required). A dry
   run is still the default; the write needs `--write --yes`.
 
+### Secure Boot signing (M5.2)
+
+`aios-sbctl` is a standalone host tool (`boot/aios-sbctl`) for the AIOS
+PK/KEK/db hierarchy, Authenticode loader signing and enrollment payloads. It
+uses the `openssl` CLI, so `openssl` must be on `PATH`:
+
+```
+aios-sbctl keygen --dir keys
+aios-sbctl sign --image boot/out/BOOTX64.EFI --keys keys --out boot/out/BOOTX64.signed.efi
+aios-sbctl verify --image boot/out/BOOTX64.signed.efi --keys keys
+aios-sbctl enroll --keys keys --out enroll
+```
+
+- `keygen` writes `PK.key/crt/cer`, `KEK.key/crt/cer` and `DB.key/crt/cer` into
+  the key directory. Keep the `*.key` files private: possession of `DB.key`
+  allows signing a loader that OVMF will trust.
+- `sign` writes the signed PE to `--out` (or replaces the input when omitted)
+  and prints the PE SHA-256 and the PKCS#7 size; `verify` checks the signature,
+  the certificate and the PE digest, then prints `signature OK`.
+- `enroll` writes `PK.auth`, `KEK.auth` and `DB.auth` into `--out`. They are
+  `EFI_VARIABLE_AUTHENTICATION_2` buffers for `SetVariable` with
+  `EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS`; `virt-fw-vars` cannot
+  consume them as certificate files, so the QEMU test NVRAM is enrolled from
+  the DER `*.cer` files instead.
+
+`aios-image` can do the signing and the QEMU run in one step:
+
+```
+cargo run --manifest-path boot/aios-image/Cargo.toml -- --no-run --sign-keys keys --enroll-out enroll --out boot/out/aios-sb.img
+cargo run --manifest-path boot/aios-image/Cargo.toml -- --headless --timeout 20 --secure-fw --ovmf-vars path/to/OVMF_VARS.fd
+```
+
+- `--sign-keys DIR` signs the loader and keeps the verified copy at
+  `boot/out/BOOTX64.signed.efi`; `--enroll-out DIR` is only accepted together
+  with `--sign-keys`.
+- `--secure-fw` switches QEMU to `edk2-x86_64-secure-code.fd`, and
+  `--ovmf-vars PATH` supplies an already-enrolled NVRAM template (the stock
+  template has no keys). Without enrolled variables a signed loader is still
+  rejected.
+- Writing to a physical disk remains a separate, explicit `aios-install`
+  operation. Signing does not flash anything; the v2.79.0 stick was not
+  rewritten during M5.2.
+
 ---
 
 ## Live USB (retired in v2.77.0)

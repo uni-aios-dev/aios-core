@@ -32,7 +32,17 @@
 //!   --headless       run QEMU without a display, serial on stdio
 //!   --timeout <sec>  stop QEMU after N seconds
 //!   --reuse-assets   reuse boot/out/assets instead of re-staging
+//!   --sign-keys DIR  Authenticode-sign BOOTX64.EFI with DB.key/DB.crt from DIR
+//!   --enroll-out DIR write PK.auth/KEK.auth/DB.auth from the same keys
+//!   --secure-fw      boot with the OVMF Secure Boot code firmware
+//!   --ovmf-vars PATH use an already-enrolled NVRAM template instead of the default
 //! ```
+//!
+//! With `--sign-keys`, the loader is signed with an Authenticode PKCS#7
+//! signature before it is written to the ESP; the signed copy is kept at
+//! `boot/out/BOOTX64.signed.efi` and verified before the image is assembled.
+//! `--enroll-out` additionally emits the time-based authenticated-variable
+//! payloads needed to enroll the hierarchy into an OVMF NVRAM file.
 //!
 //! Environment: `AIOS_QEMU`, `AIOS_IMAGE_OUT`.
 
@@ -79,6 +89,23 @@ fn run() -> Result<(), Box<dyn Error>> {
         .to_path_buf();
     let options = Options::parse(&boot_dir)?;
     let loader = build_loader(&boot_dir)?;
+    let loader = match (&options.sign_keys, &options.enroll_out) {
+        (None, Some(enroll)) => {
+            return Err(format!("--enroll-out {} requires --sign-keys", enroll.display()).into());
+        }
+        (Some(keys), enroll) => {
+            let keys = aios_sbctl::KeyMaterial::paths(keys);
+            let signed = sign_loader(&boot_dir, &loader, &keys)?;
+            if let Some(enroll) = enroll {
+                let files = aios_sbctl::create_enrollment_auth(&keys, enroll)?;
+                for file in files {
+                    println!("aios-image: enrollment payload {}", file.display());
+                }
+            }
+            signed
+        }
+        (None, None) => loader,
+    };
     let kernel = build_kernel(&core_dir)?;
     let assets = if options.reuse_assets {
         let staging = boot_dir.join("out").join("assets");
@@ -121,6 +148,14 @@ struct Options {
     timeout: Option<u64>,
     /// Reuse `boot/out/assets` instead of rebuilding the staging tree.
     reuse_assets: bool,
+    /// Key hierarchy directory used to Authenticode-sign the loader.
+    sign_keys: Option<PathBuf>,
+    /// Directory for the generated PK/KEK/db enrollment payloads.
+    enroll_out: Option<PathBuf>,
+    /// Use the OVMF Secure Boot code firmware.
+    secure_fw: bool,
+    /// NVRAM template to copy instead of the stock OVMF variables.
+    ovmf_vars: Option<PathBuf>,
 }
 
 impl Options {
@@ -134,6 +169,10 @@ impl Options {
             .ok()
             .and_then(|value| value.parse().ok());
         let mut reuse_assets = false;
+        let mut sign_keys = None;
+        let mut enroll_out = None;
+        let mut secure_fw = false;
+        let mut ovmf_vars = None;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -144,6 +183,22 @@ impl Options {
                 "--no-run" => run = false,
                 "--headless" => headless = true,
                 "--reuse-assets" => reuse_assets = true,
+                "--sign-keys" => {
+                    sign_keys = Some(PathBuf::from(
+                        args.next().ok_or("--sign-keys needs a key directory")?,
+                    ));
+                }
+                "--enroll-out" => {
+                    enroll_out = Some(PathBuf::from(
+                        args.next().ok_or("--enroll-out needs a directory")?,
+                    ));
+                }
+                "--secure-fw" => secure_fw = true,
+                "--ovmf-vars" => {
+                    ovmf_vars = Some(PathBuf::from(
+                        args.next().ok_or("--ovmf-vars needs a path")?,
+                    ));
+                }
                 "--timeout" => {
                     timeout = Some(
                         args.next()
@@ -155,7 +210,8 @@ impl Options {
                 "--help" | "-h" => {
                     println!(
                         "usage: aios-image [--out PATH] [--no-run] [--headless] \
-                         [--timeout SECS] [--reuse-assets]"
+                         [--timeout SECS] [--reuse-assets] [--sign-keys DIR] [--enroll-out DIR] \
+                          [--secure-fw] [--ovmf-vars PATH]"
                     );
                     std::process::exit(0);
                 }
@@ -168,6 +224,10 @@ impl Options {
             headless,
             timeout,
             reuse_assets,
+            sign_keys,
+            enroll_out,
+            secure_fw,
+            ovmf_vars,
         })
     }
 }
@@ -193,6 +253,37 @@ fn build_loader(boot_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
         .join("aios-boot.efi");
     require_file(&path)?;
     Ok(path)
+}
+
+/// Signs the built loader with an Authenticode PKCS#7 signature from `keys`
+/// and verifies the result before returning the signed copy's path.
+fn sign_loader(
+    boot_dir: &Path,
+    loader: &Path,
+    keys: &aios_sbctl::KeyMaterial,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if !keys.is_complete() {
+        return Err(format!(
+            "incomplete Secure Boot keys in {} (need DB.key and DB.crt)",
+            keys.dir.display()
+        )
+        .into());
+    }
+    let image = fs::read(loader)?;
+    let signature = aios_sbctl::sign_pe_bytes(&image, &keys.db_key, &keys.db_crt)?;
+    let signed = aios_sbctl::embed_signature(&image, &signature.pkcs7)?;
+    println!(
+        "aios-image: signed loader PE SHA-256 {} (PKCS#7 {} bytes)",
+        aios_sbctl::hex(&signature.pe_hash),
+        signature.pkcs7.len()
+    );
+    aios_sbctl::verify_pe_bytes(&signed, &keys.db_crt)?;
+    let out = boot_dir.join("out").join("BOOTX64.signed.efi");
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&out, &signed)?;
+    Ok(out)
 }
 
 fn build_kernel(core_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
@@ -631,13 +722,14 @@ fn read_sector(file: &mut File, lba: u64, buffer: &mut [u8; 512]) -> std::io::Re
 
 fn run_qemu(options: &Options, core_dir: &Path) -> Result<(), Box<dyn Error>> {
     let qemu = find_qemu(core_dir)?;
-    let (code, vars) = find_ovmf(core_dir)?;
+    let (code, vars) = find_ovmf(core_dir, options.secure_fw)?;
     let out_dir = options
         .out
         .parent()
         .ok_or("image path has no parent directory")?;
     let vars_copy = out_dir.join("OVMF_VARS.fd");
-    fs::copy(&vars, &vars_copy)?;
+    let vars_source = options.ovmf_vars.as_deref().unwrap_or(&vars);
+    fs::copy(vars_source, &vars_copy)?;
 
     let mut command = Command::new(&qemu);
     command.args(["-machine", "q35", "-m", "512M", "-vga", "std", "-no-reboot"]);
@@ -732,9 +824,13 @@ fn find_qemu(core_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
     Err("qemu-system-x86_64 not found (set AIOS_QEMU)".into())
 }
 
-fn find_ovmf(core_dir: &Path) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
+fn find_ovmf(core_dir: &Path, secure: bool) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
     let share = repo_root(core_dir).join("tools").join("qemu").join("share");
-    let code = share.join("edk2-x86_64-code.fd");
+    let code = share.join(if secure {
+        "edk2-x86_64-secure-code.fd"
+    } else {
+        "edk2-x86_64-code.fd"
+    });
     let vars = share.join("edk2-i386-vars.fd");
     if code.exists() && vars.exists() {
         return Ok((code, vars));

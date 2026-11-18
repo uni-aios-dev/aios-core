@@ -1,0 +1,21 @@
+# aios-sbctl: Secure Boot key and image signing tool for AIOS.
+#
+# Standalone host crate (std, no external crates). It builds the PK/KEK/db
+# hierarchy with the `openssl` CLI, signs the UEFI loader with an Authenticode
+# PKCS#7 signature and weaves that signature into the PE certificate table.
+# The same code is linked into `aios-image`, which signs BOOTX64.EFI while
+# assembling the GPT/FAT32 ESP. No Rust crypto crates and no `sbsign` needed.
+[package]
+name = "aios-sbctl"
+version = "0.1.0"
+edition = "2021"
+description = "Generates AIOS Secure Boot keys, signs BOOTX64.EFI and verifies Authenticode signatures"
+license = "AGPL-3.0-or-later"
+
+[lib]
+name = "aios_sbctl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aios-sbctl"
+path = "src/main.rs"

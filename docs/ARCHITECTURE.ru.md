@@ -1431,7 +1431,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
 Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
-## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`, `aios-install`) — v2.76.0
+## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`, `aios-install`, `aios-sbctl`) — v2.76.0 (Secure Boot с v2.79.0)
 
 AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
 `aios-boot` — собственное UEFI-приложение, `aios-bootinfo` — контракт
@@ -1489,7 +1489,26 @@ AIOS грузится на голом железе без Linux, Windows и ст
   переносит их в FAT; `verify_assets` проверяет это дерево через
   `aios-storectl::verify`. Флаг `--reuse-assets` сохраняет уже отредактированное
   `boot/out/assets` вместо повторного стейджа — так сценарии обновления и
-  отката в QEMU пересобирают образ, не теряя новое поколение.
+  отката в QEMU пересобирают образ, не теряя новое поколение. С M5.2 флаг
+  `--sign-keys DIR` подписывает загрузчик через `aios-sbctl` до копирования на
+  ESP (подписанная копия остаётся в `boot/out/BOOTX64.signed.efi` и
+  проверяется), `--enroll-out DIR` создаёт payload'ы PK/KEK/db `.auth`
+  (требует `--sign-keys`), `--secure-fw` выбирает код прошивки OVMF с Secure
+  Boot, а `--ovmf-vars PATH` — шаблон NVRAM с внесёнными ключами.
+- `aios-sbctl` (`boot/aios-sbctl`, `std`, отдельный крейт, исключён из
+  workspace, v2.79.0, M5.2): хостовая утилита подписи с командами `keygen`,
+  `sign`, `verify` и `enroll`. Для ключей RSA, сертификатов X.509, подписи
+  PKCS#7 и проверки CMS она вызывает `openssl`; внешних Rust-зависимостей и
+  `sbsign` нет. Подпись PE/COFF следует соглашению edk2/`sbsign`:
+  `eContentType` = `SPC_INDIRECT_DATA_OBJID`, хеш покрывает тело
+  `SpcIndirectDataContent` без внешнего SEQUENCE, `eContent` содержит всё
+  DER-значение, а блоб ставится в таблицу сертификатов PE. Для внесения ключей
+  создаются буферы `EFI_VARIABLE_AUTHENTICATION_2` с 16-байтовым `EFI_TIME`
+  GMT, сертификатом `EFI_CERT_TYPE_PKCS7_GUID` и отсоединённой подписью CMS по
+  `(VariableName, VendorGuid, Attributes, TimeStamp, Payload)` в сериализации
+  edk2; полезная нагрузка — `EFI_SIGNATURE_LIST` с `EFI_CERT_X509_GUID` и
+  DER-сертификатом. 15 юнит-тестов покрывают разбор DER/PE, формат подписи и
+  сериализацию переменных.
 - Инвариант выравнивания стеков: вершина любого стека ядра должна быть
   выровнена на 16 байт. Статики `[u8; N]` имеют выравнивание 1, а
   `core::fmt::Arguments` помечает свою форму «статическая `&str`» битом
@@ -1695,6 +1714,14 @@ AIOS грузится на голом железе без Linux, Windows и ст
   - `update --fail-after staging`: загрузчик по-прежнему видит sequence 1,
     активный слот 0 и исходный блок. Отдельный `rollback` через CLI возвращает
     управление слоту 0 на sequence 3 без копирования payload.
+- Доказательство Secure Boot в QEMU/OVMF (M5.2): с `--secure-fw` и шаблоном
+  NVRAM `--ovmf-vars` с внесёнными ключами образ, собранный с `--sign-keys`,
+  логирует `aios-boot: entering kernel`, `[cfg] system = AIOS 2.79.0 x86_64
+  (3 layer(s), 10 key(s), 0 invalid)` и `periodic 1000 Hz tick armed`. В том же
+  окружении неподписанный или изменённый загрузчик никогда не входит в ядро
+  (`kernel_entries=0`, `aios_boot_lines=0`), а OVMF сообщает `Access Denied`
+  для `Boot0001`. Файлы внесения ключей проверены отсоединённой подписью CMS
+  через OpenSSL; физическая флешка не перезаписывалась.
 
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 

@@ -1,5 +1,49 @@
 # Журнал разработки AIOS
 
+## v2.79.0 (M5.2) - Подпись Secure Boot и проверка в OVMF (2026-11-18)
+
+### Добавлено
+- `boot/aios-sbctl` (`std`, отдельный крейт, исключён из workspace): хостовый
+  инструмент подписи с командами `keygen` (ключи RSA PK/KEK/db и сертификаты
+  X.509 через CLI `openssl`), `sign`/`verify` (образы Authenticode PE/COFF) и
+  `enroll` (временны́е аутентифицированные переменные). Внешних Rust-зависимостей
+  нет, `sbsign` не используется; единственная внешняя программа — `openssl`.
+- Формат Authenticode соответствует edk2/`sbsign`: `eContentType` равен
+  `SPC_INDIRECT_DATA_OBJID` (1.3.6.1.4.1.311.2.1.4), хеш считается по телу
+  `SpcIndirectDataContent` без внешнего заголовка SEQUENCE, а `eContent` содержит
+  полное DER-значение. Подпись пишется в таблицу сертификатов PE, а подписанный
+  загрузчик проверяется перед сборкой образа.
+- `PK.auth`, `KEK.auth` и `DB.auth` — корректные буферы
+  `EFI_VARIABLE_AUTHENTICATION_2`: 16-байтовое время GMT `EFI_TIME`,
+  `WIN_CERTIFICATE` с `EFI_CERT_TYPE_PKCS7_GUID` и
+  `dwLength = 24 + signature_len`, отсоединённая подпись CMS по сериализации edk2
+  `(VariableName UTF-16LE, VendorGuid, Attributes, TimeStamp, Payload)` и
+  `EFI_SIGNATURE_LIST` с `EFI_CERT_X509_GUID`, содержащая DER-сертификат.
+- В `aios-image` добавлены флаги `--sign-keys DIR`, `--enroll-out DIR` (требует
+  `--sign-keys`), `--secure-fw` (код прошивки OVMF с Secure Boot) и
+  `--ovmf-vars PATH` (шаблон NVRAM с уже внесёнными ключами).
+
+### Проверено
+- `aios-sbctl`: fmt чистый, clippy `-D warnings`, 15 юнит-тестов и release-сборка.
+  Также проходят проверки workspace (fmt/clippy/test/release) и сборка ядра под
+  `x86_64-unknown-none`.
+- Подписанный `BOOTX64.EFI`: PE SHA-256
+  `068CEA4D587F3A0A5C7A9351A241DB5AC68D079F1118001F438A1F743C6B5F69`, PKCS#7
+  1467 байт. `aios-sbctl verify` печатает `signature OK`, а независимый
+  `openssl cms -verify -content <SpcIndirectDataContent>` завершается успешно.
+- Сгенерированные payload'ы `.auth` (PK/KEK/DB: 2228/2236/2262 байт) проходят
+  отсоединённую проверку CMS относительно родительского сертификата с точной
+  сериализацией edk2 и корректным `EFI_SIGNATURE_LIST`.
+- Позитивный прогон QEMU/OVMF с защищённой прошивкой и внесёнными переменными
+  доходит до `aios-boot: entering kernel`, `[cfg] system = AIOS 2.79.0 x86_64
+  (3 layer(s), 10 key(s), 0 invalid)` и `periodic 1000 Hz tick armed`.
+  Неподписанный и изменённый загрузчики отвергаются с `Access Denied`
+  (`kernel_entries=0`, `aios_boot_lines=0`). Логи: `sb-positive.log`,
+  `sb-unsigned.log`, `sb-tampered.log` в каталоге тестов M5.2.
+- Физическая флешка не трогалась: проверка подписанного образа осталась в QEMU.
+  Приёмка Secure Boot на реальном железе по-прежнему открыта (доступный ноут —
+  машина с Legacy BIOS 2008 года из записи v2.77.1).
+
 ## v2.79.0 - Исправлена каденция рендера и гейт runaway переведён на время (2026-11-18)
 
 ### Причина ухудшения после 1000 Гц

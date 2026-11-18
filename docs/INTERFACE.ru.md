@@ -27,6 +27,48 @@ aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2 --write -
   UAC). Сухой прогон по-прежнему задан по умолчанию; запись требует
   `--write --yes`.
 
+### Подпись Secure Boot (M5.2)
+
+`aios-sbctl` — отдельный хостовый инструмент (`boot/aios-sbctl`) для иерархии
+PK/KEK/db, подписи загрузчика Authenticode и payload'ов внесения ключей. Он
+вызывает CLI `openssl`, поэтому `openssl` должен быть в `PATH`:
+
+```
+aios-sbctl keygen --dir keys
+aios-sbctl sign --image boot/out/BOOTX64.EFI --keys keys --out boot/out/BOOTX64.signed.efi
+aios-sbctl verify --image boot/out/BOOTX64.signed.efi --keys keys
+aios-sbctl enroll --keys keys --out enroll
+```
+
+- `keygen` записывает `PK.key/crt/cer`, `KEK.key/crt/cer` и `DB.key/crt/cer` в
+  каталог ключей. Храните `*.key` в тайне: обладатель `DB.key` может подписать
+  загрузчик, которому OVMF будет доверять.
+- `sign` пишет подписанный PE в `--out` (или заменяет входной файл, если флага
+  нет) и печатает PE SHA-256 и размер PKCS#7; `verify` проверяет подпись,
+  сертификат и хеш PE, затем печатает `signature OK`.
+- `enroll` записывает `PK.auth`, `KEK.auth` и `DB.auth` в каталог `--out`. Это
+  буферы `EFI_VARIABLE_AUTHENTICATION_2` для `SetVariable` с атрибутом
+  `EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS`; `virt-fw-vars` не умеет
+  читать их как сертификаты, поэтому тестовый NVRAM для QEMU заполняется из
+  DER-файлов `*.cer`.
+
+`aios-image` может подписать образ и сразу выполнить прогон в QEMU:
+
+```
+cargo run --manifest-path boot/aios-image/Cargo.toml -- --no-run --sign-keys keys --enroll-out enroll --out boot/out/aios-sb.img
+cargo run --manifest-path boot/aios-image/Cargo.toml -- --headless --timeout 20 --secure-fw --ovmf-vars path/to/OVMF_VARS.fd
+```
+
+- `--sign-keys DIR` подписывает загрузчик, а проверенная копия остаётся в
+  `boot/out/BOOTX64.signed.efi`; `--enroll-out DIR` принимается только вместе с
+  `--sign-keys`.
+- `--secure-fw` переключает QEMU на `edk2-x86_64-secure-code.fd`, а
+  `--ovmf-vars PATH` задаёт шаблон NVRAM с уже внесёнными ключами (штатный
+  шаблон ключей не содержит). Без внесённых ключей даже подписанный загрузчик
+  отвергается.
+- Запись на физический диск остаётся отдельной явной операцией `aios-install`.
+  Подпись ничего не прошивает: в M5.2 флешка v2.79.0 не перезаписывалась.
+
 ---
 
 ## Live USB (упразднён в v2.77.0)

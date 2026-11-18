@@ -13,6 +13,7 @@ license = "AGPL-3.0-or-later"
 
 [dependencies]
 aios-bootinfo = { path = "../aios-bootinfo" }
+aios-sbctl = { path = "../aios-sbctl" }
 aios-bootstore = { path = "../aios-bootstore" }
 aios-easylang = { path = "../aios-easylang" }
 aios-storectl = { path = "../aios-storectl" }

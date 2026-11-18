@@ -1,5 +1,51 @@
 # AIOS Development Log
 
+## v2.79.0 (M5.2) - Secure Boot signing and OVMF verification (2026-11-18)
+
+### Added
+- `boot/aios-sbctl` (`std`, standalone, excluded from the workspace): the
+  host-side signing tool with `keygen` (PK/KEK/db RSA keys and X.509
+  certificates through the `openssl` CLI), `sign`/`verify` (Authenticode
+  PE/COFF images) and `enroll` (time-based authenticated-variable payloads). It
+  has no external Rust dependencies and does not use `sbsign`; `openssl` is the
+  only external binary.
+- The Authenticode layout matches edk2/`sbsign`: `eContentType` is
+  `SPC_INDIRECT_DATA_OBJID` (1.3.6.1.4.1.311.2.1.4), the digest covers the
+  `SpcIndirectDataContent` body without its outer SEQUENCE header, and
+  `eContent` holds the complete DER value. The signature is written into the PE
+  certificate table, and the signed loader is verified before image assembly.
+- `PK.auth`, `KEK.auth` and `DB.auth` are proper
+  `EFI_VARIABLE_AUTHENTICATION_2` buffers: a 16-byte GMT `EFI_TIME`, a
+  `WIN_CERTIFICATE` with `EFI_CERT_TYPE_PKCS7_GUID` and
+  `dwLength = 24 + signature_len`, a detached CMS signature over edk2's
+  serialization `(VariableName UTF-16LE, VendorGuid, Attributes, TimeStamp,
+  Payload)`, and an `EFI_SIGNATURE_LIST` with `EFI_CERT_X509_GUID` holding the
+  DER certificate.
+- `aios-image` gained `--sign-keys DIR`, `--enroll-out DIR` (requires
+  `--sign-keys`), `--secure-fw` (OVMF Secure Boot code firmware) and
+  `--ovmf-vars PATH` (a pre-enrolled NVRAM template).
+
+### Verified
+- `aios-sbctl`: clean fmt, clippy `-D warnings`, 15 unit tests and a release
+  build. Workspace fmt/clippy/test/release checks and the
+  `x86_64-unknown-none` kernel build pass as well.
+- Signed `BOOTX64.EFI`: PE SHA-256
+  `068CEA4D587F3A0A5C7A9351A241DB5AC68D079F1118001F438A1F743C6B5F69`, PKCS#7
+  1467 bytes. `aios-sbctl verify` prints `signature OK`, and an independent
+  `openssl cms -verify -content <SpcIndirectDataContent>` succeeds.
+- The generated `.auth` payloads (PK/KEK/DB: 2228/2236/2262 bytes) pass detached
+  CMS verification against the parent certificate with the exact edk2
+  serialization and a valid `EFI_SIGNATURE_LIST` payload.
+- A QEMU/OVMF positive run with the secure firmware and enrolled variables
+  reaches `aios-boot: entering kernel`, `[cfg] system = AIOS 2.79.0 x86_64
+  (3 layer(s), 10 key(s), 0 invalid)` and `periodic 1000 Hz tick armed`.
+  Unsigned and tampered loaders are rejected with `Access Denied`
+  (`kernel_entries=0`, `aios_boot_lines=0`). Logs: `sb-positive.log`,
+  `sb-unsigned.log`, `sb-tampered.log` in the M5.2 test directory.
+- The physical stick was not touched: signed-image validation stayed in QEMU.
+  Real-hardware Secure Boot acceptance remains open (the available laptop is
+  the 2008 Legacy-BIOS machine described in the v2.77.1 entry).
+
 ## v2.79.0 - Fix render cadence and time the pointer runaway gate (2026-11-18)
 
 ### Root cause of the post-1000 Hz regression

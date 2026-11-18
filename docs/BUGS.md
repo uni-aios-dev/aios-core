@@ -1,5 +1,40 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.79.0, M5.2): DER parser returned an absolute offset
+
+- Symptom: `parse_der_at` in `aios-sbctl` returned the absolute `content_end`
+  instead of the number of consumed bytes. A SEQUENCE with several children was
+  therefore parsed from the wrong offset, which corrupted the Authenticode
+  `SpcIndirectDataContent` construction.
+- Fix: the helper now returns the consumed length, and the regression test
+  `parses_sequence_with_multiple_children` pins the behaviour.
+
+## FIXED (v2.79.0, M5.2): generated `.auth` payloads were not edk2-compatible
+
+- Symptom: the first enrollment payloads had `dwLength = 8 + sig` (missing the
+  16-byte PKCS#7 GUID), were signed over the descriptor plus data instead of
+  edk2's `(VariableName, VendorGuid, Attributes, TimeStamp, Payload)`, had a
+  14-byte `EFI_TIME`, and carried a bare DER certificate instead of an
+  `EFI_SIGNATURE_LIST`. The installed OpenSSL also rejected `cms -detach`.
+- Fix: `authenticated_variable` now emits a 16-byte GMT timestamp, a
+  `WIN_CERTIFICATE` with `EFI_CERT_TYPE_PKCS7_GUID` and `dwLength = 24 + sig`,
+  and a detached CMS signature over the exact edk2 serialization; the payload
+  is wrapped in `EFI_SIGNATURE_LIST` with `EFI_CERT_X509_GUID`. Three unit tests
+  cover the serialization, timestamp and signature-list layout; all three files
+  pass an independent `openssl cms -verify` check.
+- Note: `virt-fw-vars` cannot import `.auth` files as certificate input, so the
+  QEMU test NVRAM was enrolled from the DER certificates. The `.auth` files have
+  only been verified cryptographically so far, not through a firmware
+  `SetVariable` call.
+
+## KNOWN LIMITATION (v2.79.0, M5.2): no real-hardware Secure Boot acceptance
+
+- Signed images are accepted by OVMF and unsigned/tampered ones are rejected,
+  but the available laptop is a 2008 AMI Legacy-BIOS machine (Core 2 Duo T5750)
+  with no UEFI/CSM/Secure Boot setup, and there is no USB↔COM adapter. The
+  physical stick still holds the Legacy-BIOS-only v2.79.0 follow-up image and
+  was not rewritten during M5.2.
+
 ## FIXED (v2.79.0): TUI showed v2.57.0 and .conf offered ignored knobs
 
 - Symptom: the About tab, status bar, `ver` command and GUI About window reported

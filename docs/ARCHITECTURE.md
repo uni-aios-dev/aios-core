@@ -1437,7 +1437,7 @@ Shared system-control plane consumed by the TUI, GUI, bridge and integration tes
 - `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
 
 Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet). Since v2.46.0 the gate also serves `SYS_PING` (id 7, the cooperative hang-watchdog heartbeat) and `SYS_FAULT_POLL` (id 8, which drains the kernel fault event ring for a ring-3 monitor — the freestanding twin of the host `FaultReport` IPC). Since v2.49.0 it serves the `SYS_SOCK_*` family (ids 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — the last two from v2.50.0 — and `SYS_SOCK_ADDR`, v2.51.0, which hands ring-3 its own bound IPv4), the ring-3 face of the kernel socket layer; every buffer argument is copied byte-by-byte through `memory::translate` and each call is gated on socket ownership (`sock::owner(fd) == pid`). Since v2.51.0 the fifth ring-3 demo task (program E) exercises the whole family from userspace over loopback — a UDP ping-pong plus, since v2.52.0, a TCP `listen`/`connect`/`accept`/echo round per loop (`sock-e ok` / `sock-t ok`; see the `user` bullet).
-## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`, `aios-install`) — v2.76.0
+## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`, `aios-install`, `aios-sbctl`) — v2.76.0 (Secure Boot since v2.79.0)
 
 AIOS boots on bare metal without Linux, Windows or a third-party boot loader:
 `aios-boot` is its own UEFI application, `aios-bootinfo` is the loader/kernel
@@ -1492,7 +1492,27 @@ no BIOS/El Torito path in v1).
   `verify_assets` checks that tree with `aios-storectl::verify`. `--reuse-assets`
   keeps an already-edited `boot/out/assets` instead of re-staging it, which is
   how the update/rollback QEMU scenarios rebuild the image without losing the
-  new generation.
+  new generation. Since M5.2, `--sign-keys DIR` Authenticode-signs the loader
+  through `aios-sbctl` before it is copied to the ESP (keeping the signed copy
+  at `boot/out/BOOTX64.signed.efi` and verifying it first), `--enroll-out DIR`
+  emits the PK/KEK/db `.auth` payloads (requires `--sign-keys`), `--secure-fw`
+  selects the OVMF Secure Boot code firmware and `--ovmf-vars PATH` selects a
+  pre-enrolled NVRAM template.
+- `aios-sbctl` (`boot/aios-sbctl`, `std`, standalone, excluded from the
+  workspace, v2.79.0, M5.2): the host signing utility with `keygen`, `sign`,
+  `verify` and `enroll` commands. It shells out to `openssl` for RSA keys,
+  X.509 certificates, PKCS#7 signing and CMS verification; there are no
+  external Rust dependencies and no `sbsign`. PE/COFF signing follows the
+  edk2/`sbsign` Authenticode convention: `eContentType` =
+  `SPC_INDIRECT_DATA_OBJID`, the digest covers the `SpcIndirectDataContent`
+  body without its outer SEQUENCE header, `eContent` holds the whole DER value,
+  and the blob is installed in the PE certificate table. Enrollment emits
+  `EFI_VARIABLE_AUTHENTICATION_2` buffers with a 16-byte GMT `EFI_TIME`, an
+  `EFI_CERT_TYPE_PKCS7_GUID` certificate and a detached CMS signature over
+  edk2's `(VariableName, VendorGuid, Attributes, TimeStamp, Payload)`; the
+  payload itself is an `EFI_SIGNATURE_LIST` with `EFI_CERT_X509_GUID` and the
+  DER certificate. 15 unit tests cover DER/PE parsing, signing layout and
+  enrollment serialization.
 - Stack alignment invariant: every kernel stack top must be 16-byte aligned.
   `[u8; N]` statics only have alignment 1, and `core::fmt::Arguments` marks its
   "static `&str`" encoding with `args & 1`; an odd argument-array address is
@@ -1689,6 +1709,14 @@ no BIOS/El Torito path in v1).
   - `update --fail-after staging`: the loader still sees sequence 1, active
     slot 0 and the original block. A separate CLI rollback switches back to
     slot 0 at sequence 3 with no payload copy.
+- QEMU/OVMF Secure Boot proof (M5.2): with `--secure-fw` and an enrolled
+  `--ovmf-vars` template, the image built with `--sign-keys` logs
+  `aios-boot: entering kernel`, `[cfg] system = AIOS 2.79.0 x86_64 (3 layer(s),
+  10 key(s), 0 invalid)` and `periodic 1000 Hz tick armed`. The same setup with
+  an unsigned or tampered loader never enters the kernel (`kernel_entries=0`,
+  `aios_boot_lines=0`) and OVMF reports `Access Denied` for `Boot0001`. The
+  enrollment files are verified with detached OpenSSL CMS checks; the physical
+  stick was not rewritten.
 
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 
