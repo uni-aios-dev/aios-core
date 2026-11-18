@@ -1,5 +1,26 @@
 # AIOS Development Log
 
+## v2.76.1 - Native boot M5.1: real USB write verified (2026-11-18)
+
+### Fixed
+- A physical disk cannot be measured with `SeekFrom::End(0)` on Windows
+  (`ERROR_INVALID_FUNCTION`). `aios-install` now uses
+  `DeviceIoControl(IOCTL_DISK_GET_LENGTH_INFO)` for `\\.\PhysicalDriveN` both in
+  `plan()` and in `--list`.
+- Raw writes through `std::fs::OpenOptions` were rejected by Windows as well.
+  Physical targets are now opened with `CreateFileW` using
+  `GENERIC_READ|GENERIC_WRITE` and `FILE_SHARE_READ|FILE_SHARE_WRITE`, written
+  through a sector-aligned buffer, and not flushed (the disk handle has no
+  buffered data to flush). Failures now name the failing step and byte offset.
+
+### Verified
+- Elevated run on a Kingston DataTraveler 3.0 USB (`\\.\PhysicalDrive3`,
+  29 592 MiB): 336 609 792 bytes written, every chunk read back, CRC32
+  `466BA1BB`. Windows now reports one GPT partition at offset 1 MiB, size
+  320 MiB, type ESP (`c12a7328-f81f-11d2-ba4b-00a0c93ec93b`).
+- 6/6 installer tests, `cargo fmt --check` and `cargo clippy --all-targets
+  -D warnings` clean.
+
 ## v2.76.0 - Native boot M5.1: Rust installer for the UEFI disk image (2026-11-18)
 
 ### Added

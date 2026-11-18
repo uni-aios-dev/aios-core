@@ -1,5 +1,27 @@
 # Журнал разработки AIOS
 
+## v2.76.1 - Собственная загрузка M5.1: реальная запись на USB проверена (2026-11-18)
+
+### Исправлено
+- Размер физического диска нельзя получить через `SeekFrom::End(0)` в Windows
+  (`ERROR_INVALID_FUNCTION`). `aios-install` теперь использует
+  `DeviceIoControl(IOCTL_DISK_GET_LENGTH_INFO)` для `\\.\PhysicalDriveN` и в
+  `plan()`, и в `--list`.
+- Windows отвергала и запись через `std::fs::OpenOptions`. Физические цели
+  открываются через `CreateFileW` с `GENERIC_READ|GENERIC_WRITE` и
+  `FILE_SHARE_READ|FILE_SHARE_WRITE`, запись идёт через выровненный по сектору
+  буфер, а `flush` для диска не вызывается. Сообщения об ошибках теперь
+  содержат шаг и байтовое смещение.
+
+### Проверено
+- Запуск с повышенными правами на Kingston DataTraveler 3.0 USB
+  (`\\.\PhysicalDrive3`, 29 592 МиБ): записано 336 609 792 байт, каждый чанк
+  перечитан, CRC32 `466BA1BB`. Windows видит один GPT-раздел со смещением
+  1 МиБ, размером 320 МиБ и типом ESP
+  (`c12a7328-f81f-11d2-ba4b-00a0c93ec93b`).
+- 6/6 тестов установщика, `cargo fmt --check` и `cargo clippy --all-targets
+  -D warnings` чисто.
+
 ## v2.76.0 - Собственная загрузка M5.1: Rust-установщик образа UEFI (2026-11-18)
 
 ### Добавлено

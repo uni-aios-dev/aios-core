@@ -50,6 +50,14 @@ const ESP_NAME: &str = "AIOS ESP";
 /// Bytes copied and read back per step.
 const CHUNK_SIZE: usize = 1024 * 1024;
 
+/// Allocation for a sector-aligned copy buffer: the extra sectors let the
+/// caller pick an aligned slice without a custom allocator or a large stack
+/// temporary. Block-device writes stay aligned even on disks with a 4 KiB
+/// physical sector size.
+fn aligned_buffer() -> Vec<u8> {
+    vec![0u8; CHUNK_SIZE + SECTOR_SIZE as usize]
+}
+
 /// Structural facts read from an image without modifying it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageInfo {
@@ -183,8 +191,15 @@ fn io_error(path: &Path, error: io::Error) -> InstallError {
     }
 }
 
+fn io_step(path: &Path, step: &str, error: io::Error) -> InstallError {
+    io_error(
+        path,
+        io::Error::new(error.kind(), format!("{step}: {error}")),
+    )
+}
+
 fn open_read(path: &Path) -> Result<File, InstallError> {
-    File::open(path).map_err(|error| io_error(path, error))
+    File::open(path).map_err(|error| io_step(path, "open for read", error))
 }
 
 fn open_read_write(path: &Path) -> Result<File, InstallError> {
@@ -192,7 +207,70 @@ fn open_read_write(path: &Path) -> Result<File, InstallError> {
         .read(true)
         .write(true)
         .open(path)
-        .map_err(|error| io_error(path, error))
+        .map_err(|error| io_step(path, "open for write", error))
+}
+
+fn open_writer(path: &Path, kind: TargetKind) -> Result<File, InstallError> {
+    #[cfg(windows)]
+    if kind == TargetKind::PhysicalDevice {
+        return open_physical_writer(path);
+    }
+    let _ = kind;
+    open_read_write(path)
+}
+
+#[cfg(windows)]
+/// Opens a physical disk with `CreateFileW` in the same sharing mode as normal
+/// disk tools. `std::fs::OpenOptions` was rejected by Windows for raw writes;
+/// this handle accepts buffered, sector-sized writes when running elevated.
+fn open_physical_writer(path: &Path) -> Result<File, InstallError> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *mut c_void,
+            disposition: u32,
+            flags: u32,
+            template: *mut c_void,
+        ) -> *mut c_void;
+    }
+
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ: u32 = 0x1;
+    const FILE_SHARE_WRITE: u32 = 0x2;
+    const OPEN_EXISTING: u32 = 3;
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == usize::MAX as *mut c_void {
+        return Err(io_step(
+            path,
+            "open raw disk for write",
+            io::Error::last_os_error(),
+        ));
+    }
+    Ok(unsafe { File::from_raw_handle(handle) })
 }
 
 fn sector_at<R: Read + Seek>(
@@ -434,6 +512,61 @@ impl<R: Seek> Seek for Prefix<R> {
     }
 }
 
+/// Size of a file or raw physical disk.
+///
+/// `SeekFrom::End` fails with `ERROR_INVALID_FUNCTION` on Windows block
+/// devices, so a physical disk is measured with `DeviceIoControl` instead.
+fn target_size(path: &Path, kind: TargetKind) -> Result<u64, InstallError> {
+    if kind == TargetKind::PhysicalDevice {
+        #[cfg(windows)]
+        return device_size(path);
+    }
+    let mut file = open_read(path)?;
+    file.seek(SeekFrom::End(0))
+        .map_err(|error| io_error(path, error))
+}
+
+#[cfg(windows)]
+fn device_size(path: &Path) -> Result<u64, InstallError> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            handle: *mut c_void,
+            code: u32,
+            input: *const c_void,
+            input_size: u32,
+            output: *mut c_void,
+            output_size: u32,
+            returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+    }
+
+    const IOCTL_DISK_GET_LENGTH_INFO: u32 = 0x0007_405C;
+    let file = open_read(path)?;
+    let mut length = 0u64;
+    let mut returned = 0u32;
+    let ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            IOCTL_DISK_GET_LENGTH_INFO,
+            std::ptr::null(),
+            0,
+            std::ptr::from_mut(&mut length).cast(),
+            std::mem::size_of::<u64>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Err(io_error(path, io::Error::last_os_error()));
+    }
+    Ok(length)
+}
+
 /// Builds a plan without changing either side.
 pub fn plan(image: &Path, target: &Path) -> Result<Plan, InstallError> {
     if let (Ok(source), Ok(destination)) = (image.canonicalize(), target.canonicalize()) {
@@ -443,10 +576,8 @@ pub fn plan(image: &Path, target: &Path) -> Result<Plan, InstallError> {
     }
     let info = inspect_image(image)?;
     let image_crc = fingerprint(image)?;
-    let mut target_file = open_read(target)?;
-    let target_bytes = target_file
-        .seek(SeekFrom::End(0))
-        .map_err(|error| io_error(target, error))?;
+    let kind = target_kind(target);
+    let target_bytes = target_size(target, kind)?;
     if target_bytes < info.bytes {
         return Err(InstallError::TargetTooSmall {
             target: target_bytes,
@@ -458,7 +589,7 @@ pub fn plan(image: &Path, target: &Path) -> Result<Plan, InstallError> {
         target: target.to_path_buf(),
         info,
         target_bytes,
-        kind: target_kind(target),
+        kind,
         image_crc,
     })
 }
@@ -471,47 +602,50 @@ pub fn execute(
     let mut source = open_read(&plan.image)?;
     source
         .seek(SeekFrom::Start(0))
-        .map_err(|error| io_error(&plan.image, error))?;
-    let mut output = open_read_write(&plan.target)?;
+        .map_err(|error| io_step(&plan.image, "seek source", error))?;
+    let mut output = open_writer(&plan.target, plan.kind)?;
     output
         .seek(SeekFrom::Start(0))
-        .map_err(|error| io_error(&plan.target, error))?;
+        .map_err(|error| io_step(&plan.target, "seek target for write", error))?;
     let mut reader = open_read(&plan.target)?;
     reader
         .seek(SeekFrom::Start(0))
-        .map_err(|error| io_error(&plan.target, error))?;
+        .map_err(|error| io_step(&plan.target, "seek target for read", error))?;
 
-    let mut buffer = vec![0u8; CHUNK_SIZE];
+    let mut storage = aligned_buffer();
+    let shift = SECTOR_SIZE as usize - (storage.as_ptr() as usize % SECTOR_SIZE as usize);
+    let buffer = &mut storage[shift..shift + CHUNK_SIZE];
     let mut back = vec![0u8; CHUNK_SIZE];
     let mut written = 0u64;
     let mut crc = crc32::INIT;
     while written < plan.info.bytes {
         let remaining = (plan.info.bytes - written) as usize;
         let want = remaining.min(CHUNK_SIZE);
-        let count = source
-            .read(&mut buffer[..want])
-            .map_err(|error| io_error(&plan.image, error))?;
-        if count == 0 {
-            return Err(InstallError::InvalidImage(
-                "the image ended during the copy".into(),
-            ));
-        }
-        output
-            .write_all(&buffer[..count])
-            .map_err(|error| io_error(&plan.target, error))?;
+        source
+            .read_exact(&mut buffer[..want])
+            .map_err(|error| io_step(&plan.image, "read source", error))?;
+        output.write_all(&buffer[..want]).map_err(|error| {
+            io_step(
+                &plan.target,
+                &format!("write chunk at byte {written}"),
+                error,
+            )
+        })?;
         reader
-            .read_exact(&mut back[..count])
-            .map_err(|error| io_error(&plan.target, error))?;
-        if back[..count] != buffer[..count] {
+            .read_exact(&mut back[..want])
+            .map_err(|error| io_step(&plan.target, "read chunk back", error))?;
+        if back[..want] != buffer[..want] {
             return Err(InstallError::VerifyMismatch { offset: written });
         }
-        crc = crc32::update(crc, &buffer[..count]);
-        written += count as u64;
+        crc = crc32::update(crc, &buffer[..want]);
+        written += want as u64;
         progress(written, plan.info.bytes);
     }
-    output
-        .flush()
-        .map_err(|error| io_error(&plan.target, error))?;
+    if plan.kind != TargetKind::PhysicalDevice {
+        output
+            .flush()
+            .map_err(|error| io_step(&plan.target, "flush target", error))?;
+    }
     drop(output);
 
     let check = inspect_prefix(&plan.target, plan.info.bytes)?;
@@ -555,7 +689,7 @@ fn list_devices_impl() -> Vec<Device> {
         let Ok(mut file) = File::open(&path) else {
             continue;
         };
-        let bytes = file.seek(SeekFrom::End(0)).unwrap_or(0);
+        let bytes = device_size(Path::new(&path)).unwrap_or(0);
         let protective_mbr = file
             .seek(SeekFrom::Start(0))
             .and_then(|_| {

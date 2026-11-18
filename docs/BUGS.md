@@ -1,5 +1,23 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.76.1): `aios-install` could not write to a physical disk on Windows
+
+- **Symptom:** an elevated `aios-install --device \\.\PhysicalDriveN --write
+  --yes` failed before the first chunk with
+  `\\.\PhysicalDriveN: Неверная функция. (os error 1)`, and `--list` showed no
+  disks.
+- **Cause:** two Windows-specific issues. `SeekFrom::End(0)` is invalid on raw
+  block devices, so the target-size probe failed; and `std::fs::OpenOptions`
+  opened the disk with a sharing mode Windows rejects for raw writes.
+- **Fix:** the size now comes from `IOCTL_DISK_GET_LENGTH_INFO`; physical targets
+  are opened with `CreateFileW(GENERIC_READ|GENERIC_WRITE,
+  FILE_SHARE_READ|FILE_SHARE_WRITE, OPEN_EXISTING, 0)`, written through a
+  sector-aligned buffer and not flushed. Error messages now include the step
+  and byte offset.
+- **Status:** closed in v2.76.1. Verified on a Kingston DataTraveler 3.0 USB
+  (disk 3): 321 MiB written and read back with CRC32 `466BA1BB`; Windows reports
+  one 320 MiB ESP partition at offset 1 MiB.
+
 ## LIMITS (v2.76.0): `flash-usb.ps1` is not a validator for the native UEFI image
 
 - **Symptom:** `scripts/flash-usb.ps1` writes any image to a physical disk and

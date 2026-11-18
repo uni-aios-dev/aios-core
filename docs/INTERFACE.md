@@ -21,6 +21,11 @@ aios-install --image boot/out/aios-esp.img --device \\.\PhysicalDrive2 --write -
   volume-lock API, so the tool cannot do this for you. `--list` probes
   `\\.\PhysicalDriveN` read-only on Windows and may be empty on virtualised
   hosts.
+- On Windows both `--list` and writing to `\\.\PhysicalDriveN` require an
+  **elevated (Administrator)** process: a non-elevated session lists no disks
+  and opening the device fails with `Access Denied`. Run the command from a
+  PowerShell started "As Administrator" (UAC confirmation is required). A dry
+  run is still the default; the write needs `--write --yes`.
 
 ---
 

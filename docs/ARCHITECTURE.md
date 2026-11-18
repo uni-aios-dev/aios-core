@@ -1675,7 +1675,13 @@ no BIOS/El Torito path in v1).
   prints the plan by default and needs `--write --yes` to modify anything;
   `--list` probes `\\.\PhysicalDrive0..15` read-only on Windows. A physical
   disk must be unmounted first: `std` has no volume-lock API. The restored
-  target boots under QEMU/OVMF byte-identically to the image.
+  target boots under QEMU/OVMF byte-identically to the image. On Windows a raw
+  disk is sized with `IOCTL_DISK_GET_LENGTH_INFO` (`SeekFrom::End` is invalid on
+  block devices) and opened with `CreateFileW` using
+  `FILE_SHARE_READ|FILE_SHARE_WRITE`; writes use a sector-aligned buffer and
+  skip `flush`. v2.76.1 verified a real 31 GB Kingston USB stick: 336 609 792
+  bytes written and read back with CRC32 `466BA1BB`, one 320 MiB ESP partition
+  at offset 1 MiB.
 - Commit invariant fixed in M4.2: `UpdatePlan::retired_header()` carries the
   **new** sequence and the new manifest CRC (not `sequence - 1`), because the
   loader validates a slot against the manifest it just selected. Without this
