@@ -12,6 +12,10 @@
   from the stock config and the `aios-config` sample/tests; the serial log prints
   the effective timer/heap once as compile-time facts, and generic parsing stays
   for keys the kernel really honours (`blocks.<name>.fuel`, `net.dhcp`).
+- Deployed: after a separate explicit confirmation the physical stick now boots
+  the v2.79.0 follow-up image `aios-kernel-usb-limine-v279-followup.img`
+  (`600E2D2B…F2756`); full read-back SHA-256 and the kernel at LBA 32 were
+  verified on the disk.
 
 ## FIXED (v2.79.0): after 1000 Hz the pointer lagged even more
 
@@ -26,11 +30,14 @@
   GUI renders at 250 Hz and TUI at 100 Hz, sensors stay at 20 Hz, and mouse
   reports still repaint immediately. Verified by build/test/clippy/fmt, a
   Limine bare-metal build and two clean 20 s QEMU runs (no panics).
-- Deployment caveat: after explicit confirmation the physical stick was
-  rewritten with `aios-kernel-usb-limine-1000hz-render.img`
-  (`0B2A3E8F…0286`); full read-back SHA-256, MBR `EB 3C 90 LIMIT` / `55 AA` and
-  ELF at LBA 32 were verified. As before, the patched hybrid image is
-  Legacy-BIOS-only and the boot partition is patched at LBA 32.
+- Deployment caveat: the stick was first rewritten with
+  `aios-kernel-usb-limine-1000hz-render.img` (`0B2A3E8F…0286`), which has since
+  been superseded on the stick by the v2.79.0 follow-up image
+  `aios-kernel-usb-limine-v279-followup.img` (`600E2D2B…F2756`). Full read-back
+  SHA-256, MBR `EB 3C 90 LIMIT` / `55 AA`, ELF at LBA 32, the ISO directory
+  record and the kernel SHA-256 were verified for the current image. As before,
+  the patched hybrid image is Legacy-BIOS-only and the boot partition is patched
+  at LBA 32.
 
 ## DIAGNOSED (v2.78.2): the old build felt faster because its timer ran too fast
 

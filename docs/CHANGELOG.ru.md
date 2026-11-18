@@ -59,6 +59,27 @@
   описание соответствовало поведению; исторические записи changelog помечены
   как устаревшие, а не переписаны.
 
+### Развёртывание (2026-11-18)
+- После явного подтверждения пользователя диск `\\.\PhysicalDrive3` (Kingston
+  DataTraveler 3.0, serial `EE05DB505AE9`) был очищен и перезаписан образом
+  `aios-kernel-run/out/aios-kernel-usb-limine-v279-followup.img` (4 683 776
+  байт, SHA-256
+  `600E2D2B63B1561C0A4AA4C0203FD72323A79B9EE02E2721043FE377A45F2756`).
+  Внешние инструменты Limine/xorriso отсутствуют, поэтому использован уже
+  проверенный пропатченный гибридный образ: свежесобранное ядро `aios-kernel`
+  (1 003 928 байт, SHA-256
+  `43A6642E45C19F828BF915EFD4AA03EB43E228045A5B0FD17CB4C1793694B58E`) записано
+  вместо полезной нагрузки в LBA 32, а запись каталога `AIOS_KER.;1` обновлена
+  (LBA 32, новый размер).
+- Полный readback дал SHA-256, совпавший с образом; MBR `EB 3C 90 LIMIT` /
+  `55 AA`, ELF в LBA 32, запись каталога и SHA-256 ядра были перечитаны прямо с
+  диска. 20-секундный прогон нового образа в QEMU с legacy BIOS залогировал
+  `periodic 1000 Hz tick armed`, `system = AIOS 2.79.0`,
+  `timer = 1000 Hz, heap = 4096 KiB (compile-time)` и `panics=0`. Логи:
+  `boot/out/flash-v279-followup-disk3.log`,
+  `boot/out/flash-verify-v279-followup.log` и
+  `boot/out/perf-v279-followup-serial.log`.
+
 ## v2.78.3 - Флешка перезаписана ядром с 1000 Гц (2026-11-18)
 
 ### Проверено

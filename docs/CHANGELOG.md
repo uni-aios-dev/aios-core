@@ -57,6 +57,27 @@
   text matches this behaviour; historical changelog entries are marked as
   superseded instead of being rewritten.
 
+### Deployed (2026-11-18)
+- After explicit user confirmation, `\\.\PhysicalDrive3` (Kingston DataTraveler
+  3.0, serial `EE05DB505AE9`) was cleaned and rewritten with
+  `aios-kernel-run/out/aios-kernel-usb-limine-v279-followup.img` (4 683 776
+  bytes, SHA-256
+  `600E2D2B63B1561C0A4AA4C0203FD72323A79B9EE02E2721043FE377A45F2756`). The
+  external Limine/xorriso tools are not present, so the previously verified
+  patched hybrid image was reused: the freshly built `aios-kernel` (1 003 928
+  bytes, SHA-256
+  `43A6642E45C19F828BF915EFD4AA03EB43E228045A5B0FD17CB4C1793694B58E`) replaced
+  the payload at ISO LBA 32 and the `AIOS_KER.;1` directory record was updated
+  (LBA 32, new size).
+- Full read-back SHA-256 matched the image; MBR `EB 3C 90 LIMIT` / `55 AA`, ELF
+  at LBA 32, the directory record and the kernel SHA-256 were re-read from the
+  disk. A 20 s legacy-BIOS QEMU run on the new image logged
+  `periodic 1000 Hz tick armed`, `system = AIOS 2.79.0`,
+  `timer = 1000 Hz, heap = 4096 KiB (compile-time)` and `panics=0`. Logs:
+  `boot/out/flash-v279-followup-disk3.log`,
+  `boot/out/flash-verify-v279-followup.log` and
+  `boot/out/perf-v279-followup-serial.log`.
+
 ## v2.78.3 - Reflash the USB stick with the 1000 Hz kernel (2026-11-18)
 
 ### Verified
