@@ -1833,9 +1833,12 @@ match on the bound local port and require the reply to come from the connected p
   `SHADOW_PAD = 7` so shadow spill repains with its shape. Continuous paths (cursor, drag, live
   System/Uptime windows) mark only their own rectangles via
   `mark_live_dirty()`. `idle_loop` drives `gui::render()` on its own cadence —
-  100 Hz (≈100 FPS, one tick in 10 of the 1000 Hz timer since v2.78.2) — plus
-  an immediate repaint after every mouse report, while the TUI keeps its ~20 Hz
-  gate and the lid/thermal probes run on that same ~20 Hz gate. Extended (0xE0/0xE1) scan
+  250 Hz (one tick in 4 of the 1000 Hz timer since v2.79.0, up from 100 Hz in
+  v2.78.2) — plus an immediate repaint after every mouse report, while the TUI
+  renders at 100 Hz and the lid/thermal probes stay on a ~20 Hz gate. The
+  runaway-pointer gate is measured in elapsed ticks (`TIMER_HZ`, one second)
+  rather than a packet count, so it no longer trips ten times faster at 1000 Hz.
+  Extended (0xE0/0xE1) scan
    codes are
    dropped before the GUI/TUI tables ever see them (see `ps2`/`main`).
    System window reuses `tui::tick_mode()`/`lid_state()`

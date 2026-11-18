@@ -745,9 +745,10 @@ input.
 - A **left-click** on the tab bar switches tabs; the mouse 8x8 arrow is clamped
   to the framebuffer and is redrawn on top of every panel repaint, so switching
   tabs or refreshing the status bar can never erase it.
-- **Runaway gate (v2.38.33)**: if 60 packets in a row push the already-clamped
-  cursor further into the same edge, pointer input is suspended —
-  `[tui] pointer runaway: input suppressed (60 packets pushing into the edge)`
+- **Runaway gate (v2.38.33, time-based since v2.79.0)**: if reports keep pushing
+  the already-clamped cursor further into the same edge for one second, pointer
+  input is suspended —
+  `[tui] pointer runaway: input suppressed (N ms pushing into the edge)`
   — and re-arms only when a packet moves away from the edge
   (`[tui] pointer runaway released`). Serial movement logs are aggregated to
   one `[serial] ps2 mouse … +N pkts dx=… dy=…` line per second per device.
@@ -830,9 +831,9 @@ focused) returns to the console/TUI.
   the GUI is active the kernel log (`vprintln!`) and heartbeat pause — the
   desktop owns the screen; serial logging keeps running so `[serial] tick …`
   still proves liveness.
-- **Pointer runaway gate (v2.38.33)**: a stream that keeps pushing the
-  clamped cursor further into the same edge (60 packets in a row) switches
-  pointer input off — `[gui] pointer runaway: input suppressed (60 packets
+- **Pointer runaway gate (v2.38.33, time-based since v2.79.0)**: a stream that
+  keeps pushing the clamped cursor further into the same edge for one second
+  switches pointer input off — `[gui] pointer runaway: input suppressed (N ms
   pushing into the edge)` — until a packet moves away from the edge
   (`[gui] pointer runaway released`); button events stay suppressed in the
   meantime, so a stuck touchpad cannot click the task bar. Mouse movement
@@ -855,8 +856,8 @@ focused) returns to the console/TUI.
   backbuffer (`[serial] gui backbuffer NNNN KiB` on entry); each frame only the
   dirty rectangle is published to the panel, one row copy at a time — the LCD
   sees only complete frames, so there is no tearing and no mouse trail. The GUI
-  repaints at 100 Hz (every 10th tick of the 1000 Hz timer since v2.78.2)
-  instead of the old 20 Hz
+  repaints at 250 Hz (every 4th tick of the 1000 Hz timer since v2.79.0,
+  up from 100 Hz in v2.78.2) instead of the old 20 Hz
   gate, which makes the live telemetry smooth while the static desktop stays
   byte-identical. If the backbuffer cannot be mapped the GUI degrades to the
   v2.38.23 direct-VRAM renderer automatically.

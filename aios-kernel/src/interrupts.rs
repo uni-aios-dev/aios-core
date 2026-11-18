@@ -171,7 +171,7 @@ fn draw_timer_bar() {
     }
     if let Some(fb) = crate::console::framebuffer() {
         let ticks = TICKS.load(Ordering::Relaxed);
-        let h = (ticks % 64) as usize;
+        let h = ((ticks / (TIMER_HZ / 100).max(1)) % 64) as usize;
         let bx = fb.width().saturating_sub(16);
         unsafe {
             fb.fill_rect(bx, 0, 8, 64, crate::framebuffer::colors::BG);

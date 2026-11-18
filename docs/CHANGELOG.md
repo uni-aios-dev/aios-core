@@ -1,5 +1,41 @@
 # AIOS Development Log
 
+## v2.79.0 - Fix render cadence and time the pointer runaway gate (2026-11-18)
+
+### Root cause of the post-1000 Hz regression
+- Raising `TIMER_HZ` to 1000 kept the old real-time render gates: the GUI still
+  repainted at 100 Hz and the TUI at 20 Hz. The tick rate (and interrupt load)
+  grew 10x without any more frames, so input felt even laggier. QEMU confirmed
+  the drop: both the old 100 Hz image and the first 1000 Hz image reached only
+  `tick 10s` in 20 s, while the 100 Hz build had reached `tick 15s` with a
+  per-tick GUI repaint.
+- The pointer runaway gate counted 60 consecutive edge-pushing packets. That is
+  ~0.6 s at 100 Hz but only 60 ms at 1000 Hz, so on the laptop with a history of
+  pointer storms it suppressed valid input almost immediately.
+
+### Changed
+- `gui.rs` / `tui.rs`: the runaway gate is now a one-second tick window
+  (`RUNAWAY_TICKS = TIMER_HZ`) tracked by `PIN_SINCE`, and its serial message
+  reports milliseconds instead of a packet count. GUI reset paths renamed
+  `PIN_STREAK` to `PIN_SINCE`; the globe blink is scaled from `TIMER_HZ`.
+- `main.rs`: the GUI renders at 250 Hz (`TIMER_HZ / 250`) and the TUI at 100 Hz
+  (`TIMER_HZ / 100`); the lid/thermal probes stay at 20 Hz. Mouse reports still
+  trigger an immediate render.
+- `interrupts.rs`: the IRQ timer bar advances on a 100 Hz cadence regardless of
+  `TIMER_HZ`.
+
+### Verified
+- `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace` and `cargo build --workspace --release` all succeed.
+- Bare-metal kernel built with `--features limine`: 1 003 208 bytes. The staged
+  Legacy-BIOS image `aios-kernel-usb-limine-1000hz-render.img` has SHA-256
+  `0B2A3E8F8CC888F9A90EB6340576586DDB57298B142B8A63D5754352EF940286`; LBA 32
+  holds the ELF (`7F 45 4C 46`) and byte-for-byte matches the built kernel.
+- 20 s QEMU runs of the old 1000 Hz image and the render-fix image both log
+  `periodic 1000 Hz tick armed`, reach `tick 10s` and show zero panics. The
+  physical stick still carries v2.78.2/v2.78.3 (`4054F225…913AA`); reflashing
+  needs a separate explicit confirmation and has not been done.
+
 ## v2.78.3 - Reflash the USB stick with the 1000 Hz kernel (2026-11-18)
 
 ### Verified

@@ -1178,13 +1178,12 @@ pub fn idle_loop() -> ! {
             last_tick_print = ticks;
         }
         stage_check("tickprint", &mut stage_mark);
-        // Monitor: the windowed GUI repaints at 100 Hz, the TUI (which redraws
-        // straight to VRAM) keeps its ~20 Hz gate, and the lid / thermal probes
-        // refresh on that same slow cadence regardless of the screen owner. All
-        // gates derive from TIMER_HZ, so raising the tick rate to 1000 Hz sharpens
-        // input polling without changing any real-time interval. Mouse motion
-        // additionally triggers an immediate render in the report bands below,
-        // so pointer feedback never waits a frame.
+        // Monitor: the windowed GUI repaints at 250 Hz and the TUI (which
+        // redraws straight to VRAM) at 100 Hz, so the higher 1000 Hz tick rate
+        // actually buys smoother frames instead of only more interrupts. Lid
+        // and thermal probes stay on a 20 Hz cadence — their I/O is expensive.
+        // Mouse motion additionally triggers an immediate render in the report
+        // bands below, so pointer feedback never waits for a gate.
         if ticks >= interrupts::TIMER_HZ {
             let slow_gate = (interrupts::TIMER_HZ / 20).max(1);
             if ticks - last_sensor_render >= slow_gate {
@@ -1194,14 +1193,17 @@ pub fn idle_loop() -> ! {
             }
             if gui::active() {
                 gui::poll_crash();
-                let gate = (interrupts::TIMER_HZ / 100).max(1);
+                let gate = (interrupts::TIMER_HZ / 250).max(1);
                 if ticks - last_gui_render >= gate {
                     gui::render();
                     last_gui_render = ticks;
                 }
-            } else if ticks - last_tui_render >= slow_gate {
-                tui::render();
-                last_tui_render = ticks;
+            } else {
+                let gate = (interrupts::TIMER_HZ / 100).max(1);
+                if ticks - last_tui_render >= gate {
+                    tui::render();
+                    last_tui_render = ticks;
+                }
             }
         }
         stage_check("render", &mut stage_mark);

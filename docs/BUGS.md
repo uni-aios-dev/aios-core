@@ -1,5 +1,24 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.79.0): after 1000 Hz the pointer lagged even more
+
+- Symptom: with the v2.78.2/v2.78.3 1000 Hz image on the stick the pointer felt
+  worse than before, even though uptime was now correct.
+- Root cause: the real-time render gates were left at GUI 100 Hz / TUI 20 Hz, so
+  the tenfold tick increase only added interrupt work. Worse, the runaway gate
+  tripped after 60 consecutive edge-pushing packets — ~60 ms at 1000 Hz instead
+  of ~0.6 s at 100 Hz — suppressing valid pointer input almost immediately on
+  the laptop with a known pointer-storm history.
+- Fix: the gate now measures one second with ticks (`RUNAWAY_TICKS = TIMER_HZ`);
+  GUI renders at 250 Hz and TUI at 100 Hz, sensors stay at 20 Hz, and mouse
+  reports still repaint immediately. Verified by build/test/clippy/fmt, a
+  Limine bare-metal build and two clean 20 s QEMU runs (no panics).
+- Deployment caveat: the physical stick still has the v2.78.2 image
+  (`4054F225…913AA`). The fixed image `aios-kernel-usb-limine-1000hz-render.img`
+  (`0B2A3E8F…0286`) is staged only; it needs explicit confirmation before the
+  stick is overwritten. As before, the patched hybrid image is Legacy-BIOS-only
+  and the boot partition is patched at LBA 32.
+
 ## DIAGNOSED (v2.78.2): the old build felt faster because its timer ran too fast
 
 - Symptom: after flashing the v2.78.0 kernel the pointer felt slower, as if the

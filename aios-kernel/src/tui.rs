@@ -23,7 +23,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Number of glyph rows the interactive panel owns. The TUI is the primary
 /// screen: a compact `CONSOLE_TOP_ROWS` boot-log strip sits on top and every
@@ -841,11 +841,12 @@ pub(crate) fn paint_cursor(fb: &Framebuffer, x: usize, y: usize, on: bool) {
     }
 }
 
-/// Packets that keep pushing an already-clamped cursor further into the same
-/// screen edge before the pointer is suppressed (see [`input_allowed`]).
-const RUNAWAY_STREAK: u32 = 60;
-/// Runaway gate: consecutive edge-pushing packets before suppression.
-static PIN_STREAK: AtomicU32 = AtomicU32::new(0);
+/// How long an unbroken stream of edge-pushing reports may last before the
+/// pointer is suppressed (one second at any `TIMER_HZ`). Packet counts would
+/// trip this gate ten times sooner at 1000 Hz than at 100 Hz.
+const RUNAWAY_TICKS: u64 = TIMER_HZ;
+/// Runaway gate: tick of the first uninterrupted edge-pushing report, or zero.
+static PIN_SINCE: AtomicU64 = AtomicU64::new(0);
 /// Runaway gate: while true, pointer input is suppressed until a packet moves
 /// the cursor away from the pinned edge.
 static PIN_LOCK: AtomicBool = AtomicBool::new(false);
@@ -875,10 +876,11 @@ pub fn input_allowed(dx: i32, dy: i32) -> bool {
         || (y == 0 && dy < 0)
         || (y as i32 >= max_y && dy > 0);
     let moving = dx != 0 || dy != 0;
+    let now = TICKS.load(Ordering::Relaxed);
     if PIN_LOCK.load(Ordering::Relaxed) {
         if moving && !pin {
             PIN_LOCK.store(false, Ordering::Relaxed);
-            PIN_STREAK.store(0, Ordering::Relaxed);
+            PIN_SINCE.store(0, Ordering::Relaxed);
             crate::kprintln!("[tui] pointer runaway released");
             return true;
         }
@@ -886,16 +888,21 @@ pub fn input_allowed(dx: i32, dy: i32) -> bool {
     }
     if !pin {
         if moving {
-            PIN_STREAK.store(0, Ordering::Relaxed);
+            PIN_SINCE.store(0, Ordering::Relaxed);
         }
         return true;
     }
-    let streak = PIN_STREAK.fetch_add(1, Ordering::Relaxed) + 1;
-    if streak >= RUNAWAY_STREAK {
+    let since = PIN_SINCE.load(Ordering::Relaxed);
+    if since == 0 {
+        PIN_SINCE.store(now.max(1), Ordering::Relaxed);
+        return true;
+    }
+    let elapsed_ms = now.saturating_sub(since) * 1000 / TIMER_HZ;
+    if now.saturating_sub(since) >= RUNAWAY_TICKS {
         PIN_LOCK.store(true, Ordering::Relaxed);
         crate::kprintln!(
-            "[tui] pointer runaway: input suppressed ({} packets pushing into the edge)",
-            streak
+            "[tui] pointer runaway: input suppressed ({} ms pushing into the edge)",
+            elapsed_ms
         );
         return false;
     }
