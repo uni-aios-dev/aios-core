@@ -32,9 +32,14 @@
   `0B2A3E8F8CC888F9A90EB6340576586DDB57298B142B8A63D5754352EF940286`; LBA 32
   holds the ELF (`7F 45 4C 46`) and byte-for-byte matches the built kernel.
 - 20 s QEMU runs of the old 1000 Hz image and the render-fix image both log
-  `periodic 1000 Hz tick armed`, reach `tick 10s` and show zero panics. The
-  physical stick still carries v2.78.2/v2.78.3 (`4054F225…913AA`); reflashing
-  needs a separate explicit confirmation and has not been done.
+  `periodic 1000 Hz tick armed`, reach `tick 10s` and show zero panics.
+- After a separate explicit confirmation, `\\.\PhysicalDrive3` (Kingston
+  DataTraveler 3.0, serial `EE05DB505AE9`) was cleaned and rewritten with the
+  v2.79.0 image via an elevated raw `CreateFileW` writer. Full read-back SHA-256
+  matched `0B2A3E8F…0286`, MBR is `EB 3C 90 LIMIT` / `55 AA` and the kernel ELF
+  (`7F 45 4C 46`) is at LBA 32. Logs: `boot/out/flash-limine-1000hz-render-disk3.log`
+  and `boot/out/flash-verify-1000hz-render.log`. As before, the patched hybrid
+  image boots only in Legacy BIOS mode.
 
 ## v2.78.3 - Reflash the USB stick with the 1000 Hz kernel (2026-11-18)
 
