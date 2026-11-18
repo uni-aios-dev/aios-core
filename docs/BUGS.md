@@ -19,9 +19,12 @@
   timers keep their real-time values. The render gates are now GUI 100 Hz,
   TUI 20 Hz, sensors 20 Hz; mouse reports render immediately. Verified in QEMU
   with `periodic 1000 Hz tick armed` and no panics.
-- The physical USB stick still carries the v2.78.0 (100 Hz) kernel; the 1000 Hz
-  image is staged in `aios-kernel-run/out/aios-kernel-usb-limine-1000hz.img`
-  and has not been flashed.
+- After explicit confirmation the physical USB stick was reflashed with the
+  1000 Hz image (v2.78.3): full read-back SHA-256 matched, MBR is
+  `EB 3C 90 LIMIT` / `55 AA` and the kernel ELF (`7F 45 4C 46`) sits at LBA 32.
+  Note for the verification tooling: `ReadFile` on a raw physical disk requires
+  a sector-aligned 512-byte buffer; a 16-byte read fails with error 87, which
+  produced a false `kernel magic: 00 00 00 00` in the earlier flash log.
 
 ## RETIRED (v2.77.0): Linux Live USB path removed
 

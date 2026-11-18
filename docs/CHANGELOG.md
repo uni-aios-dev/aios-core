@@ -1,5 +1,23 @@
 # AIOS Development Log
 
+## v2.78.3 - Reflash the USB stick with the 1000 Hz kernel (2026-11-18)
+
+### Verified
+- With explicit user confirmation, `\\.\PhysicalDrive3` (Kingston DataTraveler
+  3.0, serial `EE05DB505AE9`) was wiped with `diskpart clean` and rewritten with
+  `aios-kernel-run/out/aios-kernel-usb-limine-1000hz.img` (4 683 776 bytes,
+  SHA-256 `4054F225B6B669897DBDCC513877A39B910A10169D109859A4F72C18807F13AA`)
+  via an elevated raw `CreateFileW` writer. Disk identity was checked before the
+  wipe (exactly one disk with that serial, number 3).
+- Full read-back SHA-256 matched the image; MBR boot bytes are `EB 3C 90 LIMIT`
+  with signature `55 AA`; the kernel ELF begins with `7F 45 4C 46` at LBA 32
+  (byte 65536). Logs: `boot/out/flash-limine-1000hz-disk3.log` and
+  `boot/out/flash-verify-1000hz.log`.
+- The earlier `kernel magic: 00 00 00 00` line was a false negative from a
+  16-byte raw `ReadFile` (error 87, sector-aligned buffers required), not a bad
+  image; a 512-byte read confirms the ELF. The stick now boots the 1000 Hz
+  kernel in Legacy BIOS mode.
+
 ## v2.78.2 - Raise the kernel timer to 1000 Hz for sharper input (2026-11-18)
 
 ### Root cause of the perceived slowdown
