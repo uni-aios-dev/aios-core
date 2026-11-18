@@ -13,6 +13,17 @@
   is involved. See the Native UEFI Boot Chain section in
   `docs/ARCHITECTURE.md`.
 
+## LIMITS (v2.78.1): the reflashed stick is Legacy-BIOS-only
+
+- The v2.78.1 stick carries the new kernel in the boot partition of the old
+  hybrid image (ISO LBA 32), which overwrites `LIMINE_U.BIN` / `BOOTX64.EFI`.
+  It boots on the target 2008 Legacy-BIOS laptop, but not on UEFI firmware.
+- Appending the kernel past the ISO volume instead is not viable with the
+  current `limine.conf`: `kernel_path: boot():/boot/aios-kernel` restricts the
+  search to the partition holding the config file, so Limine cannot find a
+  kernel outside that partition (confirmed in QEMU). Restoring the full
+  hybrid image needs the external Limine binaries and `xorriso` either way.
+
 ## FIXED (v2.78.0): the Limine/legacy BIOS kernel could not be rebuilt from source
 
 - **Symptom:** the working Legacy image on the laptop was dated 2026-10-06,

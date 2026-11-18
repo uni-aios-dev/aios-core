@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## v2.78.1 - Reflash the USB stick with the restored Limine kernel (2026-11-18)
+
+### Verified
+- With explicit user confirmation, `\\.\PhysicalDrive3` (Kingston DataTraveler
+  3.0) was wiped with `diskpart clean` and rewritten with the hybrid Limine
+  image carrying the freshly built kernel from v2.78.0
+  (`aios-kernel-run/out/aios-kernel-usb-limine-test.img`, 4 683 776 bytes,
+  SHA-256 `4CBB553228A846C87F923318930FDBDF3B5FD7F4C4E56B4C47456748EC5A9535`).
+  The full read-back SHA-256 matched; the disk starts with `EB 3C 90 LIMIT`
+  and ends its first sector with `55 AA`; the kernel ELF (`7F 45 4C 46`) is
+  present at byte offset 65 536. Windows reports the disk as MBR.
+- The previous working image is preserved in
+  `aios-kernel-run/out/aios-kernel-usb.img` (SHA-256
+  `F5E8EB7E459D7309FEA4FDCBE258BF13B1DD47A4F6A33A992FD2FFB808DA420B`).
+
+### Notes
+- Because a full ISO rebuild is still blocked by missing Limine binaries and
+  `xorriso`, the new kernel was placed into the boot-partition area of the
+  existing image (ISO LBA 32), which overwrites the old UEFI stage. The stick
+  is therefore Legacy-BIOS-only — which matches the 2008 laptop it is used
+  with. An attempt to append the kernel past the ISO volume and widen the
+  volume/MBR was rejected by Limine in QEMU: `limine.conf` uses
+  `kernel_path: boot():/boot/aios-kernel`, so Limine searches only the boot
+  partition.
+
 ## v2.78.0 - Restore the Limine/legacy BIOS boot path (2026-11-18)
 
 ### Fixed
