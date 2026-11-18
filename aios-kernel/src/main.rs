@@ -239,8 +239,10 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
     // --- System configuration (M2) -----------------------------------------
     // The loader handed every `/aios/config/*.conf` file over as a
     // `MODULE_CONFIG` module; the kernel parses them in place (no copy) and the
-    // last layer wins. A value the kernel cannot honour is reported instead of
-    // being silently ignored.
+    // last layer wins. Only keys the kernel actually honours are shipped:
+    // `system.version`, `scheduler.tick_hz` and `memory.heap_min_kib` were
+    // removed because the release version and the timer/heap sizes are
+    // compile-time constants, not runtime knobs.
     let cfg = config::init();
     for (layer, entry) in config::entries() {
         kprintln!(
@@ -251,7 +253,7 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
         );
     }
     let system_name = config::get("system.name").unwrap_or("AIOS");
-    let system_version = config::get("system.version").unwrap_or(env!("CARGO_PKG_VERSION"));
+    let system_version = env!("CARGO_PKG_VERSION");
     let system_arch = config::get("system.arch").unwrap_or("x86_64");
     vprintln!(
         "Config: {} {} {} ({} layer(s), {} key(s))",
@@ -270,39 +272,11 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
         cfg.entries,
         cfg.invalid
     );
-    match config::get_u32("scheduler.tick_hz") {
-        Some(hz) if u64::from(hz) == interrupts::TIMER_HZ => {
-            kprintln!(
-                "[serial] [cfg] scheduler.tick_hz = {} Hz (matches the kernel timer)",
-                hz
-            );
-        }
-        Some(hz) => {
-            kprintln!(
-                "[serial] [cfg] scheduler.tick_hz = {} Hz but the kernel timer runs at {} Hz (not applied)",
-                hz,
-                interrupts::TIMER_HZ
-            );
-        }
-        None => {}
-    }
-    match config::get_u32("memory.heap_min_kib") {
-        Some(kib) if u64::from(kib) <= heap::HEAP_SIZE / 1024 => {
-            kprintln!(
-                "[serial] [cfg] memory.heap_min_kib = {} KiB ({} KiB kernel heap)",
-                kib,
-                heap::HEAP_SIZE / 1024
-            );
-        }
-        Some(kib) => {
-            kprintln!(
-                "[serial] [cfg] memory.heap_min_kib = {} KiB exceeds the {} KiB kernel heap (not applied)",
-                kib,
-                heap::HEAP_SIZE / 1024
-            );
-        }
-        None => {}
-    }
+    kprintln!(
+        "[serial] [cfg] timer = {} Hz, heap = {} KiB (compile-time)",
+        interrupts::TIMER_HZ,
+        heap::HEAP_SIZE / 1024
+    );
     // Drop-in proof: `net.conf` is not listed in `boot.conf`, so a value from it
     // can only be here because the loader discovered the file.
     if let (Some(dhcp), Some((layer, _))) =

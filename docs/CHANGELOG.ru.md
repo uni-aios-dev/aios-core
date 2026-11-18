@@ -43,6 +43,22 @@
   `boot/out/flash-verify-1000hz-render.log`. Как и раньше, пропатченный
   гибридный образ грузится только в Legacy BIOS.
 
+### Follow-up: один источник версии и никаких фиктивных настроек (v2.79.0)
+- `aios-kernel/Cargo.toml` теперь содержит `2.79.0`, а `tui::VERSION` равен
+  `concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"))`, поэтому вкладка About,
+  строка статуса, команда `ver` и GUI About больше не могут показать устаревшее
+  `v2.57.0`. Boot-баннер тоже берёт версию из `CARGO_PKG_VERSION`, а не из
+  `system.version = 0.1.0`, который раньше переопределял её из `system.conf`.
+- Удалены `system.version`, `scheduler.tick_hz` и `memory.heap_min_kib` из
+  `boot/assets/aios/config/system.conf` и примера/тестов `aios-config`.
+  `TIMER_HZ` и `HEAP_SIZE` — compile-time константы и не настраиваются через
+  `.conf`; serial-лог теперь печатает их один раз как факты сборки. Общий
+  парсинг (`get_u32`, `get_bool`, drop-in) остаётся для ключей, которые ядро
+  реально использует, включая `blocks.<name>.fuel` и `net.dhcp`.
+- Обновлены EN/RU `ARCHITECTURE`, `BUGS`, `TODO` и `INTERFACE`, чтобы текущее
+  описание соответствовало поведению; исторические записи changelog помечены
+  как устаревшие, а не переписаны.
+
 ## v2.78.3 - Флешка перезаписана ядром с 1000 Гц (2026-11-18)
 
 ### Проверено
@@ -86,8 +102,8 @@
   немедленную перерисовку.
 - Сны демо-задач ring 3 вычисляются от `TIMER_HZ` (200 мс старт/спящий, 60 мс
   GUI-клиент) вместо захардкоженных 20/6 тиков.
-- `boot/assets/aios/config/system.conf` и пример в `aios-config` теперь объявляют
-  `scheduler.tick_hz = 1000`.
+- `boot/assets/aios/config/system.conf` и пример в `aios-config` объявляли
+  `scheduler.tick_hz = 1000` (позже удалено в v2.79.0 как нерабочий параметр).
 
 ### Проверено
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
@@ -537,9 +553,10 @@
   `[cfg] layer '<name>' = N key(s)`, выводится как
   `[cfg] key = "value" (layer)` с предупреждениями о дублях и разрешается от
   последнего слоя к первому, поэтому drop-in переопределяет базовый файл.
-  `scheduler.tick_hz` сверяется с `interrupts::TIMER_HZ`, а
-  `memory.heap_min_kib` с `heap::HEAP_SIZE`; оба расхождения логируются, а не
-  игнорируются молча.
+  Тогда `scheduler.tick_hz` сверялся с `interrupts::TIMER_HZ`, а
+  `memory.heap_min_kib` с `heap::HEAP_SIZE`; оба расхождения логировались.
+  Устарело в v2.79.0: оба ключа удалены, поскольку они не могут изменить
+  compile-time константы.
 - **`boot/assets/aios/config/net.conf`**: drop-in, намеренно отсутствующий в
   `boot.conf` (`net.dhcp`, `net.hostname`, `net.mtu`), сквозное
   доказательство автопоиска — в логе загрузки появляется

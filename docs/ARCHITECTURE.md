@@ -1513,11 +1513,14 @@ no BIOS/El Torito path in v1).
   place through the HHDM, logs `[cfg] layer '<name>' = N key(s)`, every
   `key = "value" (layer)` pair and any duplicate key, and resolves a lookup
   last-to-first, so a drop-in such as `config/net.conf` overrides the base
-  `system.conf` without editing it. `scheduler.tick_hz` and
-  `memory.heap_min_kib` are validated against `interrupts::TIMER_HZ` and
-  `heap::HEAP_SIZE` and a mismatch is logged instead of being silently
-  ignored; the stock image ships `net.conf` unlisted in `boot.conf` as the
-  drop-in proof.
+  `system.conf` without editing it. Only live keys are shipped: `system.version`,
+  `scheduler.tick_hz` and `memory.heap_min_kib` were removed in v2.79.0 because
+  the release version comes from `env!("CARGO_PKG_VERSION")` and
+  `interrupts::TIMER_HZ` / `heap::HEAP_SIZE` are compile-time constants. The
+  boot log still prints the effective timer/heap values as compile-time facts.
+  Generic keys remain useful for real runtime settings such as
+  `blocks.<name>.fuel` and `net.dhcp`; the stock image ships `net.conf`
+  unlisted in `boot.conf` as the drop-in proof.
 - `aios-wasmhost` (`boot/aios-wasmhost`, `no_std` + `alloc`, v2.71.0, M3.1):
   the sandboxed WebAssembly host for `MODULE_BLOCK`. `module` parses and
   statically validates the binary in place (no copy): `i32`-only signatures with

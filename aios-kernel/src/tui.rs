@@ -37,8 +37,9 @@ pub fn panel_rows() -> usize {
 }
 
 /// Version banner shown on the About tab, the status bar, the `ver` shell
-/// command and the GUI About window.
-pub(crate) const VERSION: &str = "AIOS kernel v2.57.0";
+/// command and the GUI About window. Derived from `Cargo.toml` so the kernel
+/// cannot disagree with the release version.
+pub(crate) const VERSION: &str = concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"));
 
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];

@@ -1,5 +1,18 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.79.0): TUI showed v2.57.0 and .conf offered ignored knobs
+
+- Symptom: the About tab, status bar, `ver` command and GUI About window reported
+  `AIOS kernel v2.57.0` although the release was v2.79.0; `system.version =
+  0.1.0` in `system.conf` even overrode the boot banner. `scheduler.tick_hz` and
+  `memory.heap_min_kib` looked tunable but only logged a mismatch —
+  `interrupts::TIMER_HZ` and `heap::HEAP_SIZE` are compile-time constants.
+- Fix: `tui::VERSION` and the boot banner now use `env!("CARGO_PKG_VERSION")` from
+  `aios-kernel/Cargo.toml` (bumped to 2.79.0). The three stale keys were removed
+  from the stock config and the `aios-config` sample/tests; the serial log prints
+  the effective timer/heap once as compile-time facts, and generic parsing stays
+  for keys the kernel really honours (`blocks.<name>.fuel`, `net.dhcp`).
+
 ## FIXED (v2.79.0): after 1000 Hz the pointer lagged even more
 
 - Symptom: with the v2.78.2/v2.78.3 1000 Hz image on the stick the pointer felt

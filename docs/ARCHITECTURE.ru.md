@@ -1512,9 +1512,12 @@ AIOS грузится на голом железе без Linux, Windows и ст
   месте через HHDM, логирует `[cfg] layer '<name>' = N key(s)`, каждую пару
   `key = "value" (layer)` и дубли ключей, а поиск идёт от последнего слоя к
   первому — поэтому drop-in вроде `config/net.conf` переопределяет базовый
-  `system.conf` без его правки. `scheduler.tick_hz` и
-  `memory.heap_min_kib` сверяются с `interrupts::TIMER_HZ` и
-  `heap::HEAP_SIZE`, и расхождение логируется, а не игнорируется молча; в
+  `system.conf` без его правки. В v2.79.0 удалены `system.version`,
+  `scheduler.tick_hz` и `memory.heap_min_kib`: версия берётся из
+  `env!("CARGO_PKG_VERSION")`, а `interrupts::TIMER_HZ` / `heap::HEAP_SIZE` —
+  compile-time константы. В serial-логе по-прежнему печатаются фактические
+  значения таймера и кучи как константы сборки. Общие ключи остаются нужны для
+  реальных настроек времени выполнения — `blocks.<name>.fuel`, `net.dhcp`; в
   штатном образе `net.conf` не указан в `boot.conf` и служит доказательством
   работы drop-in.
 - `aios-wasmhost` (`boot/aios-wasmhost`, `no_std` + `alloc`, v2.71.0, M3.1):

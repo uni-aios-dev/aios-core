@@ -8,7 +8,7 @@
 
 [package]
 name = "aios-kernel"
-version = "0.3.0"
+version = "2.79.0"
 edition = "2021"
 description = "AIOS standalone bare-metal kernel (x86_64, no_std) — aios-boot hand-off + UEFI GOP framebuffer"
 

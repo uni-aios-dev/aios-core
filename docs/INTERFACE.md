@@ -267,6 +267,8 @@ The kernel TUI uses the same Far Manager / Midnight Commander style as `aios-tui
 
 On narrow windows the status bar text clips at the right edge (Far/MC behaviour) and the F-key strip clips too; the tab titles and `AIOS v…` version are never chopped mid-word. On very short windows the System & HW **RAM gauge** overlays nothing — it stays inside the left panel; when the window is too small for the CPU/OS blocks, those blocks naturally compress instead of the drawer breaking.
 
+The version shown in the status bar, About tab, `ver` command and GUI About window is `AIOS kernel v<version>` built from `env!("CARGO_PKG_VERSION")` in `aios-kernel/Cargo.toml` (currently v2.79.0). It is no longer a hard-coded `v2.57.0` string or a `system.version` config value, so all four surfaces always agree.
+
 ### Tabs
 
 | # | Tab | Content |

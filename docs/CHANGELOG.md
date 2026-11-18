@@ -41,6 +41,22 @@
   and `boot/out/flash-verify-1000hz-render.log`. As before, the patched hybrid
   image boots only in Legacy BIOS mode.
 
+### Follow-up: one version source, no fake config knobs (v2.79.0)
+- `aios-kernel/Cargo.toml` is now `2.79.0`, and `tui::VERSION` is
+  `concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"))`, so the About tab,
+  status bar, `ver` command and GUI About window can no longer show a stale
+  `v2.57.0`. The boot banner also uses `CARGO_PKG_VERSION` instead of the
+  `system.version = 0.1.0` value that used to override it from `system.conf`.
+- Removed `system.version`, `scheduler.tick_hz` and `memory.heap_min_kib` from
+  `boot/assets/aios/config/system.conf` and the `aios-config` sample/tests.
+  `TIMER_HZ` and `HEAP_SIZE` are compile-time constants and cannot be tuned via
+  `.conf`; the serial log now prints them once as compile-time facts. Generic
+  parsing (`get_u32`, `get_bool`, drop-ins) stays for keys the kernel really
+  uses, including `blocks.<name>.fuel` and `net.dhcp`.
+- Updated EN/RU `ARCHITECTURE`, `BUGS`, `TODO` and `INTERFACE` so current-state
+  text matches this behaviour; historical changelog entries are marked as
+  superseded instead of being rewritten.
+
 ## v2.78.3 - Reflash the USB stick with the 1000 Hz kernel (2026-11-18)
 
 ### Verified
@@ -81,8 +97,8 @@
   lid and thermal probes 20 Hz. Mouse reports still trigger an immediate render.
 - Ring-3 demo sleeps derive from `TIMER_HZ` (200 ms startup/sleeper, 60 ms GUI
   client) instead of hard-coded 20/6 ticks.
-- `boot/assets/aios/config/system.conf` and the `aios-config` sample now declare
-  `scheduler.tick_hz = 1000`.
+- `boot/assets/aios/config/system.conf` and the `aios-config` sample declared
+  `scheduler.tick_hz = 1000` (later removed in v2.79.0 as a non-runtime knob).
 
 ### Verified
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
@@ -524,9 +540,10 @@
   allocation, checked against `hhdm_offset`), logged as
   `[cfg] layer '<name>' = N key(s)`, dumped as `[cfg] key = "value" (layer)`
   with duplicate warnings, and resolved last-to-first so a drop-in overrides the
-  base file. `scheduler.tick_hz` is compared with `interrupts::TIMER_HZ` and
-  `memory.heap_min_kib` with `heap::HEAP_SIZE`; both mismatches are logged
-  instead of being silently ignored.
+  base file. At the time, `scheduler.tick_hz` was compared with
+  `interrupts::TIMER_HZ` and `memory.heap_min_kib` with `heap::HEAP_SIZE`; both
+  mismatches were logged. Superseded in v2.79.0: both keys were removed because
+  they cannot change the compile-time constants.
 - **`boot/assets/aios/config/net.conf`**: a drop-in deliberately absent from
   `boot.conf` (`net.dhcp`, `net.hostname`, `net.mtu`), proving the discovery
   path end to end — the boot log shows `[serial] [cfg] net.dhcp = true (from

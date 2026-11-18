@@ -6,10 +6,9 @@
 //! ```text
 //! # AIOS system configuration
 //! system.name = AIOS
-//! system.version = "0.1.0"
-//! scheduler.tick_hz = 1000
-//! memory.heap_min_kib = 0x1000
+//! system.arch = x86_64
 //! boot.debug = false
+//! blocks.demo.fuel = 1000
 //! ```
 //!
 //! Rules, shared by `aios-boot` and `aios-kernel`:
@@ -29,7 +28,7 @@
 /// One `key = value` pair borrowed from the configuration text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Entry<'a> {
-    /// The trimmed key, e.g. `scheduler.tick_hz`.
+    /// The trimmed key, e.g. `blocks.demo.fuel`.
     pub key: &'a str,
     /// The trimmed, unquoted value, e.g. `100`.
     pub value: &'a str,
@@ -241,21 +240,16 @@ mod tests {
     const SAMPLE: &str = "\
 # AIOS system configuration.
 system.name = AIOS
-system.version = \"0.1.0\"
 system.arch = x86_64    # inline comment
 
 boot.console = serial
 boot.debug = false
-
-scheduler.tick_hz = 1000
-memory.heap_min_kib = 0x1000
 ";
 
     #[test]
     fn parses_values() {
         let config = Config::new(SAMPLE);
         assert_eq!(config.get("system.name"), Some("AIOS"));
-        assert_eq!(config.get("system.version"), Some("0.1.0"));
         assert_eq!(config.get("system.arch"), Some("x86_64"));
         assert_eq!(config.get("boot.console"), Some("serial"));
         assert_eq!(config.get("missing.key"), None);
@@ -264,8 +258,8 @@ memory.heap_min_kib = 0x1000
     #[test]
     fn counts_entries() {
         let config = Config::new(SAMPLE);
-        assert_eq!(config.count(), 7);
-        assert_eq!(config.entries().count(), 7);
+        assert_eq!(config.count(), 4);
+        assert_eq!(config.entries().count(), 4);
         assert!(config.contains("boot.debug"));
         assert!(!config.contains("boot.nope"));
     }
