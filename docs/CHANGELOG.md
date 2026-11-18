@@ -16,17 +16,25 @@
   certificate table, and the signed loader is verified before image assembly.
 - `PK.auth`, `KEK.auth` and `DB.auth` are proper
   `EFI_VARIABLE_AUTHENTICATION_2` buffers: a 16-byte GMT `EFI_TIME`, a
-  `WIN_CERTIFICATE` with `EFI_CERT_TYPE_PKCS7_GUID` and
-  `dwLength = 24 + signature_len`, a detached CMS signature over edk2's
-  serialization `(VariableName UTF-16LE, VendorGuid, Attributes, TimeStamp,
+  `WIN_CERTIFICATE` with `wCertificateType = WIN_CERT_TYPE_EFI_GUID (0x0ef1)`,
+  `EFI_CERT_TYPE_PKCS7_GUID` and `dwLength = 24 + signature_len`, a detached
+  CMS signature over edk2's serialization
+  `(VariableName UTF-16LE, VendorGuid, Attributes, TimeStamp,
   Payload)`, and an `EFI_SIGNATURE_LIST` with `EFI_CERT_X509_GUID` holding the
   DER certificate.
 - `aios-image` gained `--sign-keys DIR`, `--enroll-out DIR` (requires
   `--sign-keys`), `--secure-fw` (OVMF Secure Boot code firmware) and
   `--ovmf-vars PATH` (a pre-enrolled NVRAM template).
 
+### Fixed (2026-11-19)
+- `.auth` descriptors used `wCertificateType = 0x0002`
+  (`WIN_CERT_TYPE_PKCS_SIGNED_DATA`, valid for PE/COFF only), so EDK2 rejected PK
+  enrollment with `EFI_SECURITY_VIOLATION`. `authentication_descriptor` now
+  writes `WIN_CERT_TYPE_EFI_GUID (0x0ef1)`, with the regression test
+  `auth_descriptor_uses_efi_guid_certificate_type`.
+
 ### Verified
-- `aios-sbctl`: clean fmt, clippy `-D warnings`, 15 unit tests and a release
+- `aios-sbctl`: clean fmt, clippy `-D warnings`, 16 unit tests and a release
   build. Workspace fmt/clippy/test/release checks and the
   `x86_64-unknown-none` kernel build pass as well.
 - Signed `BOOTX64.EFI`: PE SHA-256
@@ -42,6 +50,12 @@
   Unsigned and tampered loaders are rejected with `Access Denied`
   (`kernel_entries=0`, `aios_boot_lines=0`). Logs: `sb-positive.log`,
   `sb-unsigned.log`, `sb-tampered.log` in the M5.2 test directory.
+- The generated `PK.auth`/`KEK.auth`/`DB.auth` were also passed to a real OVMF
+  `SetVariable` by a temporary UEFI test app outside the repo: all three returned
+  `OK`. The resulting NVRAM contains PK/KEK/db (857/865/879 bytes, attr `0x27`).
+  Rebooting the signed image with that NVRAM reaches the kernel; unsigned and
+  tampered images still fail with `Access Denied`. Logs: `auth-fixed-serial.log`,
+  `sb-fixed-positive.log`, `sb-fixed-unsigned.log` and `sb-fixed-tampered.log`.
 - The physical stick was not touched: signed-image validation stayed in QEMU.
   Real-hardware Secure Boot acceptance remains open (the available laptop is
   the 2008 Legacy-BIOS machine described in the v2.77.1 entry).

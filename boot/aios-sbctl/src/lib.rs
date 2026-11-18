@@ -1023,6 +1023,24 @@ fn auth_signed_content(variable: &str, guid: &[u8; 16], data: &[u8]) -> Vec<u8> 
     out
 }
 
+/// Serialize the `EFI_VARIABLE_AUTHENTICATION_2` descriptor header.
+///
+/// `WIN_CERTIFICATE.wCertificateType` must be `WIN_CERT_TYPE_EFI_GUID`
+/// (0x0ef1) when `CertType` carries `EFI_CERT_TYPE_PKCS7_GUID`. EDK2's
+/// `VerifyTimeBasedPayload` rejects any other value with
+/// `EFI_SECURITY_VIOLATION`. Note that PE/COFF Authenticode uses 0x0002
+/// (`WIN_CERT_TYPE_PKCS_SIGNED_DATA`) instead; that value is only correct for
+/// `embed_signature`.
+fn authentication_descriptor(signature_len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(40);
+    out.extend_from_slice(&AUTH_TIMESTAMP);
+    out.extend_from_slice(&((24 + signature_len) as u32).to_le_bytes());
+    out.extend_from_slice(&0x0200u16.to_le_bytes());
+    out.extend_from_slice(&0x0ef1u16.to_le_bytes());
+    out.extend_from_slice(&EFI_CERT_TYPE_PKCS7);
+    out
+}
+
 fn authenticated_variable(
     variable: &str,
     guid: &[u8; 16],
@@ -1055,12 +1073,7 @@ fn authenticated_variable(
     ])?;
     let signature = fs::read(&sig_path)?;
 
-    let mut out = Vec::with_capacity(40 + signature.len() + data.len());
-    out.extend_from_slice(&AUTH_TIMESTAMP);
-    out.extend_from_slice(&((24 + signature.len()) as u32).to_le_bytes());
-    out.extend_from_slice(&0x0200u16.to_le_bytes());
-    out.extend_from_slice(&0x0002u16.to_le_bytes());
-    out.extend_from_slice(&EFI_CERT_TYPE_PKCS7);
+    let mut out = authentication_descriptor(signature.len());
     out.extend_from_slice(&signature);
     out.extend_from_slice(data);
     Ok(out)
@@ -1128,6 +1141,26 @@ mod tests {
         );
         assert_eq!(&list[28..44], &EFI_GLOBAL_VARIABLE);
         assert_eq!(&list[44..], &cert);
+    }
+
+    #[test]
+    fn auth_descriptor_uses_efi_guid_certificate_type() {
+        let header = authentication_descriptor(7);
+        assert_eq!(header.len(), 40);
+        assert_eq!(
+            u32::from_le_bytes(header[16..20].try_into().unwrap()),
+            24 + 7
+        );
+        assert_eq!(
+            u16::from_le_bytes(header[20..22].try_into().unwrap()),
+            0x0200
+        );
+        // WIN_CERT_TYPE_EFI_GUID, not the PE-only WIN_CERT_TYPE_PKCS_SIGNED_DATA.
+        assert_eq!(
+            u16::from_le_bytes(header[22..24].try_into().unwrap()),
+            0x0ef1
+        );
+        assert_eq!(&header[24..40], &EFI_CERT_TYPE_PKCS7);
     }
 
     #[test]

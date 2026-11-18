@@ -48,9 +48,11 @@ aios-sbctl enroll --keys keys --out enroll
   сертификат и хеш PE, затем печатает `signature OK`.
 - `enroll` записывает `PK.auth`, `KEK.auth` и `DB.auth` в каталог `--out`. Это
   буферы `EFI_VARIABLE_AUTHENTICATION_2` для `SetVariable` с атрибутом
-  `EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS`; `virt-fw-vars` не умеет
-  читать их как сертификаты, поэтому тестовый NVRAM для QEMU заполняется из
-  DER-файлов `*.cer`.
+  `EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS` и
+  `wCertificateType = WIN_CERT_TYPE_EFI_GUID (0x0ef1)`. `virt-fw-vars` не умеет
+  читать их как сертификаты, поэтому шаблон NVRAM можно заполнить либо из
+  DER-файлов `*.cer`, либо передав эти буферы в `SetVariable` из UEFI-приложения;
+  второй путь проверен в OVMF для всех трёх файлов.
 
 `aios-image` может подписать образ и сразу выполнить прогон в QEMU:
 

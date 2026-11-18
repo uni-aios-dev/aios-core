@@ -1507,11 +1507,13 @@ no BIOS/El Torito path in v1).
   `SPC_INDIRECT_DATA_OBJID`, the digest covers the `SpcIndirectDataContent`
   body without its outer SEQUENCE header, `eContent` holds the whole DER value,
   and the blob is installed in the PE certificate table. Enrollment emits
-  `EFI_VARIABLE_AUTHENTICATION_2` buffers with a 16-byte GMT `EFI_TIME`, an
+  `EFI_VARIABLE_AUTHENTICATION_2` buffers with a 16-byte GMT `EFI_TIME`, a
+  `WIN_CERTIFICATE` whose `wCertificateType` is `WIN_CERT_TYPE_EFI_GUID (0x0ef1)`
+  (the PE-only `0x0002` makes EDK2 reject PK with `EFI_SECURITY_VIOLATION`), an
   `EFI_CERT_TYPE_PKCS7_GUID` certificate and a detached CMS signature over
   edk2's `(VariableName, VendorGuid, Attributes, TimeStamp, Payload)`; the
   payload itself is an `EFI_SIGNATURE_LIST` with `EFI_CERT_X509_GUID` and the
-  DER certificate. 15 unit tests cover DER/PE parsing, signing layout and
+  DER certificate. 16 unit tests cover DER/PE parsing, signing layout and
   enrollment serialization.
 - Stack alignment invariant: every kernel stack top must be 16-byte aligned.
   `[u8; N]` statics only have alignment 1, and `core::fmt::Arguments` marks its
@@ -1715,8 +1717,9 @@ no BIOS/El Torito path in v1).
   10 key(s), 0 invalid)` and `periodic 1000 Hz tick armed`. The same setup with
   an unsigned or tampered loader never enters the kernel (`kernel_entries=0`,
   `aios_boot_lines=0`) and OVMF reports `Access Denied` for `Boot0001`. The
-  enrollment files are verified with detached OpenSSL CMS checks; the physical
-  stick was not rewritten.
+  enrollment files pass detached OpenSSL CMS checks and are also accepted by a
+  real OVMF `SetVariable` (`PK/KEK/db: OK`, NVRAM attr `0x27`); the signed image
+  boots with that NVRAM. The physical stick was not rewritten.
 
 ## Bare-Metal Kernel (`aios-kernel`, `aios-kernel-run`) — Limine + GOP since v2.34.0
 

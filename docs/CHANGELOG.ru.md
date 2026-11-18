@@ -15,16 +15,24 @@
   загрузчик проверяется перед сборкой образа.
 - `PK.auth`, `KEK.auth` и `DB.auth` — корректные буферы
   `EFI_VARIABLE_AUTHENTICATION_2`: 16-байтовое время GMT `EFI_TIME`,
-  `WIN_CERTIFICATE` с `EFI_CERT_TYPE_PKCS7_GUID` и
-  `dwLength = 24 + signature_len`, отсоединённая подпись CMS по сериализации edk2
+  `WIN_CERTIFICATE` с `wCertificateType = WIN_CERT_TYPE_EFI_GUID (0x0ef1)`,
+  `EFI_CERT_TYPE_PKCS7_GUID` и `dwLength = 24 + signature_len`, отсоединённая
+  подпись CMS по сериализации edk2
   `(VariableName UTF-16LE, VendorGuid, Attributes, TimeStamp, Payload)` и
   `EFI_SIGNATURE_LIST` с `EFI_CERT_X509_GUID`, содержащая DER-сертификат.
 - В `aios-image` добавлены флаги `--sign-keys DIR`, `--enroll-out DIR` (требует
   `--sign-keys`), `--secure-fw` (код прошивки OVMF с Secure Boot) и
   `--ovmf-vars PATH` (шаблон NVRAM с уже внесёнными ключами).
 
+### Исправлено (2026-11-19)
+- Дескрипторы `.auth` писали `wCertificateType = 0x0002`
+  (`WIN_CERT_TYPE_PKCS_SIGNED_DATA`, допустимо только для PE/COFF), из-за чего
+  EDK2 отвергал внесение PK с `EFI_SECURITY_VIOLATION`.
+  `authentication_descriptor` теперь пишет `WIN_CERT_TYPE_EFI_GUID (0x0ef1)`;
+  регресс-тест `auth_descriptor_uses_efi_guid_certificate_type` закрепляет формат.
+
 ### Проверено
-- `aios-sbctl`: fmt чистый, clippy `-D warnings`, 15 юнит-тестов и release-сборка.
+- `aios-sbctl`: fmt чистый, clippy `-D warnings`, 16 юнит-тестов и release-сборка.
   Также проходят проверки workspace (fmt/clippy/test/release) и сборка ядра под
   `x86_64-unknown-none`.
 - Подписанный `BOOTX64.EFI`: PE SHA-256
@@ -40,6 +48,13 @@
   Неподписанный и изменённый загрузчики отвергаются с `Access Denied`
   (`kernel_entries=0`, `aios_boot_lines=0`). Логи: `sb-positive.log`,
   `sb-unsigned.log`, `sb-tampered.log` в каталоге тестов M5.2.
+- Сгенерированные `PK.auth`/`KEK.auth`/`DB.auth` также были переданы в реальный
+  `SetVariable` OVMF через временное UEFI-приложение вне репозитория: все три
+  вернули `OK`. Итоговый NVRAM содержит PK/KEK/db (857/865/879 байт, attr `0x27`).
+  Подписанный образ с этим NVRAM снова доходит до ядра, а неподписанный и
+  изменённый по-прежнему отвергаются с `Access Denied`. Логи:
+  `auth-fixed-serial.log`, `sb-fixed-positive.log`, `sb-fixed-unsigned.log` и
+  `sb-fixed-tampered.log`.
 - Физическая флешка не трогалась: проверка подписанного образа осталась в QEMU.
   Приёмка Secure Boot на реальном железе по-прежнему открыта (доступный ноут —
   машина с Legacy BIOS 2008 года из записи v2.77.1).

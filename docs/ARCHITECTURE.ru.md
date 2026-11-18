@@ -1504,10 +1504,13 @@ AIOS грузится на голом железе без Linux, Windows и ст
   `SpcIndirectDataContent` без внешнего SEQUENCE, `eContent` содержит всё
   DER-значение, а блоб ставится в таблицу сертификатов PE. Для внесения ключей
   создаются буферы `EFI_VARIABLE_AUTHENTICATION_2` с 16-байтовым `EFI_TIME`
-  GMT, сертификатом `EFI_CERT_TYPE_PKCS7_GUID` и отсоединённой подписью CMS по
+  GMT, `WIN_CERTIFICATE` с `wCertificateType = WIN_CERT_TYPE_EFI_GUID (0x0ef1)`
+  (значение `0x0002` из PE заставляет EDK2 отвергнуть PK с
+  `EFI_SECURITY_VIOLATION`), сертификатом `EFI_CERT_TYPE_PKCS7_GUID` и
+  отсоединённой подписью CMS по
   `(VariableName, VendorGuid, Attributes, TimeStamp, Payload)` в сериализации
   edk2; полезная нагрузка — `EFI_SIGNATURE_LIST` с `EFI_CERT_X509_GUID` и
-  DER-сертификатом. 15 юнит-тестов покрывают разбор DER/PE, формат подписи и
+  DER-сертификатом. 16 юнит-тестов покрывают разбор DER/PE, формат подписи и
   сериализацию переменных.
 - Инвариант выравнивания стеков: вершина любого стека ядра должна быть
   выровнена на 16 байт. Статики `[u8; N]` имеют выравнивание 1, а
@@ -1720,8 +1723,10 @@ AIOS грузится на голом железе без Linux, Windows и ст
   (3 layer(s), 10 key(s), 0 invalid)` и `periodic 1000 Hz tick armed`. В том же
   окружении неподписанный или изменённый загрузчик никогда не входит в ядро
   (`kernel_entries=0`, `aios_boot_lines=0`), а OVMF сообщает `Access Denied`
-  для `Boot0001`. Файлы внесения ключей проверены отсоединённой подписью CMS
-  через OpenSSL; физическая флешка не перезаписывалась.
+  для `Boot0001`. Файлы внесения ключей проходят отсоединённую проверку CMS
+  через OpenSSL и принимаются реальным `SetVariable` OVMF (`PK/KEK/db: OK`,
+  attr NVRAM `0x27`); с этим NVRAM подписанный образ доходит до ядра. Физическая
+  флешка не перезаписывалась.
 
 ## Голое ядро (`aios-kernel`, `aios-kernel-run`) — Limine + GOP с v2.34.0
 

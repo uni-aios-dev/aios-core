@@ -1,5 +1,23 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.79.0, M5.2): `.auth` used the PE certificate type
+
+- Symptom: `authenticated_variable` wrote `WIN_CERT_TYPE_PKCS_SIGNED_DATA`
+  (0x0002) into `WIN_CERTIFICATE.wCertificateType`. That value is correct for
+  PE/COFF Authenticode, but EDK2's `VerifyTimeBasedPayload` requires
+  `WIN_CERT_TYPE_EFI_GUID` (0x0ef1) when `CertType` carries
+  `EFI_CERT_TYPE_PKCS7_GUID`, and rejected PK enrollment with
+  `EFI_SECURITY_VIOLATION`. KEK and db appeared to succeed only because OVMF was
+  in Setup Mode and skipped signature verification for them.
+- Fix: descriptor serialization moved into `authentication_descriptor`, which
+  writes 0x0ef1; the regression test
+  `auth_descriptor_uses_efi_guid_certificate_type` pins the layout.
+- Verified: a temporary UEFI test app outside the repository passed the
+  generated `PK.auth`/`KEK.auth`/`DB.auth` to a real OVMF `SetVariable`; all
+  three returned `OK`. The resulting NVRAM holds PK/KEK/db (857/865/879 bytes,
+  attr `0x27`), and the signed image boots to the kernel with that NVRAM while
+  unsigned/tampered images are still rejected with `Access Denied`.
+
 ## FIXED (v2.79.0, M5.2): DER parser returned an absolute offset
 
 - Symptom: `parse_der_at` in `aios-sbctl` returned the absolute `content_end`
@@ -23,9 +41,9 @@
   cover the serialization, timestamp and signature-list layout; all three files
   pass an independent `openssl cms -verify` check.
 - Note: `virt-fw-vars` cannot import `.auth` files as certificate input, so the
-  QEMU test NVRAM was enrolled from the DER certificates. The `.auth` files have
-  only been verified cryptographically so far, not through a firmware
-  `SetVariable` call.
+  initial QEMU NVRAM was enrolled from the DER certificates. After the
+  `wCertificateType` fix (see the entry above) the files were additionally
+  accepted through a real OVMF `SetVariable` call.
 
 ## KNOWN LIMITATION (v2.79.0, M5.2): no real-hardware Secure Boot acceptance
 
