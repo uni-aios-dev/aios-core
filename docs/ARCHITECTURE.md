@@ -64,8 +64,10 @@ parsers with conflicting names and semantics. `aios-console` is the single
 `aios-console/src/host.rs` implements `HostBackend` behind the `std` feature. It
 delegates to the same library crates the current host TUI uses: `Scheduler` for
 `ps`/`process`, `BlockRegistry`/`BlockLoader` for `block`, `NetSettingsBlock`
-for `net`, `StoreManager` for `store`, and `AiosVfs` for `vfs`. Session state
-(history, log, restart counter) lives in the backend. `HostBackend::from_handles`
+for `net`, `StoreManager` for `store`, and `AiosVfs` for `vfs`. `source <file>`
+runs a script by feeding each line back through the same `dispatch()` entry
+point, with an 8-level recursion guard. Session state (history, log, restart
+counter, source depth) lives in the backend. `HostBackend::from_handles`
 accepts shared `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>` handles so
 the console and the orchestrator can observe the same runtime; `with_config`
 creates private handles for tests. Subcommands without a real implementation

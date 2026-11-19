@@ -144,6 +144,13 @@ check-updates|uninstall|rollback`, and `vfs ls|cat|head|write|mkdir|rm|mv|cp|
 stat|exists|resolve`. Other registered subcommands report `ERR unavailable`
 until their adapters are written.
 
+`source <file>` runs a UTF-8 script through the same dispatcher. Blank lines and
+`#` comments are skipped; the first non-zero exit code is reported while later
+lines still run; `clear`/`exit` controls from a script reach the frontend, and
+nested `source` calls are capped at 8 levels. Path arguments preserve Windows
+separators, so `source C:\Users\script.txt` and
+`block load C:\blocks\mod.wasm` work unchanged.
+
 In the `aios` shell tab the new backend is available through the `console`
 prefix, for example `console process spawn worker --ram 64`. All other lines
 are still handled by the legacy dispatcher, so existing commands keep working

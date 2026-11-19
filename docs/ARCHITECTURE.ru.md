@@ -64,8 +64,10 @@ AIOS (AI-Native Operating System) — модульная ОС в стиле ми
 `aios-console/src/host.rs` реализует `HostBackend` за функцией `std`. Он
 делегирует тем же библиотечным крейтам, что и текущий хостовый TUI: `Scheduler`
 для `ps`/`process`, `BlockRegistry`/`BlockLoader` для `block`, `NetSettingsBlock`
-для `net`, `StoreManager` для `store` и `AiosVfs` для `vfs`. Состояние сессии
-(история, лог, счётчик рестартов) хранится в бэкенде.
+для `net`, `StoreManager` для `store` и `AiosVfs` для `vfs`. `source <file>`
+выполняет сценарий, передавая каждую строку в тот же `dispatch()`, с ограничением
+вложенности в 8 уровней. Состояние сессии (история, лог, счётчик рестартов,
+глубина `source`) хранится в бэкенде.
 `HostBackend::from_handles` принимает общие дескрипторы
 `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>`, чтобы консоль и
 оркестратор видели одно и то же состояние; `with_config` создаёт приватные

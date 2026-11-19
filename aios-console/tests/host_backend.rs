@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
 use aios_console::host::{HostBackend, HostBackendConfig};
-use aios_console::output::ExitCode;
+use aios_console::output::{ExitCode, OutputControl};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -33,6 +33,28 @@ fn test_config(label: &str) -> (HostBackendConfig, PathBuf) {
 fn backend(label: &str) -> HostBackend {
     let (config, _) = test_config(label);
     HostBackend::with_config(config)
+}
+
+fn script_path(label: &str) -> PathBuf {
+    let unique = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "aios-console-script-{label}-{}-{nanos}-{unique}.txt",
+        std::process::id()
+    ))
+}
+
+fn script(label: &str, contents: &str) -> PathBuf {
+    let path = script_path(label);
+    std::fs::write(&path, contents).expect("write script");
+    path
+}
+
+fn source_line(path: &Path) -> String {
+    format!("source \"{}\"", path.to_string_lossy())
 }
 
 fn assert_ok(input: &str, output: &aios_console::output::CommandOutput) {
@@ -331,4 +353,94 @@ fn host_log_reflects_state_changes() {
     assert_ok("log clear", &dispatch(&mut host, "log clear"));
     let shown = dispatch(&mut host, "log show");
     assert_eq!(shown.lines, ["no log entries"]);
+}
+
+#[test]
+fn host_source_executes_a_script_file() {
+    let mut host = backend("source");
+    let path = script(
+        "basic",
+        "# a comment\n\necho MiXeD Case\nversion\n  # indented comment\n",
+    );
+    let line = source_line(&path);
+
+    let output = dispatch(&mut host, &line);
+    assert_ok("source", &output);
+    assert!(output.lines.iter().any(|line| line == "MiXeD Case"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("aios-console host")));
+    assert!(output.lines.last().unwrap().contains("2 command(s)"));
+
+    assert!(host
+        .log_entries()
+        .iter()
+        .any(|line| line.contains("sourced")));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn host_source_rejects_a_missing_argument_and_file() {
+    let mut host = backend("source-args");
+
+    assert_eq!(dispatch(&mut host, "source").code, ExitCode::Usage);
+
+    let missing = script_path("source-missing");
+    let line = source_line(&missing);
+    let output = dispatch(&mut host, &line);
+    assert_eq!(output.code, ExitCode::BackendError);
+    assert!(output.lines[0].contains("read"));
+}
+
+#[test]
+fn host_source_propagates_controls_and_stops_on_exit() {
+    let mut host = backend("source-control");
+    let path = script("control", "echo before\nexit 5\necho after\n");
+    let line = source_line(&path);
+
+    let output = dispatch(&mut host, &line);
+    assert_eq!(output.control, OutputControl::Exit(5));
+    assert!(output.lines.iter().any(|line| line == "before"));
+    assert!(!output.lines.iter().any(|line| line == "after"));
+    assert!(output.lines.last().unwrap().contains("2 command(s)"));
+
+    let path = script("clear", "clear\necho after-clear\n");
+    let line = source_line(&path);
+    let output = dispatch(&mut host, &line);
+    assert_eq!(output.control, OutputControl::Clear);
+    assert!(output.lines.iter().any(|line| line == "after-clear"));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn host_source_reports_the_first_failure_and_keeps_running() {
+    let mut host = backend("source-failure");
+    let path = script("failure", "echo ok\nprocess kill 999\necho ok2\n");
+    let line = source_line(&path);
+
+    let output = dispatch(&mut host, &line);
+    assert_eq!(output.code, ExitCode::BackendError);
+    assert!(output.lines.iter().any(|line| line == "ok"));
+    assert!(output.lines.iter().any(|line| line == "ok2"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn host_source_guards_recursive_scripts() {
+    let mut host = backend("source-recursion");
+    let path = script_path("source-recursion");
+    let self_path = path.to_string_lossy().into_owned();
+    std::fs::write(&path, format!("echo loop\nsource \"{self_path}\"\n"))
+        .expect("write recursive script");
+    let line = source_line(&path);
+
+    let output = dispatch(&mut host, &line);
+    assert_eq!(output.code, ExitCode::BackendError);
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("nesting limit")));
+    let _ = std::fs::remove_file(path);
 }

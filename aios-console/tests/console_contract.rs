@@ -84,6 +84,19 @@ fn parser_handles_quotes_escapes_and_comments() {
 }
 
 #[test]
+fn parser_keeps_windows_path_separators_and_escapes_specials() {
+    let tokens = tokenize(r#"source C:\Users\User\script.txt"#).unwrap();
+    let text: Vec<&str> = tokens.iter().map(|token| token.text.as_str()).collect();
+    assert_eq!(text, ["source", r"C:\Users\User\script.txt"]);
+
+    let tokens = tokenize(r#"source "C:\Program Files\script.txt""#).unwrap();
+    assert_eq!(tokens[1].text, r"C:\Program Files\script.txt");
+
+    let tokens = tokenize(r#"echo a\"b"#).unwrap();
+    assert_eq!(tokens[1].text, "a\"b");
+}
+
+#[test]
 fn parser_reports_unclosed_quote_with_offset() {
     let error = tokenize("echo \"oops").unwrap_err();
     assert_eq!(error.message, "unclosed quote");

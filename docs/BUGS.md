@@ -30,6 +30,15 @@ the commands backed by real kernel APIs are implemented, and the legacy kernel
 `clear` bug persists on the old dispatcher path (the new backend clears the
 shell history explicitly).
 
+## FIXED (unified console): Windows paths lost backslashes in arguments
+
+- Symptom: `source C:\Users\script.txt` and `block load C:\blocks\mod.wasm`
+  resolved to paths without separators because the tokenizer treated every
+  backslash as an escape character.
+- Fix: `aios-console/src/parser.rs` now escapes only `"`, `'`, `\`, `#` and
+  whitespace; other backslashes stay literal. A contract test covers quoted and
+  unquoted Windows paths together with escaped quotes.
+
 ## FIXED (v2.79.0, M5.2): `.auth` used the PE certificate type
 
 - Symptom: `authenticated_variable` wrote `WIN_CERT_TYPE_PKCS_SIGNED_DATA`

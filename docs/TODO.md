@@ -99,6 +99,14 @@
   dependency; available as `console <...>` in the kernel shell. Verified for
   `x86_64-unknown-none` (release, limine). Remaining kernel commands report
   `unavailable` until real adapters exist.
+- [x] `source <file>` adapter in `HostBackend`: runs a UTF-8 script through the
+  shared dispatcher with comment skipping, first-failure reporting, control
+  propagation and an 8-level recursion guard (5 integration tests). The
+  tokenizer now escapes only tokenization-significant characters, preserving
+  Windows path separators in arguments.
+- [ ] Implement the remaining `ERR unavailable` host adapters (for example
+  `sys info`, `metrics`, `health`, `ipc stats`, `hw profile`, `telemetry`) and
+  add parity tests before replacing the legacy dispatchers.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after parity tests pass.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster

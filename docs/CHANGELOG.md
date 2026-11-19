@@ -25,8 +25,7 @@
   same library crates as the host TUI. `HostBackend::from_handles` shares the
   scheduler and block registry with the orchestrator; `HostBackendConfig`
   selects the store/VFS/net-config paths, RAM quota and the restart limit.
-  Unsupported
-  subcommands report `unavailable`, and 14 integration tests in
+  Unsupported subcommands report `unavailable`, and 14 integration tests in
   `aios-console/tests/host_backend.rs` cover the complete lifecycle, capability
   denial and error codes.
 - The `aios` shell tab now routes `console <command> [args]` through the unified
@@ -42,6 +41,22 @@
   `clear` now clears the shell history instead of leaving the echoed command.
   Verified with `cargo check`, `cargo clippy` and `cargo build` for
   `x86_64-unknown-none` (release, `--features limine`).
+- `source <file>` is now implemented in `HostBackend`: it reads a UTF-8 script,
+  runs each non-empty line through the same `dispatch()` path, skips `#`
+  comments, reports the first non-zero exit code while continuing to run later
+  lines, and propagates `Clear`/`Exit` controls. Nesting is capped at 8 levels
+  to prevent runaway recursion. Five integration tests cover scripts, missing
+  files, control propagation, failure aggregation and recursion.
+- The tokenizer now treats a backslash as an escape only for `"`, `'`, `\`, `#`
+  and whitespace. Literal Windows path separators are preserved, so arguments
+  such as `C:\Users\script.txt` reach path-taking commands intact. One contract
+  test covers path separators together with escaped quotes.
+
+### Fixed
+- Console arguments containing Windows paths (for example `source
+  C:\Users\script.txt` or `block load C:\blocks\mod.wasm`) lost their
+  backslashes because the tokenizer treated every `\` as an escape. Only
+  tokenization-significant characters are escaped now.
 
 ### Notes
 - This is the language/core phase only. The old dispatchers in `aios-tui`,

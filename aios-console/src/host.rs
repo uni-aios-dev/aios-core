@@ -19,15 +19,17 @@ use aios_process_mgr::task::{Priority, ProcessId};
 use aios_store::manager::StoreManager;
 use aios_vfs::vfs::{AiosVfs, VfsPath, VirtualFileSystem};
 
-use crate::backend::CommandBackend;
+use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
-use crate::output::CommandOutput;
+use crate::output::{CommandOutput, ExitCode, OutputControl};
 use crate::registry::{help, Invocation};
 
 /// Block id used by the host network settings block.
 const NET_BLOCK_ID: u32 = 7;
 /// Maximum number of remembered input lines.
 const HISTORY_LIMIT: usize = 200;
+/// Maximum nesting depth for `source` scripts, preventing runaway recursion.
+const MAX_SOURCE_DEPTH: usize = 8;
 
 /// Construction parameters for [`HostBackend`].
 #[derive(Debug, Clone)]
@@ -73,6 +75,7 @@ pub struct HostBackend {
     history: Vec<String>,
     log: Vec<String>,
     restarts: u32,
+    source_depth: usize,
     started: Instant,
 }
 
@@ -111,6 +114,7 @@ impl HostBackend {
             history: Vec::new(),
             log: Vec::new(),
             restarts: 0,
+            source_depth: 0,
             started: Instant::now(),
         }
     }
@@ -265,6 +269,7 @@ impl CommandBackend for HostBackend {
             },
             ("store", Some(subcommand)) => self.store_command(invocation, subcommand),
             ("vfs", Some(subcommand)) => self.vfs_command(invocation, subcommand),
+            ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
                 "'{}' has no host backend yet",
                 invocation.display_name()
@@ -274,6 +279,57 @@ impl CommandBackend for HostBackend {
 }
 
 impl HostBackend {
+    fn source(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(path) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        if self.source_depth >= MAX_SOURCE_DEPTH {
+            return CommandOutput::error(&format!(
+                "source nesting limit ({MAX_SOURCE_DEPTH}) reached at '{path}'"
+            ));
+        }
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => return CommandOutput::error(&format!("read '{path}': {error}")),
+        };
+
+        self.source_depth += 1;
+        let mut lines = Vec::new();
+        let mut code = ExitCode::Ok;
+        let mut control = OutputControl::None;
+        let mut count = 0usize;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let output = dispatch(self, line);
+            count += 1;
+            lines.extend(output.lines);
+            if code == ExitCode::Ok {
+                code = output.code;
+            }
+            if output.control == OutputControl::Clear && control == OutputControl::None {
+                control = OutputControl::Clear;
+            }
+            if let OutputControl::Exit(exit_code) = output.control {
+                control = OutputControl::Exit(exit_code);
+                break;
+            }
+        }
+        self.source_depth -= 1;
+
+        let status = format!("sourced '{path}' ({count} command(s))");
+        self.note(status.clone());
+        lines.push(status);
+        CommandOutput {
+            lines,
+            code,
+            duration_ms: 0,
+            control,
+        }
+    }
+
     fn status(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let registry = guard(&self.registry);

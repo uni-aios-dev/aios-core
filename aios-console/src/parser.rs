@@ -29,6 +29,15 @@ pub struct Token {
     pub quoted: bool,
 }
 
+/// Returns whether a backslash before `next` is an escape sequence.
+///
+/// Only characters that would otherwise change tokenization are escapable.
+/// Keeping other backslashes literal preserves Windows path separators such as
+/// `C:\Users\script.txt` without a special-case path syntax.
+fn is_escapable(next: char) -> bool {
+    matches!(next, '"' | '\'' | '\\' | '#') || next.is_whitespace()
+}
+
 /// Splits a command line into tokens, honouring quotes, escapes and `#` comments.
 pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
     let chars: Vec<char> = input.chars().collect();
@@ -57,8 +66,14 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
                 if index + 1 >= chars.len() {
                     return Err(ParseError::new("trailing escape character", index));
                 }
-                text.push(chars[index + 1]);
-                index += 2;
+                let next = chars[index + 1];
+                if is_escapable(next) {
+                    text.push(next);
+                    index += 2;
+                } else {
+                    text.push('\\');
+                    index += 1;
+                }
                 consumed = true;
                 continue;
             }
@@ -73,8 +88,14 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
                         if index + 1 >= chars.len() {
                             return Err(ParseError::new("trailing escape character", index));
                         }
-                        text.push(chars[index + 1]);
-                        index += 2;
+                        let next = chars[index + 1];
+                        if is_escapable(next) {
+                            text.push(next);
+                            index += 2;
+                        } else {
+                            text.push('\\');
+                            index += 1;
+                        }
                         continue;
                     }
                     if chars[index] == quote {
