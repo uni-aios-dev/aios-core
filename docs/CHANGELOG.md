@@ -24,7 +24,8 @@
   system, process, block, watchdog, network, store and VFS commands through the
   same library crates as the host TUI. `HostBackend::from_handles` shares the
   scheduler and block registry with the orchestrator; `HostBackendConfig`
-  selects directories, RAM quota and the restart limit. Unsupported
+  selects the store/VFS/net-config paths, RAM quota and the restart limit.
+  Unsupported
   subcommands report `unavailable`, and 14 integration tests in
   `aios-console/tests/host_backend.rs` cover the complete lifecycle, capability
   denial and error codes.

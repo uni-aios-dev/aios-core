@@ -38,6 +38,8 @@ pub struct HostBackendConfig {
     pub blocks_dir: PathBuf,
     /// Root of the sandboxed `AIOS://` filesystem.
     pub vfs_root: PathBuf,
+    /// File used to persist `net set` / `net reset` changes.
+    pub net_config_path: PathBuf,
     /// RAM quota handed to a newly created scheduler.
     pub total_ram_mb: u64,
     /// Maximum number of controlled watchdog restarts.
@@ -51,6 +53,7 @@ impl Default for HostBackendConfig {
             version: env!("CARGO_PKG_VERSION").to_string(),
             blocks_dir: base.join("blocks"),
             vfs_root: base.join("vfs"),
+            net_config_path: base.join("network.json"),
             total_ram_mb: 1024,
             max_restarts: 3,
         }
@@ -93,9 +96,10 @@ impl HostBackend {
         config: HostBackendConfig,
     ) -> Self {
         let store = StoreManager::new(config.blocks_dir.clone());
-        let net = NetSettingsBlock::with_default_store(
+        let net = NetSettingsBlock::new(
             BlockId::new(NET_BLOCK_ID),
             NetworkConfig::default(),
+            config.net_config_path.clone(),
         );
         Self {
             scheduler,

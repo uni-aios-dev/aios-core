@@ -23,6 +23,7 @@ fn test_config(label: &str) -> (HostBackendConfig, PathBuf) {
         version: format!("test-{unique}"),
         blocks_dir: base.join("blocks"),
         vfs_root: base.join("vfs"),
+        net_config_path: base.join("network.json"),
         total_ram_mb: 512,
         max_restarts: 2,
     };
