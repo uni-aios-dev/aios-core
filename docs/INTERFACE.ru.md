@@ -167,12 +167,21 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `alias`/`unalias` хранят алиасы сессии, которые `execute_line()` раскрывает до
 диспетчеризации; каждый вызов записывается как span `TraceContext`, видимый
 через `trace list`. `HostBackendConfig.context_db_path` задаёт файл redb для
-`context persist`. Команды без реального библиотечного API (`jobs|fg|bg`,
-`acl grant|revoke`, `ping`, `net recheck`, `block swap|rollback`,
-`update history|pending|recover`, `state extract|restore`, `fm jobs|cancel`) и
-команды, которые создали бы циклическую зависимость (`wd start|stop|
-force-safe-mode|escalate`, `bridge status|start|stop`,
-`auth register|login|me`), по-прежнему возвращают `ERR unavailable`.
+`context persist`. Команды live-update используют `PersistedLiveUpdateEngine`:
+`block swap|rollback` записывает реальный swap с записью отката, а
+`update history|pending|recover` читают журнал swap'ов, ожидающие откаты и
+восстановление после краша. Вывод swap сообщает, что swap записан и сохранена
+запись отката; он не утверждает, что код работающего блока был заменён.
+
+`wd`, `bridge` и `auth` работают через точки внедрения из
+`aios-console/src/control.rs` (`WatchdogControl`, `BridgeControl`,
+`AuthProvider`). Бинарник `aios` реализует их в `aios/src/console_control.rs`
+на основе общего watchdog, канала корректного завершения слушателя bridge и
+`AuthStore`: `bridge stop` запрашивает корректное завершение, а `bridge start`
+снова запускает слушатель. Без внедрённого адаптера эти команды возвращают
+`unavailable`; остальные команды без реального библиотечного API (`jobs|fg|bg`,
+`acl grant|revoke`, `ping`, `net recheck`, `state extract|restore`,
+`fm jobs|cancel`) по-прежнему возвращают `ERR unavailable`.
 
 `metrics` выводит снимок счётчиков, построенный только из реального состояния
 рантайма; флаг `--json` даёт структурированный объект, `--prometheus` — текст в

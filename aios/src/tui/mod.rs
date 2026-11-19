@@ -1958,7 +1958,7 @@ mod tests {
                 },
                 ai_tier: "basic".into(),
             },
-            bridge,
+            bridge: bridge.clone(),
             router: MessageRouter::new(),
             net_block_id: BlockId::new(100),
             base_blocks: Vec::new(),
@@ -1968,6 +1968,12 @@ mod tests {
             start_time: Instant::now(),
             bridge_running: Arc::new(AtomicBool::new(false)),
             bridge_port: 8080,
+            bridge_runtime: Arc::new(crate::console_control::BridgeRuntime::new(
+                bridge.clone(),
+                Arc::new(AtomicBool::new(false)),
+                logs.clone(),
+                8080,
+            )),
             logs,
             cluster: None,
         }));

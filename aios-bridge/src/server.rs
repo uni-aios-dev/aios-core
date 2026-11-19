@@ -42,7 +42,9 @@ pub struct BridgeContext {
     pub registry: Arc<Mutex<BlockRegistry>>,
     pub access_control: Mutex<AccessControlLayer>,
     pub telemetry: Mutex<TelemetryStore>,
-    pub watchdog: Mutex<Watchdog>,
+    /// Shared watchdog state so host-side console controls observe the same
+    /// instance as the REST status endpoint.
+    pub watchdog: Arc<Mutex<Watchdog>>,
     pub llm: tokio::sync::Mutex<LlmEngine>,
     pub start_time: SystemTime,
     pub request_counter: AtomicU64,
@@ -87,7 +89,7 @@ impl BridgeContext {
             registry: Arc::new(Mutex::new(registry)),
             access_control: Mutex::new(access_control),
             telemetry: Mutex::new(TelemetryStore::new()),
-            watchdog: Mutex::new(watchdog),
+            watchdog: Arc::new(Mutex::new(watchdog)),
             llm: tokio::sync::Mutex::new(LlmEngine::from_config(default_config())),
             start_time: SystemTime::now(),
             request_counter: AtomicU64::new(0),
@@ -106,6 +108,11 @@ impl BridgeContext {
         }
     }
 
+    /// Shared handle to the watchdog instance used by the REST status endpoint.
+    pub fn watchdog_handle(&self) -> Arc<Mutex<Watchdog>> {
+        self.watchdog.clone()
+    }
+
     /// Override the directory used by the update-service endpoints.
     pub fn with_blocks_dir(mut self, dir: impl Into<String>) -> Self {
         self.blocks_dir = dir.into();
@@ -120,6 +127,18 @@ impl BridgeContext {
 type SharedState = Arc<BridgeContext>;
 
 pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
+    start_server_with_shutdown(state, addr, std::future::pending()).await
+}
+
+/// Starts the bridge listener and stops it gracefully when `shutdown` resolves.
+pub async fn start_server_with_shutdown<F>(
+    state: SharedState,
+    addr: &str,
+    shutdown: F,
+) -> Result<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
     // CORS: restrict to a single origin when configured, otherwise disable
     // CORS headers entirely (the UI is served from the same origin as the
     // API, so cross-origin access is not needed). This replaces the previous
@@ -192,6 +211,7 @@ pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
 
     log::info!("AIOS Bridge listening on {addr}");
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
         .await
         .map_err(|e| BridgeError::ServerError(format!("Server error: {e}")))?;
 

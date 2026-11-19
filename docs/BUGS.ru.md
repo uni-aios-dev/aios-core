@@ -22,17 +22,21 @@
 Известное ограничение нового бэкенда: `HostBackend` реализует только
 подкоманды, перечисленные в `src/host.rs`. Прежние пробелы — `net validate`,
 `store verify`, `vfs readat` и `wifi status` — теперь имеют реальные адаптеры,
-но корректные записи реестра, такие как `jobs|fg|bg`, `acl grant|revoke`,
-`ping`, `net recheck`, `block swap|rollback`, `update history|pending|recover`,
+как и `block swap|rollback`, `update history|pending|recover` (реальный журнал
+`PersistedLiveUpdateEngine`) и команды `wd`/`bridge`/`auth` (хостовые адаптеры
+через точки внедрения `control.rs`). Корректные записи реестра, такие как
+`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
 `state extract|restore` и `fm jobs|cancel`, по-прежнему возвращают
 `ERR unavailable`, поскольку для них нет реального библиотечного API.
 
-Вторая группа — `wd start|stop|force-safe-mode|escalate`,
-`bridge status|start|stop` и `auth register|login|me` — тоже остаётся
-`unavailable`: добавление `aios-watchdog` или `aios-bridge` в качестве
-зависимости `aios-console` создало бы цикл (`aios-watchdog -> aios-console`,
-`aios-bridge -> aios-watchdog`). Этим командам нужна точка внедрения или
-реализация на стороне хоста вне `aios-console`.
+Циклическая зависимость для команд watchdog/bridge/auth устранена:
+`aios-console` задаёт трейты управления, а бинарник `aios` внедряет реальные
+реализации на своих дескрипторах. Без внедрённого адаптера команды по-прежнему
+возвращают `unavailable` (например, в отдельно запускаемых тестах).
+`bridge stop` отправляет сигнал корректного завершения, а не обрывает активные
+соединения. `block swap` записывает swap и запись отката, но не заменяет код
+работающего блока: прежнее состояние записывается пустым, так как реестр не
+раскрывает живые экземпляры блоков.
 
 Шелл `aios` сейчас предоставляет новый бэкенд только через префикс
 `console <...>`; до проверки паритета активным командным слоем остаются старые

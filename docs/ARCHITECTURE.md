@@ -116,13 +116,24 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 and `hub status|scan|wifi|layout`. They use the optional std dependencies
 `aios-debug`, `aios-exec-compat`, `aios-iommu`, `aios-mpk`, `aios-security`,
 `aios-sys-control`, `aios-tee`, `aios-telemetry` and `aios-wasm`; the kernel
-`no_std` build is unaffected. Commands whose crate would create a dependency
-cycle (`wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
-`auth register|login|me` — `aios-watchdog` depends on `aios-console` and
-`aios-bridge` depends on `aios-watchdog`) and commands with no real library API
-(`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
-`block swap|rollback`, `update history|pending|recover`,
-`state extract|restore`, `fm jobs|cancel`) still report `unavailable`.
+`no_std` build is unaffected. `aios-live-update` is now an optional std
+dependency: `block swap|rollback` and `update history|pending|recover` use the
+real `PersistedLiveUpdateEngine` journal, rollback entries and crash recovery.
+`block swap` reports that the swap was recorded and a rollback entry stored; it
+does not claim live block code was replaced because the registry does not expose
+live block instances.
+
+Dependency cycles for watchdog/bridge/auth commands are avoided with the
+injection seams in `aios-console/src/control.rs` (`WatchdogControl`,
+`BridgeControl`, `AuthProvider`). The `aios` binary implements them in
+`aios/src/console_control.rs` over its own handles: `WatchdogRunner::from_watchdog`
+attaches a monitoring thread to the same `Watchdog` the bridge status endpoint
+reads, `start_server_with_shutdown` lets `bridge stop` gracefully close the
+listener and `bridge start` spawn it again, and `auth` calls the real `AuthStore`.
+Without an injected adapter these commands still return `unavailable`. Commands
+with no real library API (`jobs|fg|bg`, `acl grant|revoke`, `ping`,
+`net recheck`, `state extract|restore`, `fm jobs|cancel`) still report
+`unavailable`.
 
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts

@@ -11,6 +11,26 @@
   `dispatch()`, and `CommandOutput` with exit codes `0..4` plus `Clear`/`Exit`
   frontend controls. `help` is generated from the registry instead of being
   maintained by hand in three TUI files.
+- Live-update and control-seam adapters: `aios-console` gained an optional
+  `aios-live-update` std dependency and now implements `block swap|rollback`
+  and `update history|pending|recover` over the real `PersistedLiveUpdateEngine`
+  journal, rollback entries and crash recovery. Swap output states that the swap
+  was recorded and a rollback entry stored; it does not claim live block code
+  was replaced. `aios-console/src/control.rs` defines `WatchdogControl`,
+  `BridgeControl` and `AuthProvider` injection seams so the binary that owns
+  those subsystems can provide real implementations without a dependency cycle.
+- `aios/src/console_control.rs` implements those seams over the shared
+  `Watchdog`, the bridge listener and `AuthStore`: `wd start|stop` attach/detach
+  a `WatchdogRunner` through the new `WatchdogRunner::from_watchdog` API,
+  `wd status|force-safe-mode|escalate` read and mutate the same watchdog the
+  bridge status endpoint uses, `auth register|login|me` call the real user
+  store, and `bridge status|start|stop` use `BridgeRuntime` plus the new
+  `start_server_with_shutdown` API for graceful listener shutdown and restart.
+  `BridgeContext.watchdog` became a shared `Arc<Mutex<Watchdog>>`. Without an
+  injected adapter these commands still report `unavailable`.
+- Two new `aios-console` integration tests and three host-adapter unit tests
+  cover live-update journaling, seam dispatch, shared watchdog control, real
+  auth tokens and bridge stop/restart.
 - Command names with incompatible meanings were split into distinct canonical
   forms: `process spawn` / `block load` / `block mock` (deferred `cluster
   spawn`), `wd reset` / `block rollback` / `hw rescan`, `status` / `sys info` /

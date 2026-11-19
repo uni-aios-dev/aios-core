@@ -1,4 +1,5 @@
 mod blocks;
+mod console_control;
 mod hw_probe;
 mod orchestrator;
 mod tui;

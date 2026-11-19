@@ -12,6 +12,7 @@ std = [
     "dep:aios-autohal",
     "dep:aios-hal",
     "dep:aios-ipc",
+    "dep:aios-live-update",
     "dep:aios-block-mgr",
     "dep:aios-process-mgr",
     "dep:aios-net-config",
@@ -35,6 +36,7 @@ aios-context = { path = "../aios-context", optional = true }
 aios-autohal = { path = "../aios-autohal", optional = true, default-features = false }
 aios-hal = { path = "../aios-hal", optional = true }
 aios-ipc = { path = "../aios-ipc", optional = true }
+aios-live-update = { path = "../aios-live-update", optional = true }
 aios-block-mgr = { path = "../aios-block-mgr", optional = true }
 aios-process-mgr = { path = "../aios-process-mgr", optional = true }
 aios-net-config = { path = "../aios-net-config", optional = true }

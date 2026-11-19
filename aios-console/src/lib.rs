@@ -10,6 +10,7 @@ extern crate alloc;
 
 pub mod backend;
 pub mod capability;
+pub mod control;
 pub mod deferred;
 #[cfg(feature = "std")]
 pub mod host;

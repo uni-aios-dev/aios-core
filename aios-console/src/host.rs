@@ -30,6 +30,7 @@ use aios_hal::hardware::HardwareProfile;
 use aios_iommu::iommu::IommuManager;
 use aios_iommu::IommuInfo;
 use aios_ipc::bus::IpcBus;
+use aios_live_update::cow_live_update::PersistedLiveUpdateEngine;
 use aios_mpk::mpk::MpkManager;
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
@@ -50,6 +51,7 @@ use aios_wasm::{IsolationConfig, SandboxConfig, WasiFilter, WasmBlock, WasmSandb
 
 use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
+use crate::control::{AuthProvider, BridgeControl, WatchdogControl};
 use crate::output::{CommandOutput, ExitCode, OutputControl};
 use crate::registry::{help, Invocation};
 
@@ -159,6 +161,10 @@ pub struct HostBackend {
     sys_hub: SysControlHub,
     autohal: Option<AutohalEngine>,
     hotplug: Option<HotplugMonitor>,
+    live_update: Option<PersistedLiveUpdateEngine>,
+    watchdog_control: Option<Arc<dyn WatchdogControl>>,
+    bridge_control: Option<Arc<dyn BridgeControl>>,
+    auth_provider: Option<Arc<dyn AuthProvider>>,
 }
 
 impl HostBackend {
@@ -187,6 +193,7 @@ impl HostBackend {
             config.net_config_path.clone(),
         );
         let version = config.version.clone();
+        let live_update = PersistedLiveUpdateEngine::new(30_000, config.blocks_dir.clone()).ok();
         Self {
             scheduler,
             registry,
@@ -221,6 +228,10 @@ impl HostBackend {
             sys_hub: SysControlHub::defaults(),
             autohal: None,
             hotplug: None,
+            live_update,
+            watchdog_control: None,
+            bridge_control: None,
+            auth_provider: None,
         }
     }
 
@@ -232,6 +243,21 @@ impl HostBackend {
     /// Shares the host IPC bus so `ipc` commands observe real bus traffic.
     pub fn set_ipc_bus(&mut self, bus: Arc<Mutex<IpcBus>>) {
         self.ipc_bus = bus;
+    }
+
+    /// Injects the host-owned watchdog control surface for `wd` commands.
+    pub fn set_watchdog_control(&mut self, control: Arc<dyn WatchdogControl>) {
+        self.watchdog_control = Some(control);
+    }
+
+    /// Injects the host-owned bridge control surface for `bridge` commands.
+    pub fn set_bridge_control(&mut self, control: Arc<dyn BridgeControl>) {
+        self.bridge_control = Some(control);
+    }
+
+    /// Injects the host-owned authentication surface for `auth` commands.
+    pub fn set_auth_provider(&mut self, provider: Arc<dyn AuthProvider>) {
+        self.auth_provider = Some(provider);
     }
 
     /// Overrides the hardware inventory used by `sys` and `hw` commands.
@@ -391,13 +417,16 @@ impl CommandBackend for HostBackend {
             ("block", Some("activate")) => self.block_activate(invocation),
             ("block", Some("deps")) => self.block_deps(),
             ("block", Some("verify")) => self.block_verify(invocation),
-            ("wd", Some("status")) => CommandOutput::ok(vec![
-                format!(
-                    "safe mode restarts: {}/{}",
-                    self.restarts, self.config.max_restarts
-                ),
-                format!("log entries: {}", self.log.len()),
-            ]),
+            ("block", Some("swap")) => self.block_swap(invocation),
+            ("block", Some("rollback")) => self.block_rollback(invocation),
+            ("update", Some("history")) => self.update_history(),
+            ("update", Some("pending")) => self.update_pending(),
+            ("update", Some("recover")) => self.update_recover(),
+            ("wd", Some("status")) => self.watchdog_status(),
+            ("wd", Some("start")) => self.watchdog_start(),
+            ("wd", Some("stop")) => self.watchdog_stop(),
+            ("wd", Some("force-safe-mode")) => self.watchdog_force_safe_mode(),
+            ("wd", Some("escalate")) => self.watchdog_escalate(),
             ("wd", Some("reset")) => {
                 if self.restarts >= self.config.max_restarts {
                     return CommandOutput::error(&format!(
@@ -447,6 +476,8 @@ impl CommandBackend for HostBackend {
             ("crash", Some("report")) => self.crash_report(invocation),
             ("wifi", Some(subcommand)) => self.wifi_command(invocation, subcommand),
             ("hub", Some(subcommand)) => self.hub_command(invocation, subcommand),
+            ("bridge", Some(subcommand)) => self.bridge_command(invocation, subcommand),
+            ("auth", Some(subcommand)) => self.auth_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
                 "'{}' has no host backend yet",
@@ -1510,6 +1541,288 @@ impl HostBackend {
             Ok(true) => CommandOutput::text("signature OK"),
             Ok(false) => CommandOutput::text("no valid signature"),
             Err(error) => CommandOutput::error(&format!("verify failed: {error}")),
+        }
+    }
+
+    fn block_swap(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(old_target) = invocation.arg(0) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Some(new_target) = invocation.arg(1) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        if self.live_update.is_none() {
+            return CommandOutput::error("live-update engine unavailable: storage init failed");
+        }
+        let plan = {
+            let registry = guard(&self.registry);
+            let Some(old_id) = resolve_block(&registry, old_target) else {
+                return CommandOutput::error(&format!("block '{old_target}' not found"));
+            };
+            let Some(new_id) = resolve_block(&registry, new_target) else {
+                return CommandOutput::error(&format!("block '{new_target}' not found"));
+            };
+            let Ok(old_entry) = registry.get(old_id) else {
+                return CommandOutput::error(&format!("block '{old_target}' not found"));
+            };
+            let Ok(new_entry) = registry.get(new_id) else {
+                return CommandOutput::error(&format!("block '{new_target}' not found"));
+            };
+            (
+                old_id.0,
+                old_entry.binary.clone(),
+                old_entry.manifest.version.clone(),
+                new_entry.binary.clone(),
+                new_entry.manifest.version.clone(),
+                new_entry.manifest.sha256,
+            )
+        };
+        let (old_id, old_binary, old_version, new_binary, new_version, new_sha256) = plan;
+        let mut bus = guard(&self.ipc_bus);
+        let engine = self
+            .live_update
+            .as_mut()
+            .expect("live-update engine checked above");
+        match engine.perform_swap(
+            old_id,
+            old_binary,
+            old_version.clone(),
+            Vec::new(),
+            new_binary,
+            new_version.clone(),
+            new_sha256,
+            &mut bus,
+            None,
+        ) {
+            Ok(()) => {
+                drop(bus);
+                self.command_status(format!(
+                    "block_{old_id} swap {old_version} -> {new_version} recorded; rollback entry stored"
+                ))
+            }
+            Err(error) => CommandOutput::error(&format!("block swap failed: {error}")),
+        }
+    }
+
+    fn block_rollback(&mut self, invocation: &Invocation) -> CommandOutput {
+        if self.live_update.is_none() {
+            return CommandOutput::error("live-update engine unavailable: storage init failed");
+        }
+        let ids: Vec<u32> = match invocation.first_arg() {
+            Some(target) => {
+                let registry = guard(&self.registry);
+                let Some(id) = resolve_block(&registry, target) else {
+                    return CommandOutput::error(&format!("block '{target}' not found"));
+                };
+                vec![id.0]
+            }
+            None => {
+                let engine = self
+                    .live_update
+                    .as_ref()
+                    .expect("live-update engine checked above");
+                engine
+                    .engine()
+                    .pending_rollbacks()
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect()
+            }
+        };
+        if ids.is_empty() {
+            return CommandOutput::text("no pending rollbacks");
+        }
+        let engine = self
+            .live_update
+            .as_mut()
+            .expect("live-update engine checked above");
+        let mut bus = guard(&self.ipc_bus);
+        let mut lines = Vec::new();
+        let mut failed = false;
+        for id in ids {
+            match engine.rollback(id, &mut bus) {
+                Ok(_) => lines.push(format!("block_{id} rolled back")),
+                Err(error) => {
+                    failed = true;
+                    lines.push(format!("block_{id} rollback failed: {error}"));
+                }
+            }
+        }
+        drop(bus);
+        for line in &lines {
+            self.note(line.clone());
+        }
+        if failed {
+            CommandOutput::error(&lines.join("\n"))
+        } else {
+            CommandOutput::ok(lines)
+        }
+    }
+
+    fn update_history(&self) -> CommandOutput {
+        let Some(engine) = self.live_update.as_ref() else {
+            return CommandOutput::error("live-update engine unavailable: storage init failed");
+        };
+        let history = engine.swap_history();
+        if history.is_empty() {
+            return CommandOutput::text("no swaps recorded in this session");
+        }
+        let mut lines = vec![
+            "BLOCK    OLD VERSION   NEW VERSION   SUCCESS  ROLLED_BACK  TIMESTAMP".to_string(),
+        ];
+        for record in history {
+            lines.push(format!(
+                "{:<8} {:<12} {:<13} {:<8} {:<12} {}",
+                record.block_id,
+                record.old_version,
+                record.new_version,
+                record.success,
+                record.rolled_back,
+                record.timestamp
+            ));
+        }
+        CommandOutput::ok(lines)
+    }
+
+    fn update_pending(&self) -> CommandOutput {
+        let Some(engine) = self.live_update.as_ref() else {
+            return CommandOutput::error("live-update engine unavailable: storage init failed");
+        };
+        let pending = engine.engine().pending_rollbacks();
+        if pending.is_empty() {
+            return CommandOutput::text("no pending rollbacks");
+        }
+        let mut lines = vec!["BLOCK    PREVIOUS VERSION".to_string()];
+        for (id, version) in pending {
+            lines.push(format!("{:<8} {version}", format!("block_{id}")));
+        }
+        CommandOutput::ok(lines)
+    }
+
+    fn update_recover(&mut self) -> CommandOutput {
+        let Some(engine) = self.live_update.as_mut() else {
+            return CommandOutput::error("live-update engine unavailable: storage init failed");
+        };
+        match engine.recover_from_crash() {
+            Ok(ids) if ids.is_empty() => CommandOutput::text("no interrupted hot-swaps to recover"),
+            Ok(ids) => {
+                let lines: Vec<String> = ids
+                    .iter()
+                    .map(|id| format!("recovered interrupted hot-swap for block_{id}"))
+                    .collect();
+                for line in &lines {
+                    self.note(line.clone());
+                }
+                CommandOutput::ok(lines)
+            }
+            Err(error) => CommandOutput::error(&format!("update recover failed: {error}")),
+        }
+    }
+
+    fn watchdog_status(&self) -> CommandOutput {
+        let mut lines = Vec::new();
+        if let Some(control) = self.watchdog_control.as_ref() {
+            lines.extend(control.status());
+        } else {
+            lines.push("watchdog state: no host control injected".to_string());
+        }
+        lines.push(format!(
+            "safe mode restarts: {}/{}",
+            self.restarts, self.config.max_restarts
+        ));
+        lines.push(format!("log entries: {}", self.log.len()));
+        CommandOutput::ok(lines)
+    }
+
+    fn watchdog_start(&mut self) -> CommandOutput {
+        let Some(control) = self.watchdog_control.clone() else {
+            return CommandOutput::unavailable("wd start needs a host watchdog control seam");
+        };
+        match control.start() {
+            Ok(()) => self.command_status("watchdog monitoring started"),
+            Err(error) => CommandOutput::error(&format!("wd start failed: {error}")),
+        }
+    }
+
+    fn watchdog_stop(&mut self) -> CommandOutput {
+        let Some(control) = self.watchdog_control.clone() else {
+            return CommandOutput::unavailable("wd stop needs a host watchdog control seam");
+        };
+        match control.stop() {
+            Ok(()) => self.command_status("watchdog monitoring stopped"),
+            Err(error) => CommandOutput::error(&format!("wd stop failed: {error}")),
+        }
+    }
+
+    fn watchdog_force_safe_mode(&mut self) -> CommandOutput {
+        let Some(control) = self.watchdog_control.clone() else {
+            return CommandOutput::unavailable(
+                "wd force-safe-mode needs a host watchdog control seam",
+            );
+        };
+        control.force_safe_mode();
+        self.command_status("watchdog forced into safe mode")
+    }
+
+    fn watchdog_escalate(&self) -> CommandOutput {
+        let Some(control) = self.watchdog_control.as_ref() else {
+            return CommandOutput::unavailable("wd escalate needs a host watchdog control seam");
+        };
+        CommandOutput::ok(control.escalate())
+    }
+
+    fn bridge_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        let Some(control) = self.bridge_control.clone() else {
+            return CommandOutput::unavailable("bridge control needs a host bridge control seam");
+        };
+        match subcommand {
+            "status" => CommandOutput::ok(control.status()),
+            "start" => match control.start() {
+                Ok(()) => self.command_status("bridge listener start requested"),
+                Err(error) => CommandOutput::error(&format!("bridge start failed: {error}")),
+            },
+            "stop" => match control.stop() {
+                Ok(()) => self.command_status("bridge graceful shutdown requested"),
+                Err(error) => CommandOutput::error(&format!("bridge stop failed: {error}")),
+            },
+            _ => CommandOutput::usage(invocation.spec.usage),
+        }
+    }
+
+    fn auth_command(&self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        let Some(provider) = self.auth_provider.as_ref() else {
+            return CommandOutput::unavailable("auth needs a host authentication seam");
+        };
+        match subcommand {
+            "register" | "login" => {
+                let Some(username) = invocation.arg(0) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(password) = invocation.arg(1) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let result = if subcommand == "register" {
+                    provider.register(username, password)
+                } else {
+                    provider.login(username, password)
+                };
+                match result {
+                    Ok(token) => CommandOutput::ok(vec![format!("{subcommand} OK"), token]),
+                    Err(error) => {
+                        CommandOutput::error(&format!("auth {subcommand} failed: {error}"))
+                    }
+                }
+            }
+            "me" => {
+                let Some(token) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                match provider.me(token) {
+                    Ok(user) => CommandOutput::text(user),
+                    Err(error) => CommandOutput::error(&format!("auth me failed: {error}")),
+                }
+            }
+            _ => CommandOutput::usage(invocation.spec.usage),
         }
     }
 

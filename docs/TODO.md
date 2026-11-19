@@ -141,15 +141,17 @@
   and `hub status|scan|wifi|layout`. Added `execute_line()` for alias expansion
   plus `TraceContext` spans and `HostBackendConfig.context_db_path` for redb
   persistence (9 integration tests on temp paths and injected mock profiles).
+- [x] Implement `block swap|rollback` and `update history|pending|recover` on the
+  real `PersistedLiveUpdateEngine` journal, rollback entries and crash recovery
+  (the output records a swap plus a rollback entry, not live code replacement).
+- [x] Resolve the cycle-blocked adapters outside `aios-console` with the
+  `control.rs` injection seams and real `aios` adapters: `wd start|stop|
+  force-safe-mode|escalate`, `bridge status|start|stop`,
+  `auth register|login|me`. `bridge stop` uses `start_server_with_shutdown`.
 - [ ] Implement the remaining `ERR unavailable` host adapters that have no
   dependency cycle: `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
-  `block swap|rollback`, `update history|pending|recover`,
   `state extract|restore`, `fm jobs|cancel` (need real library APIs or an
   injection seam; do not fake success).
-- [ ] Resolve the cycle-blocked adapters outside `aios-console` via an injection
-  seam or host-side implementation: `wd start|stop|force-safe-mode|escalate`,
-  `bridge status|start|stop`, `auth register|login|me` (`aios-watchdog` depends
-  on `aios-console`, `aios-bridge` depends on `aios-watchdog`).
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
   checks are green.

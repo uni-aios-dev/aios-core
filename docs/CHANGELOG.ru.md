@@ -11,6 +11,27 @@
   с `dispatch()`, а также `CommandOutput` с кодами `0..4` и действиями
   `Clear`/`Exit` для фронтенда. `help` генерируется из реестра, а не ведётся
   вручную в трёх файлах TUI.
+- Адаптеры live-update и точек внедрения: `aios-console` получил необязательную
+  std-зависимость `aios-live-update` и реализует `block swap|rollback` и
+  `update history|pending|recover` на реальном журнале `PersistedLiveUpdateEngine`,
+  записях отката и восстановлении после краша. Вывод swap сообщает, что swap
+  записан и сохранена запись отката; он не утверждает, что код работающего блока
+  был заменён. `aios-console/src/control.rs` задаёт точки внедрения
+  `WatchdogControl`, `BridgeControl` и `AuthProvider`, чтобы бинарник, владеющий
+  подсистемами, мог предоставить реальные реализации без циклической зависимости.
+- `aios/src/console_control.rs` реализует эти точки поверх общего `Watchdog`,
+  слушателя bridge и `AuthStore`: `wd start|stop` подключает/отключает
+  `WatchdogRunner` через новый API `WatchdogRunner::from_watchdog`,
+  `wd status|force-safe-mode|escalate` читают и меняют тот же watchdog, который
+  использует endpoint статуса bridge, `auth register|login|me` обращаются к
+  реальному хранилищу пользователей, а `bridge status|start|stop` используют
+  `BridgeRuntime` и новый API `start_server_with_shutdown` для корректного
+  завершения и перезапуска слушателя. `BridgeContext.watchdog` стал общим
+  `Arc<Mutex<Watchdog>>`. Без внедрённого адаптера команды по-прежнему возвращают
+  `unavailable`.
+- Два новых интеграционных теста `aios-console` и три юнит-теста хостовых
+  адаптеров покрывают журнал live-update, диспетчеризацию точек внедрения,
+  общий watchdog, реальные токены авторизации и остановку/перезапуск bridge.
 - Команды с несовместимой семантикой разведены в разные канонические имена:
   `process spawn` / `block load` / `block mock` (отложено `cluster spawn`),
   `wd reset` / `block rollback` / `hw rescan`, `status` / `sys info` /

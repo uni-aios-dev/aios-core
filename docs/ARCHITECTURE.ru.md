@@ -117,13 +117,24 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 и `hub status|scan|wifi|layout`. Они используют необязательные std-зависимости
 `aios-debug`, `aios-exec-compat`, `aios-iommu`, `aios-mpk`, `aios-security`,
 `aios-sys-control`, `aios-tee`, `aios-telemetry` и `aios-wasm`; сборка ядра
-`no_std` не затронута. Команды, чей крейт создал бы циклическую зависимость
-(`wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
-`auth register|login|me` — `aios-watchdog` зависит от `aios-console`, а
-`aios-bridge` зависит от `aios-watchdog`), а также команды без реального
-библиотечного API (`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
-`block swap|rollback`, `update history|pending|recover`,
-`state extract|restore`, `fm jobs|cancel`) по-прежнему возвращают `unavailable`.
+`no_std` не затронута. `aios-live-update` теперь необязательная std-зависимость:
+`block swap|rollback` и `update history|pending|recover` используют реальный
+журнал `PersistedLiveUpdateEngine`, записи отката и восстановление после краша.
+`block swap` сообщает, что swap записан и сохранена запись отката; он не утверждает,
+что код работающего блока был заменён, поскольку реестр не раскрывает живые
+экземпляры блоков.
+
+Циклические зависимости для команд watchdog/bridge/auth устранены через точки
+внедрения в `aios-console/src/control.rs` (`WatchdogControl`, `BridgeControl`,
+`AuthProvider`). Бинарник `aios` реализует их в `aios/src/console_control.rs`
+на своих дескрипторах: `WatchdogRunner::from_watchdog` подключает поток мониторинга
+к тому же `Watchdog`, который читает endpoint статуса bridge;
+`start_server_with_shutdown` позволяет `bridge stop` корректно закрыть слушатель,
+а `bridge start` — запустить его заново; `auth` вызывает реальный `AuthStore`.
+Без внедрённого адаптера эти команды по-прежнему возвращают `unavailable`.
+Команды без реального библиотечного API (`jobs|fg|bg`, `acl grant|revoke`,
+`ping`, `net recheck`, `state extract|restore`, `fm jobs|cancel`) также возвращают
+`unavailable`.
 
 `aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
 `aios-console` без `std` (`default-features = false`). Он адаптирует существующие

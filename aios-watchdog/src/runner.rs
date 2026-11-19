@@ -13,14 +13,23 @@ pub struct WatchdogRunner {
 
 impl WatchdogRunner {
     pub fn start(config: WatchdogConfig) -> Self {
+        let interval = config.heartbeat_interval_ms;
         let watchdog = Arc::new(Mutex::new(Watchdog::new(config)));
+        Self::from_watchdog(watchdog, interval)
+    }
+
+    /// Attaches a monitoring thread to an already shared watchdog instance.
+    ///
+    /// This lets host-owned and console-owned callers observe and control the
+    /// same `Watchdog` state instead of maintaining two independent instances.
+    pub fn from_watchdog(watchdog: Arc<Mutex<Watchdog>>, interval_ms: u64) -> Self {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let actions_received = Arc::new(Mutex::new(Vec::new()));
 
         let wd_clone = watchdog.clone();
         let stop_clone = stop_flag.clone();
         let actions_clone = actions_received.clone();
-        let interval = watchdog.lock().unwrap().config().heartbeat_interval_ms;
+        let interval = interval_ms.max(2);
 
         let handle = std::thread::Builder::new()
             .name("aios-watchdog".into())

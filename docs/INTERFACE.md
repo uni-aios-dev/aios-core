@@ -168,12 +168,21 @@ networking and security: `sleep`, `fault resolve`,
 `alias`/`unalias` maintain session aliases expanded by `execute_line()` before
 dispatch; every invocation is recorded as a `TraceContext` span shown by
 `trace list`. `HostBackendConfig.context_db_path` selects the redb file used by
-`context persist`. Commands without a real library API (`jobs|fg|bg`,
-`acl grant|revoke`, `ping`, `net recheck`, `block swap|rollback`,
-`update history|pending|recover`, `state extract|restore`, `fm jobs|cancel`)
-and commands that would create a dependency cycle (`wd start|stop|
-force-safe-mode|escalate`, `bridge status|start|stop`,
-`auth register|login|me`) still report `ERR unavailable`.
+`context persist`. Live-update commands use `PersistedLiveUpdateEngine`:
+`block swap|rollback` records a real swap with a rollback entry, and
+`update history|pending|recover` read swap records, pending rollbacks and crash
+recovery. Swap output says that the swap was recorded and a rollback entry
+stored; it does not claim live block code was replaced.
+
+`wd`, `bridge` and `auth` run through injection seams from
+`aios-console/src/control.rs` (`WatchdogControl`, `BridgeControl`,
+`AuthProvider`). The `aios` binary implements them in `aios/src/console_control.rs`
+over the shared watchdog, the bridge listener's graceful-shutdown channel and
+`AuthStore`, so `bridge stop` requests a graceful shutdown and `bridge start`
+spawns the listener again. Without an injected adapter these commands report
+`unavailable`; the remaining commands with no real library API (`jobs|fg|bg`,
+`acl grant|revoke`, `ping`, `net recheck`, `state extract|restore`,
+`fm jobs|cancel`) still report `ERR unavailable`.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.

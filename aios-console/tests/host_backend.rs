@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
+use aios_console::control::{AuthProvider, BridgeControl, WatchdogControl};
 use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::{ExitCode, OutputControl};
 use aios_hal::hardware::HardwareProfile;
@@ -183,7 +185,7 @@ fn host_watchdog_reset_is_bounded() {
 
     let status = dispatch(&mut host, "wd status");
     assert_ok("wd status", &status);
-    assert!(status.lines[0].contains("0/2"));
+    assert!(status.lines.iter().any(|line| line.contains("0/2")));
 
     assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
     assert_eq!(host.restarts(), 1);
@@ -321,9 +323,6 @@ fn host_unimplemented_subcommands_are_unavailable() {
     let mut host = backend("unavailable");
 
     for input in [
-        "block swap",
-        "block rollback",
-        "update history",
         "jobs",
         "acl grant net raw",
         "ping example.com",
@@ -1239,4 +1238,176 @@ fn host_wifi_hotplug_and_hub_adapters_work() {
     assert_ok("driver failures", &dispatch(&mut host, "driver failures"));
     assert_ok("hub status", &dispatch(&mut host, "hub status"));
     assert_ok("hub layout", &dispatch(&mut host, "hub layout"));
+}
+
+#[test]
+fn host_live_update_journal_tracks_swaps_and_rollbacks() {
+    let mut host = backend("live-update");
+
+    let history = dispatch(&mut host, "update history");
+    assert_ok("update history empty", &history);
+    assert_eq!(history.lines, ["no swaps recorded in this session"]);
+    let pending = dispatch(&mut host, "update pending");
+    assert_ok("update pending empty", &pending);
+    assert_eq!(pending.lines, ["no pending rollbacks"]);
+    let recover = dispatch(&mut host, "update recover");
+    assert_ok("update recover empty", &recover);
+    assert_eq!(recover.lines, ["no interrupted hot-swaps to recover"]);
+
+    assert_ok(
+        "block mock alpha --version=1.0.0",
+        &dispatch(&mut host, "block mock alpha --version=1.0.0"),
+    );
+    assert_ok(
+        "block mock beta --version=2.0.0",
+        &dispatch(&mut host, "block mock beta --version=2.0.0"),
+    );
+
+    assert_eq!(
+        dispatch(&mut host, "block swap alpha").code,
+        ExitCode::Usage
+    );
+    assert_eq!(
+        dispatch(&mut host, "block swap missing beta").code,
+        ExitCode::BackendError
+    );
+
+    let swap = dispatch(&mut host, "block swap alpha beta");
+    assert_ok("block swap", &swap);
+    assert!(swap.lines[0].contains("1.0.0 -> 2.0.0"));
+    assert!(swap.lines[0].contains("rollback entry stored"));
+
+    let pending = dispatch(&mut host, "update pending");
+    assert_ok("update pending after swap", &pending);
+    assert!(pending.lines.iter().any(|line| line.contains("1.0.0")));
+
+    let history = dispatch(&mut host, "update history");
+    assert_ok("update history after swap", &history);
+    assert!(history.lines.iter().any(|line| line.contains("2.0.0")));
+    assert!(history.lines.iter().any(|line| line.contains("false")));
+
+    let rollback = dispatch(&mut host, "block rollback");
+    assert_ok("block rollback all", &rollback);
+    assert!(rollback
+        .lines
+        .iter()
+        .any(|line| line.contains("rolled back")));
+
+    let pending = dispatch(&mut host, "update pending");
+    assert_ok("update pending after rollback", &pending);
+    assert_eq!(pending.lines, ["no pending rollbacks"]);
+
+    let history = dispatch(&mut host, "update history");
+    assert_ok("update history after rollback", &history);
+    assert!(history
+        .lines
+        .iter()
+        .any(|line| line.contains("rolled_back")));
+
+    assert_eq!(
+        dispatch(&mut host, "block rollback missing").code,
+        ExitCode::BackendError
+    );
+}
+
+#[test]
+fn host_control_seams_enable_watchdog_bridge_and_auth() {
+    struct MockWatchdog;
+    impl WatchdogControl for MockWatchdog {
+        fn status(&self) -> Vec<String> {
+            vec!["state: Monitoring".to_string()]
+        }
+        fn start(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn force_safe_mode(&self) {}
+        fn escalate(&self) -> Vec<String> {
+            vec!["DumpState".to_string(), "SafeModeShell".to_string()]
+        }
+    }
+
+    struct MockBridge;
+    impl BridgeControl for MockBridge {
+        fn status(&self) -> Vec<String> {
+            vec!["running: yes".to_string()]
+        }
+        fn start(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct MockAuth;
+    impl AuthProvider for MockAuth {
+        fn register(&self, username: &str, _password: &str) -> Result<String, String> {
+            Ok(format!("token-for-{username}"))
+        }
+        fn login(&self, username: &str, _password: &str) -> Result<String, String> {
+            Ok(format!("token-for-{username}"))
+        }
+        fn me(&self, token: &str) -> Result<String, String> {
+            Ok(format!("user-for-{token}"))
+        }
+    }
+
+    let mut host = backend("seams");
+    assert_eq!(
+        dispatch(&mut host, "wd force-safe-mode").code,
+        ExitCode::Unavailable
+    );
+    assert_eq!(
+        dispatch(&mut host, "bridge status").code,
+        ExitCode::Unavailable
+    );
+    assert_eq!(
+        dispatch(&mut host, "auth me abc").code,
+        ExitCode::Unavailable
+    );
+
+    host.set_watchdog_control(Arc::new(MockWatchdog));
+    host.set_bridge_control(Arc::new(MockBridge));
+    host.set_auth_provider(Arc::new(MockAuth));
+
+    let status = dispatch(&mut host, "wd status");
+    assert_ok("wd status with seam", &status);
+    assert!(status.lines.iter().any(|line| line.contains("Monitoring")));
+    assert_ok("wd start", &dispatch(&mut host, "wd start"));
+    assert_ok("wd stop", &dispatch(&mut host, "wd stop"));
+    assert_ok(
+        "wd force-safe-mode",
+        &dispatch(&mut host, "wd force-safe-mode"),
+    );
+    let escalate = dispatch(&mut host, "wd escalate");
+    assert_ok("wd escalate", &escalate);
+    assert!(escalate
+        .lines
+        .iter()
+        .any(|line| line.contains("SafeModeShell")));
+
+    let status = dispatch(&mut host, "bridge status");
+    assert_ok("bridge status with seam", &status);
+    assert!(status
+        .lines
+        .iter()
+        .any(|line| line.contains("running: yes")));
+    assert_ok("bridge start", &dispatch(&mut host, "bridge start"));
+    assert_ok("bridge stop", &dispatch(&mut host, "bridge stop"));
+
+    let register = dispatch(&mut host, "auth register alice secret");
+    assert_ok("auth register", &register);
+    assert!(register
+        .lines
+        .iter()
+        .any(|line| line.contains("token-for-alice")));
+    let login = dispatch(&mut host, "auth login alice secret");
+    assert_ok("auth login", &login);
+    let me = dispatch(&mut host, "auth me abc");
+    assert_ok("auth me", &me);
+    assert_eq!(me.lines, ["user-for-abc"]);
+    assert_eq!(dispatch(&mut host, "auth me").code, ExitCode::Usage);
 }

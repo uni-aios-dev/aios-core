@@ -21,18 +21,22 @@ switched over.
 
 A known limitation of the new backend: `HostBackend` implements only the
 subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
-`store verify`, `vfs readat` and `wifi status` now have real adapters, but valid
-registry entries such as `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
-`block swap|rollback`, `update history|pending|recover`,
+`store verify`, `vfs readat` and `wifi status` now have real adapters, as do
+`block swap|rollback` and `update history|pending|recover` (the real
+`PersistedLiveUpdateEngine` journal) and the `wd`/`bridge`/`auth` commands
+(host adapters injected through the `control.rs` seams). Valid registry entries
+such as `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
 `state extract|restore` and `fm jobs|cancel` still return `ERR unavailable`
 because no real library API exists for them.
 
-A second group — `wd start|stop|force-safe-mode|escalate`,
-`bridge status|start|stop` and `auth register|login|me` — also stays
-`unavailable`: adding `aios-watchdog` or `aios-bridge` as an `aios-console`
-dependency would create a cycle (`aios-watchdog -> aios-console`,
-`aios-bridge -> aios-watchdog`). These need an injection seam or a host-side
-implementation outside `aios-console`.
+The dependency cycle for watchdog/bridge/auth commands is resolved:
+`aios-console` defines control traits and the `aios` binary injects real
+implementations over its own handles. Commands still report `unavailable` when
+no adapter is injected (for example in standalone tests). `bridge stop` sends a
+graceful shutdown signal instead of dropping active connections. `block swap`
+records a swap and a rollback entry but does not replace live block code: the
+old state is recorded as empty because the registry does not expose live block
+instances.
 
 The `aios` shell currently exposes the new backend only through the
 `console <...>` prefix; the legacy dispatchers remain the default command

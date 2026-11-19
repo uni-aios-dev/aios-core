@@ -134,16 +134,17 @@
   алиасов и span'ов `TraceContext`, а также
   `HostBackendConfig.context_db_path` для redb (9 интеграционных тестов на
   временных путях и подставленных mock-профилях).
+- [x] Реализовать `block swap|rollback` и `update history|pending|recover` на
+  реальном журнале `PersistedLiveUpdateEngine`, записях отката и восстановлении
+  после краша (вывод сообщает о записи swap и отката, а не о замене кода).
+- [x] Разрешить адаптеры с циклическими зависимостями вне `aios-console` через
+  точки внедрения `control.rs` и реальные адаптеры `aios`:
+  `wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
+  `auth register|login|me`. `bridge stop` использует `start_server_with_shutdown`.
 - [ ] Реализовать оставшиеся хостовые адаптеры с `ERR unavailable`, у которых
   нет циклических зависимостей: `jobs|fg|bg`, `acl grant|revoke`, `ping`,
-  `net recheck`, `block swap|rollback`, `update history|pending|recover`,
-  `state extract|restore`, `fm jobs|cancel` (нужны реальные библиотечные API
-  или точка внедрения; не имитировать успех).
-- [ ] Разрешить адаптеры с циклическими зависимостями вне `aios-console` через
-  точку внедрения или реализацию на стороне хоста:
-  `wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
-  `auth register|login|me` (`aios-watchdog` зависит от `aios-console`,
-  `aios-bridge` зависит от `aios-watchdog`).
+  `net recheck`, `state extract|restore`, `fm jobs|cancel` (нужны реальные
+  библиотечные API или точка внедрения; не имитировать успех).
 - [ ] Заменить пять старых диспетчеров (`aios-tui`, `aios`, TUI ядра,
   `SafeModeShell`, `aios-shell`) только после того, как оставшиеся адаптеры
   и проверки паритета будут зелёными.

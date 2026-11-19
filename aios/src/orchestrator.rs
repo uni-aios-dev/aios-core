@@ -1,8 +1,9 @@
 use crate::blocks;
+use crate::console_control::BridgeRuntime;
 use crate::hw_probe::{self, HwProfile};
 use aios_block_mgr::registry::BlockRegistry;
 use aios_block_mgr::router::MessageRouter;
-use aios_bridge::server::{start_server, BridgeContext};
+use aios_bridge::server::BridgeContext;
 use aios_cluster::config::ClusterConfig;
 use aios_cluster::executor::SchedulerProcessExecutor;
 use aios_cluster::scheduler::DistributedScheduler;
@@ -17,7 +18,7 @@ use aios_wasm::executor::BlockExecutor;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -43,6 +44,8 @@ pub struct OrchestratorState {
     pub bridge_running: Arc<AtomicBool>,
     /// TCP port the REST/WS bridge listens on.
     pub bridge_port: u16,
+    /// Bridge lifecycle used by both boot and the text console `bridge` command.
+    pub bridge_runtime: Arc<BridgeRuntime>,
     pub logs: Arc<Mutex<Vec<String>>>,
     /// Distributed cluster scheduler when `AIOS_CLUSTER_PEERS` is configured.
     pub cluster: Option<Arc<Mutex<DistributedScheduler>>>,
@@ -308,28 +311,22 @@ pub async fn initialize(
 
     push_log(&logs, "AIOS: starting bridge server...".into());
     let bridge_running = Arc::new(AtomicBool::new(false));
+    let bridge_runtime = Arc::new(BridgeRuntime::new(
+        bridge.clone(),
+        bridge_running.clone(),
+        logs.clone(),
+        config.bridge_port,
+    ));
     if config.safe_mode {
         push_log(
             &logs,
             "AIOS SAFE MODE: bridge server disabled — shell and local blocks only".into(),
         );
-    } else {
-        let bridge_clone = bridge.clone();
-        let addr = format!("0.0.0.0:{}", config.bridge_port);
-        let logs_clone = logs.clone();
-        let br_flag = bridge_running.clone();
-
-        tokio::spawn(async move {
-            push_log(&logs_clone, format!("AIOS: Bridge listening on {addr}"));
-            br_flag.store(true, Ordering::SeqCst);
-            if let Err(e) = start_server(bridge_clone, &addr).await {
-                push_log(
-                    &logs_clone,
-                    format!("AIOS ERROR: Bridge server failed: {e}"),
-                );
-                br_flag.store(false, Ordering::SeqCst);
-            }
-        });
+    } else if let Err(error) = bridge_runtime.spawn_server() {
+        push_log(
+            &logs,
+            format!("AIOS ERROR: Bridge server failed to start: {error}"),
+        );
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -348,6 +345,7 @@ pub async fn initialize(
         start_time: Instant::now(),
         bridge_running,
         bridge_port: config.bridge_port,
+        bridge_runtime,
         logs,
         cluster,
     })

@@ -1,3 +1,4 @@
+use crate::console_control::{HostAuthProvider, HostWatchdogControl};
 use crate::orchestrator::OrchestratorState;
 use aios_autohal::engine::{AutohalEngine, DeviceView, Toast};
 use aios_autohal::hotplug::{HotplugEvent, HotplugMonitor};
@@ -186,6 +187,11 @@ impl TuiApp {
                 config,
             );
             backend.set_ipc_bus(s.bridge.ipc_bus.clone());
+            backend.set_watchdog_control(Arc::new(HostWatchdogControl::new(
+                s.bridge.watchdog_handle(),
+            )));
+            backend.set_bridge_control(s.bridge_runtime.clone());
+            backend.set_auth_provider(Arc::new(HostAuthProvider::new(s.bridge.auth.clone())));
             backend
         };
         let (hw_engine, hw_views, hw_toasts) = init_hw_engine(&state);
