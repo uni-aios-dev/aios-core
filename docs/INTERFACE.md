@@ -98,6 +98,60 @@ Both interfaces display the same data and expose the same operations. The GUI is
 
 ---
 
+## Unified text console (`aios-console`, in development)
+
+The `aios-console` crate defines the command language that will replace the
+duplicated parsers in the three current interfaces. It is pure text: one input
+line, text lines out, no panels, menus, mouse or hotkeys.
+
+```
+<group> [<subcommand>] [flags] [arguments]
+> process spawn worker --priority normal --ram 128
+> net set ip=10.0.0.5 gw=10.0.0.1
+> block load ./browser_2.0.wasm --name browser
+```
+
+- Command and subcommand names are case-insensitive; arguments keep their case.
+- Quotes (`"a b"`, `'a b'`), backslash escapes and `#` comments are supported.
+- `help [group|command]` is generated from the registry, not hand-maintained.
+- Scope tags in help: `[B]` both backends, `[H]` host only, `[K]` kernel only.
+- Result codes: `0` OK, `1` usage, `2` denied, `3` unavailable, `4` backend error.
+  Successful results end with `OK in <ms> ms`; failures start with `ERR ...`.
+- `clear` resets the visible output and scrollback; `exit [code]` closes the
+  console. These are frontend control actions, not printed text.
+
+| Old spelling | Canonical commands | Reason |
+|--------------|--------------------|--------|
+| `spawn` | `process spawn`, `block load`, `cluster spawn` (deferred) | process vs wasm block vs cluster |
+| `load` | `block load`, `block mock` | real wasm file vs synthetic safe-mode block |
+| `restart` | `wd reset`, `block rollback`, `hw rescan` | restart vs update revert vs hardware refresh |
+| `info` | `status`, `sys info`, `kernel info` | runtime vs hardware vs kernel telemetry |
+| `status` / `info` | `status`, `wd status`, `bridge status`, `net status`, `hub status` | one status per subsystem |
+| `logs`, `log` | `log show` | one log source |
+| `net get` | `net show` | show vs set/reset/link status |
+| `ls`, `list` | `block list`, `vfs ls`, `ps` | blocks vs files vs processes |
+
+Ambiguous legacy names are not silently expanded: the console prints the list
+of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
+control, store publish/sign, pipes/redirection and theming are commented out in
+`deferred.rs` and report `ERR unavailable: ...` with the reason.
+
+`HostBackend` already executes the implemented commands against the real host
+runtime: `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
+`block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
+`net show|set|reset`, `store list|sources|source|search|install|update|
+check-updates|uninstall|rollback`, and `vfs ls|cat|head|write|mkdir|rm|mv|cp|
+stat|exists|resolve`. Other registered subcommands report `ERR unavailable`
+until their adapters are written.
+
+In the `aios` shell tab the new backend is available through the `console`
+prefix, for example `console process spawn worker --ram 64`. All other lines
+are still handled by the legacy dispatcher, so existing commands keep working
+unchanged. `console help` lists the canonical commands; `console clear` and
+`console exit` act on the shell buffer and close the TUI respectively.
+
+---
+
 ## TUI (`aios-tui`)
 
 ### Launch

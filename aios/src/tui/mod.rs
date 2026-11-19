@@ -1169,8 +1169,34 @@ fn store_refresh(app: &mut TuiApp) {
     app.store_status = format!("{} installed block(s)", app.store_installed.len());
 }
 
+/// Routes a `console ...` line through the unified text backend.
+fn console_execute(app: &mut TuiApp, input: &str) {
+    use aios_console::backend::dispatch;
+    use aios_console::output::OutputControl;
+
+    let output = dispatch(&mut app.console, input);
+    for line in &output.lines {
+        app.shell_push(line.clone());
+    }
+    match output.control {
+        OutputControl::Clear => app.shell_output.clear(),
+        OutputControl::Exit(code) => {
+            push_log(&app.logs, format!("AIOS: console exit requested ({code})"));
+            app.running = false;
+        }
+        OutputControl::None => {}
+    }
+}
+
 fn shell_execute(app: &mut TuiApp, line: &str) {
-    let lower = line.trim().to_lowercase();
+    let trimmed = line.trim();
+    let mut head_and_rest = trimmed.splitn(2, char::is_whitespace);
+    let head = head_and_rest.next().unwrap_or("");
+    if head.eq_ignore_ascii_case("console") {
+        console_execute(app, head_and_rest.next().unwrap_or("help").trim());
+        return;
+    }
+    let lower = trimmed.to_lowercase();
     let parts: Vec<&str> = lower.split_whitespace().collect();
     let command = match parts.first().copied() {
         Some("") | None => return,
@@ -1179,7 +1205,7 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
     let mut out: Vec<String> = Vec::new();
     match command {
         "help" | "?" => {
-            out.push("Commands: ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | cluster status | cluster spawn <name> | cluster kill <node> <pid> | cluster migrate <node> <pid> [target] | status | logs | restart | clear".into());
+            out.push("Commands: console <command> [args] | ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | cluster status | cluster spawn <name> | cluster kill <node> <pid> | cluster migrate <node> <pid> [target] | status | logs | restart | clear".into());
         }
         "clear" | "cls" => {
             app.shell_output.clear();
@@ -1875,12 +1901,113 @@ fn handle_web_key(app: &mut TuiApp, key: event::KeyEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hw_probe::{CpuInfo, HwProfile, MemInfo, OsInfo};
+    use aios_block_mgr::registry::BlockRegistry;
+    use aios_block_mgr::router::MessageRouter;
+    use aios_bridge::server::BridgeContext;
     use aios_cluster::executor::MockProcessExecutor;
     use aios_cluster::scheduler::DistributedScheduler;
     use aios_cluster::transport::{ClusterTransport, InMemoryClusterTransport, MemoryRegistry};
     use aios_cluster::types::{NodeInfo, NodeMetrics, NodeStatus, PlacementStrategy};
+    use aios_core::block::BlockId;
+    use aios_process_mgr::scheduler::Scheduler;
+    use aios_security::access_control::AccessControlLayer;
+    use aios_wasm::executor::BlockExecutor;
+    use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
     use std::sync::atomic::AtomicBool;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+
+    fn console_test_app() -> TuiApp {
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let scheduler = Arc::new(Mutex::new(Scheduler::new(1024)));
+        let mut registry = BlockRegistry::new();
+        let id = registry
+            .register_block("console_shared", "1.0.0", b"shared-block".to_vec())
+            .expect("register block");
+        let _ = registry.activate_block(id);
+        let bridge = Arc::new(BridgeContext::new(
+            scheduler,
+            registry,
+            AccessControlLayer::new(b"console_test_secret".to_vec(), 86_400_000),
+            Watchdog::new(WatchdogConfig::default()),
+            42,
+        ));
+        let state = Arc::new(Mutex::new(OrchestratorState {
+            hw_profile: HwProfile {
+                cpu: CpuInfo {
+                    brand: "Test CPU".into(),
+                    physical_cores: 2,
+                    logical_cores: 4,
+                    architecture: "x86_64".into(),
+                    flags: Vec::new(),
+                },
+                memory: MemInfo {
+                    total_bytes: 1024,
+                    used_bytes: 0,
+                    free_bytes: 1024,
+                    total_gb: 1.0,
+                    used_gb: 0.0,
+                },
+                gpu: None,
+                os: OsInfo {
+                    name: "Test".into(),
+                    kernel_version: "0".into(),
+                    os_version: "0".into(),
+                    uptime_secs: 0,
+                    hostname: "test".into(),
+                },
+                ai_tier: "basic".into(),
+            },
+            bridge,
+            router: MessageRouter::new(),
+            net_block_id: BlockId::new(100),
+            base_blocks: Vec::new(),
+            disk_blocks: crate::blocks::DiskBlockReport::default(),
+            executor: Arc::new(Mutex::new(BlockExecutor::with_default_config().unwrap())),
+            safe_mode: false,
+            start_time: Instant::now(),
+            bridge_running: Arc::new(AtomicBool::new(false)),
+            bridge_port: 8080,
+            logs,
+            cluster: None,
+        }));
+        TuiApp::new(state)
+    }
+
+    #[test]
+    fn console_shell_command_routes_to_the_unified_backend() {
+        let mut app = console_test_app();
+        shell_execute(&mut app, "CONSOLE echo MiXeD Case");
+        assert!(
+            app.shell_output.iter().any(|line| line == "MiXeD Case"),
+            "got {:?}",
+            app.shell_output
+        );
+    }
+
+    #[test]
+    fn console_shell_command_shares_the_block_registry() {
+        let mut app = console_test_app();
+        shell_execute(&mut app, "console block list");
+        assert!(
+            app.shell_output
+                .iter()
+                .any(|line| line.contains("console_shared")),
+            "got {:?}",
+            app.shell_output
+        );
+    }
+
+    #[test]
+    fn console_shell_command_applies_clear_and_exit_controls() {
+        let mut app = console_test_app();
+        app.shell_push("old line".into());
+        shell_execute(&mut app, "console clear");
+        assert!(app.shell_output.is_empty());
+
+        shell_execute(&mut app, "console exit 3");
+        assert!(!app.running);
+    }
 
     fn test_node(id: u64, name: &str, addr: &str) -> NodeInfo {
         NodeInfo {

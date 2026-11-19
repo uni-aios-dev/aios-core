@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "hostname": "aios-host",
+  "listen_port": 8080,
+  "connect_timeout_ms": 15000,
+  "max_connections": 64,
+  "user_agent": "AIOS/1.0 (net-config; +https://github.com/uni-aios-dev/aios-core)",
+  "proxy": null,
+  "dns": {
+    "primary": null,
+    "secondary": null,
+    "search_domains": []
+  },
+  "interfaces": [],
+  "allow_private_access": false
+}

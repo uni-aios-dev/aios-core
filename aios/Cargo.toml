@@ -40,6 +40,7 @@ aios-webview = { path = "../aios-webview", default-features = false }
 aios-cluster = { path = "../aios-cluster" }
 aios-autohal = { path = "../aios-autohal", features = ["tui"] }
 aios-sys-control = { path = "../aios-sys-control" }
+aios-console = { path = "../aios-console" }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }

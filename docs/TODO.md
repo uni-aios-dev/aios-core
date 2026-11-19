@@ -80,6 +80,27 @@
 - [x] **Base block feature flags (v2.59.1)**: `base-*` features (`base-hal/browser/net-settings/all`, default `base-all`); base factories gated by features; build scripts add `--features base-all` for `--no-default-features` builds.
 - [x] **Formalize `.bin` payload handling (v2.59.1)**: non-WASM `.bin`/placeholder payloads are registered-only (never executed); `DiskBlockReport::registered_only_count()` added; logs clarified.
 
+## Unified text console (`aios-console`) — IN PROGRESS
+
+- [x] `aios-console` core crate: registry, parser, capability gating, output
+  contract, backend trait, generated help, deferred-command sketch, 18 contract
+  tests. Conflicting names are resolved into distinct canonical commands.
+- [x] Host backend: `HostBackend` in `aios-console/src/host.rs` delegates
+  process/block/net/store/VFS commands to the real library crates, shares
+  scheduler and block registry handles with the orchestrator, tracks session
+  history/log/restarts, and reports unimplemented subcommands as `unavailable`.
+  14 integration tests cover the lifecycle and error codes.
+- [x] Wire `HostBackend` into the `aios` shell: `console <command> [args]` is
+  dispatched through `TuiApp.console`, built from `BridgeContext` handles;
+  `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>`. Legacy commands
+  remain the default while parity is verified.
+- [ ] Kernel backend: adapt `run_command`, `cmd_udp`, `cmd_http`, `cmd_socktest`,
+  `wifi` and `fault` without pulling `std` into `x86_64-unknown-none`.
+- [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
+  `SafeModeShell`, `aios-shell`) only after parity tests pass.
+- [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
+  surface stay in `deferred.rs` until a real text backend exists.
+
 ## GUI Roadmap (full-fledged desktop, backlog)
 
 The v2.38.22 GUI is a first step; a real windowing system needs:

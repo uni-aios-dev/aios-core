@@ -1,5 +1,32 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (unified console): conflicting command semantics in legacy dispatchers
+
+Found while designing `aios-console`; the new registry fixes them at the
+language level, but the old front-ends are still in use until their backends are
+switched over.
+
+| Issue | Legacy location | New canonical behaviour |
+|-------|-----------------|-------------------------|
+| `spawn` has three meanings and argument orders | `aios-watchdog/src/safe_mode.rs:66-78`, `aios/src/tui/mod.rs:1234-1244`, `:1433-1450` | `process spawn`, `block load`, `cluster spawn` (deferred) |
+| `load` creates a synthetic `block_{name}_{version}` in safe mode but loads real wasm in the host TUI | `safe_mode.rs:79-83`, `aios/src/tui/mod.rs:1118-1160` | `block mock` versus `block load` |
+| `restart` means orchestrator restart, hardware refresh, or does not exist | `safe_mode.rs:200-222`, `aios/src/tui/mod.rs:1355-1359` | `wd reset`, `hw rescan`, `block rollback` |
+| `status`/`info` mix runtime status, hardware inventory and kernel telemetry | `safe_mode.rs:91`, `aios-kernel/src/tui.rs:202-214` | `status`, `sys info`, `kernel info` |
+| Kernel `clear` clears output but leaves the `> clear` echo in scrollback | `aios-kernel/src/tui.rs:165-176`, `:216` | `OutputControl::Clear` requires the frontend to reset scrollback |
+| Whole command lines are lowercased, corrupting URLs, file names and keys | `aios-tui/src/main.rs:393`, `aios/src/tui/mod.rs:1173` | Parser lowercases only the command head |
+| Invalid `kill` PID becomes `0` in one shell but a usage error in another | `safe_mode.rs:59-65`, `aios/src/tui/mod.rs:1223-1233` | `process kill <pid>` with a single usage error |
+| `net reset` exists in the block but is unreachable from the host TUI | `aios-net-config/src/block.rs:63,79-82` | `net reset` is a registered subcommand |
+| Global hotkeys `g`/`l` shadow AI-console actions | `aios/src/tui/mod.rs:1669-1672`, `:1633-1639` | Text console has no global hotkeys |
+| Kernel commands are case-sensitive (`HELP`, `Clear` fail) | `aios-kernel/src/tui.rs:178-304` | Registry lookup is case-insensitive |
+
+A known limitation of the new backend: `HostBackend` implements only the
+subcommands listed in `src/host.rs`; valid registry entries such as
+`net validate`, `block swap`, `store verify`, `vfs readat`, `sys info` and
+`wifi status` intentionally return `ERR unavailable` until an adapter exists.
+The `aios` shell currently exposes the new backend only through the
+`console <...>` prefix; the legacy dispatchers remain the default command
+surface until parity is verified.
+
 ## FIXED (v2.79.0, M5.2): `.auth` used the PE certificate type
 
 - Symptom: `authenticated_variable` wrote `WIN_CERT_TYPE_PKCS_SIGNED_DATA`

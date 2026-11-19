@@ -1,5 +1,48 @@
 # AIOS Development Log
 
+## Unreleased — unified text console core (`aios-console`)
+
+### Added
+- New workspace crate `aios-console` (`no_std` + `alloc` core, `std` feature only
+  for host testing). It defines one text-only command language shared by host
+  and kernel: `CommandSpec`/`SPECS` registry, tokenizer with quotes/escapes and
+  `#` comments, case-insensitive command names with case-preserving arguments,
+  `CapabilitySet` with scope and capability gating, `CommandBackend` trait and
+  `dispatch()`, and `CommandOutput` with exit codes `0..4` plus `Clear`/`Exit`
+  frontend controls. `help` is generated from the registry instead of being
+  maintained by hand in three TUI files.
+- Command names with incompatible meanings were split into distinct canonical
+  forms: `process spawn` / `block load` / `block mock` (deferred `cluster
+  spawn`), `wd reset` / `block rollback` / `hw rescan`, `status` / `sys info` /
+  `kernel info`, `net show|set|reset|status`, `hub status` versus `sys info`.
+  Legacy collisions (`spawn`, `load`, `restart`, `recover`, `info`, `list`,
+  `ls`) now return an explicit ambiguity error listing the alternatives.
+- 18 contract tests in `aios-console/tests/console_contract.rs` cover parser
+  quoting/case/flags, alias conflicts, canonical names, help generation, scope
+  and capability gating, and `clear`/`exit` output controls.
+- `aios-console/src/host.rs`: a real `std` `HostBackend` that executes session,
+  system, process, block, watchdog, network, store and VFS commands through the
+  same library crates as the host TUI. `HostBackend::from_handles` shares the
+  scheduler and block registry with the orchestrator; `HostBackendConfig`
+  selects directories, RAM quota and the restart limit. Unsupported
+  subcommands report `unavailable`, and 14 integration tests in
+  `aios-console/tests/host_backend.rs` cover the complete lifecycle, capability
+  denial and error codes.
+- The `aios` shell tab now routes `console <command> [args]` through the unified
+  backend while keeping all legacy commands intact. `TuiApp` owns one
+  `HostBackend` sharing the orchestrator's scheduler and block registry;
+  `Clear`/`Exit` controls map to the shell buffer and `app.running`.
+  `BridgeContext.registry` became `Arc<Mutex<BlockRegistry>>` for shared access.
+  Three TUI tests cover routing, shared registry state and control actions.
+
+### Notes
+- This is the language/core phase only. The old dispatchers in `aios-tui`,
+  `aios`, `aios-kernel` and `SafeModeShell` are still present; they are to be
+  replaced by host/kernel backend implementations in the next phases.
+- GUI, WebView, web browsing, LLM intents, cluster control, store
+  publish/sign, pipes/redirection and theming are commented out in
+  `aios-console/src/deferred.rs` and return a clear `unavailable` result.
+
 ## v2.79.0 (M5.2) - Secure Boot signing and OVMF verification (2026-11-18)
 
 ### Added

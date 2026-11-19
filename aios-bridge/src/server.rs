@@ -38,7 +38,8 @@ use tower_http::services::ServeDir;
 pub struct BridgeContext {
     pub intent_parser: IntentParser,
     pub scheduler: Arc<Mutex<Scheduler>>,
-    pub registry: Mutex<BlockRegistry>,
+    /// Shared so the text console can observe the same blocks as the bridge.
+    pub registry: Arc<Mutex<BlockRegistry>>,
     pub access_control: Mutex<AccessControlLayer>,
     pub telemetry: Mutex<TelemetryStore>,
     pub watchdog: Mutex<Watchdog>,
@@ -83,7 +84,7 @@ impl BridgeContext {
         Self {
             intent_parser: IntentParser::new(),
             scheduler,
-            registry: Mutex::new(registry),
+            registry: Arc::new(Mutex::new(registry)),
             access_control: Mutex::new(access_control),
             telemetry: Mutex::new(TelemetryStore::new()),
             watchdog: Mutex::new(watchdog),

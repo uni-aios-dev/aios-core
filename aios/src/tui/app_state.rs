@@ -2,6 +2,7 @@ use crate::orchestrator::OrchestratorState;
 use aios_autohal::engine::{AutohalEngine, DeviceView, Toast};
 use aios_autohal::hotplug::{HotplugEvent, HotplugMonitor};
 use aios_browser::types::Page;
+use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_hal::hardware::HardwareProfile;
 use aios_llm::{default_config, LlmConfig};
 use aios_sys_control::{SysControlHub, SysStatusSnapshot};
@@ -159,6 +160,8 @@ pub struct TuiApp {
     pub sys_hub: Arc<SysControlHub>,
     /// Last polled system snapshot rendered in the status bar.
     pub sys_snap: Arc<Mutex<SysStatusSnapshot>>,
+    /// Unified text console backend sharing the orchestrator runtime handles.
+    pub console: HostBackend,
 }
 
 impl TuiApp {
@@ -170,6 +173,18 @@ impl TuiApp {
         let bridge_port = {
             let s = state.lock().unwrap();
             s.bridge_port
+        };
+        let console = {
+            let s = locked(&state);
+            let config = HostBackendConfig {
+                blocks_dir: std::path::PathBuf::from(&s.bridge.blocks_dir),
+                ..HostBackendConfig::default()
+            };
+            HostBackend::from_handles(
+                s.bridge.scheduler.clone(),
+                s.bridge.registry.clone(),
+                config,
+            )
         };
         let (hw_engine, hw_views, hw_toasts) = init_hw_engine(&state);
         let hw_hotplug = if hw_engine.is_some() {
@@ -219,6 +234,7 @@ impl TuiApp {
             hw_hotplug,
             sys_hub: Arc::new(SysControlHub::defaults()),
             sys_snap: Arc::new(Mutex::new(SysStatusSnapshot::default())),
+            console,
         }
     }
 

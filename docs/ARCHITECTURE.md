@@ -34,6 +34,55 @@ All inter-crate communication flows through a binary IPC protocol. Blocks (kerne
 
 ---
 
+## Unified Text Console (`aios-console`)
+
+The three existing command front-ends (standalone `aios-tui`, the `aios`
+orchestrator TUI and the ring-0 `aios-kernel` shell) used five independent
+parsers with conflicting names and semantics. `aios-console` is the single
+`no_std`-compatible command core that replaces those parsers:
+
+```
+   text line ──> parser ──> registry.resolve ──> scope/capability gate
+                                                      │
+                                        CommandBackend::execute
+                                                      │
+                                          CommandOutput (text lines)
+```
+
+- `parser.rs` tokenizes quotes, escapes and `#` comments. Command and
+  subcommand names are lowercased; arguments keep their original case.
+- `spec.rs` / `registry.rs` hold the canonical `CommandSpec` table, the alias
+  table and generated `help`. Ambiguous legacy names are rejected with the list
+  of canonical alternatives; deferred names report `unavailable`.
+- `capability.rs` declares `Scope` (`[H]`, `[K]`, `[B]`) and `CapabilitySet`;
+  `backend.rs` gates every invocation before calling a backend.
+- `output.rs` defines `CommandOutput`, exit codes (`0` OK, `1` usage,
+  `2` denied, `3` unavailable, `4` backend error) and `OutputControl`
+  (`Clear`, `Exit`) so the kernel `clear` bug cannot recur in the new core.
+- `deferred.rs` keeps the commented-out GUI/WebView/LLM/cluster/pipe variants.
+
+`aios-console/src/host.rs` implements `HostBackend` behind the `std` feature. It
+delegates to the same library crates the current host TUI uses: `Scheduler` for
+`ps`/`process`, `BlockRegistry`/`BlockLoader` for `block`, `NetSettingsBlock`
+for `net`, `StoreManager` for `store`, and `AiosVfs` for `vfs`. Session state
+(history, log, restart counter) lives in the backend. `HostBackend::from_handles`
+accepts shared `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>` handles so
+the console and the orchestrator can observe the same runtime; `with_config`
+creates private handles for tests. Subcommands without a real implementation
+return `unavailable` rather than a fake success. `TuiApp` owns one `HostBackend`
+built from the orchestrator's handles, and the shell tab routes `console <...>`
+lines through it while the legacy dispatcher handles every other command.
+`BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>` so the bridge, TUI
+and console observe the same blocks. The legacy dispatchers are kept until full
+parity is verified.
+
+The kernel backend will adapt the existing `run_command`, `cmd_udp`, `cmd_http`,
+`cmd_socktest`, `wifi` and `fault` entry points. It is a separate implementation
+because `aios-kernel` is `x86_64-unknown-none` and cannot link `std`, `ratatui`,
+`tokio` or `reqwest`.
+
+---
+
 ## Layer 1: Foundation (`aios-core`)
 
 ### Error Handling (`error.rs`)
