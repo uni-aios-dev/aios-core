@@ -35,6 +35,13 @@
   `Clear`/`Exit` controls map to the shell buffer and `app.running`.
   `BridgeContext.registry` became `Arc<Mutex<BlockRegistry>>` for shared access.
   Three TUI tests cover routing, shared registry state and control actions.
+- `aios-kernel/src/console_backend.rs`: a `no_std` `KernelBackend` wired into the
+  kernel shell as `console <...>`. It implements the commands with real kernel
+  implementations (generated help, echo, version, kernel telemetry, faults,
+  Wi-Fi, udp/http/socktest) and returns `unavailable` for the rest. Kernel
+  `clear` now clears the shell history instead of leaving the echoed command.
+  Verified with `cargo check`, `cargo clippy` and `cargo build` for
+  `x86_64-unknown-none` (release, `--features limine`).
 
 ### Notes
 - This is the language/core phase only. The old dispatchers in `aios-tui`,

@@ -162,6 +162,12 @@ fn shell_push(line: &str) {
     s.history.push(line.to_string());
 }
 
+/// Clears the shell scrollback (also used by the unified console backend).
+pub(crate) fn shell_clear() {
+    let s = unsafe { &mut *core::ptr::addr_of_mut!(SHELL) };
+    s.history.clear();
+}
+
 fn shell_exec() {
     let s = unsafe { &mut *core::ptr::addr_of_mut!(SHELL) };
     let cmd = core::mem::take(&mut s.input);
@@ -175,10 +181,17 @@ fn shell_exec() {
     }
 }
 
-fn run_command(cmd: &str) -> Vec<String> {
+pub(crate) fn run_command(cmd: &str) -> Vec<String> {
+    if let Some(rest) = cmd.strip_prefix("console ") {
+        return crate::console_backend::dispatch_line(rest.trim());
+    }
+    if cmd == "console" {
+        return crate::console_backend::dispatch_line("help");
+    }
     match cmd {
         "help" => vec![
             "commands:".to_string(),
+            "  console <command> [args]  unified text console (help, net, wifi, ...)".to_string(),
             "  help       this list".to_string(),
             "  tabs       tab overview".to_string(),
             "  info       kernel telemetry".to_string(),
@@ -336,7 +349,7 @@ fn ip_str(ip: [u8; 4]) -> String {
 
 /// `udp A.B.C.D PORT TEXT` — sends one datagram and waits up to ~2 s for a
 /// reply, printing the first 60 bytes of it.
-fn cmd_udp(rest: &str) -> Vec<String> {
+pub(crate) fn cmd_udp(rest: &str) -> Vec<String> {
     let Some((ip, port, msg)) = parse_target(rest) else {
         return vec!["usage: udp A.B.C.D PORT TEXT".to_string()];
     };
@@ -373,7 +386,7 @@ fn cmd_udp(rest: &str) -> Vec<String> {
 
 /// `http A.B.C.D PORT [HOST]` — connects over TCP, issues `GET / HTTP/1.0` and
 /// prints the status line plus a short body preview.
-fn cmd_http(rest: &str) -> Vec<String> {
+pub(crate) fn cmd_http(rest: &str) -> Vec<String> {
     let Some((ip, port, host)) = parse_target(rest) else {
         return vec!["usage: http A.B.C.D PORT [HOST]".to_string()];
     };
@@ -462,7 +475,7 @@ fn cmd_http(rest: &str) -> Vec<String> {
 /// congestion-control/window-scaling check that asserts the client's `cwnd`
 /// (one MSS per completed segment) and the fixed `wscale = 4` shift. Prints
 /// one PASS/FAIL line per phase.
-fn cmd_socktest() -> Vec<String> {
+pub(crate) fn cmd_socktest() -> Vec<String> {
     let Some(our) = crate::net::lease() else {
         return vec!["socktest: no ip bound (dhcp/static first)".to_string()];
     };

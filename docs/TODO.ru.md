@@ -85,8 +85,11 @@
   направляется в `TuiApp.console`, созданный из дескрипторов `BridgeContext`;
   `BridgeContext.registry` теперь `Arc<Mutex<BlockRegistry>>`. Старые команды
   остаются основными до проверки паритета.
-- [ ] Ядерный бэкенд: адаптировать `run_command`, `cmd_udp`, `cmd_http`,
-  `cmd_socktest`, `wifi` и `fault` без добавления `std` в `x86_64-unknown-none`.
+- [x] Ядерный бэкенд: `aios-kernel/src/console_backend.rs` адаптирует
+  `run_command`, `cmd_udp`, `cmd_http`, `cmd_socktest`, Wi-Fi и fault API как
+  зависимость без `std`; доступен как `console <...>` в ядерном шелле.
+  Проверено для `x86_64-unknown-none` (release, limine). Остальные ядерные
+  команды возвращают `unavailable`, пока не появятся реальные адаптеры.
 - [ ] Заменить пять старых диспетчеров (`aios-tui`, `aios`, TUI ядра,
   `SafeModeShell`, `aios-shell`) только после прохождения тестов паритета.
 - [ ] Синтаксис фазы 2 (конвейеры, перенаправление, фон) и любой GUI/LLM/кластерный

@@ -150,6 +150,12 @@ are still handled by the legacy dispatcher, so existing commands keep working
 unchanged. `console help` lists the canonical commands; `console clear` and
 `console exit` act on the shell buffer and close the TUI respectively.
 
+The kernel shell uses the same `console <...>` prefix. Its backend implements
+`help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
+`wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`;
+other commands return `ERR unavailable`. Unlike the legacy kernel `clear`,
+`console clear` also clears the shell scrollback.
+
 ---
 
 ## TUI (`aios-tui`)

@@ -9,6 +9,7 @@ mod blocks;
 mod boot;
 mod config;
 mod console;
+mod console_backend;
 mod ec;
 mod fault;
 mod font8x8;

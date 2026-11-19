@@ -25,7 +25,10 @@ subcommands listed in `src/host.rs`; valid registry entries such as
 `wifi status` intentionally return `ERR unavailable` until an adapter exists.
 The `aios` shell currently exposes the new backend only through the
 `console <...>` prefix; the legacy dispatchers remain the default command
-surface until parity is verified.
+surface until parity is verified. `KernelBackend` has the same limitation: only
+the commands backed by real kernel APIs are implemented, and the legacy kernel
+`clear` bug persists on the old dispatcher path (the new backend clears the
+shell history explicitly).
 
 ## FIXED (v2.79.0, M5.2): `.auth` used the PE certificate type
 

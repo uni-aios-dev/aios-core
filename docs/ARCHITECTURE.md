@@ -76,8 +76,15 @@ lines through it while the legacy dispatcher handles every other command.
 and console observe the same blocks. The legacy dispatchers are kept until full
 parity is verified.
 
-The kernel backend will adapt the existing `run_command`, `cmd_udp`, `cmd_http`,
-`cmd_socktest`, `wifi` and `fault` entry points. It is a separate implementation
+`aios-kernel/src/console_backend.rs` implements `KernelBackend` with
+`aios-console` as a `no_std` dependency (`default-features = false`). It adapts
+the existing kernel entry points: generated `help`, `echo`, `version`,
+`kernel info|ver`, `faults stats|history|pending`, `fault resolve`,
+`wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`.
+Everything else returns `unavailable`. The kernel `clear` bug is fixed here:
+the backend clears `SHELL.history` and emits an explicit `OutputControl::Clear`.
+The kernel shell exposes the backend as `console <...>`, while the legacy
+dispatcher remains for all other commands. This is a separate implementation
 because `aios-kernel` is `x86_64-unknown-none` and cannot link `std`, `ratatui`,
 `tokio` or `reqwest`.
 

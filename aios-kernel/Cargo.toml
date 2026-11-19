@@ -22,6 +22,7 @@ limine = ["dep:limine"]
 aios-bootinfo = { path = "../boot/aios-bootinfo" }
 aios-config = { path = "../boot/aios-config" }
 aios-wasmhost = { path = "../boot/aios-wasmhost" }
+aios-console = { path = "../aios-console", default-features = false }
 limine = { version = "=0.6.5", optional = true }
 
 [profile.dev]

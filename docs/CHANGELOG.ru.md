@@ -35,6 +35,13 @@
   `Clear`/`Exit` отображаются на буфер шелла и `app.running`.
   `BridgeContext.registry` стал `Arc<Mutex<BlockRegistry>>` для общего доступа.
   Три TUI-теста покрывают маршрутизацию, общее состояние реестра и действия.
+- `aios-kernel/src/console_backend.rs`: `no_std`-бэкенд `KernelBackend`,
+  подключённый к ядерному шеллу как `console <...>`. Он реализует команды с
+  реальными ядерными реализациями (генерируемый help, echo, version, телеметрия
+  ядра, fault'ы, Wi-Fi, udp/http/socktest), остальные возвращают `unavailable`.
+  Ядерный `clear` теперь очищает историю шелла, а не оставляет эхо команды.
+  Проверено через `cargo check`, `cargo clippy` и `cargo build` для
+  `x86_64-unknown-none` (release, `--features limine`).
 
 ### Примечания
 - Это только этап языка и ядра. Старые диспетчеры в `aios-tui`, `aios`,

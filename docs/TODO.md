@@ -94,8 +94,11 @@
   dispatched through `TuiApp.console`, built from `BridgeContext` handles;
   `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>`. Legacy commands
   remain the default while parity is verified.
-- [ ] Kernel backend: adapt `run_command`, `cmd_udp`, `cmd_http`, `cmd_socktest`,
-  `wifi` and `fault` without pulling `std` into `x86_64-unknown-none`.
+- [x] Kernel backend: `aios-kernel/src/console_backend.rs` adapts `run_command`,
+  `cmd_udp`, `cmd_http`, `cmd_socktest`, Wi-Fi and fault APIs as a `no_std`
+  dependency; available as `console <...>` in the kernel shell. Verified for
+  `x86_64-unknown-none` (release, limine). Remaining kernel commands report
+  `unavailable` until real adapters exist.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after parity tests pass.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster

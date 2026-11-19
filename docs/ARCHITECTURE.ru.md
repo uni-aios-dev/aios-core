@@ -77,10 +77,17 @@ AIOS (AI-Native Operating System) — модульная ОС в стиле ми
 поэтому bridge, TUI и консоль видят одни и те же блоки. Старые диспетчеры
 остаются до полной проверки паритета.
 
-Ядерный бэкенд адаптирует существующие точки входа `run_command`, `cmd_udp`,
-`cmd_http`, `cmd_socktest`, `wifi` и `fault`. Это отдельная реализация, поскольку
-`aios-kernel` собирается под `x86_64-unknown-none` и не может линковать `std`,
-`ratatui`, `tokio` или `reqwest`.
+`aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
+`aios-console` без `std` (`default-features = false`). Он адаптирует существующие
+точки входа ядра: генерируемый `help`, `echo`, `version`, `kernel info|ver`,
+`faults stats|history|pending`, `fault resolve`,
+`wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` и `socktest`.
+Всё остальное возвращает `unavailable`. Баг ядерного `clear` исправлен: бэкенд
+очищает `SHELL.history` и выдаёт явное `OutputControl::Clear`. Ядерный шелл
+предоставляет бэкенд как `console <...>`, а старый диспетчер обрабатывает все
+остальные команды. Это отдельная реализация, поскольку `aios-kernel` собирается
+под `x86_64-unknown-none` и не может линковать `std`, `ratatui`, `tokio` или
+`reqwest`.
 
 ---
 

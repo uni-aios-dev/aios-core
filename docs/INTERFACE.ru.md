@@ -149,6 +149,12 @@ stat|exists|resolve`. Остальные зарегистрированные п
 изменений. `console help` выводит список канонических команд, `console clear`
 очищает буфер шелла, а `console exit` закрывает TUI.
 
+Ядерный шелл использует тот же префикс `console <...>`. Его бэкенд реализует
+`help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
+`wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` и `socktest`;
+остальные команды возвращают `ERR unavailable`. В отличие от старого ядерного
+`clear`, команда `console clear` очищает и историю шелла.
+
 ---
 
 ## TUI (`aios-tui`)
