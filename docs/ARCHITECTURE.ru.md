@@ -132,9 +132,20 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 `start_server_with_shutdown` позволяет `bridge stop` корректно закрыть слушатель,
 а `bridge start` — запустить его заново; `auth` вызывает реальный `AuthStore`.
 Без внедрённого адаптера эти команды по-прежнему возвращают `unavailable`.
-Команды без реального библиотечного API (`jobs|fg|bg`, `acl grant|revoke`,
-`ping`, `net recheck`, `state extract|restore`, `fm jobs|cancel`) также возвращают
-`unavailable`.
+
+`aios-console/src/unavailable.rs` хранит точную причину для каждой зарегистрированной
+команды без реального хостового API, поэтому `ERR unavailable` называет недостающую
+возможность, а не только сообщает "нет хостового бэкенда": `jobs|fg|bg` требуют
+OS-группы процессов, сигналы и foreground TTY, которых нет в `aios-process-mgr`;
+у `acl grant|revoke` нет API ACL для путей, поскольку гранты `AclContext` —
+глобальные токены процесса, а токены `caps` привязаны к block ID; `ping` требует
+ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connect не является
+эхо-ответом; у `net recheck` нет хостового аналога, так как настоящий `recheck()`
+существует только в ядре (`no_std`), а `NetManager::status()` возвращает кэш;
+`state extract|restore` не может найти живой `StatefulBlock`, потому что
+`BlockRegistry` не хранит экземпляры блоков; `fm jobs|cancel` нужен живой
+`FileManager` в хосте, которого сейчас нет. Эти команды остаются `unavailable`,
+пока не появятся указанные реальные API.
 
 `aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
 `aios-console` без `std` (`default-features = false`). Он адаптирует существующие

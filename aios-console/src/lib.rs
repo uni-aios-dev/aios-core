@@ -18,3 +18,4 @@ pub mod output;
 pub mod parser;
 pub mod registry;
 pub mod spec;
+pub mod unavailable;

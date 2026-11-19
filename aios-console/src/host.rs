@@ -479,10 +479,20 @@ impl CommandBackend for HostBackend {
             ("bridge", Some(subcommand)) => self.bridge_command(invocation, subcommand),
             ("auth", Some(subcommand)) => self.auth_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
-            _ => CommandOutput::unavailable(&format!(
-                "'{}' has no host backend yet",
-                invocation.display_name()
-            )),
+            _ => {
+                let name = invocation.display_name();
+                match crate::unavailable::host_unavailable_reason(
+                    invocation.spec.id,
+                    invocation.subcommand,
+                ) {
+                    Some(reason) => {
+                        CommandOutput::unavailable(&format!("'{name}' is unavailable: {reason}"))
+                    }
+                    None => {
+                        CommandOutput::unavailable(&format!("'{name}' has no host backend yet"))
+                    }
+                }
+            }
         }
     }
 }

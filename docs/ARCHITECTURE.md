@@ -130,10 +130,21 @@ injection seams in `aios-console/src/control.rs` (`WatchdogControl`,
 attaches a monitoring thread to the same `Watchdog` the bridge status endpoint
 reads, `start_server_with_shutdown` lets `bridge stop` gracefully close the
 listener and `bridge start` spawn it again, and `auth` calls the real `AuthStore`.
-Without an injected adapter these commands still return `unavailable`. Commands
-with no real library API (`jobs|fg|bg`, `acl grant|revoke`, `ping`,
-`net recheck`, `state extract|restore`, `fm jobs|cancel`) still report
-`unavailable`.
+Without an injected adapter these commands still return `unavailable`.
+
+`aios-console/src/unavailable.rs` holds the precise reason for each registered
+command with no real host API, so `ERR unavailable` names the missing capability
+instead of only saying "no host backend yet": `jobs|fg|bg` need OS process
+groups, signals and TTY foreground that `aios-process-mgr` does not model;
+`acl grant|revoke` has no path-scoped ACL API because `AclContext` grants are
+process-global tokens and `caps` tokens are keyed by block ID; `ping` needs an
+ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
+connect is not an echo reply; `net recheck` has no host equivalent because the
+real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached;
+`state extract|restore` cannot reach a live `StatefulBlock` because
+`BlockRegistry` stores no instances; `fm jobs|cancel` needs a `FileManager`
+instance in the host, which currently owns none. These commands stay
+`unavailable` until those real APIs exist.
 
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts

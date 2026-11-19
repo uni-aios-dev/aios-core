@@ -324,9 +324,13 @@ fn host_unimplemented_subcommands_are_unavailable() {
 
     for input in [
         "jobs",
+        "fg 1",
+        "bg 1",
         "acl grant net raw",
         "ping example.com",
         "net recheck",
+        "state extract browser",
+        "fm jobs",
         "wd force-safe-mode",
         "bridge status",
         "kernel info",
@@ -335,6 +339,30 @@ fn host_unimplemented_subcommands_are_unavailable() {
         assert_eq!(output.code, ExitCode::Unavailable, "input: {input}");
         assert!(
             output.lines[0].starts_with("ERR unavailable:"),
+            "input: {input}, output: {}",
+            output.as_text()
+        );
+    }
+}
+
+#[test]
+fn host_unavailable_commands_report_precise_reasons() {
+    let mut host = backend("unavailable-reasons");
+
+    for (input, fragment) in [
+        ("jobs", "no job control"),
+        ("fg 1", "no job control"),
+        ("bg 1", "no job control"),
+        ("acl grant CAP_FS_READ /tmp", "no path-scoped ACL API"),
+        ("ping example.com", "no ICMP reachability API"),
+        ("net recheck", "recheck() is kernel-only"),
+        ("state extract browser", "no live StatefulBlock instances"),
+        ("fm jobs", "owns no live FileManager"),
+    ] {
+        let output = dispatch(&mut host, input);
+        assert_eq!(output.code, ExitCode::Unavailable, "input: {input}");
+        assert!(
+            output.as_text().contains(fragment),
             "input: {input}, output: {}",
             output.as_text()
         );

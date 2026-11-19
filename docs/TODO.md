@@ -148,10 +148,16 @@
   `control.rs` injection seams and real `aios` adapters: `wd start|stop|
   force-safe-mode|escalate`, `bridge status|start|stop`,
   `auth register|login|me`. `bridge stop` uses `start_server_with_shutdown`.
-- [ ] Implement the remaining `ERR unavailable` host adapters that have no
-  dependency cycle: `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
-  `state extract|restore`, `fm jobs|cancel` (need real library APIs or an
-  injection seam; do not fake success).
+- [x] Document the exact blocker for the six remaining `ERR unavailable`
+  commands in `aios-console/src/unavailable.rs` and the EN/RU docs. Investigation
+  confirmed they are NOT missing adapters: `jobs|fg|bg` need OS process groups,
+  signals and TTY foreground; `acl` needs a path-scoped ACL API (existing
+  `AclContext` grants are global and `caps` tokens are block-keyed); `ping` needs
+  ICMP with raw-socket privileges; `net recheck` needs a host equivalent of the
+  kernel-only `recheck()`; `state` needs live `StatefulBlock` handles in
+  `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked.
+- [ ] Implement those real APIs before re-enabling the six commands; do not
+  alias them to `caps`, TCP connect or cached network status.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
   checks are green.

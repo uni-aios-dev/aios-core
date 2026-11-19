@@ -28,6 +28,12 @@
 `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
 `state extract|restore` и `fm jobs|cancel`, по-прежнему возвращают
 `ERR unavailable`, поскольку для них нет реального библиотечного API.
+`aios-console/src/unavailable.rs` теперь сообщает конкретную причину для каждой:
+отсутствие OS job control, нет API ACL для путей, нет ICMP-API или привилегий
+raw-сокета, `recheck()` только в ядре, в реестре нет живых экземпляров
+`StatefulBlock`, в хосте нет живого `FileManager`. Оставлять эти команды
+`unavailable` с точной причиной — осознанное решение: подмена через `caps`,
+состояние блоков или TCP connect отбросила бы их объявленную семантику.
 
 Циклическая зависимость для команд watchdog/bridge/auth устранена:
 `aios-console` задаёт трейты управления, а бинарник `aios` внедряет реальные

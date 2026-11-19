@@ -27,7 +27,13 @@ subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
 (host adapters injected through the `control.rs` seams). Valid registry entries
 such as `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
 `state extract|restore` and `fm jobs|cancel` still return `ERR unavailable`
-because no real library API exists for them.
+because no real library API exists for them. `aios-console/src/unavailable.rs`
+now reports a concrete cause for each: missing OS job control, no path-scoped
+ACL API, no ICMP/reachability API or raw-socket privilege, a kernel-only
+`recheck()`, no live `StatefulBlock` instances in the registry, and no live
+`FileManager` in the host. Keeping these entries `unavailable` with an exact
+reason is deliberate — aliasing them to `caps`, block state or TCP connect
+would discard their declared semantics.
 
 The dependency cycle for watchdog/bridge/auth commands is resolved:
 `aios-console` defines control traits and the `aios` binary injects real

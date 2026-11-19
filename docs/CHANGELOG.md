@@ -3,6 +3,14 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `aios-console/src/unavailable.rs` gives each registered-but-unsupported host
+  command a precise reason instead of the generic `has no host backend yet`:
+  `jobs|fg|bg` (no OS job control), `acl` (no path-scoped ACL API), `ping` (no
+  ICMP/raw-socket API), `net recheck` (kernel-only `recheck()`), `state` (no live
+  `StatefulBlock` handles) and `fm` (no host `FileManager`). Investigation
+  confirmed none has a real matching API today; they remain honestly
+  `unavailable` rather than being aliased to `caps`, TCP connect or cached
+  network status. EN/RU docs and the host contract tests were aligned.
 - New workspace crate `aios-console` (`no_std` + `alloc` core, `std` feature only
   for host testing). It defines one text-only command language shared by host
   and kernel: `CommandSpec`/`SPECS` registry, tokenizer with quotes/escapes and

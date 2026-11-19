@@ -141,10 +141,16 @@
   точки внедрения `control.rs` и реальные адаптеры `aios`:
   `wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
   `auth register|login|me`. `bridge stop` использует `start_server_with_shutdown`.
-- [ ] Реализовать оставшиеся хостовые адаптеры с `ERR unavailable`, у которых
-  нет циклических зависимостей: `jobs|fg|bg`, `acl grant|revoke`, `ping`,
-  `net recheck`, `state extract|restore`, `fm jobs|cancel` (нужны реальные
-  библиотечные API или точка внедрения; не имитировать успех).
+- [x] Зафиксировать точный блокер для шести оставшихся команд `ERR unavailable`
+  в `aios-console/src/unavailable.rs` и EN/RU документации. Исследование
+  подтвердило, что это не недостающие адаптеры: `jobs|fg|bg` требуют OS-группы
+  процессов, сигналы и foreground TTY; `acl` — API ACL для путей (существующие
+  гранты `AclContext` глобальны, а токены `caps` привязаны к блоку); `ping` —
+  ICMP с привилегиями raw-сокета; `net recheck` — хостовый аналог ядерного
+  `recheck()`; `state` — живые дескрипторы `StatefulBlock` в `BlockRegistry`;
+  `fm` — живой `FileManager` в хосте. Имитация невозможна.
+- [ ] Сначала реализовать эти реальные API, затем снова включить шесть команд;
+  не подменять их через `caps`, TCP connect или кэшированный статус сети.
 - [ ] Заменить пять старых диспетчеров (`aios-tui`, `aios`, TUI ядра,
   `SafeModeShell`, `aios-shell`) только после того, как оставшиеся адаптеры
   и проверки паритета будут зелёными.

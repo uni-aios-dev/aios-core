@@ -179,9 +179,20 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 на основе общего watchdog, канала корректного завершения слушателя bridge и
 `AuthStore`: `bridge stop` запрашивает корректное завершение, а `bridge start`
 снова запускает слушатель. Без внедрённого адаптера эти команды возвращают
-`unavailable`; остальные команды без реального библиотечного API (`jobs|fg|bg`,
-`acl grant|revoke`, `ping`, `net recheck`, `state extract|restore`,
-`fm jobs|cancel`) по-прежнему возвращают `ERR unavailable`.
+`unavailable`; остальные команды по-прежнему возвращают `ERR unavailable`, но с
+конкретной причиной из `aios-console/src/unavailable.rs`:
+
+| Команда | Причина недоступности |
+|---------|-----------------------|
+| `jobs`, `fg`, `bg` | в `aios-process-mgr` нет OS-групп процессов, сигналов и foreground TTY |
+| `acl` | нет API ACL для путей; гранты `AclContext` глобальны, `caps` использует block ID |
+| `ping` | нет ICMP-API и привилегий raw-сокета; TCP connect не является эхо-ответом |
+| `net recheck` | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
+| `state` | `BlockRegistry` не хранит живые экземпляры `StatefulBlock` |
+| `fm` | в хосте нет живого `FileManager`, который можно проверить или остановить |
+
+Универсальное сообщение `has no host backend yet` остаётся только для команд вне
+этого исследованного множества.
 
 `metrics` выводит снимок счётчиков, построенный только из реального состояния
 рантайма; флаг `--json` даёт структурированный объект, `--prometheus` — текст в

@@ -180,9 +180,20 @@ stored; it does not claim live block code was replaced.
 over the shared watchdog, the bridge listener's graceful-shutdown channel and
 `AuthStore`, so `bridge stop` requests a graceful shutdown and `bridge start`
 spawns the listener again. Without an injected adapter these commands report
-`unavailable`; the remaining commands with no real library API (`jobs|fg|bg`,
-`acl grant|revoke`, `ping`, `net recheck`, `state extract|restore`,
-`fm jobs|cancel`) still report `ERR unavailable`.
+`unavailable`; the remaining commands still report `ERR unavailable`, but with a
+concrete reason from `aios-console/src/unavailable.rs`:
+
+| Command | Why it is unavailable |
+|---------|-----------------------|
+| `jobs`, `fg`, `bg` | no OS process groups, signals or TTY foreground in `aios-process-mgr` |
+| `acl` | no path-scoped ACL API; `AclContext` grants are global tokens, `caps` uses block IDs |
+| `ping` | no ICMP API or raw-socket privilege; TCP connect is not an echo reply |
+| `net recheck` | real `recheck()` is kernel-only; host `NetManager` reports cached status |
+| `state` | `BlockRegistry` stores no live `StatefulBlock` instances |
+| `fm` | the host owns no live `FileManager` to inspect or cancel |
+
+The generic `has no host backend yet` message is kept only for commands outside
+this investigated set.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.
