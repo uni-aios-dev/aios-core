@@ -111,9 +111,12 @@
 - [x] `telemetry` adapter in `HostBackend` built on the real `aios-context`
   `TelemetryStore`: `record` with optional RAM/block/process metadata plus
   `query`, `latest`, `avg`, `peak` and `clear` (6 integration tests).
+- [x] `ipc` adapter in `HostBackend` over the shared bridge `IpcBus`: `stats`,
+  `send`, `peek`, `reroute`, `flush`, `freeze` and `unfreeze`; `BridgeContext`
+  now exposes `ipc_bus` as `Arc<Mutex<IpcBus>>` (6 integration tests).
 - [ ] Implement the remaining `ERR unavailable` host adapters (for example
-  `sys info`, `ipc stats`, `hw profile`) and add parity tests before replacing
-  the legacy dispatchers.
+  `sys info`, `hw profile`) and add parity tests before replacing the legacy
+  dispatchers.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after parity tests pass.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster

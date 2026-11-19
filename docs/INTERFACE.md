@@ -141,8 +141,9 @@ runtime: `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics`, `health` and `telemetry`. Other registered
-subcommands report `ERR unavailable` until their adapters are written.
+stat|exists|resolve`, `metrics`, `health`, `telemetry` and `ipc`. Other
+registered subcommands report `ERR unavailable` until their adapters are
+written.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.
@@ -155,6 +156,12 @@ blocks, recorded crash events, RAM above 85% and the restart limit.
 `telemetry record <metric> <value> [--ram=MB] [--block=ID] [--process=name]`
 stores a sample (RAM defaults to the scheduler's current usage); `query
 [metric]`, `latest`, `avg [metric]`, `peak` and `clear` inspect or reset it.
+
+`ipc` operates on the same `IpcBus` as the HTTP bridge: `stats` shows queue
+depth, sent/received/dropped counters and average latency; `send <src> <dst>
+[text] [--priority=N]` queues a packet, `peek` shows the front packet, and
+`reroute`, `flush`, `freeze` and `unfreeze` manage the queue. Frozen packets are
+held by the console until `unfreeze`.
 
 `source <file>` runs a UTF-8 script through the same dispatcher. Blank lines and
 `#` comments are skipped; the first non-zero exit code is reported while later

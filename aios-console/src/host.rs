@@ -13,6 +13,8 @@ use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::{BlockId, BlockState};
+use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+use aios_ipc::bus::IpcBus;
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::Scheduler;
@@ -99,6 +101,8 @@ pub struct HostBackend {
     store: StoreManager,
     net: NetSettingsBlock,
     telemetry: TelemetryStore,
+    ipc_bus: Arc<Mutex<IpcBus>>,
+    frozen_packets: Vec<IpcPacket>,
     capabilities: CapabilitySet,
     history: Vec<String>,
     log: Vec<String>,
@@ -139,6 +143,8 @@ impl HostBackend {
             store,
             net,
             telemetry: TelemetryStore::new(),
+            ipc_bus: Arc::new(Mutex::new(IpcBus::new(256))),
+            frozen_packets: Vec::new(),
             capabilities: CapabilitySet::all(),
             history: Vec::new(),
             log: Vec::new(),
@@ -151,6 +157,11 @@ impl HostBackend {
     /// Replaces the capability set of this session.
     pub fn set_capabilities(&mut self, capabilities: CapabilitySet) {
         self.capabilities = capabilities;
+    }
+
+    /// Shares the host IPC bus so `ipc` commands observe real bus traffic.
+    pub fn set_ipc_bus(&mut self, bus: Arc<Mutex<IpcBus>>) {
+        self.ipc_bus = bus;
     }
 
     /// Returns the controlled restart counter.
@@ -300,6 +311,7 @@ impl CommandBackend for HostBackend {
             },
             ("store", Some(subcommand)) => self.store_command(invocation, subcommand),
             ("vfs", Some(subcommand)) => self.vfs_command(invocation, subcommand),
+            ("ipc", Some(subcommand)) => self.ipc_command(invocation, subcommand),
             ("telemetry", Some(subcommand)) => self.telemetry_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
@@ -753,6 +765,142 @@ impl HostBackend {
                 .unwrap_or_else(|| "-".to_string()),
             entry.process_name.as_deref().unwrap_or("-"),
         )
+    }
+
+    fn ipc_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "stats" => {
+                let bus = guard(&self.ipc_bus);
+                let metrics = bus.metrics();
+                CommandOutput::ok(vec![
+                    "ipc            host bus".to_string(),
+                    format!("queued         {} packet(s)", bus.len()),
+                    format!("peak depth     {}", metrics.peak_queue_depth),
+                    format!("sent           {}", metrics.total_sent),
+                    format!("received       {}", metrics.total_received),
+                    format!("dropped        {}", metrics.total_dropped),
+                    format!("deduplicated   {}", metrics.total_deduplicated),
+                    format!("avg latency    {:.2} us", metrics.avg_send_latency_us()),
+                ])
+            }
+            "flush" => {
+                let mut bus = guard(&self.ipc_bus);
+                let count = bus.len();
+                bus.flush();
+                drop(bus);
+                self.command_status(format!("IPC queue flushed ({count} packet(s) discarded)"))
+            }
+            "freeze" => {
+                let packets = {
+                    let mut bus = guard(&self.ipc_bus);
+                    bus.freeze()
+                };
+                let count = packets.len();
+                self.frozen_packets = packets;
+                self.command_status(format!("IPC bus frozen ({count} packet(s) held)"))
+            }
+            "unfreeze" => {
+                let packets = std::mem::take(&mut self.frozen_packets);
+                let count = packets.len();
+                let mut bus = guard(&self.ipc_bus);
+                bus.unfreeze(packets);
+                drop(bus);
+                self.command_status(format!("IPC bus unfrozen ({count} packet(s) restored)"))
+            }
+            "reroute" => {
+                let Some(old) = invocation
+                    .arg(0)
+                    .and_then(|value| value.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(new) = invocation
+                    .arg(1)
+                    .and_then(|value| value.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let mut bus = guard(&self.ipc_bus);
+                let count = bus.reroute(old, new);
+                drop(bus);
+                self.command_status(format!(
+                    "rerouted {count} packet(s) from block {old} to {new}"
+                ))
+            }
+            "send" => {
+                let Some(source) = invocation
+                    .arg(0)
+                    .and_then(|value| value.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(target) = invocation
+                    .arg(1)
+                    .and_then(|value| value.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let text = invocation.arg(2).unwrap_or("");
+                let packet = IpcPacket::new(
+                    source,
+                    target,
+                    CommandId::Custom,
+                    Payload::Text(text.to_string()),
+                );
+                let packet = match invocation
+                    .flag("priority")
+                    .and_then(|value| value)
+                    .and_then(|value| value.parse::<u8>().ok())
+                {
+                    Some(priority) => packet.with_priority(priority),
+                    None => packet,
+                };
+                let packet_id = packet.header.packet_id;
+                let mut bus = guard(&self.ipc_bus);
+                match bus.send(packet) {
+                    Ok(()) => {
+                        drop(bus);
+                        self.command_status(format!(
+                            "IPC packet {packet_id} queued: {source}->{target}"
+                        ))
+                    }
+                    Err(error) => CommandOutput::error(&format!("ipc send failed: {error}")),
+                }
+            }
+            "peek" => {
+                let bus = guard(&self.ipc_bus);
+                match bus.peek() {
+                    Some(packet) => CommandOutput::ok(vec![
+                        format!("packet       {}", packet.header.packet_id),
+                        format!(
+                            "route        {} -> {}",
+                            packet.header.source_block, packet.header.target_block
+                        ),
+                        format!("command      0x{:04X}", packet.header.command_id),
+                        format!("priority     {}", packet.header.priority),
+                        format!("payload      {}", Self::payload_kind(&packet.payload)),
+                    ]),
+                    None => CommandOutput::text("IPC queue empty"),
+                }
+            }
+            _ => CommandOutput::unavailable(&format!("ipc {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn payload_kind(payload: &Payload) -> String {
+        match payload {
+            Payload::Text(text) => format!("Text({text})"),
+            Payload::Binary(bytes) => format!("Binary({} bytes)", bytes.len()),
+            Payload::Empty => "Empty".to_string(),
+            other => {
+                let debug = format!("{other:?}");
+                debug
+                    .split(['(', '{'])
+                    .next()
+                    .unwrap_or("Payload")
+                    .to_string()
+            }
+        }
     }
 
     fn process_list(&self) -> CommandOutput {

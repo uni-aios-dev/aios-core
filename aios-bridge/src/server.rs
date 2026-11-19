@@ -61,8 +61,8 @@ pub struct BridgeContext {
     pub auth: AuthHandle,
     /// Live-update engine backing the hot-swap intent (rollback bookkeeping).
     pub live_update: Mutex<LiveUpdateEngine>,
-    /// Kernel IPC bus shared by the live-update engine and telemetry feed.
-    pub ipc_bus: Mutex<IpcBus>,
+    /// Kernel IPC bus shared by the bridge, telemetry feed and text console.
+    pub ipc_bus: Arc<Mutex<IpcBus>>,
 }
 
 impl BridgeContext {
@@ -102,7 +102,7 @@ impl BridgeContext {
             blocks_dir: std::env::var("AIOS_BLOCKS_DIR").unwrap_or_else(|_| "./blocks".to_string()),
             auth,
             live_update: Mutex::new(LiveUpdateEngine::new(10_000)),
-            ipc_bus: Mutex::new(IpcBus::new(256)),
+            ipc_bus: Arc::new(Mutex::new(IpcBus::new(256))),
         }
     }
 

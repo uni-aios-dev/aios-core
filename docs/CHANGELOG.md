@@ -65,6 +65,13 @@
   `query`, `latest`, `avg`, `peak` and `clear` read or reset the same ring.
   Six integration tests cover recording, queries, averages, peaks, clearing,
   argument validation and the empty ring.
+- `ipc` is now a real host adapter over a shared `aios-ipc` `IpcBus`:
+  `stats` exposes the bus metrics, `send`/`peek` inject and inspect packets,
+  `reroute`, `flush`, `freeze` and `unfreeze` manage the queue. `BridgeContext`
+  exposes `ipc_bus` as `Arc<Mutex<IpcBus>>` and `TuiApp` shares it with the
+  console, so the commands observe the same traffic as the bridge. Six
+  integration tests cover metrics, peek, validation, reroute/flush,
+  freeze/unfreeze and an externally shared bus.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source

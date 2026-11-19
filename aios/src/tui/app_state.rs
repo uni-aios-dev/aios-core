@@ -180,11 +180,13 @@ impl TuiApp {
                 blocks_dir: std::path::PathBuf::from(&s.bridge.blocks_dir),
                 ..HostBackendConfig::default()
             };
-            HostBackend::from_handles(
+            let mut backend = HostBackend::from_handles(
                 s.bridge.scheduler.clone(),
                 s.bridge.registry.clone(),
                 config,
-            )
+            );
+            backend.set_ipc_bus(s.bridge.ipc_bus.clone());
+            backend
         };
         let (hw_engine, hw_views, hw_toasts) = init_hw_engine(&state);
         let hw_hotplug = if hw_engine.is_some() {

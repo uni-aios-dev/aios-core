@@ -140,7 +140,7 @@ AIOS предоставляет два интерфейса для управл�
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics`, `health` и `telemetry`. Остальные
+stat|exists|resolve`, `metrics`, `health`, `telemetry` и `ipc`. Остальные
 зарегистрированные подкоманды возвращают `ERR unavailable`, пока для них не
 написаны адаптеры.
 
@@ -157,6 +157,12 @@ stat|exists|resolve`, `metrics`, `health` и `telemetry`. Остальные
 записывает отсчёт (RAM по умолчанию равен текущему использованию планировщика);
 `query [metric]`, `latest`, `avg [metric]`, `peak` и `clear` просматривают или
 очищают его.
+
+`ipc` работает с тем же `IpcBus`, что и HTTP-bridge: `stats` показывает глубину
+очереди, счётчики отправки/получения/потерь и среднюю задержку; `send <src>
+<dst> [text] [--priority=N]` ставит пакет в очередь, `peek` показывает первый
+пакет, а `reroute`, `flush`, `freeze` и `unfreeze` управляют очередью. Замороженные
+пакеты хранятся в консоли до `unfreeze`.
 
 `source <file>` выполняет UTF-8-сценарий через тот же диспетчер. Пустые строки и
 комментарии `#` пропускаются; первый ненулевой код возвращается как результат,

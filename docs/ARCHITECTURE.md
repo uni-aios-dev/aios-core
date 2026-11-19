@@ -72,8 +72,10 @@ the block registry (block states) and session state (restarts, log); `metrics`
 renders it as text, JSON or Prometheus exposition, while `health` derives a
 status plus per-issue findings. `telemetry` owns a `TelemetryStore` from
 `aios-context`, so samples recorded through the console use the same ring
-representation as the rest of the system. Session state (history, log, restart
-counter, source depth) lives in the backend. `HostBackend::from_handles`
+representation as the rest of the system. `ipc` drives an `Arc<Mutex<IpcBus>>`
+shared with `BridgeContext`; `freeze` holds drained packets in the backend until
+`unfreeze`. Session state (history, log, restart counter, source depth) lives in
+the backend. `HostBackend::from_handles`
 accepts shared `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>` handles so
 the console and the orchestrator can observe the same runtime; `with_config`
 creates private handles for tests. Subcommands without a real implementation
@@ -81,8 +83,9 @@ return `unavailable` rather than a fake success. `TuiApp` owns one `HostBackend`
 built from the orchestrator's handles, and the shell tab routes `console <...>`
 lines through it while the legacy dispatcher handles every other command.
 `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>` so the bridge, TUI
-and console observe the same blocks. The legacy dispatchers are kept until full
-parity is verified.
+and console observe the same blocks; `BridgeContext.ipc_bus` is likewise
+`Arc<Mutex<IpcBus>>`, shared with the console. The legacy dispatchers are kept
+until full parity is verified.
 
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts

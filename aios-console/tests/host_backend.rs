@@ -691,3 +691,157 @@ fn host_telemetry_missing_subcommand_is_a_usage_error() {
     assert_eq!(output.code, ExitCode::Usage);
     assert!(output.lines[0].contains("telemetry record|query|latest|avg|peak|clear"));
 }
+
+#[test]
+fn host_ipc_stats_reflect_real_bus_traffic() {
+    let mut host = backend("ipc-stats");
+    let empty = dispatch(&mut host, "ipc stats");
+    assert_ok("ipc stats", &empty);
+    assert!(empty
+        .lines
+        .iter()
+        .any(|line| line.contains("queued         0")));
+
+    assert_ok(
+        "ipc send 1 2 first",
+        &dispatch(&mut host, "ipc send 1 2 first"),
+    );
+    assert_ok(
+        "ipc send 3 4 second",
+        &dispatch(&mut host, "ipc send 3 4 second"),
+    );
+
+    let stats = dispatch(&mut host, "ipc stats");
+    assert_ok("ipc stats", &stats);
+    assert!(stats
+        .lines
+        .iter()
+        .any(|line| line.contains("queued         2")));
+    assert!(stats
+        .lines
+        .iter()
+        .any(|line| line.contains("sent           2")));
+    assert!(stats
+        .lines
+        .iter()
+        .any(|line| line.contains("peak depth     2")));
+    assert!(stats
+        .lines
+        .iter()
+        .any(|line| line.contains("received       0")));
+}
+
+#[test]
+fn host_ipc_peek_shows_the_front_packet() {
+    let mut host = backend("ipc-peek");
+    assert_ok(
+        "ipc send 1 2 first --priority=4",
+        &dispatch(&mut host, "ipc send 1 2 first --priority=4"),
+    );
+    assert_ok(
+        "ipc send 3 4 second",
+        &dispatch(&mut host, "ipc send 3 4 second"),
+    );
+
+    let peek = dispatch(&mut host, "ipc peek");
+    assert_ok("ipc peek", &peek);
+    assert!(peek.lines.iter().any(|line| line.contains("1 -> 2")));
+    assert!(peek
+        .lines
+        .iter()
+        .any(|line| line.contains("priority     4")));
+    assert!(peek.lines.iter().any(|line| line.contains("Text(first)")));
+    assert!(!peek.lines.iter().any(|line| line.contains("second")));
+}
+
+#[test]
+fn host_ipc_send_validates_arguments_and_failure_is_a_backend_error() {
+    let mut host = backend("ipc-send");
+    assert_eq!(dispatch(&mut host, "ipc send").code, ExitCode::Usage);
+    assert_eq!(
+        dispatch(&mut host, "ipc send x 2 text").code,
+        ExitCode::Usage
+    );
+    assert_eq!(
+        dispatch(&mut host, "ipc send 1 y text").code,
+        ExitCode::Usage
+    );
+
+    let sent = dispatch(&mut host, "ipc send 1 2 text");
+    assert_ok("ipc send 1 2 text", &sent);
+    assert!(sent.lines[0].contains("IPC packet"));
+    assert!(sent.lines[0].contains("1->2"));
+}
+
+#[test]
+fn host_ipc_reroute_and_flush_change_the_queue() {
+    let mut host = backend("ipc-reroute");
+    dispatch(&mut host, "ipc send 1 9 text");
+    assert_ok("ipc reroute 9 4", &dispatch(&mut host, "ipc reroute 9 4"));
+    let peek = dispatch(&mut host, "ipc peek");
+    assert!(peek.lines.iter().any(|line| line.contains("1 -> 4")));
+
+    assert_ok("ipc flush", &dispatch(&mut host, "ipc flush"));
+    assert_eq!(dispatch(&mut host, "ipc peek").lines, ["IPC queue empty"]);
+    let stats = dispatch(&mut host, "ipc stats");
+    assert!(stats
+        .lines
+        .iter()
+        .any(|line| line.contains("queued         0")));
+}
+
+#[test]
+fn host_ipc_freeze_and_unfreeze_preserve_packets() {
+    let mut host = backend("ipc-freeze");
+    dispatch(&mut host, "ipc send 1 2 held");
+
+    let frozen = dispatch(&mut host, "ipc freeze");
+    assert_ok("ipc freeze", &frozen);
+    assert!(frozen.lines[0].contains("frozen (1 packet(s) held)"));
+    assert_eq!(dispatch(&mut host, "ipc peek").lines, ["IPC queue empty"]);
+
+    let blocked = dispatch(&mut host, "ipc send 3 4 blocked");
+    assert_eq!(blocked.code, ExitCode::BackendError);
+    assert!(blocked.lines[0].contains("frozen"));
+
+    let unfrozen = dispatch(&mut host, "ipc unfreeze");
+    assert_ok("ipc unfreeze", &unfrozen);
+    assert!(unfrozen.lines[0].contains("unfrozen (1 packet(s) restored)"));
+    let peek = dispatch(&mut host, "ipc peek");
+    assert!(peek.lines.iter().any(|line| line.contains("Text(held)")));
+}
+
+#[test]
+fn host_ipc_observes_an_externally_shared_bus() {
+    use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+    use aios_ipc::bus::IpcBus;
+    use std::sync::{Arc, Mutex};
+
+    let mut host = backend("ipc-shared");
+    let bus = Arc::new(Mutex::new(IpcBus::new(16)));
+    {
+        let mut shared = bus.lock().expect("lock shared bus");
+        shared
+            .send(IpcPacket::new(
+                5,
+                6,
+                CommandId::Custom,
+                Payload::Text("external".to_string()),
+            ))
+            .expect("send on shared bus");
+    }
+    host.set_ipc_bus(bus);
+
+    let stats = dispatch(&mut host, "ipc stats");
+    assert_ok("ipc stats", &stats);
+    assert!(stats
+        .lines
+        .iter()
+        .any(|line| line.contains("queued         1")));
+    let peek = dispatch(&mut host, "ipc peek");
+    assert!(peek.lines.iter().any(|line| line.contains("5 -> 6")));
+    assert!(peek
+        .lines
+        .iter()
+        .any(|line| line.contains("Text(external)")));
+}
