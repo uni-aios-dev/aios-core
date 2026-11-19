@@ -21,7 +21,7 @@ switched over.
 
 A known limitation of the new backend: `HostBackend` implements only the
 subcommands listed in `src/host.rs`; valid registry entries such as
-`net validate`, `block swap`, `store verify`, `vfs readat`, `hw fingerprints`
+`net validate`, `block swap`, `store verify`, `vfs readat`, `update history`
 and `wifi status` intentionally return `ERR unavailable` until an adapter exists.
 The `aios` shell currently exposes the new backend only through the
 `console <...>` prefix; the legacy dispatchers remain the default command

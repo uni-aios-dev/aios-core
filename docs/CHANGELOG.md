@@ -81,6 +81,10 @@
   injects a snapshot so tests never depend on physical hardware. Six integration
   tests cover inventory, tier derivation, profile switching, name validation,
   cached detection and forced rescan.
+- `hw fingerprints` now uses `aios-autohal::extract_fingerprints` on the active
+  `HardwareProfile`, printing USB/PCI/NVMe lookup keys, driver ids, class codes
+  and actionability. One integration test checks the extracted keys against a
+  mock profile, so no physical device scanning is involved.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source

@@ -142,7 +142,7 @@ runtime: `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
 stat|exists|resolve`, `metrics`, `health`, `telemetry`, `ipc`, `sys info|tier`
-and `hw detect|rescan|profile`. Other registered subcommands report
+and `hw detect|rescan|profile|fingerprints`. Other registered subcommands report
 `ERR unavailable` until their adapters are written.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
@@ -169,8 +169,9 @@ tier, its description, model limit and batch size. `hw detect` shows the cached
 snapshot, `hw rescan` discards it and forces a fresh HAL detection, and
 `hw profile [name]` selects a deterministic mock profile (`modern`, `legacy`,
 `legacy-2012`, `nvidia`, `intel-meteor-lake`, `qualcomm-x-elite`) for reproducible
-inspection. These commands describe hardware, unlike `status`, which reports
-runtime state.
+inspection. `hw fingerprints` lists the USB, PCI and NVMe lookup keys, driver
+ids and class codes extracted from that profile. These commands describe
+hardware, unlike `status`, which reports runtime state.
 
 `source <file>` runs a UTF-8 script through the same dispatcher. Blank lines and
 `#` comments are skipped; the first non-zero exit code is reported while later

@@ -117,9 +117,11 @@
 - [x] `sys`/`hw` adapters in `HostBackend` on real `aios-hal` profiles: `sys info`,
   `sys tier`, `hw detect`, `hw rescan` and `hw profile [name]`; an injected
   profile keeps tests hardware-independent (6 integration tests).
-- [ ] Implement the remaining `ERR unavailable` host adapters (for example
-  `hw fingerprints`) and add parity tests before replacing the legacy
-  dispatchers.
+- [x] `hw fingerprints` adapter in `HostBackend` over
+  `aios_autohal::extract_fingerprints`, printing USB/PCI/NVMe keys and driver
+  ids from the active profile (1 integration test).
+- [ ] Implement the remaining `ERR unavailable` host adapters and add parity
+  tests before replacing the legacy dispatchers.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after parity tests pass.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster

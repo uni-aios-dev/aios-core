@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
+use aios_autohal::fingerprint::extract_fingerprints;
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
@@ -328,6 +329,7 @@ impl CommandBackend for HostBackend {
             ("hw", Some("detect")) => self.hw_detect(),
             ("hw", Some("rescan")) => self.hw_rescan(),
             ("hw", Some("profile")) => self.hw_profile(invocation),
+            ("hw", Some("fingerprints")) => self.hw_fingerprints(),
             ("telemetry", Some(subcommand)) => self.telemetry_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
@@ -568,6 +570,35 @@ impl HostBackend {
         let mut lines = Self::hardware_lines("hw             hardware profile", &name, &profile);
         self.note(format!("hardware profile set to {name}"));
         lines.push(format!("profile        {name}"));
+        CommandOutput::ok(lines)
+    }
+
+    fn hw_fingerprints(&mut self) -> CommandOutput {
+        let (source, profile) = self.hardware();
+        let fingerprints = extract_fingerprints(&profile);
+        let mut lines = vec![
+            "hw             hardware fingerprints".to_string(),
+            format!("source         {source}"),
+            format!("count          {} fingerprint(s)", fingerprints.len()),
+        ];
+        for (index, fingerprint) in fingerprints.iter().enumerate() {
+            let label = format!("#{index}");
+            let actionable = if fingerprint.is_actionable() {
+                "yes"
+            } else {
+                "no"
+            };
+            lines.push(format!(
+                "{label:<14}{}  {}  driver={}  class=0x{:06X}  actionable={actionable}",
+                fingerprint.key(),
+                fingerprint.display_name(),
+                fingerprint.driver_id(),
+                fingerprint.class_code,
+            ));
+        }
+        if fingerprints.is_empty() {
+            lines.push("none           no hardware fingerprints".to_string());
+        }
         CommandOutput::ok(lines)
     }
 

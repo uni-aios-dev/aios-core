@@ -325,7 +325,7 @@ fn host_unimplemented_subcommands_are_unavailable() {
         "block rollback",
         "store verify",
         "vfs readat",
-        "hw fingerprints",
+        "update history",
         "kernel info",
         "wifi status",
     ] {
@@ -979,4 +979,38 @@ fn host_hw_rescan_forces_fresh_detection() {
         .log_entries()
         .iter()
         .any(|entry| entry == "hardware rescan completed"));
+}
+
+#[test]
+fn host_hw_fingerprints_uses_the_extracted_device_keys() {
+    let mut host = backend("hw-fingerprints");
+    host.set_hardware_profile(HardwareProfile::mock_modern());
+
+    let output = dispatch(&mut host, "hw fingerprints");
+    assert_ok("hw fingerprints", &output);
+    assert!(output.lines[0].starts_with("hw "));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line == "source         injected"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("count          4 fingerprint(s)")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("usb.046d.c52b")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("pci.10de.2684")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("driver.nvme.0000.0000")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("actionable=yes")));
 }

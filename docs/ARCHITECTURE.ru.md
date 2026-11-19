@@ -76,8 +76,10 @@ AIOS (AI-Native Operating System) — модульная ОС в стиле ми
 `freeze` удерживает извлечённые пакеты в бэкенде до `unfreeze`. `sys` и `hw` читают
 снимки `HardwareProfile` из `aios-hal`: первая команда определяет оборудование
 лениво, `hw rescan` вызывает повторное определение, а `hw profile` выбирает
-mock-профиль; `set_hardware_profile` подставляет снимок для тестов. Состояние
-сессии (история, лог, счётчик рестартов, глубина `source`) хранится в бэкенде.
+mock-профиль; `hw fingerprints` запускает `aios_autohal::extract_fingerprints`
+для этого профиля, а `set_hardware_profile` подставляет снимок для тестов.
+Состояние сессии (история, лог, счётчик рестартов, глубина `source`) хранится
+в бэкенде.
 `HostBackend::from_handles` принимает общие дескрипторы
 `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>`, чтобы консоль и
 оркестратор видели одно и то же состояние; `with_config` создаёт приватные
