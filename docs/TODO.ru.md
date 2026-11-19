@@ -99,9 +99,12 @@
   питает обычный, `--json` и `--prometheus` вывод `metrics`, а также статус
   `HEALTHY`/`DEGRADED`/`UNHEALTHY` с причиной по каждой проблеме (6 интеграционных
   тестов).
+- [x] Адаптер `telemetry` в `HostBackend` на базе настоящего `TelemetryStore` из
+  `aios-context`: `record` с необязательными RAM/block/process-метаданными,
+  а также `query`, `latest`, `avg`, `peak` и `clear` (6 интеграционных тестов).
 - [ ] Реализовать оставшиеся хостовые адаптеры с `ERR unavailable` (например
-  `sys info`, `ipc stats`, `hw profile`, `telemetry`) и добавить тесты паритета
-  перед заменой старых диспетчеров.
+  `sys info`, `ipc stats`, `hw profile`) и добавить тесты паритета перед заменой
+  старых диспетчеров.
 - [ ] Заменить пять старых диспетчеров (`aios-tui`, `aios`, TUI ядра,
   `SafeModeShell`, `aios-shell`) только после прохождения тестов паритета.
 - [ ] Синтаксис фазы 2 (конвейеры, перенаправление, фон) и любой GUI/LLM/кластерный

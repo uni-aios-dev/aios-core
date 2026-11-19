@@ -70,8 +70,10 @@ point, with an 8-level recursion guard. `metrics` and `health` share one
 `MetricsSnapshot` collected from the scheduler (process states, crash log, RAM),
 the block registry (block states) and session state (restarts, log); `metrics`
 renders it as text, JSON or Prometheus exposition, while `health` derives a
-status plus per-issue findings. Session state (history, log, restart counter,
-source depth) lives in the backend. `HostBackend::from_handles`
+status plus per-issue findings. `telemetry` owns a `TelemetryStore` from
+`aios-context`, so samples recorded through the console use the same ring
+representation as the rest of the system. Session state (history, log, restart
+counter, source depth) lives in the backend. `HostBackend::from_handles`
 accepts shared `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>` handles so
 the console and the orchestrator can observe the same runtime; `with_config`
 creates private handles for tests. Subcommands without a real implementation

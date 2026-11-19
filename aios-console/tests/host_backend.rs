@@ -557,3 +557,137 @@ fn host_health_is_unhealthy_at_the_restart_limit() {
         .iter()
         .any(|line| line.contains("watchdog restart")));
 }
+
+#[test]
+fn host_telemetry_record_query_and_latest_work() {
+    let mut host = backend("telemetry-record");
+
+    assert_ok(
+        "telemetry record cpu 75.5 --ram=1024 --block=7 --process=worker",
+        &dispatch(
+            &mut host,
+            "telemetry record cpu 75.5 --ram=1024 --block=7 --process=worker",
+        ),
+    );
+    assert_ok(
+        "telemetry record gpu 90 --ram=2048",
+        &dispatch(&mut host, "telemetry record gpu 90 --ram=2048"),
+    );
+
+    let query = dispatch(&mut host, "telemetry query cpu");
+    assert_ok("telemetry query cpu", &query);
+    assert_eq!(query.lines.len(), 2);
+    assert!(query.lines[1].contains("cpu"));
+    assert!(query.lines[1].contains("75.50"));
+    assert!(query.lines[1].contains("1024"));
+    assert!(query.lines[1].contains("7"));
+    assert!(query.lines[1].contains("worker"));
+
+    let all = dispatch(&mut host, "telemetry query");
+    assert_ok("telemetry query", &all);
+    assert_eq!(all.lines.len(), 3);
+    assert!(all.lines.iter().any(|line| line.contains("gpu")));
+
+    let latest = dispatch(&mut host, "telemetry latest");
+    assert_ok("telemetry latest", &latest);
+    assert_eq!(latest.lines.len(), 2);
+    assert!(latest.lines[1].contains("gpu"));
+}
+
+#[test]
+fn host_telemetry_avg_and_peak_work() {
+    let mut host = backend("telemetry-avg");
+    dispatch(&mut host, "telemetry record cpu 75 --ram=1024");
+    dispatch(&mut host, "telemetry record cpu 80 --ram=2048");
+    dispatch(&mut host, "telemetry record gpu 40 --ram=512");
+
+    let avg = dispatch(&mut host, "telemetry avg cpu");
+    assert_ok("telemetry avg cpu", &avg);
+    assert_eq!(avg.lines, ["cpu avg: 77.50"]);
+
+    let overall = dispatch(&mut host, "telemetry avg");
+    assert_ok("telemetry avg", &overall);
+    assert_eq!(overall.lines, ["overall avg: 65.00 over 3 sample(s)"]);
+
+    let peak = dispatch(&mut host, "telemetry peak");
+    assert_ok("telemetry peak", &peak);
+    assert!(peak.lines.iter().any(|line| line.contains("2048 MB")));
+    assert!(peak.lines.iter().any(|line| line.contains("cpu = 80.00")));
+}
+
+#[test]
+fn host_telemetry_clear_and_empty_ring_are_reported() {
+    let mut host = backend("telemetry-clear");
+
+    assert_eq!(
+        dispatch(&mut host, "telemetry query").lines,
+        ["no telemetry entries"]
+    );
+    assert_eq!(
+        dispatch(&mut host, "telemetry latest").lines,
+        ["no telemetry entries"]
+    );
+    assert_eq!(
+        dispatch(&mut host, "telemetry avg").lines,
+        ["no telemetry entries"]
+    );
+    assert_eq!(
+        dispatch(&mut host, "telemetry avg cpu").lines,
+        ["no samples for 'cpu'"]
+    );
+
+    dispatch(&mut host, "telemetry record cpu 50 --ram=128");
+    let cleared = dispatch(&mut host, "telemetry clear");
+    assert_ok("telemetry clear", &cleared);
+    assert!(cleared.lines[0].contains("cleared 1 telemetry entries"));
+    assert_eq!(
+        dispatch(&mut host, "telemetry query").lines,
+        ["no telemetry entries"]
+    );
+    assert!(cleared.lines[0].contains("cleared"));
+    assert!(host
+        .log_entries()
+        .iter()
+        .any(|line| line.contains("cleared 1 telemetry entries")));
+}
+
+#[test]
+fn host_telemetry_record_defaults_ram_from_the_scheduler() {
+    let mut host = backend("telemetry-ram");
+    dispatch(&mut host, "process spawn worker --ram=64");
+
+    assert_ok(
+        "telemetry record cpu 10",
+        &dispatch(&mut host, "telemetry record cpu 10"),
+    );
+    let latest = dispatch(&mut host, "telemetry latest");
+    assert_ok("telemetry latest", &latest);
+    assert!(latest.lines[1].contains("64"));
+}
+
+#[test]
+fn host_telemetry_record_rejects_invalid_arguments() {
+    let mut host = backend("telemetry-args");
+
+    assert_eq!(
+        dispatch(&mut host, "telemetry record").code,
+        ExitCode::Usage
+    );
+    assert_eq!(
+        dispatch(&mut host, "telemetry record cpu nope").code,
+        ExitCode::Usage
+    );
+    assert_eq!(
+        dispatch(&mut host, "telemetry record cpu 1 --block=nope").code,
+        ExitCode::Usage
+    );
+    assert_eq!(dispatch(&mut host, "telemetry bogus").code, ExitCode::Usage);
+}
+
+#[test]
+fn host_telemetry_missing_subcommand_is_a_usage_error() {
+    let mut host = backend("telemetry-missing");
+    let output = dispatch(&mut host, "telemetry");
+    assert_eq!(output.code, ExitCode::Usage);
+    assert!(output.lines[0].contains("telemetry record|query|latest|avg|peak|clear"));
+}

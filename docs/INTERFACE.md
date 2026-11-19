@@ -141,8 +141,8 @@ runtime: `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics` and `health`. Other registered subcommands
-report `ERR unavailable` until their adapters are written.
+stat|exists|resolve`, `metrics`, `health` and `telemetry`. Other registered
+subcommands report `ERR unavailable` until their adapters are written.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.
@@ -150,6 +150,11 @@ Counters cover uptime, process states, crash events, RAM, block states, restarts
 and the session log. `health` reports `HEALTHY`, `DEGRADED` or `UNHEALTHY` with
 one line per detected issue: suspended or crashed processes, Frozen/Error
 blocks, recorded crash events, RAM above 85% and the restart limit.
+
+`telemetry` uses the `aios-context` ring:
+`telemetry record <metric> <value> [--ram=MB] [--block=ID] [--process=name]`
+stores a sample (RAM defaults to the scheduler's current usage); `query
+[metric]`, `latest`, `avg [metric]`, `peak` and `clear` inspect or reset it.
 
 `source <file>` runs a UTF-8 script through the same dispatcher. Blank lines and
 `#` comments are skipped; the first non-zero exit code is reported while later

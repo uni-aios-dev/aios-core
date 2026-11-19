@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
+use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::{BlockId, BlockState};
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
@@ -97,6 +98,7 @@ pub struct HostBackend {
     config: HostBackendConfig,
     store: StoreManager,
     net: NetSettingsBlock,
+    telemetry: TelemetryStore,
     capabilities: CapabilitySet,
     history: Vec<String>,
     log: Vec<String>,
@@ -136,6 +138,7 @@ impl HostBackend {
             config,
             store,
             net,
+            telemetry: TelemetryStore::new(),
             capabilities: CapabilitySet::all(),
             history: Vec::new(),
             log: Vec::new(),
@@ -297,6 +300,7 @@ impl CommandBackend for HostBackend {
             },
             ("store", Some(subcommand)) => self.store_command(invocation, subcommand),
             ("vfs", Some(subcommand)) => self.vfs_command(invocation, subcommand),
+            ("telemetry", Some(subcommand)) => self.telemetry_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
                 "'{}' has no host backend yet",
@@ -625,6 +629,130 @@ impl HostBackend {
             lines.push("  - no problems detected".to_string());
         }
         CommandOutput::ok(lines)
+    }
+
+    fn telemetry_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "record" => {
+                let Some(name) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(value) = invocation
+                    .arg(1)
+                    .and_then(|raw| raw.parse::<f64>().ok())
+                    .filter(|value| value.is_finite())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let ram = invocation
+                    .flag("ram")
+                    .and_then(|value| value)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or_else(|| guard(&self.scheduler).ram_usage().0);
+                let mut entry = TelemetryEntry::new(name, value, ram);
+                if let Some(block) = invocation.flag("block").and_then(|value| value) {
+                    match block.parse::<u32>() {
+                        Ok(id) => entry = entry.with_block(id),
+                        Err(_) => return CommandOutput::usage(invocation.spec.usage),
+                    }
+                }
+                if let Some(process) = invocation.flag("process").and_then(|value| value) {
+                    entry = entry.with_process(process);
+                }
+                self.telemetry.record(entry);
+                self.command_status(format!("recorded '{name}'={value} (ram={ram}MB)"))
+            }
+            "query" => {
+                let entries: Vec<_> = match invocation.first_arg() {
+                    Some(name) => self.telemetry.query_metric(name),
+                    None => self.telemetry.entries.iter().collect(),
+                };
+                if entries.is_empty() {
+                    return CommandOutput::text("no telemetry entries");
+                }
+                let mut lines = vec![Self::telemetry_header()];
+                lines.extend(
+                    entries
+                        .iter()
+                        .map(|entry| Self::format_telemetry_entry(entry)),
+                );
+                CommandOutput::ok(lines)
+            }
+            "latest" => match self.telemetry.latest() {
+                Some(entry) => CommandOutput::ok(vec![
+                    Self::telemetry_header(),
+                    Self::format_telemetry_entry(entry),
+                ]),
+                None => CommandOutput::text("no telemetry entries"),
+            },
+            "avg" => match invocation.first_arg() {
+                Some(name) => match self.telemetry.average_value(name) {
+                    Some(average) => CommandOutput::text(format!("{name} avg: {average:.2}")),
+                    None => CommandOutput::text(format!("no samples for '{name}'")),
+                },
+                None => {
+                    let entries = &self.telemetry.entries;
+                    if entries.is_empty() {
+                        CommandOutput::text("no telemetry entries")
+                    } else {
+                        let average = entries.iter().map(|entry| entry.value).sum::<f64>()
+                            / entries.len() as f64;
+                        CommandOutput::text(format!(
+                            "overall avg: {average:.2} over {} sample(s)",
+                            entries.len()
+                        ))
+                    }
+                }
+            },
+            "peak" => {
+                let peak_ram = self.telemetry.peak_ram();
+                let peak_value = self
+                    .telemetry
+                    .entries
+                    .iter()
+                    .max_by(|left, right| {
+                        left.value
+                            .partial_cmp(&right.value)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|entry| (entry.metric_name.clone(), entry.value));
+                let mut lines = vec![format!("peak ram    {peak_ram} MB")];
+                match peak_value {
+                    Some((name, value)) => {
+                        lines.push(format!("peak value  {name} = {value:.2}"));
+                    }
+                    None => lines.push("peak value  no samples".to_string()),
+                }
+                CommandOutput::ok(lines)
+            }
+            "clear" => {
+                let count = self.telemetry.count();
+                self.telemetry.clear();
+                self.command_status(format!("cleared {count} telemetry entries"))
+            }
+            _ => CommandOutput::unavailable(&format!(
+                "telemetry {subcommand} has no host backend yet"
+            )),
+        }
+    }
+
+    fn telemetry_header() -> String {
+        "TIME_MS           METRIC           VALUE  RAM_MB  BLOCK  PROCESS".to_string()
+    }
+
+    fn format_telemetry_entry(entry: &TelemetryEntry) -> String {
+        format!(
+            "{:<16}  {:<16} {:>8.2} {:>7}  {:<5}  {}",
+            entry.timestamp_ms,
+            entry.metric_name,
+            entry.value,
+            entry.ram_used_mb,
+            entry
+                .block_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            entry.process_name.as_deref().unwrap_or("-"),
+        )
     }
 
     fn process_list(&self) -> CommandOutput {

@@ -59,6 +59,12 @@
   Frozen/Error blocks, crash events, high RAM use and the restart limit, with a
   human-readable finding for each issue. Six integration tests cover all three
   metrics formats and all three health statuses.
+- `telemetry` is now backed by the real `aios-context` `TelemetryStore` in
+  `HostBackend`: `record` accepts a metric, a finite numeric value, optional RAM
+  (defaults to the scheduler's current usage), `--block` and `--process`;
+  `query`, `latest`, `avg`, `peak` and `clear` read or reset the same ring.
+  Six integration tests cover recording, queries, averages, peaks, clearing,
+  argument validation and the empty ring.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source

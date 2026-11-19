@@ -140,8 +140,9 @@ AIOS предоставляет два интерфейса для управл�
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics` и `health`. Остальные зарегистрированные
-подкоманды возвращают `ERR unavailable`, пока для них не написаны адаптеры.
+stat|exists|resolve`, `metrics`, `health` и `telemetry`. Остальные
+зарегистрированные подкоманды возвращают `ERR unavailable`, пока для них не
+написаны адаптеры.
 
 `metrics` выводит снимок счётчиков, построенный только из реального состояния
 рантайма; флаг `--json` даёт структурированный объект, `--prometheus` — текст в
@@ -150,6 +151,12 @@ stat|exists|resolve`, `metrics` и `health`. Остальные зарегист
 `DEGRADED` или `UNHEALTHY` и по строке на каждую найденную проблему:
 приостановленные или аварийные процессы, блоки Frozen/Error, записанные краши,
 загрузка RAM выше 85% и лимит рестартов.
+
+`telemetry` использует кольцо `aios-context`:
+`telemetry record <metric> <value> [--ram=MB] [--block=ID] [--process=name]`
+записывает отсчёт (RAM по умолчанию равен текущему использованию планировщика);
+`query [metric]`, `latest`, `avg [metric]`, `peak` и `clear` просматривают или
+очищают его.
 
 `source <file>` выполняет UTF-8-сценарий через тот же диспетчер. Пустые строки и
 комментарии `#` пропускаются; первый ненулевой код возвращается как результат,

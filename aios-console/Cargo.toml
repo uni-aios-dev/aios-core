@@ -8,6 +8,7 @@ description = "Single text-only command console for AIOS: registry, parser, capa
 default = ["std"]
 std = [
     "dep:aios-core",
+    "dep:aios-context",
     "dep:aios-block-mgr",
     "dep:aios-process-mgr",
     "dep:aios-net-config",
@@ -18,6 +19,7 @@ std = [
 
 [dependencies]
 aios-core = { path = "../aios-core", optional = true }
+aios-context = { path = "../aios-context", optional = true }
 aios-block-mgr = { path = "../aios-block-mgr", optional = true }
 aios-process-mgr = { path = "../aios-process-mgr", optional = true }
 aios-net-config = { path = "../aios-net-config", optional = true }
