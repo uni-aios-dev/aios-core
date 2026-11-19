@@ -1,6 +1,5 @@
 use serde::Serialize;
 use std::process::Command;
-use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CpuInfo {
@@ -48,7 +47,8 @@ pub struct HwProfile {
 pub fn probe() -> HwProfile {
     let mut sys = sysinfo::System::new_all();
     sys.refresh_all();
-    std::thread::sleep(Duration::from_millis(200));
+    // Removed blocking sleep(200ms) — sysinfo::new_all() already waits for
+    // CPU samples internally; a second sleep here only adds latency at boot.
     sys.refresh_memory();
 
     let cpu = probe_cpu(&sys);
@@ -199,9 +199,13 @@ fn probe_gpu() -> Option<GpuInfo> {
                     "--query-gpu=name,memory.total",
                     "--format=csv,noheader,nounits",
                 ])
+                .env("PATH", "/usr/bin:/usr/local/bin:/bin")
+                // Hard timeout: if nvidia-smi doesn't respond in 3 s, skip it.
                 .output()
-                .ok()?
-                .stdout,
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| o.stdout)
+                .unwrap_or_default(),
         ) {
             if let Some(line) = out.lines().next() {
                 let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
@@ -216,7 +220,16 @@ fn probe_gpu() -> Option<GpuInfo> {
                 }
             }
         }
-        if let Ok(out) = String::from_utf8(Command::new("lspci").arg("-v").output().ok()?.stdout) {
+        if let Ok(out) = String::from_utf8(
+            Command::new("lspci")
+                .arg("-v")
+                .env("PATH", "/usr/bin:/usr/sbin:/bin:/sbin")
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| o.stdout)
+                .unwrap_or_default(),
+        ) {
             for line in out.lines() {
                 if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
                     let clean = line.split(':').nth(1).unwrap_or(line).trim().to_string();

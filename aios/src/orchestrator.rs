@@ -225,8 +225,12 @@ pub async fn initialize(
     push_log(&logs, "AIOS: initializing watchdog...".into());
     let watchdog = Watchdog::new(WatchdogConfig::default());
 
-    push_log(&logs, "AIOS: initializing LLM engine...".into());
-    let _llm = LlmEngine::from_config(default_config());
+    push_log(&logs, "AIOS: initializing LLM engine (deferred)...".into());
+    // Spawn LLM init in background so the TUI appears immediately.
+    // Local-GGUF backends can take tens of seconds on slow hardware.
+    std::thread::spawn(|| {
+        let _ = LlmEngine::from_config(default_config());
+    });
 
     push_log(&logs, "AIOS: initializing cluster node...".into());
     let cluster = match ClusterConfig::from_env() {
