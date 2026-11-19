@@ -36,3 +36,4 @@ name = "aios-tui"
 path = "src/main.rs"
 
 [dev-dependencies]
+aios-console = { path = "../aios-console", default-features = false }

@@ -12,3 +12,6 @@ serde = { workspace = true }
 log = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+aios-console = { path = "../aios-console", default-features = false }

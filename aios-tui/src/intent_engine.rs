@@ -298,4 +298,41 @@ mod tests {
         let ctx = test_context();
         assert!(IntentEngine::translate("xyzzy foobar", &ctx).is_none());
     }
+
+    #[test]
+    fn intent_translations_have_canonical_text_counterparts() {
+        use aios_console::registry::{resolve, ResolveError};
+
+        let ctx = test_context();
+        let cases: &[(&str, &str)] = &[
+            ("free up memory", "process renice 0 0"),
+            ("optimize for video editing", "perf-tune-video"),
+            ("update network block", "block swap"),
+            ("kill encoder", "process kill 0"),
+            ("start inference", "process spawn inference"),
+            ("boost priority", "process renice 0 4"),
+            ("check system health", "health"),
+            ("show loaded blocks", "block list"),
+        ];
+        for (intent, canonical) in cases {
+            assert!(
+                IntentEngine::translate(intent, &ctx).is_some(),
+                "untranslated intent: {intent}"
+            );
+            if *canonical == "perf-tune-video" {
+                assert!(matches!(
+                    resolve(canonical),
+                    Err(ResolveError::Deferred { .. })
+                ));
+            } else {
+                resolve(canonical)
+                    .unwrap_or_else(|error| panic!("{canonical} did not resolve: {error:?}"));
+            }
+        }
+
+        assert!(matches!(
+            resolve("intent free up memory"),
+            Err(ResolveError::Deferred { .. })
+        ));
+    }
 }

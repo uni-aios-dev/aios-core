@@ -120,10 +120,17 @@
 - [x] `hw fingerprints` adapter in `HostBackend` over
   `aios_autohal::extract_fingerprints`, printing USB/PCI/NVMe keys and driver
   ids from the active profile (1 integration test).
-- [ ] Implement the remaining `ERR unavailable` host adapters and add parity
-  tests before replacing the legacy dispatchers.
+- [x] Add parity tests before replacing the legacy dispatchers:
+  `aios-console/tests/legacy_parity.rs` pins the vocabulary and canonical,
+  ambiguous or deferred results for `aios-tui`, `aios`, kernel TUI,
+  `SafeModeShell` and `aios-shell`; pure seams are compared in `aios-watchdog`,
+  `aios-tui` and `aios-shell` unit tests. Added `processes`, `ver`, `cls` and
+  argument-free `log`/`wifi` aliases so old spellings resolve without capturing
+  real subcommands.
+- [ ] Implement the remaining `ERR unavailable` host adapters.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
-  `SafeModeShell`, `aios-shell`) only after parity tests pass.
+  `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
+  checks are green.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 

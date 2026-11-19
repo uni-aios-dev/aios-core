@@ -85,12 +85,22 @@
   `HardwareProfile`, printing USB/PCI/NVMe lookup keys, driver ids, class codes
   and actionability. One integration test checks the extracted keys against a
   mock profile, so no physical device scanning is involved.
+- Legacy command-surface parity is now pinned by tests.
+  `aios-console/tests/legacy_parity.rs` covers the vocabulary of `aios-tui`,
+  the `aios` shell, the kernel shell, `SafeModeShell` and `aios-shell`, checking
+  canonical targets, ambiguous names, deferred names and the `console` frontend
+  prefix. Pure seams are compared in `aios-watchdog`, `aios-tui` and
+  `aios-shell` unit tests. The registry gained `processes`, `ver` and `cls`
+  aliases plus argument-free `log`/`wifi` aliases, so each legacy spelling has a
+  canonical target without hijacking `log clear` or `wifi scan`.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source
   C:\Users\script.txt` or `block load C:\blocks\mod.wasm`) lost their
   backslashes because the tokenizer treated every `\` as an escape. Only
   tokenization-significant characters are escaped now.
+- Grouped commands marked `allow_bare_args` no longer report `MissingSubcommand`
+  when typed with no arguments; `faults` and bare `exec` now resolve normally.
 
 ### Notes
 - This is the language/core phase only. The old dispatchers in `aios-tui`,

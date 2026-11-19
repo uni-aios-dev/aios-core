@@ -53,7 +53,10 @@ parsers with conflicting names and semantics. `aios-console` is the single
   subcommand names are lowercased; arguments keep their original case.
 - `spec.rs` / `registry.rs` hold the canonical `CommandSpec` table, the alias
   table and generated `help`. Ambiguous legacy names are rejected with the list
-  of canonical alternatives; deferred names report `unavailable`.
+  of canonical alternatives; deferred names report `unavailable`. Unambiguous
+  spellings (`processes`, `ver`, `cls`) map directly, while argument-free
+  aliases (`log`, `wifi`) select a default subcommand without capturing
+  `log clear` or `wifi scan`.
 - `capability.rs` declares `Scope` (`[H]`, `[K]`, `[B]`) and `CapabilitySet`;
   `backend.rs` gates every invocation before calling a backend.
 - `output.rs` defines `CommandOutput`, exit codes (`0` OK, `1` usage,
@@ -90,7 +93,11 @@ lines through it while the legacy dispatcher handles every other command.
 `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>` so the bridge, TUI
 and console observe the same blocks; `BridgeContext.ipc_bus` is likewise
 `Arc<Mutex<IpcBus>>`, shared with the console. The legacy dispatchers are kept
-until full parity is verified.
+until full parity is verified. Parity is checked by
+`aios-console/tests/legacy_parity.rs` across all five command surfaces and by
+unit tests against the pure seams `SafeModeShell::parse_command`,
+`IntentEngine::translate` and the `aios-shell` alias expander. Hardware-bound
+handlers stay out of these tests; the table asserts resolution results only.
 
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts

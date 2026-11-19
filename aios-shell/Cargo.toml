@@ -10,6 +10,9 @@ serde_json = "1"
 dirs = "5"
 libc = "0.2"
 
+[dev-dependencies]
+aios-console = { path = "../aios-console", default-features = false }
+
 [[bin]]
 name = "aios-shell"
 path = "src/main.rs"

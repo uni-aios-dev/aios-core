@@ -157,8 +157,14 @@ fn unambiguous_aliases_map_to_canonical_commands() {
         ("blocks", "block", Some("list")),
         ("unload 7", "block", Some("unload")),
         ("logs --tail 5", "log", Some("show")),
+        ("log", "log", Some("show")),
+        ("processes", "ps", None),
+        ("ver", "kernel", Some("ver")),
+        ("wifi", "wifi", Some("status")),
         ("net get", "net", Some("show")),
         ("q", "exit", None),
+        ("quit", "exit", None),
+        ("cls", "clear", None),
         ("?", "help", None),
     ];
     for (input, expected_id, expected_sub) in cases {
@@ -166,6 +172,28 @@ fn unambiguous_aliases_map_to_canonical_commands() {
         assert_eq!(invocation.spec.id, *expected_id, "input: {input}");
         assert_eq!(invocation.subcommand, *expected_sub, "input: {input}");
     }
+}
+
+#[test]
+fn bare_allowed_commands_resolve_without_subcommands() {
+    let faults = resolve("faults").unwrap();
+    assert_eq!(faults.spec.id, "faults");
+    assert_eq!(faults.subcommand, None);
+
+    let exec = resolve("exec").unwrap();
+    assert_eq!(exec.spec.id, "exec");
+    assert_eq!(exec.subcommand, None);
+}
+
+#[test]
+fn bare_aliases_do_not_capture_real_subcommands() {
+    let log = resolve("log clear").unwrap();
+    assert_eq!(log.spec.id, "log");
+    assert_eq!(log.subcommand, Some("clear"));
+
+    let wifi = resolve("wifi scan").unwrap();
+    assert_eq!(wifi.spec.id, "wifi");
+    assert_eq!(wifi.subcommand, Some("scan"));
 }
 
 #[test]

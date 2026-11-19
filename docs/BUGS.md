@@ -39,6 +39,18 @@ shell history explicitly).
   whitespace; other backslashes stay literal. A contract test covers quoted and
   unquoted Windows paths together with escaped quotes.
 
+## FIXED (unified console): legacy bare names had no canonical target
+
+- Symptom: `processes`, `ver`, `cls`, bare `log` and bare `wifi` came from the
+  old shells but did not resolve in the registry; a plain prefix alias for
+  `log`/`wifi` would also have captured `log clear` and `wifi scan`.
+- Fix: the registry gained direct aliases for `processes`, `ver` and `cls` plus
+  `AliasTarget::CanonicalBare`, which supplies a default subcommand only when
+  no arguments were typed. Parity tests now cover all five legacy surfaces.
+- A related fix: `allow_bare_args` is now honoured when a grouped command is
+  typed without arguments. `faults` and bare `exec` resolve instead of returning
+  `MissingSubcommand`.
+
 ## FIXED (v2.79.0, M5.2): `.auth` used the PE certificate type
 
 - Symptom: `authenticated_variable` wrote `WIN_CERT_TYPE_PKCS_SIGNED_DATA`

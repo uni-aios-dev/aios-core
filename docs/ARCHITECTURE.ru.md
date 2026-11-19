@@ -54,6 +54,9 @@ AIOS (AI-Native Operating System) — модульная ОС в стиле ми
 - `spec.rs` / `registry.rs` содержат каноническую таблицу `CommandSpec`, таблицу
   алиасов и генерируемый `help`. Неоднозначные старые имена отклоняются со
   списком канонических альтернатив; отложенные имена возвращают `unavailable`.
+  Однозначные написания (`processes`, `ver`, `cls`) отображаются напрямую, а
+  алиасы без аргументов (`log`, `wifi`) выбирают подкоманду по умолчанию, не
+  перехватывая `log clear` и `wifi scan`.
 - `capability.rs` объявляет `Scope` (`[H]`, `[K]`, `[B]`) и `CapabilitySet`;
   `backend.rs` проверяет каждый вызов до передачи бэкенду.
 - `output.rs` задаёт `CommandOutput`, коды возврата (`0` OK, `1` usage,
@@ -90,7 +93,12 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 команды. `BridgeContext.registry` теперь имеет тип `Arc<Mutex<BlockRegistry>>`,
 поэтому bridge, TUI и консоль видят одни и те же блоки; `BridgeContext.ipc_bus`
 также стал `Arc<Mutex<IpcBus>>` и разделяется с консолью. Старые диспетчеры
-остаются до полной проверки паритета.
+остаются до полной проверки паритета. Паритет проверяется файлом
+`aios-console/tests/legacy_parity.rs` для всех пяти командных поверхностей,
+а также юнит-тестами чистых точек входа `SafeModeShell::parse_command`,
+`IntentEngine::translate` и расширителя алиасов `aios-shell`. Обработчики,
+зависящие от оборудования, в эти тесты не входят: таблица проверяет только
+результаты разрешения команд.
 
 `aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
 `aios-console` без `std` (`default-features = false`). Он адаптирует существующие

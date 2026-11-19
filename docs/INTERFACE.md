@@ -130,6 +130,16 @@ line, text lines out, no panels, menus, mouse or hotkeys.
 | `logs`, `log` | `log show` | one log source |
 | `net get` | `net show` | show vs set/reset/link status |
 | `ls`, `list` | `block list`, `vfs ls`, `ps` | blocks vs files vs processes |
+| `processes` | `ps` | safe-mode process-list spelling |
+| `ver` | `kernel ver` | kernel version is a telemetry subcommand |
+| `cls` | `clear` | host-shell spelling of `clear` |
+| `wifi` | `wifi status` | bare legacy name defaults to status |
+
+Parity tests cover the vocabulary of `aios-tui`, the `aios` shell, the kernel
+shell, `SafeModeShell` and `aios-shell`: `aios-console/tests/legacy_parity.rs`
+pins canonical, ambiguous and deferred results, while unit tests in
+`aios-watchdog`, `aios-tui` and `aios-shell` compare the pure parser/translator
+seams.
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster

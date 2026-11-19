@@ -806,3 +806,33 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aios_console::registry::{resolve, ResolveError};
+
+    #[test]
+    fn posix_alias_expansion_maps_to_canonical_text_commands() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ll".to_string(), "ls -la".to_string());
+        aliases.insert("g".to_string(), "git".to_string());
+
+        assert_eq!(expand_aliases("ll", &aliases), "ls -la");
+        assert_eq!(expand_aliases("ll /tmp", &aliases), "ls -la /tmp");
+        assert_eq!(expand_aliases("g status", &aliases), "git status");
+        assert!(is_gui_app("firefox"));
+        assert!(!is_gui_app("cargo"));
+
+        let vfs = resolve("vfs ls").unwrap();
+        assert_eq!(vfs.spec.id, "vfs");
+        assert_eq!(vfs.subcommand, Some("ls"));
+
+        let exec = resolve("exec ls -la").unwrap();
+        assert_eq!(exec.spec.id, "exec");
+        assert_eq!(exec.first_arg(), Some("ls"));
+
+        assert!(matches!(resolve("gui"), Err(ResolveError::Deferred { .. })));
+        assert!(matches!(resolve("tui"), Err(ResolveError::Deferred { .. })));
+    }
+}

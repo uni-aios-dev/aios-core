@@ -123,6 +123,8 @@ pub const SPECS: &[CommandSpec] = &[
 pub enum AliasTarget {
     /// Unambiguous replacement by a canonical command line.
     Canonical(&'static str),
+    /// Replacement that applies only when the legacy name has no arguments.
+    CanonicalBare(&'static str),
     /// Removed because the old name had incompatible meanings.
     Ambiguous(&'static [&'static str]),
     /// Kept as documentation but intentionally not implemented.
@@ -154,9 +156,14 @@ pub const ALIASES: &[Alias] = &[
     alias!("blocks" => AliasTarget::Canonical("block list")),
     alias!("unload" => AliasTarget::Canonical("block unload")),
     alias!("logs" => AliasTarget::Canonical("log show")),
+    alias!("log" => AliasTarget::CanonicalBare("log show")),
+    alias!("processes" => AliasTarget::Canonical("ps")),
+    alias!("ver" => AliasTarget::Canonical("kernel ver")),
+    alias!("wifi" => AliasTarget::CanonicalBare("wifi status")),
     alias!("net get" => AliasTarget::Canonical("net show")),
     alias!("q" => AliasTarget::Canonical("exit")),
     alias!("quit" => AliasTarget::Canonical("exit")),
+    alias!("cls" => AliasTarget::Canonical("clear")),
     alias!("?" => AliasTarget::Canonical("help")),
     // Name collisions: one spelling, several incompatible operations.
     alias!("spawn" => AliasTarget::Ambiguous(&["process spawn (new process)", "block load (real wasm file)", "cluster spawn (deferred)"])),
@@ -331,6 +338,15 @@ fn prepare(
     }
 
     let Some(first) = positionals.first() else {
+        if spec.allow_bare_args {
+            return Ok(Invocation {
+                spec,
+                subcommand: None,
+                args: positionals,
+                flags,
+                raw,
+            });
+        }
         return Err(ResolveError::MissingSubcommand {
             command: spec.id,
             usage: spec.usage,
@@ -424,14 +440,29 @@ fn apply_alias(
             input: entry.from.to_string(),
             reason,
         }),
-        AliasTarget::Canonical(target) => {
-            let (head, leading) = split_alias_target(target).map_err(ResolveError::Parse)?;
-            let skip = matched.len().saturating_sub(1);
-            let mut positionals = leading;
-            positionals.extend(parsed.positionals.iter().skip(skip).cloned());
-            prepare(head, positionals, parsed.flags.clone(), parsed.raw.clone())
+        AliasTarget::Canonical(target) => canonical_target(target, matched, parsed),
+        AliasTarget::CanonicalBare(target) if parsed.positionals.is_empty() => {
+            canonical_target(target, matched, parsed)
         }
+        _ => prepare(
+            parsed.name.clone(),
+            parsed.positionals.clone(),
+            parsed.flags.clone(),
+            parsed.raw.clone(),
+        ),
     }
+}
+
+fn canonical_target(
+    target: &str,
+    matched: &[&str],
+    parsed: &crate::parser::ParsedLine,
+) -> Result<Invocation, ResolveError> {
+    let (head, leading) = split_alias_target(target).map_err(ResolveError::Parse)?;
+    let skip = matched.len().saturating_sub(1);
+    let mut positionals = leading;
+    positionals.extend(parsed.positionals.iter().skip(skip).cloned());
+    prepare(head, positionals, parsed.flags.clone(), parsed.raw.clone())
 }
 
 /// Generates help lines for all specs or for one group/command.

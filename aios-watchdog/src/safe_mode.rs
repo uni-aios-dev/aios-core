@@ -417,4 +417,80 @@ mod tests {
         assert!(resp.output.contains("1:"));
         assert!(resp.output.contains("2:"));
     }
+
+    #[test]
+    fn legacy_parser_vocabulary_matches_console_counterparts() {
+        use aios_console::registry::{resolve, ResolveError};
+
+        let canonical: &[(&str, ShellCommand, &str, Option<&str>)] = &[
+            ("ps", ShellCommand::ListProcesses, "ps", None),
+            ("processes", ShellCommand::ListProcesses, "ps", None),
+            ("blocks", ShellCommand::ListBlocks, "block", Some("list")),
+            (
+                "kill 42",
+                ShellCommand::KillProcess { pid: 42 },
+                "process",
+                Some("kill"),
+            ),
+            (
+                "unload 7",
+                ShellCommand::UnloadBlock { block_id: 7 },
+                "block",
+                Some("unload"),
+            ),
+            ("status", ShellCommand::SystemStatus, "status", None),
+            ("logs", ShellCommand::ViewLogs, "log", Some("show")),
+            ("log", ShellCommand::ViewLogs, "log", Some("show")),
+            ("help", ShellCommand::Help, "help", None),
+            ("?", ShellCommand::Help, "help", None),
+            ("exit", ShellCommand::Exit, "exit", None),
+            ("quit", ShellCommand::Exit, "exit", None),
+            ("q", ShellCommand::Exit, "exit", None),
+        ];
+        for (input, legacy, id, sub) in canonical {
+            assert_eq!(
+                SafeModeShell::parse_command(input),
+                legacy.clone(),
+                "input: {input}"
+            );
+            let invocation =
+                resolve(input).unwrap_or_else(|error| panic!("{input} did not resolve: {error:?}"));
+            assert_eq!(invocation.spec.id, *id, "input: {input}");
+            assert_eq!(invocation.subcommand, *sub, "input: {input}");
+        }
+
+        let ambiguous: &[(&str, ShellCommand)] = &[
+            ("list", ShellCommand::ListProcesses),
+            ("ls", ShellCommand::ListBlocks),
+            (
+                "spawn worker 3 256",
+                ShellCommand::SpawnProcess {
+                    name: "worker".into(),
+                    priority: 3,
+                    ram_mb: 256,
+                },
+            ),
+            (
+                "load my_block 2.0.0",
+                ShellCommand::LoadBlock {
+                    name: "my_block".into(),
+                    version: "2.0.0".into(),
+                },
+            ),
+            ("info", ShellCommand::SystemStatus),
+            ("restart", ShellCommand::RestartOrchestrator),
+            ("recover", ShellCommand::RestartOrchestrator),
+        ];
+        for (input, legacy) in ambiguous {
+            assert_eq!(
+                SafeModeShell::parse_command(input),
+                legacy.clone(),
+                "input: {input}"
+            );
+            assert!(
+                matches!(resolve(input), Err(ResolveError::Ambiguous { .. })),
+                "{input} must stay ambiguous"
+            );
+        }
+    }
 }
