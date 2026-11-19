@@ -11,11 +11,11 @@ use std::time::Instant;
 
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
-use aios_core::block::BlockId;
+use aios_core::block::{BlockId, BlockState};
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::Scheduler;
-use aios_process_mgr::task::{Priority, ProcessId};
+use aios_process_mgr::task::{Priority, ProcessId, ProcessState};
 use aios_store::manager::StoreManager;
 use aios_vfs::vfs::{AiosVfs, VfsPath, VirtualFileSystem};
 
@@ -30,6 +30,32 @@ const NET_BLOCK_ID: u32 = 7;
 const HISTORY_LIMIT: usize = 200;
 /// Maximum nesting depth for `source` scripts, preventing runaway recursion.
 const MAX_SOURCE_DEPTH: usize = 8;
+
+/// Point-in-time view of counters used by `metrics` and `health`.
+struct MetricsSnapshot {
+    uptime_secs: u64,
+    process_total: usize,
+    process_running: usize,
+    process_ready: usize,
+    process_suspended: usize,
+    process_crashed: usize,
+    process_terminated: usize,
+    crash_events: usize,
+    ram_used_mb: u64,
+    ram_total_mb: u64,
+    ram_used_percent: u64,
+    block_total: usize,
+    block_loaded: usize,
+    block_active: usize,
+    block_frozen: usize,
+    block_error: usize,
+    block_unloaded: usize,
+    restarts: u32,
+    max_restarts: u32,
+    log_entries: usize,
+    unhealthy: Vec<String>,
+    degraded: Vec<String>,
+}
 
 /// Construction parameters for [`HostBackend`].
 #[derive(Debug, Clone)]
@@ -226,6 +252,8 @@ impl CommandBackend for HostBackend {
             }
             ("status", _) => self.status(),
             ("uptime", _) => CommandOutput::text(format!("{}s", self.started.elapsed().as_secs())),
+            ("metrics", _) => self.metrics(invocation),
+            ("health", _) => self.health(),
             ("ps", _) => self.process_list(),
             ("process", Some("spawn")) => self.process_spawn(invocation),
             ("process", Some("kill")) => self.process_kill(invocation),
@@ -351,6 +379,252 @@ impl HostBackend {
             ),
             format!("log           {} entries", self.log.len()),
         ])
+    }
+
+    fn snapshot(&self) -> MetricsSnapshot {
+        let scheduler = guard(&self.scheduler);
+        let registry = guard(&self.registry);
+        let (ram_used_mb, ram_total_mb) = scheduler.ram_usage();
+        let ram_used_percent = ram_used_mb
+            .saturating_mul(100)
+            .checked_div(ram_total_mb)
+            .unwrap_or(0);
+
+        let mut process_running = 0;
+        let mut process_ready = 0;
+        let mut process_suspended = 0;
+        let mut process_crashed = 0;
+        let mut process_terminated = 0;
+        let mut unhealthy = Vec::new();
+        let mut degraded = Vec::new();
+        for process in scheduler.all_processes() {
+            match process.state {
+                ProcessState::Running => process_running += 1,
+                ProcessState::Ready => process_ready += 1,
+                ProcessState::Suspended => {
+                    process_suspended += 1;
+                    degraded.push(format!(
+                        "process '{}' (PID {}) is Suspended",
+                        process.name, process.pid.0
+                    ));
+                }
+                ProcessState::Crashed => {
+                    process_crashed += 1;
+                    unhealthy.push(format!(
+                        "process '{}' (PID {}) is Crashed",
+                        process.name, process.pid.0
+                    ));
+                }
+                ProcessState::Terminated => process_terminated += 1,
+            }
+        }
+        let crash_events = scheduler.crash_log().len();
+        if crash_events > 0 {
+            degraded.push(format!("{crash_events} crash event(s) recorded"));
+        }
+
+        let mut block_loaded = 0;
+        let mut block_active = 0;
+        let mut block_frozen = 0;
+        let mut block_error = 0;
+        let mut block_unloaded = 0;
+        for (manifest, state) in registry.topology_with_state() {
+            match state {
+                BlockState::Loaded => block_loaded += 1,
+                BlockState::Active => block_active += 1,
+                BlockState::Frozen => {
+                    block_frozen += 1;
+                    degraded.push(format!("block '{}' is Frozen", manifest.name));
+                }
+                BlockState::Error => {
+                    block_error += 1;
+                    unhealthy.push(format!("block '{}' is in Error state", manifest.name));
+                }
+                BlockState::Unloaded => block_unloaded += 1,
+            }
+        }
+
+        if ram_used_percent > 85 {
+            degraded.push(format!("RAM usage {ram_used_percent}% exceeds 85%"));
+        }
+        if self.restarts > 0 && self.restarts >= self.config.max_restarts {
+            unhealthy.push(format!(
+                "restart limit ({}) reached",
+                self.config.max_restarts
+            ));
+        } else if self.restarts > 0 {
+            degraded.push(format!("{} watchdog restart(s)", self.restarts));
+        }
+
+        MetricsSnapshot {
+            uptime_secs: self.started.elapsed().as_secs(),
+            process_total: scheduler.process_count(),
+            process_running,
+            process_ready,
+            process_suspended,
+            process_crashed,
+            process_terminated,
+            crash_events,
+            ram_used_mb,
+            ram_total_mb,
+            ram_used_percent,
+            block_total: registry.count(),
+            block_loaded,
+            block_active,
+            block_frozen,
+            block_error,
+            block_unloaded,
+            restarts: self.restarts,
+            max_restarts: self.config.max_restarts,
+            log_entries: self.log.len(),
+            unhealthy,
+            degraded,
+        }
+    }
+
+    fn metrics(&self, invocation: &Invocation) -> CommandOutput {
+        let snapshot = self.snapshot();
+        if invocation.has_flag("json") {
+            Self::metrics_json(&snapshot)
+        } else if invocation.has_flag("prometheus") {
+            Self::metrics_prometheus(&snapshot)
+        } else {
+            CommandOutput::ok(Self::metrics_lines(&snapshot))
+        }
+    }
+
+    fn metrics_lines(s: &MetricsSnapshot) -> Vec<String> {
+        vec![
+            "metrics        host console".to_string(),
+            format!("uptime          {}s", s.uptime_secs),
+            format!(
+                "processes       {} ({} running, {} ready, {} suspended, {} crashed, {} terminated)",
+                s.process_total,
+                s.process_running,
+                s.process_ready,
+                s.process_suspended,
+                s.process_crashed,
+                s.process_terminated
+            ),
+            format!("crash events    {}", s.crash_events),
+            format!(
+                "ram             {}/{} MB ({}%)",
+                s.ram_used_mb, s.ram_total_mb, s.ram_used_percent
+            ),
+            format!(
+                "blocks          {} ({} loaded, {} active, {} frozen, {} error, {} unloaded)",
+                s.block_total,
+                s.block_loaded,
+                s.block_active,
+                s.block_frozen,
+                s.block_error,
+                s.block_unloaded
+            ),
+            format!("restarts        {}/{}", s.restarts, s.max_restarts),
+            format!("log             {} entries", s.log_entries),
+        ]
+    }
+
+    fn metrics_json(s: &MetricsSnapshot) -> CommandOutput {
+        let value = serde_json::json!({
+            "uptime_secs": s.uptime_secs,
+            "processes": {
+                "total": s.process_total,
+                "running": s.process_running,
+                "ready": s.process_ready,
+                "suspended": s.process_suspended,
+                "crashed": s.process_crashed,
+                "terminated": s.process_terminated,
+            },
+            "crash_events": s.crash_events,
+            "ram": {
+                "used_mb": s.ram_used_mb,
+                "total_mb": s.ram_total_mb,
+                "used_percent": s.ram_used_percent,
+            },
+            "blocks": {
+                "total": s.block_total,
+                "loaded": s.block_loaded,
+                "active": s.block_active,
+                "frozen": s.block_frozen,
+                "error": s.block_error,
+                "unloaded": s.block_unloaded,
+            },
+            "restarts": s.restarts,
+            "max_restarts": s.max_restarts,
+            "log_entries": s.log_entries,
+        });
+        match serde_json::to_string_pretty(&value) {
+            Ok(json) => CommandOutput::text(json),
+            Err(error) => CommandOutput::error(&format!("metrics json: {error}")),
+        }
+    }
+
+    fn metrics_prometheus(s: &MetricsSnapshot) -> CommandOutput {
+        CommandOutput::ok(vec![
+            "# HELP aios_uptime_seconds Host console uptime in seconds".to_string(),
+            "# TYPE aios_uptime_seconds gauge".to_string(),
+            format!("aios_uptime_seconds {}", s.uptime_secs),
+            "# HELP aios_processes Total number of processes".to_string(),
+            "# TYPE aios_processes gauge".to_string(),
+            format!("aios_processes_total {}", s.process_total),
+            format!("aios_processes_running {}", s.process_running),
+            format!("aios_processes_ready {}", s.process_ready),
+            format!("aios_processes_suspended {}", s.process_suspended),
+            format!("aios_processes_crashed {}", s.process_crashed),
+            format!("aios_processes_terminated {}", s.process_terminated),
+            "# HELP aios_crash_events_total Recorded crash events".to_string(),
+            "# TYPE aios_crash_events_total counter".to_string(),
+            format!("aios_crash_events_total {}", s.crash_events),
+            "# HELP aios_ram_used_mb RAM used in megabytes".to_string(),
+            "# TYPE aios_ram_used_mb gauge".to_string(),
+            format!("aios_ram_used_mb {}", s.ram_used_mb),
+            format!("aios_ram_total_mb {}", s.ram_total_mb),
+            "# HELP aios_blocks_total Registered blocks".to_string(),
+            "# TYPE aios_blocks_total gauge".to_string(),
+            format!("aios_blocks_total {}", s.block_total),
+            format!("aios_blocks_active {}", s.block_active),
+            format!("aios_blocks_frozen {}", s.block_frozen),
+            format!("aios_blocks_error {}", s.block_error),
+            "# HELP aios_restarts_total Controlled watchdog restarts".to_string(),
+            "# TYPE aios_restarts_total counter".to_string(),
+            format!("aios_restarts_total {}", s.restarts),
+            format!("aios_max_restarts {}", s.max_restarts),
+        ])
+    }
+
+    fn health(&self) -> CommandOutput {
+        let snapshot = self.snapshot();
+        let status = if !snapshot.unhealthy.is_empty() {
+            "UNHEALTHY"
+        } else if !snapshot.degraded.is_empty() {
+            "DEGRADED"
+        } else {
+            "HEALTHY"
+        };
+        let mut lines = vec![
+            format!("health          {status}"),
+            format!("uptime          {}s", snapshot.uptime_secs),
+            format!(
+                "processes       {} ({} running, {} ready)",
+                snapshot.process_total, snapshot.process_running, snapshot.process_ready
+            ),
+            format!(
+                "blocks          {} ({} active)",
+                snapshot.block_total, snapshot.block_active
+            ),
+            format!(
+                "ram             {}/{} MB ({}%)",
+                snapshot.ram_used_mb, snapshot.ram_total_mb, snapshot.ram_used_percent
+            ),
+        ];
+        for finding in snapshot.unhealthy.iter().chain(snapshot.degraded.iter()) {
+            lines.push(format!("  - {finding}"));
+        }
+        if lines.len() == 5 {
+            lines.push("  - no problems detected".to_string());
+        }
+        CommandOutput::ok(lines)
     }
 
     fn process_list(&self) -> CommandOutput {

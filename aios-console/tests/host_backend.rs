@@ -444,3 +444,116 @@ fn host_source_guards_recursive_scripts() {
         .any(|line| line.contains("nesting limit")));
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn host_metrics_reports_real_counters() {
+    let mut host = backend("metrics");
+    assert_ok(
+        "process spawn worker --ram=32",
+        &dispatch(&mut host, "process spawn worker --ram=32"),
+    );
+    assert_ok(
+        "block mock demo --version=2.3.4",
+        &dispatch(&mut host, "block mock demo --version=2.3.4"),
+    );
+
+    let output = dispatch(&mut host, "metrics");
+    assert_ok("metrics", &output);
+    assert!(output.lines.iter().any(|line| line.starts_with("metrics")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("processes       1 (") && line.contains("1 ready")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("blocks          1 (")));
+    assert!(output.lines.iter().any(|line| line.contains("/512 MB")));
+}
+
+#[test]
+fn host_metrics_json_is_parseable() {
+    let mut host = backend("metrics-json");
+    assert_ok(
+        "process spawn worker",
+        &dispatch(&mut host, "process spawn worker"),
+    );
+
+    let output = dispatch(&mut host, "metrics --json");
+    assert_ok("metrics --json", &output);
+    let value: serde_json::Value =
+        serde_json::from_str(&output.as_text()).expect("metrics JSON must parse");
+    assert_eq!(value["processes"]["total"], 1);
+    assert_eq!(value["processes"]["ready"], 1);
+    assert_eq!(value["ram"]["total_mb"], 512);
+    assert_eq!(value["blocks"]["total"], 0);
+    assert_eq!(value["restarts"], 0);
+    assert_eq!(value["max_restarts"], 2);
+}
+
+#[test]
+fn host_metrics_prometheus_uses_exposition_format() {
+    let mut host = backend("metrics-prometheus");
+    assert_ok("block mock demo", &dispatch(&mut host, "block mock demo"));
+
+    let output = dispatch(&mut host, "metrics --prometheus");
+    assert_ok("metrics --prometheus", &output);
+    let text = output.as_text();
+    assert!(text.contains("# HELP aios_uptime_seconds"));
+    assert!(text.contains("# TYPE aios_processes gauge"));
+    assert!(text.contains("aios_processes_total 0"));
+    assert!(text.contains("aios_blocks_total 1"));
+    assert!(text.contains("aios_ram_total_mb 512"));
+}
+
+#[test]
+fn host_health_is_healthy_for_an_idle_backend() {
+    let mut host = backend("health-healthy");
+
+    let output = dispatch(&mut host, "health");
+    assert_ok("health", &output);
+    assert!(output.lines[0].contains("HEALTHY"));
+    assert!(output
+        .lines
+        .last()
+        .unwrap()
+        .contains("no problems detected"));
+}
+
+#[test]
+fn host_health_is_degraded_when_a_process_is_suspended() {
+    let mut host = backend("health-degraded");
+    dispatch(&mut host, "process spawn worker");
+    assert_ok(
+        "process suspend 1",
+        &dispatch(&mut host, "process suspend 1"),
+    );
+
+    let output = dispatch(&mut host, "health");
+    assert_ok("health", &output);
+    assert!(output.lines[0].contains("DEGRADED"));
+    assert!(!output.lines[0].contains("UNHEALTHY"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("is Suspended")));
+}
+
+#[test]
+fn host_health_is_unhealthy_at_the_restart_limit() {
+    let mut host = backend("health-unhealthy");
+    assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
+    assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
+
+    let output = dispatch(&mut host, "health");
+    assert_ok("health", &output);
+    assert!(output.lines[0].contains("UNHEALTHY"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("restart limit")));
+    assert!(!output
+        .lines
+        .iter()
+        .any(|line| line.contains("watchdog restart")));
+}

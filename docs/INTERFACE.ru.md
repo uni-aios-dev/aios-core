@@ -139,9 +139,17 @@ AIOS предоставляет два интерфейса для управл�
 `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
-check-updates|uninstall|rollback` и `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`. Остальные зарегистрированные подкоманды возвращают
-`ERR unavailable`, пока для них не написаны адаптеры.
+check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
+stat|exists|resolve`, `metrics` и `health`. Остальные зарегистрированные
+подкоманды возвращают `ERR unavailable`, пока для них не написаны адаптеры.
+
+`metrics` выводит снимок счётчиков, построенный только из реального состояния
+рантайма; флаг `--json` даёт структурированный объект, `--prometheus` — текст в
+формате exposition. Счётчики покрывают uptime, состояния процессов, краши, RAM,
+состояния блоков, рестарты и лог сессии. `health` возвращает `HEALTHY`,
+`DEGRADED` или `UNHEALTHY` и по строке на каждую найденную проблему:
+приостановленные или аварийные процессы, блоки Frozen/Error, записанные краши,
+загрузка RAM выше 85% и лимит рестартов.
 
 `source <file>` выполняет UTF-8-сценарий через тот же диспетчер. Пустые строки и
 комментарии `#` пропускаются; первый ненулевой код возвращается как результат,

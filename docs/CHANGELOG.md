@@ -51,6 +51,14 @@
   and whitespace. Literal Windows path separators are preserved, so arguments
   such as `C:\Users\script.txt` reach path-taking commands intact. One contract
   test covers path separators together with escaped quotes.
+- `metrics` and `health` are now implemented in `HostBackend` using real runtime
+  state only: scheduler process counts/states and crash log, RAM usage, block
+  states from the registry, watchdog restarts and the session log. `metrics`
+  prints a plain snapshot or accepts `--json` / `--prometheus`; `health` derives
+  `HEALTHY` / `DEGRADED` / `UNHEALTHY` from crashed or suspended processes,
+  Frozen/Error blocks, crash events, high RAM use and the restart limit, with a
+  human-readable finding for each issue. Six integration tests cover all three
+  metrics formats and all three health statuses.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source
