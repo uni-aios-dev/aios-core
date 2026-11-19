@@ -93,6 +93,31 @@
   `aios-shell` unit tests. The registry gained `processes`, `ver` and `cls`
   aliases plus argument-free `log`/`wifi` aliases, so each legacy spelling has a
   canonical target without hijacking `log clear` or `wifi scan`.
+- A second batch of host adapters now delegates to real library crates instead
+  of returning `ERR unavailable`: `sleep`, `alias`/`unalias`, `fault resolve`,
+  `sched mode|quantum|aging|rt-deadline|rt-clear`,
+  `net validate|config|status|apply|lease`, `store trust|verify`, `vfs readat`,
+  `caps list|issue|revoke|check`, `sandbox start|stop|log|mem`,
+  `hw-protect status|mpk|tee|iommu|clear`, `wasm compile|call|mem|grow`,
+  `wasi policy`, `exec detect|caps|<program>`, `deps scan|heal`,
+  `compat list|kill`, `context stats|export|compact|persist`,
+  `workflow list|priority`, `stability list|best|worst`, `trace list`,
+  `crash report`, `driver list|failures|remove|rollback|install|provision`,
+  `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`
+  and `hub status|scan|wifi|layout`. `aios-console/Cargo.toml` gained the
+  optional std dependencies `aios-debug`, `aios-exec-compat`, `aios-iommu`,
+  `aios-mpk`, `aios-security`, `aios-sys-control`, `aios-tee`,
+  `aios-telemetry` and `aios-wasm`; the `no_std` kernel build is unaffected.
+  `HostBackend::execute_line()` expands session aliases before dispatch and
+  records every invocation as a trace span, visible via `trace list`.
+  `HostBackendConfig.context_db_path` selects the redb file for `context
+  persist`. Nine integration tests use temp paths and injected mock profiles;
+  none depends on physical hardware or performs a long `sleep`.
+- Commands that would need a dependency cycle (`wd start|stop|force-safe-mode|
+  escalate`, `bridge status|start|stop`, `auth register|login|me`) and commands
+  without a real library API (`jobs|fg|bg`, `acl grant|revoke`, `ping`,
+  `net recheck`, `block swap|rollback`, `update history|pending|recover`,
+  `state extract|restore`, `fm jobs|cancel`) still report `ERR unavailable`.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source

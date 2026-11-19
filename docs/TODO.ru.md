@@ -119,7 +119,31 @@
   `aios-watchdog`, `aios-tui` и `aios-shell`. Добавлены алиасы `processes`,
   `ver`, `cls` и работающие без аргументов `log`/`wifi`, чтобы старые написания
   разрешались, не перехватывая настоящие подкоманды.
-- [ ] Реализовать оставшиеся хостовые адаптеры с `ERR unavailable`.
+- [x] Вторая партия хостовых адаптеров в `HostBackend` на реальных библиотечных
+  крейтах: `sleep`, `alias`/`unalias`, `fault resolve`,
+  `sched mode|quantum|aging|rt-deadline|rt-clear`,
+  `net validate|config|status|apply|lease`, `store trust|verify`, `vfs readat`,
+  `caps list|issue|revoke|check`, `sandbox start|stop|log|mem`,
+  `hw-protect status|mpk|tee|iommu|clear`, `wasm compile|call|mem|grow`,
+  `wasi policy`, `exec detect|caps|<program>`, `deps scan|heal`,
+  `compat list|kill`, `context stats|export|compact|persist`,
+  `workflow list|priority`, `stability list|best|worst`, `trace list`,
+  `crash report`, `driver list|failures|remove|rollback|install|provision`,
+  `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`
+  и `hub status|scan|wifi|layout`. Добавлен `execute_line()` для раскрытия
+  алиасов и span'ов `TraceContext`, а также
+  `HostBackendConfig.context_db_path` для redb (9 интеграционных тестов на
+  временных путях и подставленных mock-профилях).
+- [ ] Реализовать оставшиеся хостовые адаптеры с `ERR unavailable`, у которых
+  нет циклических зависимостей: `jobs|fg|bg`, `acl grant|revoke`, `ping`,
+  `net recheck`, `block swap|rollback`, `update history|pending|recover`,
+  `state extract|restore`, `fm jobs|cancel` (нужны реальные библиотечные API
+  или точка внедрения; не имитировать успех).
+- [ ] Разрешить адаптеры с циклическими зависимостями вне `aios-console` через
+  точку внедрения или реализацию на стороне хоста:
+  `wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
+  `auth register|login|me` (`aios-watchdog` зависит от `aios-console`,
+  `aios-bridge` зависит от `aios-watchdog`).
 - [ ] Заменить пять старых диспетчеров (`aios-tui`, `aios`, TUI ядра,
   `SafeModeShell`, `aios-shell`) только после того, как оставшиеся адаптеры
   и проверки паритета будут зелёными.

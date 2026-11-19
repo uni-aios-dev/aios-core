@@ -5,25 +5,48 @@
 //! unimplemented subcommand is reported as unavailable instead of being silently
 //! accepted.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use aios_autohal::engine::{AutohalEngine, EngineConfig};
 use aios_autohal::fingerprint::extract_fingerprints;
+use aios_autohal::hotplug::{HotplugConfig, HotplugMonitor};
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::registry::BlockRegistry;
+use aios_context::persistence::PersistentStore;
+use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::{BlockId, BlockState};
+use aios_core::fault::RecoveryAction;
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+use aios_debug::crash_reporter::{CrashKind, CrashReporter};
+use aios_exec_compat::dependency_healer::DependencyHealer;
+use aios_exec_compat::format::ExecutableType;
+use aios_exec_compat::sandbox_compat::CompatSandboxManager;
 use aios_hal::ai_tier::AiTier;
 use aios_hal::hardware::HardwareProfile;
+use aios_iommu::iommu::IommuManager;
+use aios_iommu::IommuInfo;
 use aios_ipc::bus::IpcBus;
+use aios_mpk::mpk::MpkManager;
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
-use aios_process_mgr::scheduler::Scheduler;
+use aios_process_mgr::scheduler::{Scheduler, SchedulingMode};
 use aios_process_mgr::task::{Priority, ProcessId, ProcessState};
+use aios_security::access_control::AccessControlLayer;
+use aios_security::capability::Capability as SecCapability;
+use aios_security::hardware_bridge::HardwareSecurityBridge;
+use aios_security::sandbox::Sandbox;
 use aios_store::manager::StoreManager;
+use aios_store::ManifestValidator;
+use aios_sys_control::net_manager::{NetManager, SimulatedWifi, WifiBackend};
+use aios_sys_control::SysControlHub;
+use aios_tee::TeeInfo;
+use aios_telemetry::trace::{SpanStatus, TraceContext};
 use aios_vfs::vfs::{AiosVfs, VfsPath, VirtualFileSystem};
+use aios_wasm::{IsolationConfig, SandboxConfig, WasiFilter, WasmBlock, WasmSandbox};
 
 use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
@@ -76,6 +99,8 @@ pub struct HostBackendConfig {
     pub vfs_root: PathBuf,
     /// File used to persist `net set` / `net reset` changes.
     pub net_config_path: PathBuf,
+    /// Database file used by `context persist`.
+    pub context_db_path: PathBuf,
     /// RAM quota handed to a newly created scheduler.
     pub total_ram_mb: u64,
     /// Maximum number of controlled watchdog restarts.
@@ -90,6 +115,7 @@ impl Default for HostBackendConfig {
             blocks_dir: base.join("blocks"),
             vfs_root: base.join("vfs"),
             net_config_path: base.join("network.json"),
+            context_db_path: base.join("context.redb"),
             total_ram_mb: 1024,
             max_restarts: 3,
         }
@@ -115,6 +141,24 @@ pub struct HostBackend {
     restarts: u32,
     source_depth: usize,
     started: Instant,
+    aliases: BTreeMap<String, String>,
+    trace_context: TraceContext,
+    crash_reporter: CrashReporter,
+    context_store: EmbeddedContextStore,
+    wasi_filter: WasiFilter,
+    wasm_source: Option<Vec<u8>>,
+    compat_manager: CompatSandboxManager,
+    access_control: AccessControlLayer,
+    cap_token_ids: Vec<u32>,
+    sandboxes: BTreeMap<u32, Sandbox>,
+    hw_bridge: HardwareSecurityBridge,
+    mpk: Option<MpkManager>,
+    iommu: IommuManager,
+    tee: TeeInfo,
+    wifi: NetManager,
+    sys_hub: SysControlHub,
+    autohal: Option<AutohalEngine>,
+    hotplug: Option<HotplugMonitor>,
 }
 
 impl HostBackend {
@@ -142,6 +186,7 @@ impl HostBackend {
             NetworkConfig::default(),
             config.net_config_path.clone(),
         );
+        let version = config.version.clone();
         Self {
             scheduler,
             registry,
@@ -158,6 +203,24 @@ impl HostBackend {
             restarts: 0,
             source_depth: 0,
             started: Instant::now(),
+            aliases: BTreeMap::new(),
+            trace_context: TraceContext::new(),
+            crash_reporter: CrashReporter::new("aios-console", &version),
+            context_store: EmbeddedContextStore::new(1000),
+            wasi_filter: WasiFilter::default(),
+            wasm_source: None,
+            compat_manager: CompatSandboxManager::new(),
+            access_control: AccessControlLayer::new(b"aios-console-issuer-v1".to_vec(), 3_600_000),
+            cap_token_ids: Vec::new(),
+            sandboxes: BTreeMap::new(),
+            hw_bridge: HardwareSecurityBridge::new(),
+            mpk: MpkManager::detect().ok(),
+            iommu: IommuManager::new(16),
+            tee: TeeInfo::detect(),
+            wifi: NetManager::default(),
+            sys_hub: SysControlHub::defaults(),
+            autohal: None,
+            hotplug: None,
         }
     }
 
@@ -174,6 +237,32 @@ impl HostBackend {
     /// Overrides the hardware inventory used by `sys` and `hw` commands.
     pub fn set_hardware_profile(&mut self, profile: HardwareProfile) {
         self.hardware_profile = Some(("injected".to_string(), profile));
+    }
+
+    /// Executes one input line with session alias expansion and trace recording.
+    pub fn execute_line(&mut self, line: &str) -> CommandOutput {
+        let expanded = self.expand_aliases(line);
+        let _span = self.trace_context.begin_span("console.command");
+        self.trace_context.add_tag("input", &expanded);
+        let output = dispatch(self, &expanded);
+        let status = match output.code {
+            ExitCode::Ok => SpanStatus::Ok,
+            _ => SpanStatus::Error(format!("{:?}", output.code)),
+        };
+        self.trace_context.end_span(status);
+        output
+    }
+
+    fn expand_aliases(&self, line: &str) -> String {
+        let trimmed = line.trim();
+        let (name, rest) = match trimmed.find(char::is_whitespace) {
+            Some(index) => (&trimmed[..index], &trimmed[index..]),
+            None => (trimmed, ""),
+        };
+        match self.aliases.get(&name.to_ascii_lowercase()) {
+            Some(target) => format!("{target}{rest}"),
+            None => trimmed.to_string(),
+        }
     }
 
     /// Returns the controlled restart counter.
@@ -276,6 +365,9 @@ impl CommandBackend for HostBackend {
                 self.log.clear();
                 CommandOutput::text("log cleared")
             }
+            ("sleep", _) => self.sleep(invocation),
+            ("alias", _) => self.alias_command(invocation),
+            ("unalias", _) => self.unalias_command(invocation),
             ("status", _) => self.status(),
             ("sys", Some("info")) => self.sys_info(),
             ("sys", Some("tier")) => self.sys_tier(),
@@ -289,6 +381,8 @@ impl CommandBackend for HostBackend {
             ("process", Some("suspend")) => self.process_signal(invocation, true),
             ("process", Some("resume")) => self.process_signal(invocation, false),
             ("process", Some("affinity")) => self.process_affinity(invocation),
+            ("fault", Some("resolve")) => self.fault_resolve(invocation),
+            ("sched", Some(subcommand)) => self.sched_command(invocation, subcommand),
             ("block", Some("list")) => self.block_list(),
             ("block", Some("info")) => self.block_info(invocation),
             ("block", Some("load")) => self.block_load(invocation),
@@ -323,6 +417,11 @@ impl CommandBackend for HostBackend {
                 Ok(()) => self.command_status("network configuration reset to defaults"),
                 Err(error) => CommandOutput::error(&format!("net reset failed: {error}")),
             },
+            ("net", Some("validate")) => self.net_validate(invocation),
+            ("net", Some("config")) => self.net_config(),
+            ("net", Some("status")) => self.net_status(),
+            ("net", Some("apply")) => self.net_set(invocation),
+            ("net", Some("lease")) => self.net_lease(),
             ("store", Some(subcommand)) => self.store_command(invocation, subcommand),
             ("vfs", Some(subcommand)) => self.vfs_command(invocation, subcommand),
             ("ipc", Some(subcommand)) => self.ipc_command(invocation, subcommand),
@@ -330,7 +429,24 @@ impl CommandBackend for HostBackend {
             ("hw", Some("rescan")) => self.hw_rescan(),
             ("hw", Some("profile")) => self.hw_profile(invocation),
             ("hw", Some("fingerprints")) => self.hw_fingerprints(),
+            ("driver", Some(subcommand)) => self.driver_command(invocation, subcommand),
+            ("hotplug", Some(subcommand)) => self.hotplug_command(invocation, subcommand),
             ("telemetry", Some(subcommand)) => self.telemetry_command(invocation, subcommand),
+            ("caps", Some(subcommand)) => self.caps_command(invocation, subcommand),
+            ("sandbox", Some(subcommand)) => self.sandbox_command(invocation, subcommand),
+            ("hw-protect", Some(subcommand)) => self.hw_protect_command(invocation, subcommand),
+            ("wasm", Some(subcommand)) => self.wasm_command(invocation, subcommand),
+            ("wasi", Some("policy")) => self.wasi_policy(invocation),
+            ("exec", _) => self.exec_command(invocation),
+            ("deps", Some(subcommand)) => self.deps_command(invocation, subcommand),
+            ("compat", Some(subcommand)) => self.compat_command(invocation, subcommand),
+            ("context", Some(subcommand)) => self.context_command(invocation, subcommand),
+            ("workflow", Some(subcommand)) => self.workflow_command(invocation, subcommand),
+            ("stability", Some(subcommand)) => self.stability_command(invocation, subcommand),
+            ("trace", Some("list")) => self.trace_list(),
+            ("crash", Some("report")) => self.crash_report(invocation),
+            ("wifi", Some(subcommand)) => self.wifi_command(invocation, subcommand),
+            ("hub", Some(subcommand)) => self.hub_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
                 "'{}' has no host backend yet",
@@ -365,7 +481,7 @@ impl HostBackend {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let output = dispatch(self, line);
+            let output = self.execute_line(line);
             count += 1;
             lines.extend(output.lines);
             if code == ExitCode::Ok {
@@ -1543,6 +1659,58 @@ impl HostBackend {
                     Err(error) => CommandOutput::error(&format!("rollback failed: {error}")),
                 }
             }
+            "trust" => {
+                let Some(source) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let keys: Vec<String> = invocation.args[1..].to_vec();
+                if keys.is_empty() {
+                    return CommandOutput::usage(invocation.spec.usage);
+                }
+                match self.store.trust_source(source, &keys) {
+                    Ok(()) => self.command_status(format!(
+                        "trusted source '{source}' with {} key(s)",
+                        keys.len()
+                    )),
+                    Err(error) => CommandOutput::error(&format!("store trust failed: {error}")),
+                }
+            }
+            "verify" => {
+                let name = invocation.first_arg().map(str::to_string);
+                let blocks: Vec<_> = match name.as_deref() {
+                    Some(name) => self.store.find_installed(name).into_iter().collect(),
+                    None => self.store.list_installed(),
+                };
+                if blocks.is_empty() {
+                    return CommandOutput::text("no installed blocks to verify");
+                }
+                let mut lines = vec!["BLOCK            SHA256  SIGNATURE".to_string()];
+                let mut failures = 0usize;
+                for block in blocks {
+                    let sha = std::fs::read(&block.path)
+                        .ok()
+                        .and_then(|bytes| {
+                            ManifestValidator::validate_sha256(&block.manifest, &bytes).ok()
+                        })
+                        .unwrap_or(false);
+                    let signature = ManifestValidator::verify_signature(&block.manifest)
+                        .ok()
+                        .unwrap_or(false);
+                    if !sha || !signature {
+                        failures += 1;
+                    }
+                    lines.push(format!(
+                        "{:<16} {:<7} {}",
+                        block.manifest.name,
+                        if sha { "OK" } else { "FAIL" },
+                        if signature { "OK" } else { "NONE" }
+                    ));
+                }
+                if failures > 0 {
+                    lines.push(format!("{failures} block(s) failed verification"));
+                }
+                CommandOutput::ok(lines)
+            }
             _ => CommandOutput::unavailable(&format!("store {subcommand} has no host backend yet")),
         }
     }
@@ -1694,7 +1862,1200 @@ impl HostBackend {
                     Err(error) => CommandOutput::error(&format!("resolve failed: {error}")),
                 }
             }
+            "readat" => {
+                let path = match Self::path_arg(invocation, 0) {
+                    Ok(path) => path,
+                    Err(output) => return output,
+                };
+                let Some(offset) = invocation.arg(1).and_then(|raw| raw.parse::<u64>().ok()) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(max) = invocation.arg(2).and_then(|raw| raw.parse::<usize>().ok()) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                match StoreManager::block_on(aios_vfs::operations::read_at(
+                    &vfs, &path, offset, max,
+                )) {
+                    Ok(bytes) => {
+                        let mut lines =
+                            vec![format!("offset        {offset} ({} byte(s))", bytes.len())];
+                        lines.extend(String::from_utf8_lossy(&bytes).lines().map(str::to_string));
+                        CommandOutput::ok(lines)
+                    }
+                    Err(error) => CommandOutput::error(&format!("readat failed: {error}")),
+                }
+            }
             _ => CommandOutput::unavailable(&format!("vfs {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn sleep(&self, invocation: &Invocation) -> CommandOutput {
+        let Some(seconds) = invocation
+            .first_arg()
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        std::thread::sleep(Duration::from_secs(seconds));
+        CommandOutput::text(format!("slept {seconds}s"))
+    }
+
+    fn alias_command(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(definition) = invocation.args.first().map(|_| invocation.args.join(" ")) else {
+            let mut lines = vec!["NAME        COMMAND".to_string()];
+            for (name, target) in &self.aliases {
+                lines.push(format!("{name:<12}{target}"));
+            }
+            lines.push(format!("Total: {} session alias(es)", self.aliases.len()));
+            return CommandOutput::ok(lines);
+        };
+        let Some((name, target)) = definition.split_once('=') else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        if name.is_empty() || target.is_empty() || name.chars().any(char::is_whitespace) {
+            return CommandOutput::usage(invocation.spec.usage);
+        }
+        let name = name.to_ascii_lowercase();
+        self.aliases.insert(name.clone(), target.to_string());
+        self.command_status(format!("alias '{name}' -> '{target}'"))
+    }
+
+    fn unalias_command(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(name) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        match self.aliases.remove(&name.to_ascii_lowercase()) {
+            Some(target) => self.command_status(format!("removed alias '{name}' -> '{target}'")),
+            None => CommandOutput::error(&format!("no session alias '{name}'")),
+        }
+    }
+
+    fn fault_resolve(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(pid) = parse_pid(invocation) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Some(raw) = invocation.arg(1) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let action = match raw.to_ascii_lowercase().as_str() {
+            "rollback" => RecoveryAction::Rollback,
+            "terminate" => RecoveryAction::Terminate,
+            "resume" => RecoveryAction::Resume,
+            _ => return CommandOutput::usage(invocation.spec.usage),
+        };
+        let mut scheduler = guard(&self.scheduler);
+        match scheduler.resolve_fault(pid, action) {
+            Ok(()) => {
+                drop(scheduler);
+                self.command_status(format!(
+                    "fault for PID {} resolved with {}",
+                    pid.0,
+                    action.name()
+                ))
+            }
+            Err(error) => CommandOutput::error(&format!("fault resolve failed: {error}")),
+        }
+    }
+
+    fn sched_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "mode" => {
+                let Some(raw) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let mode = match raw.to_ascii_lowercase().as_str() {
+                    "normal" => SchedulingMode::Normal,
+                    "realtime" | "real-time" | "rt" => SchedulingMode::RealTime,
+                    _ => return CommandOutput::usage(invocation.spec.usage),
+                };
+                let mut scheduler = guard(&self.scheduler);
+                scheduler.set_scheduling_mode(mode);
+                drop(scheduler);
+                self.command_status(format!("scheduler mode set to {mode:?}"))
+            }
+            "quantum" | "aging" => {
+                let Some(value) = invocation
+                    .first_arg()
+                    .and_then(|raw| raw.parse::<u64>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let mut scheduler = guard(&self.scheduler);
+                let replaced =
+                    std::mem::replace(&mut *scheduler, Scheduler::new(self.config.total_ram_mb));
+                *scheduler = if subcommand == "quantum" {
+                    replaced.with_time_slice(value)
+                } else {
+                    replaced.with_aging_threshold(value)
+                };
+                drop(scheduler);
+                self.command_status(format!("scheduler {subcommand} set to {value}ms"))
+            }
+            "rt-deadline" => {
+                let Some(pid) = parse_pid(invocation) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(deadline) = invocation.arg(1).and_then(|raw| raw.parse::<u64>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let mut scheduler = guard(&self.scheduler);
+                scheduler.set_rt_deadline(pid, deadline);
+                drop(scheduler);
+                self.command_status(format!(
+                    "real-time deadline {deadline}ms set for PID {}",
+                    pid.0
+                ))
+            }
+            "rt-clear" => {
+                let mut scheduler = guard(&self.scheduler);
+                let targets: Vec<ProcessId> = match parse_pid(invocation) {
+                    Some(pid) => vec![pid],
+                    None => scheduler.rt_deadlines().keys().copied().collect(),
+                };
+                for pid in &targets {
+                    scheduler.clear_rt_deadline(*pid);
+                }
+                drop(scheduler);
+                self.command_status(format!("cleared {} real-time deadline(s)", targets.len()))
+            }
+            _ => CommandOutput::unavailable(&format!("sched {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn net_validate(&self, invocation: &Invocation) -> CommandOutput {
+        let Some(raw) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let kind = invocation.arg(1).map(|value| value.to_ascii_lowercase());
+        let valid = match kind.as_deref() {
+            Some("ip") => Some(("ip address", aios_net_config::validation::validate_ip(raw))),
+            Some("port") => raw.parse::<u16>().ok().and_then(|port| {
+                aios_net_config::validation::validate_port(port)
+                    .ok()
+                    .map(|_| ("port", true))
+            }),
+            Some("url") => aios_net_config::validation::validate_url(raw)
+                .ok()
+                .map(|_| ("url", true)),
+            Some(other) => {
+                return CommandOutput::usage(&format!("net validate: unknown kind '{other}'"))
+            }
+            None => {
+                if aios_net_config::validation::validate_ip(raw) {
+                    Some(("ip address", true))
+                } else if aios_net_config::validation::validate_url(raw).is_ok() {
+                    Some(("url", true))
+                } else {
+                    None
+                }
+            }
+        };
+        match valid {
+            Some((label, true)) => CommandOutput::text(format!("'{raw}' is a valid {label}")),
+            _ => CommandOutput::error(&format!("'{raw}' is not a valid ip/port/url")),
+        }
+    }
+
+    fn net_config(&self) -> CommandOutput {
+        let store =
+            aios_net_config::store::NetworkConfigStore::new(self.config.net_config_path.clone());
+        match store.load() {
+            Ok(Some(config)) => CommandOutput::text(config.to_json()),
+            Ok(None) => CommandOutput::text("no persisted network configuration"),
+            Err(error) => CommandOutput::error(&format!("net config failed: {error}")),
+        }
+    }
+
+    fn net_status(&self) -> CommandOutput {
+        let link = self.wifi.status();
+        CommandOutput::ok(vec![
+            format!("state         {:?}", link.state),
+            format!(
+                "ssid          {}",
+                link.ssid.unwrap_or_else(|| "-".to_string())
+            ),
+            format!(
+                "ipv4          {}",
+                link.ipv4
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!(
+                "gateway       {}",
+                link.gateway
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!(
+                "dns           {}",
+                link.dns
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!("rssi          {} dBm", link.rssi_dbm),
+        ])
+    }
+
+    fn net_lease(&self) -> CommandOutput {
+        CommandOutput::text("no DHCP lease acquired in this session")
+    }
+
+    fn caps_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "list" => {
+                if self.cap_token_ids.is_empty() {
+                    return CommandOutput::text("no capability tokens issued");
+                }
+                let mut lines = vec!["BLOCK  EXPIRES_IN_MS  CAPABILITIES".to_string()];
+                for id in &self.cap_token_ids {
+                    if let Some(token) = self.access_control.get_token(*id) {
+                        let caps = token
+                            .capabilities
+                            .iter()
+                            .map(|cap| cap.name())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        lines.push(format!("{:<6} {:<14} {}", id, token.remaining_ms(), caps));
+                    }
+                }
+                CommandOutput::ok(lines)
+            }
+            "issue" => {
+                let Some(id) = invocation
+                    .first_arg()
+                    .and_then(|raw| raw.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let caps: Vec<SecCapability> = invocation.args[1..]
+                    .iter()
+                    .filter_map(|raw| parse_sec_capability(raw))
+                    .collect();
+                if caps.is_empty() {
+                    return CommandOutput::usage(invocation.spec.usage);
+                }
+                match self.access_control.issue_token(id, caps.clone()) {
+                    Ok(_) => {
+                        if !self.cap_token_ids.contains(&id) {
+                            self.cap_token_ids.push(id);
+                        }
+                        self.command_status(format!(
+                            "issued {} capability token(s) to block {id}",
+                            caps.len()
+                        ))
+                    }
+                    Err(error) => CommandOutput::error(&format!("caps issue failed: {error}")),
+                }
+            }
+            "revoke" => {
+                let Some(id) = invocation
+                    .first_arg()
+                    .and_then(|raw| raw.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                if self.access_control.revoke_token(id) {
+                    self.cap_token_ids.retain(|value| *value != id);
+                    self.command_status(format!("revoked capability token for block {id}"))
+                } else {
+                    CommandOutput::error(&format!("no capability token for block {id}"))
+                }
+            }
+            "check" => {
+                let Some(id) = invocation
+                    .first_arg()
+                    .and_then(|raw| raw.parse::<u32>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(cap) = invocation.arg(1).and_then(parse_sec_capability) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                match self.access_control.check_permission(id, &cap) {
+                    Ok(()) => CommandOutput::text(format!("block {id} has {}", cap.name())),
+                    Err(error) => {
+                        CommandOutput::error(&format!("block {id} denied {}: {error}", cap.name()))
+                    }
+                }
+            }
+            _ => CommandOutput::unavailable(&format!("caps {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn sandbox_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        let Some(id) = invocation
+            .first_arg()
+            .and_then(|raw| raw.parse::<u32>().ok())
+        else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        match subcommand {
+            "start" => {
+                let memory_mb = invocation
+                    .arg(1)
+                    .and_then(|raw| raw.parse::<u64>().ok())
+                    .unwrap_or(64);
+                let max_syscalls = invocation
+                    .arg(2)
+                    .and_then(|raw| raw.parse::<u64>().ok())
+                    .unwrap_or(1000);
+                let caps: Vec<SecCapability> = invocation.args[3..]
+                    .iter()
+                    .filter_map(|raw| parse_sec_capability(raw))
+                    .collect();
+                let mut sandbox = Sandbox::new(id, caps, memory_mb * 1024 * 1024, max_syscalls);
+                sandbox.start();
+                self.sandboxes.insert(id, sandbox);
+                self.command_status(format!(
+                    "sandbox for block {id} started ({memory_mb} MB, {max_syscalls} syscalls)"
+                ))
+            }
+            "stop" => match self.sandboxes.get_mut(&id) {
+                Some(sandbox) => {
+                    sandbox.terminate();
+                    self.command_status(format!("sandbox for block {id} terminated"))
+                }
+                None => CommandOutput::error(&format!("no sandbox for block {id}")),
+            },
+            "log" => match self.sandboxes.get(&id) {
+                Some(sandbox) => {
+                    let log = sandbox.syscall_log();
+                    if log.is_empty() {
+                        return CommandOutput::text(format!("no syscalls logged for block {id}"));
+                    }
+                    let mut lines = vec!["TIME_MS          SYSCALL            ALLOWED".to_string()];
+                    for entry in log {
+                        lines.push(format!(
+                            "{:<16}  {:<18} {}",
+                            entry.timestamp_ms, entry.name, entry.allowed
+                        ));
+                    }
+                    CommandOutput::ok(lines)
+                }
+                None => CommandOutput::error(&format!("no sandbox for block {id}")),
+            },
+            "mem" => match self.sandboxes.get(&id) {
+                Some(sandbox) => {
+                    let (used, limit) = sandbox.memory_usage();
+                    CommandOutput::ok(vec![
+                        format!("used       {used} bytes"),
+                        format!("limit      {limit} bytes"),
+                        format!("state      {:?}", sandbox.state()),
+                    ])
+                }
+                None => CommandOutput::error(&format!("no sandbox for block {id}")),
+            },
+            _ => {
+                CommandOutput::unavailable(&format!("sandbox {subcommand} has no host backend yet"))
+            }
+        }
+    }
+
+    fn hw_protect_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "status" => {
+                let mut lines = vec!["hw-protect    protection status".to_string()];
+                let protections = self.hw_bridge.active_protections();
+                lines.push(format!("assignments   {}", protections.len()));
+                for protection in protections {
+                    lines.push(format!("  {protection:?}"));
+                }
+                lines.push(format!(
+                    "mpk           available={} keys={}",
+                    self.mpk.as_ref().is_some_and(|mpk| mpk.supported()),
+                    self.mpk.as_ref().map_or(0, |mpk| mpk.active_keys_count())
+                ));
+                lines.push(format!(
+                    "iommu         available={} status={:?}",
+                    IommuInfo::detect().is_ok_and(|info| info.available),
+                    self.iommu.status()
+                ));
+                lines.push(format!(
+                    "tee           supported={} platform={:?}",
+                    self.tee.supported, self.tee.platform
+                ));
+                CommandOutput::ok(lines)
+            }
+            "mpk" | "tee" | "iommu" => {
+                if invocation.args.len() >= 2 {
+                    let Some(id) = invocation
+                        .first_arg()
+                        .and_then(|raw| raw.parse::<u32>().ok())
+                    else {
+                        return CommandOutput::usage(invocation.spec.usage);
+                    };
+                    let value = invocation.arg(1).unwrap_or("");
+                    let result = match subcommand {
+                        "mpk" => value
+                            .parse::<u16>()
+                            .ok()
+                            .and_then(|key| self.hw_bridge.assign_mpk_protection(id, key).ok())
+                            .is_some(),
+                        "tee" => self
+                            .hw_bridge
+                            .assign_tee_protection(id, value.to_string())
+                            .is_ok(),
+                        _ => value
+                            .parse::<u32>()
+                            .ok()
+                            .and_then(|domain| {
+                                self.hw_bridge.assign_iommu_protection(id, domain).ok()
+                            })
+                            .is_some(),
+                    };
+                    if result {
+                        self.command_status(format!(
+                            "assigned {subcommand} protection to block {id}"
+                        ))
+                    } else {
+                        CommandOutput::error(&format!("invalid {subcommand} assignment arguments"))
+                    }
+                } else {
+                    CommandOutput::unavailable(&format!(
+                        "hw-protect {subcommand} requires <block> <id>; see 'hw-protect status'"
+                    ))
+                }
+            }
+            "clear" => {
+                let count = self.hw_bridge.protection_count();
+                match invocation.first_arg() {
+                    Some(raw) if raw.eq_ignore_ascii_case("all") => self.hw_bridge.clear(),
+                    Some(raw) => match raw.parse::<u32>() {
+                        Ok(id) => {
+                            self.hw_bridge.remove_protection(id);
+                        }
+                        Err(_) => return CommandOutput::usage(invocation.spec.usage),
+                    },
+                    None => self.hw_bridge.clear(),
+                }
+                self.command_status(format!("cleared hardware protections (had {count})"))
+            }
+            _ => CommandOutput::unavailable(&format!(
+                "hw-protect {subcommand} has no host backend yet"
+            )),
+        }
+    }
+
+    fn wasm_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "compile" => {
+                let Some(path) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let bytes = match std::fs::read(path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => return CommandOutput::error(&format!("read '{path}': {error}")),
+                };
+                let sandbox = match WasmSandbox::new(SandboxConfig::default()) {
+                    Ok(sandbox) => sandbox,
+                    Err(error) => return CommandOutput::error(&format!("wasm sandbox: {error}")),
+                };
+                let text = String::from_utf8(bytes.clone()).ok();
+                let compiled = match text
+                    .as_deref()
+                    .filter(|text| text.trim_start().starts_with('('))
+                {
+                    Some(wat) => sandbox.compile_wat(wat).map(|_| ()),
+                    None => sandbox.compile_any(&bytes).map(|_| ()),
+                };
+                match compiled {
+                    Ok(()) => {
+                        self.wasm_source = Some(bytes.clone());
+                        self.command_status(format!(
+                            "compiled WASM module from '{path}' ({} bytes)",
+                            bytes.len()
+                        ))
+                    }
+                    Err(error) => CommandOutput::error(&format!("wasm compile failed: {error}")),
+                }
+            }
+            "call" | "mem" | "grow" => {
+                let Some(function) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let source = match self.wasm_source.as_ref() {
+                    Some(source) => source.clone(),
+                    None => {
+                        return CommandOutput::error(
+                            "no compiled module; run 'wasm compile <file>'",
+                        )
+                    }
+                };
+                let mut block = match WasmBlock::new(
+                    "console".to_string(),
+                    "1.0.0".to_string(),
+                    &source,
+                    SandboxConfig::default(),
+                    IsolationConfig::default(),
+                ) {
+                    Ok(block) => block,
+                    Err(error) => return CommandOutput::error(&format!("wasm block: {error}")),
+                };
+                let mut store = match block.create_store() {
+                    Ok(store) => store,
+                    Err(error) => return CommandOutput::error(&format!("wasm store: {error}")),
+                };
+                if let Err(error) = block.instantiate(&mut store) {
+                    return CommandOutput::error(&format!("wasm instantiate: {error}"));
+                }
+                match subcommand {
+                    "call" => match block.call_func(&mut store, function, &[]) {
+                        Ok(values) => CommandOutput::ok(
+                            values
+                                .iter()
+                                .enumerate()
+                                .map(|(index, value)| format!("result[{index}]  {value:?}"))
+                                .collect(),
+                        ),
+                        Err(error) => {
+                            CommandOutput::error(&format!("wasm call '{function}': {error}"))
+                        }
+                    },
+                    "mem" => {
+                        let stats = block.memory_stats();
+                        CommandOutput::ok(vec![
+                            format!("memory        {} bytes", block.memory_size(&mut store)),
+                            format!("limit         {} pages", stats.limit_pages),
+                            format!("fuel limit    {}", stats.fuel_limit),
+                            format!("instantiated  {}", stats.is_instantiated),
+                        ])
+                    }
+                    _ => {
+                        let pages = match function.parse::<u64>() {
+                            Ok(pages) => pages,
+                            Err(_) => return CommandOutput::usage(invocation.spec.usage),
+                        };
+                        match block.grow_memory(&mut store, pages) {
+                            Ok(()) => {
+                                self.command_status(format!("grew WASM memory by {pages} pages"))
+                            }
+                            Err(error) => {
+                                CommandOutput::error(&format!("wasm grow failed: {error}"))
+                            }
+                        }
+                    }
+                }
+            }
+            _ => CommandOutput::unavailable(&format!("wasm {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn wasi_policy(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(mode) = invocation.first_arg() else {
+            return CommandOutput::ok(vec![
+                format!("default      {:?}", self.wasi_filter.default_policy),
+                format!("allowed      {}", self.wasi_filter.total_allowed()),
+                format!("denied       {}", self.wasi_filter.total_denied()),
+                format!("logged       {}", self.wasi_filter.total_logged()),
+            ]);
+        };
+        self.wasi_filter = match mode.to_ascii_lowercase().as_str() {
+            "permissive" => WasiFilter::permissive(),
+            "restrictive" => WasiFilter::restrictive(),
+            "no-network" | "nonetwork" => WasiFilter::no_network(),
+            "allow" => WasiFilter::new(aios_wasm::SyscallPolicy::Allow),
+            "deny" => WasiFilter::new(aios_wasm::SyscallPolicy::Deny),
+            "log" => WasiFilter::new(aios_wasm::SyscallPolicy::Log),
+            _ => return CommandOutput::usage(invocation.spec.usage),
+        };
+        self.command_status(format!("WASI policy set to '{mode}'"))
+    }
+
+    fn exec_command(&mut self, invocation: &Invocation) -> CommandOutput {
+        match invocation.subcommand {
+            Some("detect") | Some("caps") => {
+                let Some(target) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let kind = match std::fs::read(target) {
+                    Ok(bytes) => ExecutableType::from_bytes(&bytes),
+                    Err(_) => ExecutableType::from_extension(target),
+                };
+                if invocation.subcommand == Some("detect") {
+                    CommandOutput::ok(vec![
+                        format!("file           {target}"),
+                        format!("type           {kind:?}"),
+                        format!("subsystem      {}", kind.subsystem_name()),
+                    ])
+                } else {
+                    let caps = kind.required_capabilities();
+                    let mut lines = vec!["CAPABILITY".to_string()];
+                    for cap in caps {
+                        lines.push(format!("{cap:?}"));
+                    }
+                    CommandOutput::ok(lines)
+                }
+            }
+            None => {
+                let Some(program) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                match std::process::Command::new(program)
+                    .args(&invocation.args[1..])
+                    .output()
+                {
+                    Ok(output) => {
+                        let mut lines = vec![format!("status         {}", output.status)];
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        lines.extend(stdout.lines().map(str::to_string));
+                        lines.extend(stderr.lines().map(|line| format!("stderr: {line}")));
+                        CommandOutput::ok(lines)
+                    }
+                    Err(error) => {
+                        CommandOutput::error(&format!("exec '{program}' failed: {error}"))
+                    }
+                }
+            }
+            _ => CommandOutput::unavailable(&format!(
+                "exec {} has no host backend yet",
+                invocation.display_name()
+            )),
+        }
+    }
+
+    fn deps_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        let Some(target) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let name = Path::new(target)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| target.to_string());
+        let kind = ExecutableType::from_extension(target);
+        let symbols = invocation.args[1..].to_vec();
+        let mut healer = DependencyHealer::new(0);
+        match subcommand {
+            "scan" => {
+                let result = healer.scan_dependencies(&name, kind, &symbols);
+                let mut lines = vec![
+                    format!("executable     {target}"),
+                    format!("type           {kind:?}"),
+                    format!("satisfied      {}", result.already_satisfied.len()),
+                    format!("missing        {}", result.missing.len()),
+                ];
+                for dependency in result.missing {
+                    lines.push(format!(
+                        "  {} ({:?}) required by {}",
+                        dependency.name, dependency.dep_type, dependency.required_by
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
+            "heal" => match healer.heal_dependencies(&name, kind, &symbols, false) {
+                Ok(resolutions) => {
+                    let mut lines = vec![format!(
+                        "resolved       {} dependency(ies)",
+                        resolutions.len()
+                    )];
+                    for resolution in resolutions {
+                        lines.push(format!(
+                            "  {} -> {}",
+                            resolution.original_name, resolution.resolved_path
+                        ));
+                    }
+                    self.note(format!("healed dependencies for '{target}'"));
+                    CommandOutput::ok(lines)
+                }
+                Err(error) => CommandOutput::error(&format!("deps heal failed: {error}")),
+            },
+            _ => CommandOutput::unavailable(&format!("deps {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn compat_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "list" => {
+                let processes = self.compat_manager.active_processes();
+                if processes.is_empty() {
+                    return CommandOutput::text("no compatibility processes");
+                }
+                let mut lines = vec!["PID  NAME              TYPE         MEM_MB".to_string()];
+                for process in processes {
+                    lines.push(format!(
+                        "{:<4} {:<17} {:<12} {}",
+                        process.pid,
+                        process.name,
+                        format!("{:?}", process.exe_type),
+                        process.memory_used_mb
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
+            "kill" => {
+                let Some(pid) = invocation
+                    .first_arg()
+                    .and_then(|raw| raw.parse::<u64>().ok())
+                else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                match self.compat_manager.terminate_process(pid) {
+                    Ok(()) => {
+                        self.command_status(format!("compatibility process {pid} terminated"))
+                    }
+                    Err(error) => CommandOutput::error(&format!("compat kill failed: {error}")),
+                }
+            }
+            _ => {
+                CommandOutput::unavailable(&format!("compat {subcommand} has no host backend yet"))
+            }
+        }
+    }
+
+    fn context_command(&mut self, _invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "stats" => CommandOutput::ok(vec![
+                format!("total        {}", self.context_store.total_entries()),
+                format!("telemetry    {}", self.context_store.telemetry().count()),
+                format!("workflows    {}", self.context_store.workflows().count()),
+                format!("stability    {}", self.context_store.stability().count()),
+                format!("compact      {}", self.context_store.should_compact()),
+            ]),
+            "export" => {
+                let export = self.context_store.export_all();
+                CommandOutput::ok(vec![
+                    format!("telemetry    {}", export.telemetry_entries),
+                    format!("workflows    {}", export.workflow_entries),
+                    format!("stability    {}", export.stability_entries),
+                ])
+            }
+            "compact" => {
+                let report = self.context_store.compact();
+                self.command_status(format!(
+                    "compacted context: {} telemetry, {} workflow, {} stability entr(ies)",
+                    report.telemetry_pruned, report.workflows_pruned, report.stability_pruned
+                ))
+            }
+            "persist" => {
+                let store = PersistentStore::new(&self.config.context_db_path);
+                match store.save_all(
+                    self.context_store.telemetry(),
+                    self.context_store.workflows(),
+                    self.context_store.stability(),
+                ) {
+                    Ok(summary) => self.command_status(format!(
+                        "persisted {} telemetry, {} workflow, {} stability entr(ies) to {}",
+                        summary.telemetry_entries,
+                        summary.workflow_entries,
+                        summary.stability_entries,
+                        self.config.context_db_path.display()
+                    )),
+                    Err(error) => CommandOutput::error(&format!("context persist failed: {error}")),
+                }
+            }
+            _ => {
+                CommandOutput::unavailable(&format!("context {subcommand} has no host backend yet"))
+            }
+        }
+    }
+
+    fn workflow_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "list" => {
+                let workflows = self.context_store.workflows();
+                let mut names: Vec<_> = workflows.profiles.keys().collect();
+                names.sort();
+                if names.is_empty() {
+                    return CommandOutput::text("no workflow profiles");
+                }
+                let mut lines = vec!["NAME                 USES  TRIGGERS".to_string()];
+                for name in names {
+                    let profile = &workflows.profiles[name];
+                    lines.push(format!(
+                        "{:<20} {:<5} {}",
+                        profile.name,
+                        profile.usage_count,
+                        profile.trigger_blocks.join(", ")
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
+            "priority" => {
+                let Some(profile_name) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let Some(process) = invocation.arg(1) else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let workflows = self.context_store.workflows_mut();
+                let Some(profile) = workflows.get_mut(profile_name) else {
+                    return CommandOutput::error(&format!("no workflow profile '{profile_name}'"));
+                };
+                match invocation.arg(2) {
+                    Some(value) => match value.parse::<u8>().ok() {
+                        Some(priority) => {
+                            profile.set_priority(process, priority);
+                            self.command_status(format!(
+                                "priority of '{process}' in '{profile_name}' set to {priority}"
+                            ))
+                        }
+                        None => CommandOutput::usage(invocation.spec.usage),
+                    },
+                    None => match profile.get_priority(process) {
+                        Some(priority) => {
+                            CommandOutput::text(format!("{profile_name}/{process} = {priority}"))
+                        }
+                        None => CommandOutput::text(format!(
+                            "no priority for '{process}' in '{profile_name}'"
+                        )),
+                    },
+                }
+            }
+            _ => CommandOutput::unavailable(&format!(
+                "workflow {subcommand} has no host backend yet"
+            )),
+        }
+    }
+
+    fn stability_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        let stability = self.context_store.stability();
+        match subcommand {
+            "list" => {
+                if stability.scores.is_empty() {
+                    return CommandOutput::text("no stability scores");
+                }
+                let mut lines = vec!["BLOCK            VERSION    SCORE   CRASHES".to_string()];
+                for score in &stability.scores {
+                    lines.push(format!(
+                        "{:<16} {:<10} {:<7.2} {}",
+                        score.block_name, score.binary_version, score.score, score.crash_count
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
+            "best" => {
+                let Some(name) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                match stability.best_version(name) {
+                    Some(score) => CommandOutput::ok(vec![
+                        format!("block          {}", score.block_name),
+                        format!("version        {}", score.binary_version),
+                        format!("score          {:.2}", score.score),
+                    ]),
+                    None => CommandOutput::text(format!("no stability score for '{name}'")),
+                }
+            }
+            "worst" => match stability.worst_score() {
+                Some(score) => CommandOutput::ok(vec![
+                    format!("block          {}", score.block_name),
+                    format!("version        {}", score.binary_version),
+                    format!("score          {:.2}", score.score),
+                    format!("crashes         {}", score.crash_count),
+                ]),
+                None => CommandOutput::text("no stability scores"),
+            },
+            _ => CommandOutput::unavailable(&format!(
+                "stability {subcommand} has no host backend yet"
+            )),
+        }
+    }
+
+    fn trace_list(&self) -> CommandOutput {
+        let spans = self.trace_context.spans();
+        if spans.is_empty() {
+            return CommandOutput::text("no trace spans");
+        }
+        let mut lines = vec!["TRACE_ID         OPERATION         DURATION_MS  STATUS".to_string()];
+        for span in spans {
+            let status = match &span.status {
+                SpanStatus::Ok => "Ok".to_string(),
+                SpanStatus::Timeout => "Timeout".to_string(),
+                SpanStatus::Error(error) => format!("Error({error})"),
+            };
+            lines.push(format!(
+                "{:<16}  {:<17} {:<12} {}",
+                span.trace_id,
+                span.operation,
+                span.end_time_ms
+                    .map(|end| end.saturating_sub(span.start_time_ms))
+                    .unwrap_or(0),
+                status
+            ));
+        }
+        CommandOutput::ok(lines)
+    }
+
+    fn crash_report(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(kind) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let message = invocation.args[1..].join(" ");
+        if message.is_empty() {
+            return CommandOutput::usage(invocation.spec.usage);
+        }
+        let kind = match kind.to_ascii_lowercase().as_str() {
+            "panic" => CrashKind::Panic,
+            "watchdog" | "watchdog_timeout" => CrashKind::WatchdogTimeout,
+            "oom" => CrashKind::OOM,
+            "block" | "block_crash" => CrashKind::BlockCrash,
+            _ => CrashKind::Unknown,
+        };
+        let report = self
+            .crash_reporter
+            .generate_report(kind, "console", &message, "", "", false);
+        self.command_status(format!("crash report {} generated", report.id))
+    }
+
+    fn ensure_autohal(&mut self) -> Result<&mut AutohalEngine, CommandOutput> {
+        if self.autohal.is_none() {
+            let config = EngineConfig {
+                store_root: self.config.blocks_dir.join("drivers"),
+                ..EngineConfig::default()
+            };
+            self.autohal =
+                Some(AutohalEngine::new(config).map_err(|error| {
+                    CommandOutput::error(&format!("driver engine init: {error}"))
+                })?);
+        }
+        Ok(self.autohal.as_mut().expect("driver engine initialized"))
+    }
+
+    fn driver_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        let (_, profile) = self.hardware();
+        let fingerprints = extract_fingerprints(&profile);
+        match subcommand {
+            "list" => {
+                let engine = match self.ensure_autohal() {
+                    Ok(engine) => engine,
+                    Err(output) => return output,
+                };
+                let views = engine.device_views();
+                if views.is_empty() {
+                    return CommandOutput::text("no driver devices registered");
+                }
+                let mut lines = vec![
+                    "DRIVER           NAME                 STATE         FAILURES".to_string(),
+                ];
+                for view in views {
+                    lines.push(format!(
+                        "{:<16} {:<20} {:<13} {}",
+                        view.driver_id,
+                        view.driver_name,
+                        format!("{:?}", view.state),
+                        view.failures
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
+            "failures" => {
+                let engine = match self.ensure_autohal() {
+                    Ok(engine) => engine,
+                    Err(output) => return output,
+                };
+                let index = engine.store().index();
+                match invocation.first_arg() {
+                    Some(id) => {
+                        CommandOutput::text(format!("{id}: {} failure(s)", index.failures_for(id)))
+                    }
+                    None => {
+                        let mut failures: Vec<_> = index
+                            .failures
+                            .iter()
+                            .filter(|(_, count)| **count > 0)
+                            .collect();
+                        failures.sort_by(|left, right| left.0.cmp(right.0));
+                        if failures.is_empty() {
+                            return CommandOutput::text("no driver failures recorded");
+                        }
+                        let mut lines = vec!["DRIVER           FAILURES".to_string()];
+                        for (id, count) in failures {
+                            lines.push(format!("{id:<16} {count}"));
+                        }
+                        CommandOutput::ok(lines)
+                    }
+                }
+            }
+            "remove" => {
+                let Some(id) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let engine = match self.ensure_autohal() {
+                    Ok(engine) => engine,
+                    Err(output) => return output,
+                };
+                if engine.uninstall_driver(id) {
+                    self.command_status(format!("driver '{id}' removed"))
+                } else {
+                    CommandOutput::error(&format!("driver '{id}' not found"))
+                }
+            }
+            "rollback" | "install" | "provision" => {
+                let engine = match self.ensure_autohal() {
+                    Ok(engine) => engine,
+                    Err(output) => return output,
+                };
+                if let Some(target) = invocation.first_arg() {
+                    let fingerprint = fingerprints
+                        .iter()
+                        .find(|candidate| {
+                            candidate.key() == target || candidate.driver_id() == target
+                        })
+                        .cloned();
+                    let Some(fingerprint) = fingerprint else {
+                        return CommandOutput::error(&format!(
+                            "no hardware fingerprint matching '{target}'"
+                        ));
+                    };
+                    if subcommand == "rollback" {
+                        engine.rollback_to_generic(&fingerprint);
+                        self.command_status(format!(
+                            "rolled back '{}' to the generic driver",
+                            fingerprint.display_name()
+                        ))
+                    } else {
+                        engine.provision_blocking(fingerprint);
+                        self.command_status(format!(
+                            "provisioning attempted for '{}'; check 'driver list'",
+                            target
+                        ))
+                    }
+                } else {
+                    engine.rescan(&profile);
+                    self.command_status(format!(
+                        "hardware rescan complete ({} fingerprint(s))",
+                        fingerprints.len()
+                    ))
+                }
+            }
+            _ => {
+                CommandOutput::unavailable(&format!("driver {subcommand} has no host backend yet"))
+            }
+        }
+    }
+
+    fn hotplug_command(&mut self, _invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "start" => {
+                self.hotplug = Some(HotplugMonitor::start(HotplugConfig::default()));
+                self.command_status("hotplug monitor started")
+            }
+            "events" => match self.hotplug.as_ref() {
+                Some(monitor) => match monitor.try_recv() {
+                    Some(event) => {
+                        let action = if event.is_added() { "added" } else { "removed" };
+                        CommandOutput::text(format!(
+                            "{} {}",
+                            action,
+                            event.fingerprint().display_name()
+                        ))
+                    }
+                    None => CommandOutput::text("no hotplug events"),
+                },
+                None => CommandOutput::error("hotplug monitor is not running"),
+            },
+            "drain" => match self.hotplug.as_ref() {
+                Some(monitor) => self.command_status(format!(
+                    "drained {} hotplug event(s)",
+                    monitor.drain().len()
+                )),
+                None => CommandOutput::error("hotplug monitor is not running"),
+            },
+            _ => {
+                CommandOutput::unavailable(&format!("hotplug {subcommand} has no host backend yet"))
+            }
+        }
+    }
+
+    fn wifi_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "status" => self.net_status(),
+            "scan" => match StoreManager::block_on(self.wifi.scan()) {
+                Ok(networks) => {
+                    if networks.is_empty() {
+                        return CommandOutput::text("no Wi-Fi networks found");
+                    }
+                    let mut lines = vec!["SSID                 RSSI  SECURITY  BAND".to_string()];
+                    for network in networks {
+                        lines.push(format!(
+                            "{:<20} {:<5} {:<9} {:?}",
+                            network.ssid,
+                            network.rssi_dbm,
+                            network.security.label(),
+                            network.band
+                        ));
+                    }
+                    CommandOutput::ok(lines)
+                }
+                Err(error) => CommandOutput::error(&format!("wifi scan failed: {error}")),
+            },
+            "connect" => {
+                let Some(ssid) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let password = invocation.arg(1);
+                match StoreManager::block_on(self.wifi.connect(ssid, password)) {
+                    Ok(link) => self.command_status(format!(
+                        "connected to '{ssid}' ({:?}, RSSI {} dBm)",
+                        link.state, link.rssi_dbm
+                    )),
+                    Err(error) => CommandOutput::error(&format!("wifi connect failed: {error}")),
+                }
+            }
+            "disconnect" => match StoreManager::block_on(self.wifi.disconnect()) {
+                Ok(()) => self.command_status("Wi-Fi disconnected"),
+                Err(error) => CommandOutput::error(&format!("wifi disconnect failed: {error}")),
+            },
+            "sim" => {
+                self.wifi = NetManager::new(WifiBackend::Simulated(SimulatedWifi::default()), None);
+                self.command_status("Wi-Fi backend set to simulated")
+            }
+            "real" => {
+                self.wifi = NetManager::new(WifiBackend::Host, None);
+                self.command_status("Wi-Fi backend set to host")
+            }
+            _ => CommandOutput::unavailable(&format!("wifi {subcommand} has no host backend yet")),
+        }
+    }
+
+    fn hub_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
+        match subcommand {
+            "status" => {
+                let snapshot = StoreManager::block_on(self.sys_hub.refresh_status());
+                let mut lines = vec![snapshot.status_line()];
+                lines.push(format!("layout       {}", snapshot.layout));
+                lines.push(format!("battery      {:?}", snapshot.battery_percent));
+                lines.push(format!("ac online    {:?}", snapshot.ac_online));
+                lines.push(format!("max temp     {:.1} C", snapshot.max_temp_c));
+                lines.push(format!("throttled    {}", snapshot.throttled));
+                CommandOutput::ok(lines)
+            }
+            "scan" => match StoreManager::block_on(self.sys_hub.scan_networks()) {
+                Ok(networks) => {
+                    if networks.is_empty() {
+                        return CommandOutput::text("no Wi-Fi networks found");
+                    }
+                    let mut lines = vec!["SSID                 RSSI  SECURITY".to_string()];
+                    for network in networks {
+                        lines.push(format!(
+                            "{:<20} {:<5} {}",
+                            network.ssid,
+                            network.rssi_dbm,
+                            network.security.label()
+                        ));
+                    }
+                    CommandOutput::ok(lines)
+                }
+                Err(error) => CommandOutput::error(&format!("hub scan failed: {error}")),
+            },
+            "wifi" => {
+                let Some(ssid) = invocation.first_arg() else {
+                    return CommandOutput::usage(invocation.spec.usage);
+                };
+                let password = invocation.arg(1);
+                match StoreManager::block_on(self.sys_hub.connect_wifi(ssid, password)) {
+                    Ok(link) => {
+                        self.command_status(format!("hub connected to '{ssid}' ({:?})", link.state))
+                    }
+                    Err(error) => CommandOutput::error(&format!("hub wifi failed: {error}")),
+                }
+            }
+            "layout" => {
+                let indicator = StoreManager::block_on(self.sys_hub.layout_indicator());
+                CommandOutput::text(indicator)
+            }
+            _ => CommandOutput::unavailable(&format!("hub {subcommand} has no host backend yet")),
         }
     }
 }
@@ -1718,6 +3079,14 @@ fn parse_priority(value: &str) -> Option<Priority> {
         "4" | "critical" => Some(Priority::Critical),
         _ => None,
     }
+}
+
+fn parse_sec_capability(value: &str) -> Option<SecCapability> {
+    let upper = value.trim().to_ascii_uppercase();
+    let upper = upper.strip_prefix("CAP_").unwrap_or(&upper);
+    SecCapability::all_variants()
+        .into_iter()
+        .find(|capability| capability.name().trim_start_matches("CAP_") == upper)
 }
 
 fn resolve_block(registry: &BlockRegistry, target: &str) -> Option<BlockId> {

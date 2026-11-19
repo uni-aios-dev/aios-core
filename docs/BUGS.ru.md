@@ -20,10 +20,21 @@
 | Команды ядра регистрочувствительны (`HELP`, `Clear` не работают) | `aios-kernel/src/tui.rs:178-304` | Поиск в реестре регистронезависимый |
 
 Известное ограничение нового бэкенда: `HostBackend` реализует только
-подкоманды, перечисленные в `src/host.rs`. Корректные записи реестра, такие как
-`net validate`, `block swap`, `store verify`, `vfs readat`, `update history` и
-`wifi status`, намеренно возвращают `ERR unavailable`, пока для них не появится
-адаптер. Шелл `aios` сейчас предоставляет новый бэкенд только через префикс
+подкоманды, перечисленные в `src/host.rs`. Прежние пробелы — `net validate`,
+`store verify`, `vfs readat` и `wifi status` — теперь имеют реальные адаптеры,
+но корректные записи реестра, такие как `jobs|fg|bg`, `acl grant|revoke`,
+`ping`, `net recheck`, `block swap|rollback`, `update history|pending|recover`,
+`state extract|restore` и `fm jobs|cancel`, по-прежнему возвращают
+`ERR unavailable`, поскольку для них нет реального библиотечного API.
+
+Вторая группа — `wd start|stop|force-safe-mode|escalate`,
+`bridge status|start|stop` и `auth register|login|me` — тоже остаётся
+`unavailable`: добавление `aios-watchdog` или `aios-bridge` в качестве
+зависимости `aios-console` создало бы цикл (`aios-watchdog -> aios-console`,
+`aios-bridge -> aios-watchdog`). Этим командам нужна точка внедрения или
+реализация на стороне хоста вне `aios-console`.
+
+Шелл `aios` сейчас предоставляет новый бэкенд только через префикс
 `console <...>`; до проверки паритета активным командным слоем остаются старые
 диспетчеры. У `KernelBackend` то же ограничение: реализованы только команды с
 реальными ядерными API, а старый баг ядерного `clear` сохраняется на старом пути

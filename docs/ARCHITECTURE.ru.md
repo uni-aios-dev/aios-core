@@ -100,6 +100,31 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 зависящие от оборудования, в эти тесты не входят: таблица проверяет только
 результаты разрешения команд.
 
+`HostBackendConfig.context_db_path` задаёт файл redb для `context persist`.
+`HostBackend::execute_line()` — точка входа с учётом алиасов и трассировки:
+алиасы сессии из `alias`/`unalias` раскрываются до диспетчеризации, а каждый
+вызов записывается как span в `aios-telemetry::TraceContext` (`trace list`).
+Вторая партия адаптеров, построенных на реальных вызовах библиотек, покрывает
+`sleep`, `alias|unalias`, `fault resolve`, `sched mode|quantum|aging|
+rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
+`store trust|verify`, `vfs readat`, `caps list|issue|revoke|check`,
+`sandbox start|stop|log|mem`, `hw-protect status|mpk|tee|iommu|clear`,
+`wasm compile|call|mem|grow`, `wasi policy`, `exec detect|caps|<program>`,
+`deps scan|heal`, `compat list|kill`, `context stats|export|compact|persist`,
+`workflow list|priority`, `stability list|best|worst`, `trace list`,
+`crash report`, `driver list|failures|remove|rollback|install|provision`,
+`hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`
+и `hub status|scan|wifi|layout`. Они используют необязательные std-зависимости
+`aios-debug`, `aios-exec-compat`, `aios-iommu`, `aios-mpk`, `aios-security`,
+`aios-sys-control`, `aios-tee`, `aios-telemetry` и `aios-wasm`; сборка ядра
+`no_std` не затронута. Команды, чей крейт создал бы циклическую зависимость
+(`wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
+`auth register|login|me` — `aios-watchdog` зависит от `aios-console`, а
+`aios-bridge` зависит от `aios-watchdog`), а также команды без реального
+библиотечного API (`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
+`block swap|rollback`, `update history|pending|recover`,
+`state extract|restore`, `fm jobs|cancel`) по-прежнему возвращают `unavailable`.
+
 `aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
 `aios-console` без `std` (`default-features = false`). Он адаптирует существующие
 точки входа ядра: генерируемый `help`, `echo`, `version`, `kernel info|ver`,

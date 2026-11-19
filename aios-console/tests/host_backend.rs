@@ -25,6 +25,7 @@ fn test_config(label: &str) -> (HostBackendConfig, PathBuf) {
         blocks_dir: base.join("blocks"),
         vfs_root: base.join("vfs"),
         net_config_path: base.join("network.json"),
+        context_db_path: base.join("context.redb"),
         total_ram_mb: 512,
         max_restarts: 2,
     };
@@ -320,14 +321,16 @@ fn host_unimplemented_subcommands_are_unavailable() {
     let mut host = backend("unavailable");
 
     for input in [
-        "net validate",
         "block swap",
         "block rollback",
-        "store verify",
-        "vfs readat",
         "update history",
+        "jobs",
+        "acl grant net raw",
+        "ping example.com",
+        "net recheck",
+        "wd force-safe-mode",
+        "bridge status",
         "kernel info",
-        "wifi status",
     ] {
         let output = dispatch(&mut host, input);
         assert_eq!(output.code, ExitCode::Unavailable, "input: {input}");
@@ -1013,4 +1016,227 @@ fn host_hw_fingerprints_uses_the_extracted_device_keys() {
         .lines
         .iter()
         .any(|line| line.contains("actionable=yes")));
+}
+
+#[test]
+fn host_aliases_expand_through_execute_line() {
+    let mut host = backend("aliases");
+
+    assert_ok("alias", &dispatch(&mut host, "alias"));
+    assert_ok("alias ll=echo hi", &dispatch(&mut host, "alias ll=echo hi"));
+
+    let expanded = host.execute_line("ll World");
+    assert_ok("execute_line expanded alias", &expanded);
+    assert_eq!(expanded.lines, ["hi World"]);
+
+    assert_ok("unalias ll", &dispatch(&mut host, "unalias ll"));
+    let after = host.execute_line("ll World");
+    assert_eq!(after.code, ExitCode::Usage);
+    assert_eq!(dispatch(&mut host, "alias").code, ExitCode::Ok);
+}
+
+#[test]
+fn host_sched_and_fault_commands_use_the_scheduler() {
+    let mut host = backend("sched");
+
+    assert_ok("sched mode rt", &dispatch(&mut host, "sched mode rt"));
+    assert_ok("sched quantum 10", &dispatch(&mut host, "sched quantum 10"));
+    assert_ok("sched aging 5", &dispatch(&mut host, "sched aging 5"));
+    assert_ok("sched rt-clear", &dispatch(&mut host, "sched rt-clear"));
+
+    assert_ok(
+        "process spawn worker",
+        &dispatch(&mut host, "process spawn worker"),
+    );
+    assert_ok(
+        "sched rt-deadline 1 100",
+        &dispatch(&mut host, "sched rt-deadline 1 100"),
+    );
+    assert_ok("sched rt-clear 1", &dispatch(&mut host, "sched rt-clear 1"));
+
+    assert_eq!(dispatch(&mut host, "fault resolve").code, ExitCode::Usage);
+    assert_eq!(
+        dispatch(&mut host, "fault resolve 1 bogus").code,
+        ExitCode::Usage
+    );
+    assert_eq!(
+        dispatch(&mut host, "sched mode bogus").code,
+        ExitCode::Usage
+    );
+}
+
+#[test]
+fn host_network_validation_and_status_work() {
+    let mut host = backend("net-extra");
+
+    let valid = dispatch(&mut host, "net validate 1.2.3.4 ip");
+    assert_ok("net validate valid ip", &valid);
+    assert!(valid.lines[0].contains("valid ip"));
+
+    let invalid = dispatch(&mut host, "net validate nope ip");
+    assert_eq!(invalid.code, ExitCode::BackendError);
+
+    assert_ok("net config", &dispatch(&mut host, "net config"));
+    let status = dispatch(&mut host, "net status");
+    assert_ok("net status", &status);
+    assert!(status.lines.iter().any(|line| line.contains("state")));
+
+    let lease = dispatch(&mut host, "net lease");
+    assert_ok("net lease", &lease);
+    assert!(lease.lines[0].contains("no DHCP lease"));
+}
+
+#[test]
+fn host_store_verify_and_vfs_readat_work() {
+    let mut host = backend("verify-readat");
+
+    let verify = dispatch(&mut host, "store verify");
+    assert_ok("store verify", &verify);
+
+    assert_ok(
+        "vfs write AIOS:///note.txt hello world",
+        &dispatch(&mut host, "vfs write AIOS:///note.txt hello world"),
+    );
+    let read = dispatch(&mut host, "vfs readat AIOS:///note.txt 0 5");
+    assert_ok("vfs readat", &read);
+    assert!(read.lines.iter().any(|line| line.contains("hello")));
+    assert_eq!(
+        dispatch(&mut host, "vfs readat AIOS:///note.txt nope 5").code,
+        ExitCode::Usage
+    );
+}
+
+#[test]
+fn host_security_adapters_work() {
+    let mut host = backend("security");
+
+    let empty = dispatch(&mut host, "caps list");
+    assert_ok("caps list", &empty);
+    assert!(empty.lines[0].contains("no capability tokens"));
+
+    assert_ok(
+        "caps issue 7 net_bind",
+        &dispatch(&mut host, "caps issue 7 net_bind"),
+    );
+    assert_ok(
+        "caps check 7 net_bind",
+        &dispatch(&mut host, "caps check 7 net_bind"),
+    );
+    let listed = dispatch(&mut host, "caps list");
+    assert_ok("caps list after issue", &listed);
+    assert!(listed.lines.iter().any(|line| line.contains("NET_BIND")));
+    assert_ok("caps revoke 7", &dispatch(&mut host, "caps revoke 7"));
+
+    assert_ok(
+        "sandbox start 7 64 1000",
+        &dispatch(&mut host, "sandbox start 7 64 1000"),
+    );
+    assert_ok("sandbox mem 7", &dispatch(&mut host, "sandbox mem 7"));
+    assert_ok("sandbox log 7", &dispatch(&mut host, "sandbox log 7"));
+    assert_ok("sandbox stop 7", &dispatch(&mut host, "sandbox stop 7"));
+    assert_eq!(
+        dispatch(&mut host, "sandbox mem 999").code,
+        ExitCode::BackendError
+    );
+
+    assert_ok(
+        "hw-protect status",
+        &dispatch(&mut host, "hw-protect status"),
+    );
+    assert_ok("hw-protect clear", &dispatch(&mut host, "hw-protect clear"));
+}
+
+#[test]
+fn host_wasm_and_wasi_adapters_report_real_state() {
+    let mut host = backend("wasm");
+
+    let policy = dispatch(&mut host, "wasi policy");
+    assert_ok("wasi policy", &policy);
+    assert!(policy.lines.iter().any(|line| line.contains("default")));
+    assert_ok(
+        "wasi policy permissive",
+        &dispatch(&mut host, "wasi policy permissive"),
+    );
+    assert_ok(
+        "wasi policy no-network",
+        &dispatch(&mut host, "wasi policy no-network"),
+    );
+    assert_eq!(
+        dispatch(&mut host, "wasi policy bogus").code,
+        ExitCode::Usage
+    );
+
+    assert_eq!(
+        dispatch(&mut host, "wasm call start").code,
+        ExitCode::BackendError
+    );
+    assert_eq!(dispatch(&mut host, "wasm compile").code, ExitCode::Usage);
+}
+
+#[test]
+fn host_exec_deps_and_context_adapters_work() {
+    let mut host = backend("runtime");
+
+    let detect = dispatch(&mut host, "exec detect missing.exe");
+    assert_ok("exec detect", &detect);
+    assert!(detect.lines.iter().any(|line| line.contains("type")));
+
+    let caps = dispatch(&mut host, "exec caps missing.exe");
+    assert_ok("exec caps", &caps);
+
+    let scan = dispatch(&mut host, "deps scan app.exe foo");
+    assert_ok("deps scan", &scan);
+    assert!(scan.lines.iter().any(|line| line.contains("executable")));
+
+    assert_ok("compat list", &dispatch(&mut host, "compat list"));
+    assert_eq!(dispatch(&mut host, "compat kill").code, ExitCode::Usage);
+
+    assert_ok("context stats", &dispatch(&mut host, "context stats"));
+    assert_ok("context export", &dispatch(&mut host, "context export"));
+    assert_ok("context compact", &dispatch(&mut host, "context compact"));
+
+    assert_ok("workflow list", &dispatch(&mut host, "workflow list"));
+    assert_ok("stability list", &dispatch(&mut host, "stability list"));
+    assert_ok("stability worst", &dispatch(&mut host, "stability worst"));
+
+    let report = dispatch(&mut host, "crash report panic test failure");
+    assert_ok("crash report", &report);
+    assert!(report.lines[0].contains("crash report"));
+}
+
+#[test]
+fn host_trace_records_execute_line_spans() {
+    let mut host = backend("trace");
+    assert_eq!(dispatch(&mut host, "trace list").lines, ["no trace spans"]);
+
+    assert_ok("echo traced", &host.execute_line("echo traced"));
+    let traces = host.execute_line("trace list");
+    assert_ok("trace list", &traces);
+    assert!(traces
+        .lines
+        .iter()
+        .any(|line| line.contains("console.command")));
+}
+
+#[test]
+fn host_wifi_hotplug_and_hub_adapters_work() {
+    let mut host = backend("wifi-hotplug");
+    host.set_hardware_profile(HardwareProfile::mock_modern());
+
+    assert_ok("wifi sim", &dispatch(&mut host, "wifi sim"));
+    let status = dispatch(&mut host, "wifi status");
+    assert_ok("wifi status", &status);
+    assert!(status.lines.iter().any(|line| line.contains("state")));
+    assert_ok("wifi scan", &dispatch(&mut host, "wifi scan"));
+    assert_ok("wifi disconnect", &dispatch(&mut host, "wifi disconnect"));
+    assert_ok("wifi real", &dispatch(&mut host, "wifi real"));
+
+    assert_ok("hotplug start", &dispatch(&mut host, "hotplug start"));
+    assert_ok("hotplug events", &dispatch(&mut host, "hotplug events"));
+    assert_ok("hotplug drain", &dispatch(&mut host, "hotplug drain"));
+
+    assert_ok("driver list", &dispatch(&mut host, "driver list"));
+    assert_ok("driver failures", &dispatch(&mut host, "driver failures"));
+    assert_ok("hub status", &dispatch(&mut host, "hub status"));
+    assert_ok("hub layout", &dispatch(&mut host, "hub layout"));
 }

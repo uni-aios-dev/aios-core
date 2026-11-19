@@ -99,6 +99,31 @@ unit tests against the pure seams `SafeModeShell::parse_command`,
 `IntentEngine::translate` and the `aios-shell` alias expander. Hardware-bound
 handlers stay out of these tests; the table asserts resolution results only.
 
+`HostBackendConfig.context_db_path` selects the redb file used by `context
+persist`. `HostBackend::execute_line()` is the alias- and trace-aware entry
+point: session aliases created by `alias`/`unalias` are expanded before dispatch
+and every invocation is recorded as a span in `aios-telemetry::TraceContext`
+(`trace list`). A second batch of adapters, all backed by real library calls,
+covers `sleep`, `alias|unalias`, `fault resolve`, `sched mode|quantum|aging|
+rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
+`store trust|verify`, `vfs readat`, `caps list|issue|revoke|check`,
+`sandbox start|stop|log|mem`, `hw-protect status|mpk|tee|iommu|clear`,
+`wasm compile|call|mem|grow`, `wasi policy`, `exec detect|caps|<program>`,
+`deps scan|heal`, `compat list|kill`, `context stats|export|compact|persist`,
+`workflow list|priority`, `stability list|best|worst`, `trace list`,
+`crash report`, `driver list|failures|remove|rollback|install|provision`,
+`hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`
+and `hub status|scan|wifi|layout`. They use the optional std dependencies
+`aios-debug`, `aios-exec-compat`, `aios-iommu`, `aios-mpk`, `aios-security`,
+`aios-sys-control`, `aios-tee`, `aios-telemetry` and `aios-wasm`; the kernel
+`no_std` build is unaffected. Commands whose crate would create a dependency
+cycle (`wd start|stop|force-safe-mode|escalate`, `bridge status|start|stop`,
+`auth register|login|me` — `aios-watchdog` depends on `aios-console` and
+`aios-bridge` depends on `aios-watchdog`) and commands with no real library API
+(`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
+`block swap|rollback`, `update history|pending|recover`,
+`state extract|restore`, `fm jobs|cancel`) still report `unavailable`.
+
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts
 the existing kernel entry points: generated `help`, `echo`, `version`,

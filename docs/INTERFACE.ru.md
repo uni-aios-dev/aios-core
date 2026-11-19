@@ -145,14 +145,34 @@ AIOS предоставляет два интерфейса для управл�
 публикация/подпись пакетов, конвейеры/перенаправление и темы закоментированы в
 `deferred.rs` и возвращают `ERR unavailable: ...` с причиной.
 
-`HostBackend` уже выполняет реализованные команды в реальном хостовом окружении:
-`ps`, `process spawn|kill|renice|suspend|resume|affinity`,
-`block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
-`net show|set|reset`, `store list|sources|source|search|install|update|
-check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics`, `health`, `telemetry`, `ipc`, `sys info|tier`
-и `hw detect|rescan|profile|fingerprints`. Остальные зарегистрированные
-подкоманды возвращают `ERR unavailable`, пока для них не написаны адаптеры.
+`HostBackend` уже выполняет реализованные команды в реальном хостовом окружении.
+Процессы, блоки, store, VFS и интроспекция: `ps`,
+`process spawn|kill|renice|suspend|resume|affinity`,
+`block list|info|load|mock|unload|activate|deps|verify`,
+`store list|sources|source|search|install|update|check-updates|uninstall|
+rollback|trust|verify`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|stat|exists|
+resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
+`sys info|tier` и `hw detect|rescan|profile|fingerprints`. Планировщик, сеть и
+безопасность: `sleep`, `fault resolve`,
+`sched mode|quantum|aging|rt-deadline|rt-clear`,
+`net show|set|reset|validate|config|status|apply|lease`,
+`caps list|issue|revoke|check`, `sandbox start|stop|log|mem` и
+`hw-protect status|mpk|tee|iommu|clear`. Рантайм и управление:
+`wasm compile|call|mem|grow`, `wasi policy`, `exec detect|caps|<program>`,
+`deps scan|heal`, `compat list|kill`, `context stats|export|compact|persist`,
+`workflow list|priority`, `stability list|best|worst`, `crash report`,
+`driver list|failures|remove|rollback|install|provision`,
+`hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`,
+`hub status|scan|wifi|layout`, `alias`, `unalias` и `wd status|reset`.
+`alias`/`unalias` хранят алиасы сессии, которые `execute_line()` раскрывает до
+диспетчеризации; каждый вызов записывается как span `TraceContext`, видимый
+через `trace list`. `HostBackendConfig.context_db_path` задаёт файл redb для
+`context persist`. Команды без реального библиотечного API (`jobs|fg|bg`,
+`acl grant|revoke`, `ping`, `net recheck`, `block swap|rollback`,
+`update history|pending|recover`, `state extract|restore`, `fm jobs|cancel`) и
+команды, которые создали бы циклическую зависимость (`wd start|stop|
+force-safe-mode|escalate`, `bridge status|start|stop`,
+`auth register|login|me`), по-прежнему возвращают `ERR unavailable`.
 
 `metrics` выводит снимок счётчиков, построенный только из реального состояния
 рантайма; флаг `--json` даёт структурированный объект, `--prometheus` — текст в

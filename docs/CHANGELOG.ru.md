@@ -95,6 +95,34 @@
   `aios-shell`. В реестр добавлены алиасы `processes`, `ver` и `cls`, а также
   алиасы без аргументов `log`/`wifi`: каждое старое написание получило
   каноническую цель без перехвата `log clear` и `wifi scan`.
+- Вторая партия хостовых адаптеров теперь делегирует реальным библиотечным
+  крейтам вместо `ERR unavailable`: `sleep`, `alias`/`unalias`, `fault resolve`,
+  `sched mode|quantum|aging|rt-deadline|rt-clear`,
+  `net validate|config|status|apply|lease`, `store trust|verify`, `vfs readat`,
+  `caps list|issue|revoke|check`, `sandbox start|stop|log|mem`,
+  `hw-protect status|mpk|tee|iommu|clear`, `wasm compile|call|mem|grow`,
+  `wasi policy`, `exec detect|caps|<program>`, `deps scan|heal`,
+  `compat list|kill`, `context stats|export|compact|persist`,
+  `workflow list|priority`, `stability list|best|worst`, `trace list`,
+  `crash report`, `driver list|failures|remove|rollback|install|provision`,
+  `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`
+  и `hub status|scan|wifi|layout`. `aios-console/Cargo.toml` получил
+  необязательные std-зависимости `aios-debug`, `aios-exec-compat`,
+  `aios-iommu`, `aios-mpk`, `aios-security`, `aios-sys-control`, `aios-tee`,
+  `aios-telemetry` и `aios-wasm`; сборка ядра `no_std` не затронута.
+  `HostBackend::execute_line()` раскрывает алиасы сессии до диспетчеризации и
+  записывает каждый вызов как span трассировки, видимый через `trace list`.
+  `HostBackendConfig.context_db_path` задаёт файл redb для `context persist`.
+  Девять интеграционных тестов используют временные пути и подставленные
+  mock-профили; ни один не зависит от физического оборудования и не выполняет
+  длительный `sleep`.
+- Команды, для которых потребовался бы циклический доступ (`wd start|stop|
+  force-safe-mode|escalate`, `bridge status|start|stop`,
+  `auth register|login|me`), а также команды без реального библиотечного API
+  (`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
+  `block swap|rollback`, `update history|pending|recover`,
+  `state extract|restore`, `fm jobs|cancel`) по-прежнему возвращают
+  `ERR unavailable`.
 
 ### Исправлено
 - Аргументы консоли с Windows-путями (например `source C:\Users\script.txt` или

@@ -127,7 +127,29 @@
   `aios-tui` and `aios-shell` unit tests. Added `processes`, `ver`, `cls` and
   argument-free `log`/`wifi` aliases so old spellings resolve without capturing
   real subcommands.
-- [ ] Implement the remaining `ERR unavailable` host adapters.
+- [x] Second host adapter batch in `HostBackend` delegating to real library
+  crates: `sleep`, `alias`/`unalias`, `fault resolve`,
+  `sched mode|quantum|aging|rt-deadline|rt-clear`,
+  `net validate|config|status|apply|lease`, `store trust|verify`, `vfs readat`,
+  `caps list|issue|revoke|check`, `sandbox start|stop|log|mem`,
+  `hw-protect status|mpk|tee|iommu|clear`, `wasm compile|call|mem|grow`,
+  `wasi policy`, `exec detect|caps|<program>`, `deps scan|heal`,
+  `compat list|kill`, `context stats|export|compact|persist`,
+  `workflow list|priority`, `stability list|best|worst`, `trace list`,
+  `crash report`, `driver list|failures|remove|rollback|install|provision`,
+  `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`
+  and `hub status|scan|wifi|layout`. Added `execute_line()` for alias expansion
+  plus `TraceContext` spans and `HostBackendConfig.context_db_path` for redb
+  persistence (9 integration tests on temp paths and injected mock profiles).
+- [ ] Implement the remaining `ERR unavailable` host adapters that have no
+  dependency cycle: `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
+  `block swap|rollback`, `update history|pending|recover`,
+  `state extract|restore`, `fm jobs|cancel` (need real library APIs or an
+  injection seam; do not fake success).
+- [ ] Resolve the cycle-blocked adapters outside `aios-console` via an injection
+  seam or host-side implementation: `wd start|stop|force-safe-mode|escalate`,
+  `bridge status|start|stop`, `auth register|login|me` (`aios-watchdog` depends
+  on `aios-console`, `aios-bridge` depends on `aios-watchdog`).
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
   checks are green.

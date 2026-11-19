@@ -147,13 +147,33 @@ control, store publish/sign, pipes/redirection and theming are commented out in
 `deferred.rs` and report `ERR unavailable: ...` with the reason.
 
 `HostBackend` already executes the implemented commands against the real host
-runtime: `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
-`block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
-`net show|set|reset`, `store list|sources|source|search|install|update|
-check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics`, `health`, `telemetry`, `ipc`, `sys info|tier`
-and `hw detect|rescan|profile|fingerprints`. Other registered subcommands report
-`ERR unavailable` until their adapters are written.
+runtime. Process/block/store/VFS and introspection commands: `ps`,
+`process spawn|kill|renice|suspend|resume|affinity`,
+`block list|info|load|mock|unload|activate|deps|verify`,
+`store list|sources|source|search|install|update|check-updates|uninstall|
+rollback|trust|verify`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|stat|exists|
+resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
+`sys info|tier` and `hw detect|rescan|profile|fingerprints`. Scheduling,
+networking and security: `sleep`, `fault resolve`,
+`sched mode|quantum|aging|rt-deadline|rt-clear`,
+`net show|set|reset|validate|config|status|apply|lease`,
+`caps list|issue|revoke|check`, `sandbox start|stop|log|mem` and
+`hw-protect status|mpk|tee|iommu|clear`. Runtime and management adapters:
+`wasm compile|call|mem|grow`, `wasi policy`, `exec detect|caps|<program>`,
+`deps scan|heal`, `compat list|kill`, `context stats|export|compact|persist`,
+`workflow list|priority`, `stability list|best|worst`, `crash report`,
+`driver list|failures|remove|rollback|install|provision`,
+`hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`,
+`hub status|scan|wifi|layout`, `alias`, `unalias` and `wd status|reset`.
+`alias`/`unalias` maintain session aliases expanded by `execute_line()` before
+dispatch; every invocation is recorded as a `TraceContext` span shown by
+`trace list`. `HostBackendConfig.context_db_path` selects the redb file used by
+`context persist`. Commands without a real library API (`jobs|fg|bg`,
+`acl grant|revoke`, `ping`, `net recheck`, `block swap|rollback`,
+`update history|pending|recover`, `state extract|restore`, `fm jobs|cancel`)
+and commands that would create a dependency cycle (`wd start|stop|
+force-safe-mode|escalate`, `bridge status|start|stop`,
+`auth register|login|me`) still report `ERR unavailable`.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.

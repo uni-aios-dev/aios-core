@@ -17,6 +17,15 @@ std = [
     "dep:aios-net-config",
     "dep:aios-store",
     "dep:aios-vfs",
+    "dep:aios-debug",
+    "dep:aios-exec-compat",
+    "dep:aios-iommu",
+    "dep:aios-mpk",
+    "dep:aios-security",
+    "dep:aios-sys-control",
+    "dep:aios-tee",
+    "dep:aios-telemetry",
+    "dep:aios-wasm",
     "dep:serde_json",
 ]
 
@@ -31,4 +40,13 @@ aios-process-mgr = { path = "../aios-process-mgr", optional = true }
 aios-net-config = { path = "../aios-net-config", optional = true }
 aios-store = { path = "../aios-store", optional = true }
 aios-vfs = { path = "../aios-vfs", optional = true }
+aios-debug = { path = "../aios-debug", optional = true }
+aios-exec-compat = { path = "../aios-exec-compat", optional = true }
+aios-iommu = { path = "../aios-iommu", optional = true }
+aios-mpk = { path = "../aios-mpk", optional = true }
+aios-security = { path = "../aios-security", optional = true }
+aios-sys-control = { path = "../aios-sys-control", optional = true }
+aios-tee = { path = "../aios-tee", optional = true }
+aios-telemetry = { path = "../aios-telemetry", optional = true }
+aios-wasm = { path = "../aios-wasm", optional = true }
 serde_json = { workspace = true, optional = true }
