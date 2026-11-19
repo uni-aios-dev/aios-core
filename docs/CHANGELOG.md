@@ -72,6 +72,15 @@
   console, so the commands observe the same traffic as the bridge. Six
   integration tests cover metrics, peek, validation, reroute/flush,
   freeze/unfreeze and an externally shared bus.
+- `sys info`, `sys tier`, `hw detect`, `hw rescan` and `hw profile [name]` now
+  use real `aios-hal` hardware data instead of returning `ERR unavailable`.
+  `sys` reports the inventory and derived AI tier, `hw detect` reads the cached
+  snapshot, `hw rescan` forces a fresh HAL detection and `hw profile` selects a
+  deterministic mock profile (`modern`, `legacy`, `legacy-2012`, `nvidia`,
+  `intel-meteor-lake`, `qualcomm-x-elite`). `HostBackend::set_hardware_profile`
+  injects a snapshot so tests never depend on physical hardware. Six integration
+  tests cover inventory, tier derivation, profile switching, name validation,
+  cached detection and forced rescan.
 
 ### Fixed
 - Console arguments containing Windows paths (for example `source

@@ -105,8 +105,12 @@
 - [x] Адаптер `ipc` в `HostBackend` поверх общей шины `IpcBus` из bridge: `stats`,
   `send`, `peek`, `reroute`, `flush`, `freeze` и `unfreeze`; `BridgeContext`
   предоставляет `ipc_bus` как `Arc<Mutex<IpcBus>>` (6 интеграционных тестов).
+- [x] Адаптеры `sys`/`hw` в `HostBackend` на реальных профилях `aios-hal`:
+  `sys info`, `sys tier`, `hw detect`, `hw rescan` и `hw profile [name]`;
+  подставляемый профиль делает тесты независимыми от оборудования
+  (6 интеграционных тестов).
 - [ ] Реализовать оставшиеся хостовые адаптеры с `ERR unavailable` (например
-  `sys info`, `hw profile`) и добавить тесты паритета перед заменой старых
+  `hw fingerprints`) и добавить тесты паритета перед заменой старых
   диспетчеров.
 - [ ] Заменить пять старых диспетчеров (`aios-tui`, `aios`, TUI ядра,
   `SafeModeShell`, `aios-shell`) только после прохождения тестов паритета.

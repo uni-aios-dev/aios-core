@@ -14,6 +14,8 @@ use aios_block_mgr::registry::BlockRegistry;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::{BlockId, BlockState};
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+use aios_hal::ai_tier::AiTier;
+use aios_hal::hardware::HardwareProfile;
 use aios_ipc::bus::IpcBus;
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
@@ -33,6 +35,8 @@ const NET_BLOCK_ID: u32 = 7;
 const HISTORY_LIMIT: usize = 200;
 /// Maximum nesting depth for `source` scripts, preventing runaway recursion.
 const MAX_SOURCE_DEPTH: usize = 8;
+
+type MockProfileFactory = fn() -> HardwareProfile;
 
 /// Point-in-time view of counters used by `metrics` and `health`.
 struct MetricsSnapshot {
@@ -103,6 +107,7 @@ pub struct HostBackend {
     telemetry: TelemetryStore,
     ipc_bus: Arc<Mutex<IpcBus>>,
     frozen_packets: Vec<IpcPacket>,
+    hardware_profile: Option<(String, HardwareProfile)>,
     capabilities: CapabilitySet,
     history: Vec<String>,
     log: Vec<String>,
@@ -145,6 +150,7 @@ impl HostBackend {
             telemetry: TelemetryStore::new(),
             ipc_bus: Arc::new(Mutex::new(IpcBus::new(256))),
             frozen_packets: Vec::new(),
+            hardware_profile: None,
             capabilities: CapabilitySet::all(),
             history: Vec::new(),
             log: Vec::new(),
@@ -162,6 +168,11 @@ impl HostBackend {
     /// Shares the host IPC bus so `ipc` commands observe real bus traffic.
     pub fn set_ipc_bus(&mut self, bus: Arc<Mutex<IpcBus>>) {
         self.ipc_bus = bus;
+    }
+
+    /// Overrides the hardware inventory used by `sys` and `hw` commands.
+    pub fn set_hardware_profile(&mut self, profile: HardwareProfile) {
+        self.hardware_profile = Some(("injected".to_string(), profile));
     }
 
     /// Returns the controlled restart counter.
@@ -265,6 +276,8 @@ impl CommandBackend for HostBackend {
                 CommandOutput::text("log cleared")
             }
             ("status", _) => self.status(),
+            ("sys", Some("info")) => self.sys_info(),
+            ("sys", Some("tier")) => self.sys_tier(),
             ("uptime", _) => CommandOutput::text(format!("{}s", self.started.elapsed().as_secs())),
             ("metrics", _) => self.metrics(invocation),
             ("health", _) => self.health(),
@@ -312,6 +325,9 @@ impl CommandBackend for HostBackend {
             ("store", Some(subcommand)) => self.store_command(invocation, subcommand),
             ("vfs", Some(subcommand)) => self.vfs_command(invocation, subcommand),
             ("ipc", Some(subcommand)) => self.ipc_command(invocation, subcommand),
+            ("hw", Some("detect")) => self.hw_detect(),
+            ("hw", Some("rescan")) => self.hw_rescan(),
+            ("hw", Some("profile")) => self.hw_profile(invocation),
             ("telemetry", Some(subcommand)) => self.telemetry_command(invocation, subcommand),
             ("source", _) => self.source(invocation),
             _ => CommandOutput::unavailable(&format!(
@@ -395,6 +411,164 @@ impl HostBackend {
             ),
             format!("log           {} entries", self.log.len()),
         ])
+    }
+
+    fn hardware(&mut self) -> (String, HardwareProfile) {
+        if self.hardware_profile.is_none() {
+            self.hardware_profile = Some(("detected".to_string(), HardwareProfile::detect()));
+        }
+        self.hardware_profile
+            .clone()
+            .expect("hardware profile initialized")
+    }
+
+    fn hardware_lines(header: &str, source: &str, profile: &HardwareProfile) -> Vec<String> {
+        let cpu = &profile.cpu;
+        let mut lines = vec![
+            header.to_string(),
+            format!("source         {source}"),
+            format!("cpu            {} ({:?})", cpu.model, cpu.vendor),
+            format!(
+                "topology       {} core(s), {} thread(s)",
+                cpu.cores, cpu.threads
+            ),
+            format!("clock          {} MHz", cpu.base_freq_mhz),
+            format!(
+                "simd           avx512={} avx2={} sse42={} neon={}",
+                cpu.has_avx512, cpu.has_avx2, cpu.has_sse42, cpu.has_neon
+            ),
+            format!(
+                "memory         {} MB total, {} MB available",
+                profile.memory.total_mb, profile.memory.available_mb
+            ),
+            format!(
+                "dimm           {} x {} MHz",
+                profile.memory.dimm_count, profile.memory.speed_mhz
+            ),
+        ];
+        match &profile.gpu {
+            Some(gpu) => {
+                let capability = if gpu.compute_capability.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", gpu.compute_capability)
+                };
+                lines.push(format!(
+                    "gpu            {} ({}, {} MB VRAM{})",
+                    gpu.name, gpu.vendor, gpu.vram_mb, capability
+                ));
+            }
+            None => lines.push("gpu            none".to_string()),
+        }
+        match &profile.npu {
+            Some(npu) => {
+                let frameworks = if npu.supported_frameworks.is_empty() {
+                    "none".to_string()
+                } else {
+                    npu.supported_frameworks.join(", ")
+                };
+                lines.push(format!(
+                    "npu            {} ({} TOPS, frameworks: {})",
+                    npu.name, npu.tops, frameworks
+                ));
+            }
+            None => lines.push("npu            none".to_string()),
+        }
+        lines.push(format!(
+            "pci            {} device(s)",
+            profile.pci_devices.len()
+        ));
+        lines.push(format!(
+            "storage        {} device(s)",
+            profile.storage_devices.len()
+        ));
+        lines.push(format!(
+            "usb            {} device(s)",
+            profile.usb_devices.len()
+        ));
+        lines.push(format!(
+            "thunderbolt    {} device(s)",
+            profile.thunderbolt_devices.len()
+        ));
+        lines.push(format!("tier           {}", AiTier::from_profile(profile)));
+        lines
+    }
+
+    fn sys_info(&mut self) -> CommandOutput {
+        let (source, profile) = self.hardware();
+        CommandOutput::ok(Self::hardware_lines(
+            "sys            hardware inventory",
+            &source,
+            &profile,
+        ))
+    }
+
+    fn sys_tier(&mut self) -> CommandOutput {
+        let (source, profile) = self.hardware();
+        let tier = AiTier::from_profile(&profile);
+        CommandOutput::ok(vec![
+            format!("tier           {tier}"),
+            format!("description    {}", tier.description()),
+            format!("max model      {:.1} GB", tier.max_model_size_gb()),
+            format!("batch          {}", tier.recommended_batch_size()),
+            format!("source         {source}"),
+        ])
+    }
+
+    fn hw_detect(&mut self) -> CommandOutput {
+        let (source, profile) = self.hardware();
+        CommandOutput::ok(Self::hardware_lines(
+            "hw             hardware detection",
+            &source,
+            &profile,
+        ))
+    }
+
+    fn hw_rescan(&mut self) -> CommandOutput {
+        self.hardware_profile = None;
+        let (source, profile) = self.hardware();
+        let mut lines = Self::hardware_lines("hw             hardware rescan", &source, &profile);
+        self.note("hardware rescan completed");
+        lines.push("rescan         complete".to_string());
+        CommandOutput::ok(lines)
+    }
+
+    fn hw_profile(&mut self, invocation: &Invocation) -> CommandOutput {
+        const PROFILES: [(&str, MockProfileFactory); 6] = [
+            ("modern", HardwareProfile::mock_modern),
+            ("legacy", HardwareProfile::mock_legacy),
+            ("legacy-2012", HardwareProfile::mock_legacy_2012),
+            ("nvidia", HardwareProfile::mock_nvidia),
+            ("intel-meteor-lake", HardwareProfile::mock_intel_meteor_lake),
+            ("qualcomm-x-elite", HardwareProfile::mock_qualcomm_x_elite),
+        ];
+        let Some(requested) = invocation.arg(0) else {
+            let (source, profile) = self.hardware();
+            return CommandOutput::ok(Self::hardware_lines(
+                "hw             hardware profile",
+                &source,
+                &profile,
+            ));
+        };
+        let name = requested.to_ascii_lowercase();
+        let Some(factory) = PROFILES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, factory)| *factory)
+        else {
+            let names = PROFILES
+                .iter()
+                .map(|(candidate, _)| *candidate)
+                .collect::<Vec<_>>()
+                .join("|");
+            return CommandOutput::usage(&format!("hw profile [{names}]"));
+        };
+        let profile = factory();
+        self.hardware_profile = Some((name.clone(), profile.clone()));
+        let mut lines = Self::hardware_lines("hw             hardware profile", &name, &profile);
+        self.note(format!("hardware profile set to {name}"));
+        lines.push(format!("profile        {name}"));
+        CommandOutput::ok(lines)
     }
 
     fn snapshot(&self) -> MetricsSnapshot {

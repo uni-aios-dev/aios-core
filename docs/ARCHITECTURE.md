@@ -74,8 +74,10 @@ status plus per-issue findings. `telemetry` owns a `TelemetryStore` from
 `aios-context`, so samples recorded through the console use the same ring
 representation as the rest of the system. `ipc` drives an `Arc<Mutex<IpcBus>>`
 shared with `BridgeContext`; `freeze` holds drained packets in the backend until
-`unfreeze`. Session state (history, log, restart counter, source depth) lives in
-the backend. `HostBackend::from_handles`
+`unfreeze`. `sys` and `hw` read `aios-hal` `HardwareProfile` snapshots: the first
+command detects hardware lazily, `hw rescan` forces re-detection and `hw profile`
+selects a mock profile; `set_hardware_profile` injects a snapshot for tests.
+Session state (history, log, restart counter, source depth) lives in the backend. `HostBackend::from_handles`
 accepts shared `Arc<Mutex<Scheduler>>` / `Arc<Mutex<BlockRegistry>>` handles so
 the console and the orchestrator can observe the same runtime; `with_config`
 creates private handles for tests. Subcommands without a real implementation

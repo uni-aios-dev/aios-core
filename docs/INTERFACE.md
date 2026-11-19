@@ -141,9 +141,9 @@ runtime: `ps`, `process spawn|kill|renice|suspend|resume|affinity`,
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics`, `health`, `telemetry` and `ipc`. Other
-registered subcommands report `ERR unavailable` until their adapters are
-written.
+stat|exists|resolve`, `metrics`, `health`, `telemetry`, `ipc`, `sys info|tier`
+and `hw detect|rescan|profile`. Other registered subcommands report
+`ERR unavailable` until their adapters are written.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.
@@ -162,6 +162,15 @@ depth, sent/received/dropped counters and average latency; `send <src> <dst>
 [text] [--priority=N]` queues a packet, `peek` shows the front packet, and
 `reroute`, `flush`, `freeze` and `unfreeze` manage the queue. Frozen packets are
 held by the console until `unfreeze`.
+
+`sys info` prints a hardware inventory from `aios-hal` (CPU, SIMD flags, memory,
+GPU/NPU and device counts) plus the derived AI tier; `sys tier` prints only the
+tier, its description, model limit and batch size. `hw detect` shows the cached
+snapshot, `hw rescan` discards it and forces a fresh HAL detection, and
+`hw profile [name]` selects a deterministic mock profile (`modern`, `legacy`,
+`legacy-2012`, `nvidia`, `intel-meteor-lake`, `qualcomm-x-elite`) for reproducible
+inspection. These commands describe hardware, unlike `status`, which reports
+runtime state.
 
 `source <file>` runs a UTF-8 script through the same dispatcher. Blank lines and
 `#` comments are skipped; the first non-zero exit code is reported while later

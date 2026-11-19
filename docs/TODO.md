@@ -114,8 +114,11 @@
 - [x] `ipc` adapter in `HostBackend` over the shared bridge `IpcBus`: `stats`,
   `send`, `peek`, `reroute`, `flush`, `freeze` and `unfreeze`; `BridgeContext`
   now exposes `ipc_bus` as `Arc<Mutex<IpcBus>>` (6 integration tests).
+- [x] `sys`/`hw` adapters in `HostBackend` on real `aios-hal` profiles: `sys info`,
+  `sys tier`, `hw detect`, `hw rescan` and `hw profile [name]`; an injected
+  profile keeps tests hardware-independent (6 integration tests).
 - [ ] Implement the remaining `ERR unavailable` host adapters (for example
-  `sys info`, `hw profile`) and add parity tests before replacing the legacy
+  `hw fingerprints`) and add parity tests before replacing the legacy
   dispatchers.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
   `SafeModeShell`, `aios-shell`) only after parity tests pass.

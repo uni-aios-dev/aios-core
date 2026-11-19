@@ -140,9 +140,9 @@ AIOS предоставляет два интерфейса для управл�
 `block list|info|load|mock|unload|activate|deps|verify`, `wd status|reset`,
 `net show|set|reset`, `store list|sources|source|search|install|update|
 check-updates|uninstall|rollback`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|
-stat|exists|resolve`, `metrics`, `health`, `telemetry` и `ipc`. Остальные
-зарегистрированные подкоманды возвращают `ERR unavailable`, пока для них не
-написаны адаптеры.
+stat|exists|resolve`, `metrics`, `health`, `telemetry`, `ipc`, `sys info|tier`
+и `hw detect|rescan|profile`. Остальные зарегистрированные подкоманды возвращают
+`ERR unavailable`, пока для них не написаны адаптеры.
 
 `metrics` выводит снимок счётчиков, построенный только из реального состояния
 рантайма; флаг `--json` даёт структурированный объект, `--prometheus` — текст в
@@ -163,6 +163,15 @@ stat|exists|resolve`, `metrics`, `health`, `telemetry` и `ipc`. Остальн�
 <dst> [text] [--priority=N]` ставит пакет в очередь, `peek` показывает первый
 пакет, а `reroute`, `flush`, `freeze` и `unfreeze` управляют очередью. Замороженные
 пакеты хранятся в консоли до `unfreeze`.
+
+`sys info` выводит инвентарь оборудования из `aios-hal` (CPU, флаги SIMD, память,
+GPU/NPU и число устройств) и производный AI-tier; `sys tier` показывает только
+tier, его описание, ограничение размера модели и размер батча. `hw detect`
+показывает кэшированный снимок, `hw rescan` отбрасывает его и выполняет новое
+определение через HAL, а `hw profile [name]` выбирает детерминированный
+mock-профиль (`modern`, `legacy`, `legacy-2012`, `nvidia`, `intel-meteor-lake`,
+`qualcomm-x-elite`) для воспроизводимого просмотра. Эти команды описывают
+оборудование, в отличие от `status`, который сообщает состояние рантайма.
 
 `source <file>` выполняет UTF-8-сценарий через тот же диспетчер. Пустые строки и
 комментарии `#` пропускаются; первый ненулевой код возвращается как результат,

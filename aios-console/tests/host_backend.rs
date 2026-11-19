@@ -6,6 +6,7 @@ use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
 use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::{ExitCode, OutputControl};
+use aios_hal::hardware::HardwareProfile;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -324,7 +325,7 @@ fn host_unimplemented_subcommands_are_unavailable() {
         "block rollback",
         "store verify",
         "vfs readat",
-        "sys info",
+        "hw fingerprints",
         "kernel info",
         "wifi status",
     ] {
@@ -844,4 +845,138 @@ fn host_ipc_observes_an_externally_shared_bus() {
         .lines
         .iter()
         .any(|line| line.contains("Text(external)")));
+}
+
+#[test]
+fn host_sys_info_reports_injected_hardware_inventory() {
+    let mut host = backend("sys-info");
+    host.set_hardware_profile(HardwareProfile::mock_modern());
+
+    let output = dispatch(&mut host, "sys info");
+    assert_ok("sys info", &output);
+    assert!(output.lines[0].starts_with("sys "));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line == "source         injected"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.starts_with("cpu            ")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.starts_with("memory         ")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.starts_with("gpu            ")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.starts_with("npu            ")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("tier           Tier 1")));
+}
+
+#[test]
+fn host_sys_tier_derives_tier_from_the_active_profile() {
+    let mut host = backend("sys-tier");
+    host.set_hardware_profile(HardwareProfile::mock_modern());
+
+    let output = dispatch(&mut host, "sys tier");
+    assert_ok("sys tier", &output);
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("tier           Tier 1")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("max model      70.0 GB")));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("batch          64")));
+
+    host.set_hardware_profile(HardwareProfile::mock_legacy_2012());
+    let legacy = dispatch(&mut host, "sys tier");
+    assert_ok("sys tier", &legacy);
+    assert!(legacy
+        .lines
+        .iter()
+        .any(|line| line.contains("tier           Tier 3")));
+}
+
+#[test]
+fn host_hw_profile_switches_mock_profiles_case_insensitively() {
+    let mut host = backend("hw-profile");
+
+    let modern = dispatch(&mut host, "hw profile MoDeRn");
+    assert_ok("hw profile MoDeRn", &modern);
+    assert!(modern
+        .lines
+        .iter()
+        .any(|line| line.contains("profile        modern")));
+    let info = dispatch(&mut host, "sys info");
+    assert!(info
+        .lines
+        .iter()
+        .any(|line| line == "source         modern"));
+
+    let legacy = dispatch(&mut host, "hw profile legacy-2012");
+    assert_ok("hw profile legacy-2012", &legacy);
+    let tier = dispatch(&mut host, "sys tier");
+    assert!(tier.lines.iter().any(|line| line.contains("Tier 3")));
+}
+
+#[test]
+fn host_hw_profile_rejects_unknown_names_with_usage() {
+    let mut host = backend("hw-profile-invalid");
+
+    let output = dispatch(&mut host, "hw profile alien");
+    assert_eq!(output.code, ExitCode::Usage);
+    assert!(output.lines[0]
+        .contains("modern|legacy|legacy-2012|nvidia|intel-meteor-lake|qualcomm-x-elite"));
+}
+
+#[test]
+fn host_hw_detect_reports_the_cached_profile() {
+    let mut host = backend("hw-detect");
+    host.set_hardware_profile(HardwareProfile::mock_intel_meteor_lake());
+
+    let output = dispatch(&mut host, "hw detect");
+    assert_ok("hw detect", &output);
+    assert!(output.lines[0].starts_with("hw "));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line == "source         injected"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("tier           Tier 1")));
+}
+
+#[test]
+fn host_hw_rescan_forces_fresh_detection() {
+    let mut host = backend("hw-rescan");
+    host.set_hardware_profile(HardwareProfile::mock_modern());
+
+    let output = dispatch(&mut host, "hw rescan");
+    assert_ok("hw rescan", &output);
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line == "source         detected"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line == "rescan         complete"));
+    assert!(host
+        .log_entries()
+        .iter()
+        .any(|entry| entry == "hardware rescan completed"));
 }

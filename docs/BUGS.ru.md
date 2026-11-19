@@ -21,7 +21,7 @@
 
 Известное ограничение нового бэкенда: `HostBackend` реализует только
 подкоманды, перечисленные в `src/host.rs`. Корректные записи реестра, такие как
-`net validate`, `block swap`, `store verify`, `vfs readat`, `sys info` и
+`net validate`, `block swap`, `store verify`, `vfs readat`, `hw fingerprints` и
 `wifi status`, намеренно возвращают `ERR unavailable`, пока для них не появится
 адаптер. Шелл `aios` сейчас предоставляет новый бэкенд только через префикс
 `console <...>`; до проверки паритета активным командным слоем остаются старые

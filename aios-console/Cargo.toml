@@ -9,6 +9,7 @@ default = ["std"]
 std = [
     "dep:aios-core",
     "dep:aios-context",
+    "dep:aios-hal",
     "dep:aios-ipc",
     "dep:aios-block-mgr",
     "dep:aios-process-mgr",
@@ -21,6 +22,7 @@ std = [
 [dependencies]
 aios-core = { path = "../aios-core", optional = true }
 aios-context = { path = "../aios-context", optional = true }
+aios-hal = { path = "../aios-hal", optional = true }
 aios-ipc = { path = "../aios-ipc", optional = true }
 aios-block-mgr = { path = "../aios-block-mgr", optional = true }
 aios-process-mgr = { path = "../aios-process-mgr", optional = true }
