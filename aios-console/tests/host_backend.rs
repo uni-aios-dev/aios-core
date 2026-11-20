@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -43,6 +43,37 @@ fn test_config(label: &str) -> (HostBackendConfig, PathBuf) {
 fn backend(label: &str) -> HostBackend {
     let (config, _) = test_config(label);
     HostBackend::with_config(config)
+}
+
+#[derive(Default)]
+struct ResetWatchdog {
+    resets: AtomicUsize,
+}
+
+impl ResetWatchdog {
+    fn resets(&self) -> usize {
+        self.resets.load(Ordering::Relaxed)
+    }
+}
+
+impl WatchdogControl for ResetWatchdog {
+    fn status(&self) -> Vec<String> {
+        vec!["state: Monitoring".to_string()]
+    }
+    fn start(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn stop(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn force_safe_mode(&self) {}
+    fn reset(&self) -> Result<(), String> {
+        self.resets.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+    fn escalate(&self) -> Vec<String> {
+        vec!["DumpState".to_string(), "SafeModeShell".to_string()]
+    }
 }
 
 fn installed_stub(config: &HostBackendConfig, name: &str) {
@@ -247,6 +278,8 @@ fn host_block_activation_and_dependencies_work() {
 #[test]
 fn host_watchdog_reset_is_bounded() {
     let mut host = backend("wd");
+    let watchdog = Arc::new(ResetWatchdog::default());
+    host.set_watchdog_control(watchdog.clone());
 
     let status = dispatch(&mut host, "wd status");
     assert_ok("wd status", &status);
@@ -257,9 +290,12 @@ fn host_watchdog_reset_is_bounded() {
     assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
     assert_eq!(host.restarts(), 2);
 
+    assert_eq!(watchdog.resets(), 2);
+
     let third = dispatch(&mut host, "wd reset");
     assert_eq!(third.code, ExitCode::BackendError);
     assert!(third.lines[0].contains("max restarts"));
+    assert_eq!(watchdog.resets(), 2);
 }
 
 #[test]
@@ -368,6 +404,7 @@ fn host_vfs_invalid_path_is_a_backend_error() {
 #[test]
 fn host_capability_denial_blocks_privileged_commands() {
     let mut host = backend("caps");
+    host.set_watchdog_control(Arc::new(ResetWatchdog::default()));
     host.set_capabilities(CapabilitySet::new());
 
     let store = dispatch(&mut host, "store list");
@@ -459,6 +496,7 @@ fn host_unavailable_commands_report_precise_reasons() {
 #[test]
 fn host_log_reflects_state_changes() {
     let mut host = backend("log");
+    host.set_watchdog_control(Arc::new(ResetWatchdog::default()));
 
     assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
     let shown = dispatch(&mut host, "log show");
@@ -660,6 +698,7 @@ fn host_health_is_degraded_when_a_process_is_suspended() {
 #[test]
 fn host_health_is_unhealthy_at_the_restart_limit() {
     let mut host = backend("health-unhealthy");
+    host.set_watchdog_control(Arc::new(ResetWatchdog::default()));
     assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
     assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
 
@@ -1427,23 +1466,6 @@ fn host_live_update_journal_tracks_swaps_and_rollbacks() {
 
 #[test]
 fn host_control_seams_enable_watchdog_bridge_and_auth() {
-    struct MockWatchdog;
-    impl WatchdogControl for MockWatchdog {
-        fn status(&self) -> Vec<String> {
-            vec!["state: Monitoring".to_string()]
-        }
-        fn start(&self) -> Result<(), String> {
-            Ok(())
-        }
-        fn stop(&self) -> Result<(), String> {
-            Ok(())
-        }
-        fn force_safe_mode(&self) {}
-        fn escalate(&self) -> Vec<String> {
-            vec!["DumpState".to_string(), "SafeModeShell".to_string()]
-        }
-    }
-
     struct MockBridge;
     impl BridgeControl for MockBridge {
         fn status(&self) -> Vec<String> {
@@ -1475,6 +1497,7 @@ fn host_control_seams_enable_watchdog_bridge_and_auth() {
         dispatch(&mut host, "wd force-safe-mode").code,
         ExitCode::Unavailable
     );
+    assert_eq!(dispatch(&mut host, "wd reset").code, ExitCode::Unavailable);
     assert_eq!(
         dispatch(&mut host, "bridge status").code,
         ExitCode::Unavailable
@@ -1484,7 +1507,8 @@ fn host_control_seams_enable_watchdog_bridge_and_auth() {
         ExitCode::Unavailable
     );
 
-    host.set_watchdog_control(Arc::new(MockWatchdog));
+    let watchdog = Arc::new(ResetWatchdog::default());
+    host.set_watchdog_control(watchdog.clone());
     host.set_bridge_control(Arc::new(MockBridge));
     host.set_auth_provider(Arc::new(MockAuth));
 
@@ -1497,6 +1521,8 @@ fn host_control_seams_enable_watchdog_bridge_and_auth() {
         "wd force-safe-mode",
         &dispatch(&mut host, "wd force-safe-mode"),
     );
+    assert_ok("wd reset", &dispatch(&mut host, "wd reset"));
+    assert_eq!(watchdog.resets(), 1);
     let escalate = dispatch(&mut host, "wd escalate");
     assert_ok("wd escalate", &escalate);
     assert!(escalate

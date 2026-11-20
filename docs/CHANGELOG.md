@@ -3,6 +3,12 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `WatchdogControl` now has a real `reset` operation. The `aios` adapter resets
+  the shared `Watchdog` while keeping its `WatchdogRunner` attached, and
+  `wd reset` calls that seam before incrementing the bounded restart counter;
+  without an adapter it reports `unavailable` instead of faking success. Tests
+  cover reset with and without a monitoring thread, seam invocation and the
+  existing restart limit. EN/RU docs were aligned.
 - The standalone `aios-tui` now builds its `Scheduler` and `BlockRegistry` as
   `Arc<Mutex<...>>` and passes the same handles to `HostBackend::from_handles`,
   so `console ps` and `console block list` observe the processes and blocks used

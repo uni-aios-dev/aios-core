@@ -459,19 +459,7 @@ impl CommandBackend for HostBackend {
             ("wd", Some("stop")) => self.watchdog_stop(),
             ("wd", Some("force-safe-mode")) => self.watchdog_force_safe_mode(),
             ("wd", Some("escalate")) => self.watchdog_escalate(),
-            ("wd", Some("reset")) => {
-                if self.restarts >= self.config.max_restarts {
-                    return CommandOutput::error(&format!(
-                        "max restarts ({}) reached; manual intervention required",
-                        self.config.max_restarts
-                    ));
-                }
-                self.restarts += 1;
-                self.command_status(format!(
-                    "orchestrator restart {} of {} initiated",
-                    self.restarts, self.config.max_restarts
-                ))
-            }
+            ("wd", Some("reset")) => self.watchdog_reset(),
             ("net", Some("show")) => CommandOutput::text(self.net.config().to_json()),
             ("net", Some("set")) => self.net_set(invocation),
             ("net", Some("reset")) => match self.net.reset() {
@@ -1886,6 +1874,26 @@ impl HostBackend {
             return CommandOutput::unavailable("wd escalate needs a host watchdog control seam");
         };
         CommandOutput::ok(control.escalate())
+    }
+
+    fn watchdog_reset(&mut self) -> CommandOutput {
+        if self.restarts >= self.config.max_restarts {
+            return CommandOutput::error(&format!(
+                "max restarts ({}) reached; manual intervention required",
+                self.config.max_restarts
+            ));
+        }
+        let Some(control) = self.watchdog_control.clone() else {
+            return CommandOutput::unavailable("wd reset needs a host watchdog control seam");
+        };
+        if let Err(error) = control.reset() {
+            return CommandOutput::error(&format!("wd reset failed: {error}"));
+        }
+        self.restarts += 1;
+        self.command_status(format!(
+            "orchestrator restart {} of {} initiated",
+            self.restarts, self.config.max_restarts
+        ))
     }
 
     fn bridge_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {

@@ -90,6 +90,19 @@ impl WatchdogControl for HostWatchdogControl {
             .force_safe_mode();
     }
 
+    fn reset(&self) -> Result<(), String> {
+        let runner = self.runner.lock().map_err(|error| error.to_string())?;
+        if let Some(runner) = runner.as_ref() {
+            runner.reset();
+        } else {
+            self.watchdog
+                .lock()
+                .map_err(|error| error.to_string())?
+                .reset();
+        }
+        Ok(())
+    }
+
     fn escalate(&self) -> Vec<String> {
         self.watchdog
             .lock()
@@ -313,12 +326,45 @@ mod tests {
             .any(|action| action.contains("SafeModeShell")));
         assert!(actions.iter().any(|action| action.contains("DumpState")));
 
+        control.reset().expect("reset watchdog");
+        assert_eq!(
+            handle
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .state(),
+            aios_watchdog::watchdog::WatchdogState::Monitoring
+        );
+        assert_eq!(
+            handle
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .missed_count(),
+            0
+        );
+
         control.stop().expect("stop watchdog");
         assert!(control.stop().is_err(), "second stop must fail");
         assert!(control
             .status()
             .iter()
             .any(|line| line == "monitoring thread: stopped"));
+    }
+
+    #[test]
+    fn watchdog_control_resets_without_a_monitoring_thread() {
+        let handle = watchdog_handle();
+        let control = HostWatchdogControl::new(handle.clone());
+
+        control.force_safe_mode();
+        control.reset().expect("reset watchdog without runner");
+
+        assert_eq!(
+            handle
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .state(),
+            aios_watchdog::watchdog::WatchdogState::Monitoring
+        );
     }
 
     #[test]

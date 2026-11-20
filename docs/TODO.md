@@ -190,6 +190,10 @@
   dashboard. One binary unit test seeds shared processes/blocks and verifies
   both console views plus the legacy process list; bare-command output is
   unchanged.
+- [x] Add a real `WatchdogControl::reset` seam over the shared `Watchdog`;
+  `wd reset` now calls it before incrementing the bounded restart counter and
+  reports `unavailable` without an adapter. Tests cover reset with and without a
+  runner, seam invocation and the restart limit.
 - [x] Migrate the first bare commands in the `aios` shell: bare `clear`/`cls`
   now route through `console_execute`/`HostBackend`, emitting no lines and only
   `OutputControl::Clear`. Six new `aios` tests pin legacy output for `help`/`?`,

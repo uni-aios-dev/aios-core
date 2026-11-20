@@ -19,6 +19,8 @@ pub trait WatchdogControl: Send + Sync {
     fn stop(&self) -> Result<(), String>;
     /// Forces the watchdog into safe mode.
     fn force_safe_mode(&self);
+    /// Resets watchdog state to monitoring; an attached runner stays attached.
+    fn reset(&self) -> Result<(), String>;
     /// Returns the actions produced by one escalation step.
     fn escalate(&self) -> Vec<String>;
 }

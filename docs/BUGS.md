@@ -110,6 +110,16 @@ old dispatcher path (the new backend clears the shell history explicitly).
 ambiguous, so they stay on the legacy dispatcher instead of being forced into
 the console.
 
+## FIXED (unified console): `wd reset` no longer fakes a restart
+
+Previously `wd reset` incremented the session restart counter even with no
+watchdog adapter, so `restart`/`recover` had no real effect behind the reported
+success. `WatchdogControl` now has a `reset` operation; the `aios` adapter calls
+`Watchdog::reset` on the shared watchdog and keeps an attached monitoring runner
+alive, while `HostBackend` counts the restart only after that call succeeds.
+Without an adapter `wd reset` now reports `ERR unavailable` instead of success.
+EN/RU docs were aligned.
+
 ## FIXED (unified console): Windows paths lost backslashes in arguments
 
 - Symptom: `source C:\Users\script.txt` and `block load C:\blocks\mod.wasm`

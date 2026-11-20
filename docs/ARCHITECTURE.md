@@ -160,7 +160,10 @@ injection seams in `aios-console/src/control.rs` (`WatchdogControl`,
 attaches a monitoring thread to the same `Watchdog` the bridge status endpoint
 reads, `start_server_with_shutdown` lets `bridge stop` gracefully close the
 listener and `bridge start` spawn it again, and `auth` calls the real `AuthStore`.
-Without an injected adapter these commands still return `unavailable`.
+`WatchdogControl::reset` calls `Watchdog::reset` on the shared instance (keeping
+an attached runner alive) and `wd reset` requires that seam before incrementing
+the bounded restart counter. Without an injected adapter these commands still
+return `unavailable`.
 
 `aios-console/src/unavailable.rs` holds the precise reason for each registered
 command with no real host API, so `ERR unavailable` names the missing capability

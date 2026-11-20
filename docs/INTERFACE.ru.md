@@ -182,7 +182,9 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `AuthProvider`). Бинарник `aios` реализует их в `aios/src/console_control.rs`
 на основе общего watchdog, канала корректного завершения слушателя bridge и
 `AuthStore`: `bridge stop` запрашивает корректное завершение, а `bridge start`
-снова запускает слушатель. Без внедрённого адаптера эти команды возвращают
+снова запускает слушатель. `wd reset` сбрасывает общий watchdog через
+`WatchdogControl::reset` и только после этого увеличивает ограниченный счётчик
+перезапусков. Без внедрённого адаптера эти команды возвращают
 `unavailable`; остальные команды по-прежнему возвращают `ERR unavailable`, но с
 конкретной причиной из `aios-console/src/unavailable.rs`:
 

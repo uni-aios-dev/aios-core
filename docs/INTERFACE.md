@@ -183,7 +183,9 @@ stored; it does not claim live block code was replaced.
 `AuthProvider`). The `aios` binary implements them in `aios/src/console_control.rs`
 over the shared watchdog, the bridge listener's graceful-shutdown channel and
 `AuthStore`, so `bridge stop` requests a graceful shutdown and `bridge start`
-spawns the listener again. Without an injected adapter these commands report
+spawns the listener again. `wd reset` resets the shared watchdog through
+`WatchdogControl::reset` and only then increments the bounded restart counter.
+Without an injected adapter these commands report
 `unavailable`; the remaining commands still report `ERR unavailable`, but with a
 concrete reason from `aios-console/src/unavailable.rs`:
 

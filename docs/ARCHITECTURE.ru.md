@@ -163,7 +163,10 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 к тому же `Watchdog`, который читает endpoint статуса bridge;
 `start_server_with_shutdown` позволяет `bridge stop` корректно закрыть слушатель,
 а `bridge start` — запустить его заново; `auth` вызывает реальный `AuthStore`.
-Без внедрённого адаптера эти команды по-прежнему возвращают `unavailable`.
+`WatchdogControl::reset` вызывает `Watchdog::reset` на общем экземпляре (подключённый
+раннер остаётся подключённым), а `wd reset` требует этот адаптер до увеличения
+ограниченного счётчика перезапусков. Без внедрённого адаптера эти команды
+по-прежнему возвращают `unavailable`.
 
 `aios-console/src/unavailable.rs` хранит точную причину для каждой зарегистрированной
 команды без реального хостового API, поэтому `ERR unavailable` называет недостающую
