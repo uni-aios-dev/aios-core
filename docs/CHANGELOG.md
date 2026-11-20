@@ -3,6 +3,13 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now builds its `Scheduler` and `BlockRegistry` as
+  `Arc<Mutex<...>>` and passes the same handles to `HostBackend::from_handles`,
+  so `console ps` and `console block list` observe the processes and blocks used
+  by `SafeModeShell` and the dashboard. Bare commands still use the legacy
+  dispatcher with unchanged output; a new binary unit test seeds shared state
+  and checks both console views plus the safe-mode process list. EN/RU docs were
+  aligned.
 - `aios-watchdog/src/safe_mode.rs` now pins the exact legacy `ShellResponse`
   success flag and output string for every `SafeModeShell` branch: empty and
   populated process/block lists, kill/spawn/load/unload success and failure,

@@ -102,8 +102,11 @@ The standalone `aios-tui` binary likewise owns one `HostBackend` created in
 `main`. Its Shell tab recognises the same case-insensitive `console <...>` prefix
 before the TUI extras and the `SafeModeShell` fallback. `execute_shell_cmd`
 returns a flag so `console exit` can break the event loop through the normal
-shutdown path, and `console clear` clears the shell buffer. Other lines keep the
-existing TUI and safe-mode behaviour.
+shutdown path, and `console clear` clears the shell buffer. Its `Scheduler` and
+`BlockRegistry` are now `Arc<Mutex<...>>` shared with `HostBackend::from_handles`,
+so `console ps` and `console block list` observe the same processes and blocks as
+the safe-mode commands and the dashboard; legacy command output is unchanged.
+Other lines keep the existing TUI and safe-mode behaviour.
 All four frontends use `aios_console::frontend::console_prefix`, a `no_std`
 helper in the core crate: it matches the prefix case-insensitively, preserves
 argument case and treats bare or whitespace-only `console` as a help request.
@@ -937,7 +940,10 @@ Monitoring → Suspended → Recovering → Monitoring (on heartbeat received)
 
 Exact output for every branch is pinned in `safe_mode.rs` tests. No bare command
 currently has output-level parity with `HostBackend`, so all of them remain on
-the legacy dispatcher until a host-side adapter and shared handles exist.
+the legacy dispatcher until a host-side adapter exists. The standalone TUI
+already shares its scheduler and registry with `HostBackend`, so `console ps` and
+`console block list` can observe the safe-mode runtime without changing legacy
+output.
 
 **Restart limiting:** Configurable `max_restarts` prevents infinite restart loops.
 

@@ -142,7 +142,8 @@
   dispatcher in `aios-watchdog/src/safe_mode.rs`: every branch's `success` flag
   and `output` string is asserted verbatim, including failure wording and
   legacy column layout. No bare command matches `HostBackend` output yet, so
-  routing stays legacy until shared handles and a host-side adapter exist.
+  routing stays legacy until a host-side adapter exists; the standalone TUI now
+  shares its runtime handles with the console.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,
@@ -183,6 +184,12 @@
   TUI extras and the `SafeModeShell` fallback, `Clear` clears the shell buffer
   and `Exit` breaks the event loop cleanly. Three unit tests cover prefix
   parsing, backend routing and control actions.
+- [x] Share the standalone `aios-tui` `Scheduler` and `BlockRegistry` with
+  `HostBackend::from_handles` as `Arc<Mutex<...>>`; `console ps` and
+  `console block list` now observe the same runtime as `SafeModeShell` and the
+  dashboard. One binary unit test seeds shared processes/blocks and verifies
+  both console views plus the legacy process list; bare-command output is
+  unchanged.
 - [x] Migrate the first bare commands in the `aios` shell: bare `clear`/`cls`
   now route through `console_execute`/`HostBackend`, emitting no lines and only
   `OutputControl::Clear`. Six new `aios` tests pin legacy output for `help`/`?`,

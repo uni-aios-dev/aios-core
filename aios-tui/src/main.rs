@@ -16,7 +16,7 @@ use aios_bridge::dto::{StorePublishRequest, StorePublishResponse};
 use aios_browser::engine::BrowserEngine;
 use aios_browser::html_parser::HtmlParser;
 use aios_browser::types::BrowserConfig;
-use aios_console::host::HostBackend;
+use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::OutputControl;
 use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
@@ -404,15 +404,17 @@ fn run_console_command(state: &mut DashboardState, console: &mut HostBackend, re
 fn execute_shell_cmd(
     state: &mut DashboardState,
     cmd: &str,
-    scheduler: &mut Scheduler,
-    registry: &mut BlockRegistry,
+    scheduler: &Arc<Mutex<Scheduler>>,
+    registry: &Arc<Mutex<BlockRegistry>>,
     safe_shell: &mut SafeModeShell,
     console: &mut HostBackend,
 ) -> bool {
     if let Some(rest) = aios_console::frontend::console_prefix(cmd) {
         return run_console_command(state, console, rest);
     }
-    execute_shell_cmd_inner(state, cmd, scheduler, registry, safe_shell);
+    let mut scheduler = scheduler.lock().unwrap();
+    let mut registry = registry.lock().unwrap();
+    execute_shell_cmd_inner(state, cmd, &mut scheduler, &mut registry, safe_shell);
     false
 }
 
@@ -1341,31 +1343,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ai_tier = AiTier::from_profile(&profile);
     log::info!("AIOS: AI tier = {:?}", ai_tier);
 
-    let mut registry = BlockRegistry::new();
+    let registry = Arc::new(Mutex::new(BlockRegistry::new()));
+    {
+        let mut reg = registry.lock().unwrap();
+        let hal_data = b"hal-native-module";
+        let _ = BlockLoader::load_from_binary(&mut reg, "hal", "1.0.0", hal_data.to_vec());
+        let _ = BlockLoader::load_from_binary(&mut reg, "ipc_bus", "1.0.0", b"ipc_bus".to_vec());
+        let _ =
+            BlockLoader::load_from_binary(&mut reg, "scheduler", "1.0.0", b"scheduler".to_vec());
+        let _ =
+            BlockLoader::load_from_binary(&mut reg, "browser", "0.1.0", b"browser-native".to_vec());
 
-    let hal_data = b"hal-native-module";
-    let _ = BlockLoader::load_from_binary(&mut registry, "hal", "1.0.0", hal_data.to_vec());
-    let _ = BlockLoader::load_from_binary(&mut registry, "ipc_bus", "1.0.0", b"ipc_bus".to_vec());
-    let _ =
-        BlockLoader::load_from_binary(&mut registry, "scheduler", "1.0.0", b"scheduler".to_vec());
-    let _ = BlockLoader::load_from_binary(
-        &mut registry,
-        "browser",
-        "0.1.0",
-        b"browser-native".to_vec(),
-    );
+        let disk_results = BlockLoader::load_from_directory(&mut reg, &blocks_dir);
+        let disk_loaded = disk_results.iter().filter(|r| r.is_ok()).count();
+        let disk_failed = disk_results.iter().filter(|r| r.is_err()).count();
+        log::info!(
+            "AIOS: disk blocks loaded={}, failed={}",
+            disk_loaded,
+            disk_failed
+        );
 
-    let disk_results = BlockLoader::load_from_directory(&mut registry, &blocks_dir);
-    let disk_loaded = disk_results.iter().filter(|r| r.is_ok()).count();
-    let disk_failed = disk_results.iter().filter(|r| r.is_err()).count();
-    log::info!(
-        "AIOS: disk blocks loaded={}, failed={}",
-        disk_loaded,
-        disk_failed
-    );
-
-    registry.set_block_dependencies("ipc_bus", vec!["hal".into()]);
-    registry.set_block_dependencies("scheduler", vec!["ipc_bus".into()]);
+        reg.set_block_dependencies("ipc_bus", vec!["hal".into()]);
+        reg.set_block_dependencies("scheduler", vec!["ipc_bus".into()]);
+    }
 
     let mut context_store = EmbeddedContextStore::new(10_000);
     if context_store.should_compact() {
@@ -1390,10 +1390,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut scheduler = Scheduler::new(profile.memory.total_mb);
-    let _ = scheduler.spawn_process("ai_orchestrator", Priority::High, 512);
-    let _ = scheduler.spawn_process("io_handler", Priority::Normal, 128);
-    let _ = scheduler.spawn_process("health_monitor", Priority::Low, 64);
+    let scheduler = Arc::new(Mutex::new(Scheduler::new(profile.memory.total_mb)));
+    {
+        let mut sched = scheduler.lock().unwrap();
+        let _ = sched.spawn_process("ai_orchestrator", Priority::High, 512);
+        let _ = sched.spawn_process("io_handler", Priority::Normal, 128);
+        let _ = sched.spawn_process("health_monitor", Priority::Low, 64);
+    }
 
     let watchdog_config = WatchdogConfig {
         heartbeat_interval_ms: 2000,
@@ -1436,7 +1439,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut telemetry = TelemetryStore::new();
     let mut safe_shell = SafeModeShell::new(3);
-    let mut console = HostBackend::new();
+    let mut console = HostBackend::from_handles(
+        scheduler.clone(),
+        registry.clone(),
+        HostBackendConfig::default(),
+    );
 
     if is_headless() {
         log::info!("AIOS: headless mode — running without TUI");
@@ -1452,7 +1459,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut state = DashboardState::new(ai_tier, profile, &registry, &scheduler);
+    let mut state = {
+        let sched = scheduler.lock().unwrap();
+        let reg = registry.lock().unwrap();
+        DashboardState::new(ai_tier, profile, &reg, &sched)
+    };
 
     let rt = tokio::runtime::Runtime::new()?;
     let fm_root = data_dir.join("vfs_sandbox");
@@ -1483,7 +1494,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(result) = state.take_fetched_block() {
             match result {
                 Ok((name, binary)) => {
-                    match BlockLoader::load_from_binary(&mut registry, &name, "1.0.0", binary) {
+                    let mut reg = registry.lock().unwrap();
+                    match BlockLoader::load_from_binary(&mut reg, &name, "1.0.0", binary) {
                         Ok(m) => state
                             .shell_state
                             .add_output(format!("Loaded block '{}' ID {}", m.name, m.id)),
@@ -1495,7 +1507,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         terminal.draw(|f| {
-            state.update_from_scheduler(&scheduler, &registry);
+            let sched = scheduler.lock().unwrap();
+            let reg = registry.lock().unwrap();
+            state.update_from_scheduler(&sched, &reg);
             dashboard::draw_dashboard(f, &state);
         })?;
 
@@ -1606,11 +1620,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         .get(state.selected_row)
                                                         .map(|b| b.name.clone())
                                                         .unwrap_or_else(|| "unknown".into());
+                                                    let mut reg = registry.lock().unwrap();
                                                     match BlockLoader::load_from_binary(
-                                                        &mut registry,
-                                                        &name,
-                                                        &value,
-                                                        binary,
+                                                        &mut reg, &name, &value, binary,
                                                     ) {
                                                         Ok(manifest) => {
                                                             state.add_log(format!(
@@ -1673,8 +1685,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let console_exit = execute_shell_cmd(
                                         &mut state,
                                         &cmd,
-                                        &mut scheduler,
-                                        &mut registry,
+                                        &scheduler,
+                                        &registry,
                                         &mut safe_shell,
                                         &mut console,
                                     );
@@ -1795,7 +1807,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if state.selected_tab == 1 {
                                 if let Some(pid) = state.selected_process_pid() {
                                     use aios_process_mgr::task::ProcessId;
-                                    let result = scheduler.kill_process(ProcessId(pid));
+                                    let result =
+                                        scheduler.lock().unwrap().kill_process(ProcessId(pid));
                                     match result {
                                         Ok(proc) => {
                                             state.add_log(format!(
@@ -1822,7 +1835,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let selected_id =
                                         state.blocks.get(state.selected_row).map(|b| BlockId(b.id));
                                     if let Some(id) = selected_id {
-                                        match registry.unload_block(id) {
+                                        match registry.lock().unwrap().unload_block(id) {
                                             Ok(entry) => {
                                                 state.add_log(format!(
                                                     "Unloaded block '{}' ({})",
@@ -1861,15 +1874,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     ));
                                     if path.exists() {
                                         if let Some(id) = selected_id {
-                                            let _ = registry.unload_block(id);
+                                            let _ = registry.lock().unwrap().unload_block(id);
                                         }
                                         match std::fs::read(&path) {
                                             Ok(binary) => {
+                                                let mut reg = registry.lock().unwrap();
                                                 match BlockLoader::load_from_binary(
-                                                    &mut registry,
-                                                    &name,
-                                                    &version,
-                                                    binary,
+                                                    &mut reg, &name, &version, binary,
                                                 ) {
                                                     Ok(manifest) => {
                                                         state.add_log(format!(
@@ -1976,10 +1987,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Err(e) => state.add_log(format!("GUI launch failed: {e}")),
                         },
                         KeyCode::Char('s') => {
+                            let (process_count, used_ram) = {
+                                let sched = scheduler.lock().unwrap();
+                                (sched.process_count(), sched.ram_usage().0)
+                            };
                             let entry = TelemetryEntry::new(
                                 "process_count",
-                                scheduler.process_count() as f64,
-                                scheduler.ram_usage().0,
+                                process_count as f64,
+                                used_ram,
                             )
                             .with_process("scheduler");
                             telemetry.record(entry);
@@ -1990,15 +2005,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             state.add_log(format!(
                                 "Telemetry: {} proc, avg={:.1}",
-                                scheduler.process_count(),
-                                avg,
+                                process_count, avg,
                             ));
                         }
                         KeyCode::Char('x') => {
+                            let mut sched = scheduler.lock().unwrap();
+                            let mut reg = registry.lock().unwrap();
                             let resp = safe_shell.execute(
                                 aios_watchdog::safe_mode::ShellCommand::SystemStatus,
-                                &mut scheduler,
-                                &mut registry,
+                                &mut sched,
+                                &mut reg,
                             );
                             state.add_log(format!("Status: {}", resp.output));
                         }
@@ -2071,6 +2087,31 @@ mod tests {
         reg.register_block("test", "0.1.0", b"t".to_vec()).unwrap();
         let sched = Scheduler::new(65536);
         DashboardState::new(AiTier::Tier1, profile, &reg, &sched)
+    }
+
+    fn make_shared_handles() -> (
+        std::sync::Arc<std::sync::Mutex<aios_process_mgr::scheduler::Scheduler>>,
+        std::sync::Arc<std::sync::Mutex<aios_block_mgr::registry::BlockRegistry>>,
+    ) {
+        (
+            std::sync::Arc::new(std::sync::Mutex::new(
+                aios_process_mgr::scheduler::Scheduler::new(65536),
+            )),
+            std::sync::Arc::new(std::sync::Mutex::new(
+                aios_block_mgr::registry::BlockRegistry::new(),
+            )),
+        )
+    }
+
+    fn make_shared_console(
+        scheduler: &std::sync::Arc<std::sync::Mutex<aios_process_mgr::scheduler::Scheduler>>,
+        registry: &std::sync::Arc<std::sync::Mutex<aios_block_mgr::registry::BlockRegistry>>,
+    ) -> aios_console::host::HostBackend {
+        aios_console::host::HostBackend::from_handles(
+            scheduler.clone(),
+            registry.clone(),
+            aios_console::host::HostBackendConfig::default(),
+        )
     }
 
     #[test]
@@ -2161,15 +2202,14 @@ mod tests {
     #[test]
     fn test_intent_command_translates_request() {
         let mut state = make_dashboard_state();
-        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
-        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let (scheduler, registry) = make_shared_handles();
         let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
-        let mut console = aios_console::host::HostBackend::new();
+        let mut console = make_shared_console(&scheduler, &registry);
         super::execute_shell_cmd(
             &mut state,
             "intent free up memory",
-            &mut scheduler,
-            &mut registry,
+            &scheduler,
+            &registry,
             &mut safe_shell,
             &mut console,
         );
@@ -2181,20 +2221,77 @@ mod tests {
     #[test]
     fn test_intent_command_reports_unknown_request() {
         let mut state = make_dashboard_state();
-        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
-        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let (scheduler, registry) = make_shared_handles();
         let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
-        let mut console = aios_console::host::HostBackend::new();
+        let mut console = make_shared_console(&scheduler, &registry);
         super::execute_shell_cmd(
             &mut state,
             "intent make me a sandwich",
-            &mut scheduler,
-            &mut registry,
+            &scheduler,
+            &registry,
             &mut safe_shell,
             &mut console,
         );
         let out = state.shell_state.output.join("\n");
         assert!(out.contains("no intent matched"), "got {out}");
+    }
+
+    #[test]
+    fn test_console_and_safe_shell_share_runtime_handles() {
+        let mut state = make_dashboard_state();
+        let (scheduler, registry) = make_shared_handles();
+        {
+            let mut sched = scheduler.lock().unwrap();
+            let pid = sched
+                .spawn_process("shared_worker", aios_process_mgr::task::Priority::High, 64)
+                .unwrap();
+            assert_eq!(pid.0, 1);
+        }
+        {
+            let mut reg = registry.lock().unwrap();
+            aios_block_mgr::loader::BlockLoader::load_from_binary(
+                &mut reg,
+                "shared_block",
+                "1.0.0",
+                b"shared".to_vec(),
+            )
+            .unwrap();
+        }
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = make_shared_console(&scheduler, &registry);
+
+        super::execute_shell_cmd(
+            &mut state,
+            "console ps",
+            &scheduler,
+            &registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        let out = state.shell_state.output.join("\n");
+        assert!(out.contains("shared_worker"), "got {out}");
+
+        state.shell_state.output.clear();
+        super::execute_shell_cmd(
+            &mut state,
+            "console block list",
+            &scheduler,
+            &registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        let out = state.shell_state.output.join("\n");
+        assert!(out.contains("shared_block"), "got {out}");
+
+        let mut sched = scheduler.lock().unwrap();
+        let mut reg = registry.lock().unwrap();
+        let resp = safe_shell.execute(
+            aios_watchdog::safe_mode::ShellCommand::ListProcesses,
+            &mut sched,
+            &mut reg,
+        );
+        assert!(resp.output.contains("shared_worker"));
+        assert!(resp.output.contains("Total: 1 processes"));
     }
 
     #[test]
@@ -2219,16 +2316,15 @@ mod tests {
     #[test]
     fn test_console_command_routes_to_unified_backend() {
         let mut state = make_dashboard_state();
-        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
-        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let (scheduler, registry) = make_shared_handles();
         let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
-        let mut console = aios_console::host::HostBackend::new();
+        let mut console = make_shared_console(&scheduler, &registry);
 
         let exit = super::execute_shell_cmd(
             &mut state,
             "CONSOLE echo MiXeD Case",
-            &mut scheduler,
-            &mut registry,
+            &scheduler,
+            &registry,
             &mut safe_shell,
             &mut console,
         );
@@ -2242,17 +2338,16 @@ mod tests {
     #[test]
     fn test_console_clear_and_exit_controls_reach_the_frontend() {
         let mut state = make_dashboard_state();
-        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
-        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let (scheduler, registry) = make_shared_handles();
         let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
-        let mut console = aios_console::host::HostBackend::new();
+        let mut console = make_shared_console(&scheduler, &registry);
 
         state.shell_state.add_output("old line".into());
         let exit = super::execute_shell_cmd(
             &mut state,
             "console clear",
-            &mut scheduler,
-            &mut registry,
+            &scheduler,
+            &registry,
             &mut safe_shell,
             &mut console,
         );
@@ -2262,8 +2357,8 @@ mod tests {
         let exit = super::execute_shell_cmd(
             &mut state,
             "console exit 3",
-            &mut scheduler,
-            &mut registry,
+            &scheduler,
+            &registry,
             &mut safe_shell,
             &mut console,
         );

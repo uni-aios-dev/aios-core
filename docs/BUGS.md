@@ -99,10 +99,12 @@ exactly as before; the inputs are also recorded in unified console history.
 stay unchanged until output parity is proven: legacy `help`/`?`, unknown-command,
 usage and empty `ps` lines differ from the canonical host wording. Exact legacy
 `SafeModeShell` output is now pinned in `aios-watchdog/src/safe_mode.rs` for all
-branches, but no bare safe-mode command matches `HostBackend` output yet; the
-standalone TUI also has no shared `Arc<Mutex<...>>` handles between the two.
-`KernelBackend` has the same limitation: only the commands backed by real
-kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
+branches, but no bare safe-mode command matches `HostBackend` output yet. The
+standalone TUI now shares its `Scheduler` and `BlockRegistry` as
+`Arc<Mutex<...>>` with `HostBackend`, so `console ps` and `console block list`
+observe the same runtime as safe-mode commands while legacy output stays
+unchanged. `KernelBackend` has the same limitation: only the commands backed by
+real kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
 old dispatcher path (the new backend clears the shell history explicitly).
 `tabs`, `gui` and `tui` are deferred in the registry and bare `info` is
 ambiguous, so they stay on the legacy dispatcher instead of being forced into
