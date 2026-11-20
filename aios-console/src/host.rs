@@ -1318,6 +1318,14 @@ impl HostBackend {
         crate::legacy::exit_text(&self.execute_line("exit"))
     }
 
+    /// Renders the exact legacy `help` text from the canonical all-commands help.
+    ///
+    /// Returns `None` if the canonical shape changes or a help topic was used, so
+    /// a frontend can keep the legacy dispatcher instead of printing a wrong list.
+    pub fn legacy_help_text(&mut self) -> Option<String> {
+        crate::legacy::help_text(&self.execute_line("help"))
+    }
+
     fn process_list(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let processes = scheduler.all_processes();

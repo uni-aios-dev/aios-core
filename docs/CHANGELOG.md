@@ -3,6 +3,12 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `help` and `?` through
+  `HostBackend::legacy_help_text` and `legacy::help_text`. The adapter maps the
+  generated all-commands help to the exact legacy `SafeModeShell` wording, while
+  the TUI extras stay a separate frontend block. A help topic that does not match
+  the canonical shape falls back to the legacy dispatcher. New core unit tests
+  and a binary test compare both spellings byte-for-byte. EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `exit`, `quit` and `q` through
   `HostBackend::exit_legacy_text` and `legacy::exit_text`. The adapter maps the
   canonical `OutputControl::Exit` back to the exact legacy `SafeModeShell` line

@@ -142,11 +142,11 @@
   dispatcher in `aios-watchdog/src/safe_mode.rs`: every branch's `success` flag
   and `output` string is asserted verbatim, including failure wording and
   legacy column layout. The standalone TUI now shares its runtime handles with
-  the console, and bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`
-  and `exit`/`quit`/`q` use host-side adapters (`aios-console/src/legacy.rs`)
-  with byte-for-byte equality to `SafeModeShell`; remaining bare commands stay on
-  the legacy dispatcher until their adapters exist. Canonical `console info`
-  remains ambiguous.
+  the console, and bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
+  `exit`/`quit`/`q` and `help`/`?` use host-side adapters
+  (`aios-console/src/legacy.rs`) with byte-for-byte equality to `SafeModeShell`;
+  remaining bare commands stay on the legacy dispatcher until their adapters
+  exist. Canonical `console info` remains ambiguous.
 - [x] Add the first exact-output adapter (`aios-console/src/legacy.rs` and
   `HostBackend::process_list_legacy_text`) and route bare
   `ps`/`processes`/`list` in `aios-tui` through it. Core unit tests pin the
@@ -169,6 +169,12 @@
   bare-command shutdown flag, so only `console exit` breaks the event loop. Core
   unit tests and a binary test compare all three spellings with `SafeModeShell`.
   EN/RU docs were aligned.
+- [x] Add the help exact-output adapter (`HostBackend::legacy_help_text` and
+  `legacy::help_text`) and route bare `help`/`?` in `aios-tui` through it. The
+  adapter maps the generated all-commands help to the legacy wording and keeps
+  `TUI_HELP_EXTRAS` as a separate frontend block; a non-matching help topic falls
+  back to the legacy dispatcher. Core unit tests and a binary test compare both
+  spellings byte-for-byte with `SafeModeShell`. EN/RU docs were aligned.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

@@ -17,6 +17,8 @@ const STATUS_BLOCKS: &str = "blocks        ";
 const STATUS_MEMORY: &str = "memory        ";
 const STATUS_RESTARTS: &str = "restarts      ";
 const STATUS_LOG: &str = "log           ";
+const HELP_HEADER: &str = "AIOS text console commands";
+const LEGACY_HELP: &str = "Commands:\n  ps                         — list processes\n  blocks                     — list loaded blocks\n  spawn <name> [prio] [ram]  — spawn a process\n  kill <pid>                 — kill a process\n  load <name> [version]      — load a block\n  unload <id>                — unload a block\n  status                     — system status\n  logs                       — view safe mode logs\n  restart                    — restart orchestrator\n  help                       — show this help\n  exit                       — exit safe mode";
 
 /// Converts canonical `ps` output into the exact legacy safe-mode process text.
 ///
@@ -144,6 +146,19 @@ pub fn exit_text(output: &CommandOutput) -> Option<String> {
     }
 }
 
+/// Converts canonical `help` output into the exact legacy safe-mode help text.
+///
+/// Returns `None` when the output is not the generated all-commands help, so a
+/// frontend can keep the legacy dispatcher instead of replacing a help topic
+/// with the shell-wide legacy listing.
+pub fn help_text(output: &CommandOutput) -> Option<String> {
+    if output.code != ExitCode::Ok || output.lines.first().map(String::as_str) != Some(HELP_HEADER)
+    {
+        return None;
+    }
+    Some(String::from(LEGACY_HELP))
+}
+
 fn legacy_process_row(row: &str) -> Option<String> {
     let fields = row.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 5 {
@@ -186,8 +201,8 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_list_text, exit_text, process_list_text, status_text, BLOCK_HEADER, BLOCK_SEPARATOR,
-        PROCESS_HEADER, PROCESS_SEPARATOR,
+        block_list_text, exit_text, help_text, process_list_text, status_text, BLOCK_HEADER,
+        BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -290,6 +305,16 @@ mod tests {
     }
 
     #[test]
+    fn maps_canonical_help_to_legacy_layout() {
+        let output = CommandOutput::ok(alloc::vec![
+            HELP_HEADER.into(),
+            "scope: [B] both backends, [H] host only, [K] kernel only".into(),
+            String::new(),
+        ]);
+        assert_eq!(help_text(&output).as_deref(), Some(LEGACY_HELP));
+    }
+
+    #[test]
     fn rejects_unexpected_outputs() {
         assert_eq!(process_list_text(&CommandOutput::usage("ps")), None);
         assert_eq!(
@@ -315,5 +340,7 @@ mod tests {
             exit_text(&CommandOutput::text("Exiting safe mode shell")),
             None
         );
+        assert_eq!(help_text(&CommandOutput::usage("help")), None);
+        assert_eq!(help_text(&CommandOutput::text("  status  status")), None);
     }
 }

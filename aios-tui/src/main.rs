@@ -43,6 +43,8 @@ use aios_watchdog::heartbeat::Heartbeat;
 use aios_watchdog::safe_mode::SafeModeShell;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig, WatchdogState};
 
+const TUI_HELP_EXTRAS: &str = "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <query|url> — open/search on the Web tab\n  clear           — clear shell output\n  console <cmd>   — unified console (console help lists commands)";
+
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
@@ -446,7 +448,14 @@ fn execute_shell_cmd(
     }
     let mut scheduler = scheduler.lock().unwrap();
     let mut registry = registry.lock().unwrap();
-    execute_shell_cmd_inner(state, cmd, &mut scheduler, &mut registry, safe_shell);
+    execute_shell_cmd_inner(
+        state,
+        cmd,
+        &mut scheduler,
+        &mut registry,
+        safe_shell,
+        console,
+    );
     false
 }
 
@@ -456,6 +465,7 @@ fn execute_shell_cmd_inner(
     scheduler: &mut Scheduler,
     registry: &mut BlockRegistry,
     safe_shell: &mut SafeModeShell,
+    console: &mut HostBackend,
 ) {
     let lower = cmd.trim().to_lowercase();
     let parts: Vec<&str> = lower.split_whitespace().collect();
@@ -1199,16 +1209,17 @@ fn execute_shell_cmd_inner(
             return;
         }
         Some("help") | Some("?") => {
-            let resp = safe_shell.execute(
-                aios_watchdog::safe_mode::ShellCommand::Help,
-                scheduler,
-                registry,
-            );
-            state.shell_state.add_output(resp.output);
-            state.shell_state.add_output(
-                "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <query|url> — open/search on the Web tab\n  clear           — clear shell output\n  console <cmd>   — unified console (console help lists commands)"
-                    .into(),
-            );
+            let text = console.legacy_help_text().unwrap_or_else(|| {
+                safe_shell
+                    .execute(
+                        aios_watchdog::safe_mode::ShellCommand::Help,
+                        scheduler,
+                        registry,
+                    )
+                    .output
+            });
+            state.shell_state.add_output(text);
+            state.shell_state.add_output(TUI_HELP_EXTRAS.to_string());
             return;
         }
         _ => aios_watchdog::safe_mode::SafeModeShell::parse_command(cmd),
@@ -2594,6 +2605,43 @@ mod tests {
                 "command: {command}"
             );
             assert!(!exit, "bare {command} keeps the legacy shutdown flag");
+        }
+    }
+
+    #[test]
+    fn test_bare_help_aliases_match_safe_mode_output_exactly() {
+        for command in ["HELP", "?"] {
+            let mut state = make_dashboard_state();
+            let (scheduler, registry) = make_shared_handles();
+            let expected = {
+                let mut sched = scheduler.lock().unwrap();
+                let mut reg = registry.lock().unwrap();
+                let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+                shell
+                    .execute(
+                        aios_watchdog::safe_mode::ShellCommand::Help,
+                        &mut sched,
+                        &mut reg,
+                    )
+                    .output
+            };
+            state.shell_state.output.clear();
+            let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            let mut console = make_shared_console(&scheduler, &registry);
+            let exit = super::execute_shell_cmd(
+                &mut state,
+                command,
+                &scheduler,
+                &registry,
+                &mut safe_shell,
+                &mut console,
+            );
+            assert!(!exit);
+            assert_eq!(
+                state.shell_state.output.join("\n"),
+                format!("{}\n{}", expected, super::TUI_HELP_EXTRAS),
+                "command: {command}"
+            );
         }
     }
 
