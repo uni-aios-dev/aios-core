@@ -1293,6 +1293,14 @@ impl HostBackend {
         crate::legacy::process_list_text(&self.process_list())
     }
 
+    /// Renders the exact legacy `blocks` text from the canonical host block list.
+    ///
+    /// Returns `None` if the canonical shape changes, so a frontend can fall
+    /// back to the legacy dispatcher instead of printing a partial table.
+    pub fn block_list_legacy_text(&self) -> Option<String> {
+        crate::legacy::block_list_text(&self.block_list())
+    }
+
     fn process_list(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let processes = scheduler.all_processes();

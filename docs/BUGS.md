@@ -94,16 +94,16 @@ The `aios` shell still keeps its legacy dispatcher as the default command
 surface, except bare `clear`/`cls`: they now go through `console_execute` and
 emit no lines with only `OutputControl::Clear`, so the shell buffer is cleared
 exactly as before; the inputs are also recorded in unified console history.
-`aios-shell` and `aios-tui` expose the new backend only through the
-`console <...>` prefix; `SafeModeShell` and the remaining bare-command paths
-stay unchanged until output parity is proven: legacy `help`/`?`, unknown-command,
-usage and empty `ps` lines differ from the canonical host wording. Exact legacy
-`SafeModeShell` output is now pinned in `aios-watchdog/src/safe_mode.rs` for all
-branches, but no bare safe-mode command matches `HostBackend` output yet. The
-standalone TUI now shares its `Scheduler` and `BlockRegistry` as
-`Arc<Mutex<...>>` with `HostBackend`, so `console ps` and `console block list`
-observe the same runtime as safe-mode commands while legacy output stays
-unchanged. `KernelBackend` has the same limitation: only the commands backed by
+`aios-shell` exposes the new backend through the `console <...>` prefix, while
+`aios-tui` also routes bare `ps`/`processes`/`list` and `blocks`/`ls` through
+exact-output adapters; all other bare-command paths stay unchanged until output
+parity is proven: legacy `help`/`?`, unknown-command, usage and empty `ps` lines
+differ from the canonical host wording. Exact legacy `SafeModeShell` output is
+pinned in `aios-watchdog/src/safe_mode.rs` for all branches, and the migrated
+list aliases match it byte-for-byte. The standalone TUI shares its `Scheduler`
+and `BlockRegistry` as `Arc<Mutex<...>>` with `HostBackend`, so `console ps` and
+`console block list` observe the same runtime as safe-mode commands while legacy
+output stays unchanged. `KernelBackend` has the same limitation: only the commands backed by
 real kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
 old dispatcher path (the new backend clears the shell history explicitly).
 `tabs`, `gui` and `tui` are deferred in the registry and bare `info` is

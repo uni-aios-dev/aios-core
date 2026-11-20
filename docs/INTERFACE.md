@@ -407,10 +407,10 @@ cannot shadow it. Bare or whitespace-only `console` prints generated help.
 `console clear` clears the shell output and `console exit [code]` closes the TUI
 through the normal shutdown path. `console ps` and `console block list` share the
 same `Arc<Mutex<...>>` `Scheduler` and `BlockRegistry` as the dashboard and
-`SafeModeShell`, so they observe the live TUI runtime. Bare `ps`, `processes` and
-`list` now use the unified `HostBackend` through an exact-output adapter; their
-text is byte-for-byte identical to the legacy safe-mode shell. All other bare
-commands keep their legacy behaviour.
+`SafeModeShell`, so they observe the live TUI runtime. Bare `ps`, `processes`,
+`list`, `blocks` and `ls` now use the unified `HostBackend` through exact-output
+adapters; their text is byte-for-byte identical to the legacy safe-mode shell.
+All other bare commands keep their legacy behaviour.
 
 Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
 

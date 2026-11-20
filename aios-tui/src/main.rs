@@ -413,13 +413,13 @@ fn execute_legacy_parity_command(
     if parts.next().is_some() {
         return false;
     }
-    if !matches!(
-        command.to_ascii_lowercase().as_str(),
-        "ps" | "processes" | "list"
-    ) {
-        return false;
-    }
-    let Some(text) = console.process_list_legacy_text() else {
+    let command = command.to_ascii_lowercase();
+    let text = match command.as_str() {
+        "ps" | "processes" | "list" => console.process_list_legacy_text(),
+        "blocks" | "ls" => console.block_list_legacy_text(),
+        _ => return false,
+    };
+    let Some(text) = text else {
         return false;
     };
     for line in text.lines() {
@@ -2395,6 +2395,83 @@ mod tests {
                 "command: {command}"
             );
         }
+    }
+
+    #[test]
+    fn test_bare_block_aliases_match_safe_mode_output_exactly() {
+        for command in ["BLOCKS", "ls"] {
+            let mut state = make_dashboard_state();
+            let (scheduler, registry) = make_shared_handles();
+            {
+                let mut reg = registry.lock().unwrap();
+                aios_block_mgr::loader::BlockLoader::load_from_binary(
+                    &mut reg,
+                    "hal",
+                    "0.1.0",
+                    b"hal-data".to_vec(),
+                )
+                .unwrap();
+            }
+            let expected = {
+                let mut sched = scheduler.lock().unwrap();
+                let mut reg = registry.lock().unwrap();
+                let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+                shell
+                    .execute(
+                        aios_watchdog::safe_mode::ShellCommand::ListBlocks,
+                        &mut sched,
+                        &mut reg,
+                    )
+                    .output
+            };
+            state.shell_state.output.clear();
+            let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            let mut console = make_shared_console(&scheduler, &registry);
+            super::execute_shell_cmd(
+                &mut state,
+                command,
+                &scheduler,
+                &registry,
+                &mut safe_shell,
+                &mut console,
+            );
+            assert_eq!(
+                state.shell_state.output.join("\n"),
+                expected,
+                "command: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bare_blocks_empty_output_matches_safe_mode_exactly() {
+        let mut state = make_dashboard_state();
+        let (scheduler, registry) = make_shared_handles();
+        let expected = {
+            let mut sched = scheduler.lock().unwrap();
+            let mut reg = registry.lock().unwrap();
+            let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            shell
+                .execute(
+                    aios_watchdog::safe_mode::ShellCommand::ListBlocks,
+                    &mut sched,
+                    &mut reg,
+                )
+                .output
+        };
+        state.shell_state.output.clear();
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = make_shared_console(&scheduler, &registry);
+        let exit = super::execute_shell_cmd(
+            &mut state,
+            "blocks",
+            &scheduler,
+            &registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        assert!(!exit);
+        assert_eq!(state.shell_state.output.join("\n"), expected);
     }
 
     #[test]

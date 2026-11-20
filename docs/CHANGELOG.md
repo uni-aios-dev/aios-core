@@ -3,6 +3,13 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `blocks` and `ls` through
+  `HostBackend::block_list_legacy_text` and the shared adapter in
+  `aios-console/src/legacy.rs`. Canonical block lists are mapped back to the
+  exact legacy `SafeModeShell` text, including the empty-list line and original
+  column widths; new core unit tests and two binary tests cover populated and
+  empty lists. Together with the process aliases, these are the first two
+  migrated safe-mode command groups. EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `ps`, `processes` and `list` through
   the unified `HostBackend` via a new `aios-console/src/legacy.rs` adapter. It
   maps canonical process-list output back to the exact legacy `SafeModeShell`
