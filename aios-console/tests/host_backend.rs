@@ -104,7 +104,16 @@ fn assert_ok(input: &str, output: &aios_console::output::CommandOutput) {
 fn host_session_and_status_commands_work() {
     let mut host = backend("session");
 
-    assert_ok("help", &dispatch(&mut host, "help"));
+    let help = dispatch(&mut host, "help");
+    assert_ok("help", &help);
+    assert_eq!(help.lines[0], "AIOS text console commands");
+    for command in ["ps", "clear", "echo"] {
+        assert!(
+            help.lines.iter().any(|line| line.contains(command)),
+            "help is missing {command}"
+        );
+    }
+
     let version = dispatch(&mut host, "version");
     assert_ok("version", &version);
     assert!(version.lines[0].contains("test-"));
@@ -122,7 +131,27 @@ fn host_session_and_status_commands_work() {
         .any(|line| line.starts_with("memory        ")));
 
     assert_ok("history", &dispatch(&mut host, "history"));
-    assert!(dispatch(&mut host, "clear").control == aios_console::output::OutputControl::Clear);
+    let clear = dispatch(&mut host, "clear");
+    assert_ok("clear", &clear);
+    assert!(clear.lines.is_empty());
+    assert_eq!(clear.control, OutputControl::Clear);
+}
+
+#[test]
+fn host_usage_errors_keep_the_canonical_wording() {
+    let mut host = backend("usage-wording");
+
+    let kill = dispatch(&mut host, "process kill");
+    assert_eq!(kill.code, ExitCode::Usage);
+    assert_eq!(
+        kill.lines,
+        ["ERR usage: process spawn|kill|renice|suspend|resume|affinity"]
+    );
+
+    let cls = dispatch(&mut host, "CLS");
+    assert_ok("CLS", &cls);
+    assert!(cls.lines.is_empty());
+    assert_eq!(cls.control, OutputControl::Clear);
 }
 
 #[test]

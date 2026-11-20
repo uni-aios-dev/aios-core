@@ -173,6 +173,13 @@
   TUI extras and the `SafeModeShell` fallback, `Clear` clears the shell buffer
   and `Exit` breaks the event loop cleanly. Three unit tests cover prefix
   parsing, backend routing and control actions.
+- [x] Migrate the first bare commands in the `aios` shell: bare `clear`/`cls`
+  now route through `console_execute`/`HostBackend`, emitting no lines and only
+  `OutputControl::Clear`. Six new `aios` tests pin legacy output for `help`/`?`,
+  unknown commands, usage lines and empty `ps`, while extended integration
+  assertions in `aios-console/tests/host_backend.rs` pin canonical `help`,
+  `clear` and usage output. Other bare commands keep the legacy dispatcher
+  until output parity is proven.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,

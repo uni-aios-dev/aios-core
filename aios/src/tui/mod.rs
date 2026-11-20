@@ -1196,6 +1196,10 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
         console_execute(app, head_and_rest.next().unwrap_or("help").trim());
         return;
     }
+    if head.eq_ignore_ascii_case("clear") || head.eq_ignore_ascii_case("cls") {
+        console_execute(app, head);
+        return;
+    }
     let lower = trimmed.to_lowercase();
     let parts: Vec<&str> = lower.split_whitespace().collect();
     let command = match parts.first().copied() {
@@ -2013,6 +2017,74 @@ mod tests {
 
         shell_execute(&mut app, "console exit 3");
         assert!(!app.running);
+    }
+
+    #[test]
+    fn bare_help_and_question_keep_the_legacy_line() {
+        let expected = "Commands: console <command> [args] | ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | cluster status | cluster spawn <name> | cluster kill <node> <pid> | cluster migrate <node> <pid> [target] | status | logs | restart | clear";
+        for input in ["help", "?"] {
+            let mut app = console_test_app();
+            shell_execute(&mut app, input);
+            let lines: Vec<&str> = app.shell_output.iter().map(String::as_str).collect();
+            assert_eq!(lines, [expected], "input: {input}");
+        }
+    }
+
+    #[test]
+    fn bare_clear_and_cls_clear_output_without_echo() {
+        for input in ["clear", "cls", "CLS"] {
+            let mut app = console_test_app();
+            app.shell_push("old line".into());
+            shell_execute(&mut app, input);
+            assert!(
+                app.shell_output.is_empty(),
+                "{input} left {:?}",
+                app.shell_output
+            );
+        }
+    }
+
+    #[test]
+    fn bare_clear_is_routed_through_the_unified_backend() {
+        let mut app = console_test_app();
+        app.shell_push("old line".into());
+        shell_execute(&mut app, "CLS");
+        assert!(app.shell_output.is_empty());
+        let history = aios_console::backend::dispatch(&mut app.console, "history");
+        assert!(history.lines.iter().any(|line| line.contains("CLS")));
+    }
+
+    #[test]
+    fn bare_unknown_command_keeps_the_legacy_message() {
+        let mut app = console_test_app();
+        shell_execute(&mut app, "frobnicate");
+        let lines: Vec<&str> = app.shell_output.iter().map(String::as_str).collect();
+        assert_eq!(lines, ["  unknown command 'frobnicate' — type help"]);
+    }
+
+    #[test]
+    fn bare_usage_errors_keep_the_legacy_wording() {
+        for (input, expected) in [
+            ("kill", "Usage: kill <pid>"),
+            (
+                "store",
+                "Usage: store list | store search <q> | store install <name>",
+            ),
+            ("net", "Usage: net get | net set key=value ..."),
+        ] {
+            let mut app = console_test_app();
+            shell_execute(&mut app, input);
+            let lines: Vec<&str> = app.shell_output.iter().map(String::as_str).collect();
+            assert_eq!(lines, [expected], "input: {input}");
+        }
+    }
+
+    #[test]
+    fn bare_ps_on_empty_scheduler_keeps_the_legacy_summary() {
+        let mut app = console_test_app();
+        shell_execute(&mut app, "ps");
+        let lines: Vec<&str> = app.shell_output.iter().map(String::as_str).collect();
+        assert_eq!(lines, ["  total=0 running=0 ram=0MB/1024MB"]);
     }
 
     fn test_node(id: u64, name: &str, addr: &str) -> NodeInfo {

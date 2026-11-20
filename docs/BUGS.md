@@ -1,5 +1,12 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (build): Cargo warning for binary-only `aios-shell` dependency
+
+The root `aios-integration-tests` package declared binary-only `aios-shell` as a
+dev-dependency. Cargo ignored it and printed `ignoring invalid dependency
+aios-shell which is missing a lib target` on every workspace command. No
+integration test imports the crate, so the unused dependency was removed.
+
 ## FIXED (official store): duplicate manifests in local catalog scans
 
 `collect_block_files` walked both the source root (descending into `blocks/`)
@@ -71,13 +78,17 @@ records a swap and a rollback entry but does not replace live block code: the
 old state is recorded as empty because the registry does not expose live block
 instances.
 
-The `aios` shell, `aios-shell` and `aios-tui` currently expose the new backend
-only through the `console <...>` prefix; `SafeModeShell` and the bare-command
-paths of all three frontends remain the default command surface until parity is
-verified. `KernelBackend` has the same limitation: only
-the commands backed by real kernel APIs are implemented, and the legacy kernel
-`clear` bug persists on the old dispatcher path (the new backend clears the
-shell history explicitly).
+The `aios` shell still keeps its legacy dispatcher as the default command
+surface, except bare `clear`/`cls`: they now go through `console_execute` and
+emit no lines with only `OutputControl::Clear`, so the shell buffer is cleared
+exactly as before; the inputs are also recorded in unified console history.
+`aios-shell` and `aios-tui` expose the new backend only through the
+`console <...>` prefix; `SafeModeShell` and the remaining bare-command paths
+stay unchanged until output parity is proven: legacy `help`/`?`, unknown-command,
+usage and empty `ps` lines differ from the canonical host wording.
+`KernelBackend` has the same limitation: only the commands backed by real
+kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
+old dispatcher path (the new backend clears the shell history explicitly).
 
 ## FIXED (unified console): Windows paths lost backslashes in arguments
 

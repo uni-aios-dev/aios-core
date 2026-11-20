@@ -89,7 +89,10 @@ the console and the orchestrator can observe the same runtime; `with_config`
 creates private handles for tests. Subcommands without a real implementation
 return `unavailable` rather than a fake success. `TuiApp` owns one `HostBackend`
 built from the orchestrator's handles, and the shell tab routes `console <...>`
-lines through it while the legacy dispatcher handles every other command.
+lines through it. Bare `clear`/`cls` now go through the same `console_execute`
+path: both emit no lines and only `OutputControl::Clear`, matching the legacy
+buffer clear; they are also recorded in `HostBackend` history. Every other bare
+command still uses the legacy dispatcher.
 `aios-shell` likewise owns one `HostBackend` created in `main` and recognises a
 case-insensitive `console <...>` prefix before alias expansion, so the registry
 never sees the prefix itself. `console` alone prints generated help;
@@ -109,6 +112,11 @@ until full parity is verified. Parity is checked by
 unit tests against the pure seams `SafeModeShell::parse_command`,
 `IntentEngine::translate` and the `aios-shell` alias expander. Hardware-bound
 handlers stay out of these tests; the table asserts resolution results only.
+`legacy_parity.rs` therefore proves resolution but not output equality:
+`aios/src/tui/mod.rs` pins the exact legacy lines for `help`/`?`, unknown
+commands, `kill`/`store`/`net` usage strings and empty `ps`, while
+`aios-console/tests/host_backend.rs` pins the canonical host wording for
+`help`, `clear` and usage errors.
 
 `HostBackendConfig.context_db_path` selects the redb file used by `context
 persist`. `HostBackend::execute_line()` is the alias- and trace-aware entry

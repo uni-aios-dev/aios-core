@@ -3,6 +3,14 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The `aios` shell now routes bare `clear`/`cls` through the unified
+  `HostBackend`: they emit no lines and only `OutputControl::Clear`, matching
+  the legacy buffer clear, and are recorded in the unified console history.
+  Six `aios` unit tests pin the exact legacy output for `help`/`?`, unknown
+  commands, `kill`/`store`/`net` usage and empty `ps`, while extended
+  `aios-console` integration assertions pin canonical `help`, `clear` and usage
+  wording. Other bare commands stay on the legacy dispatcher until output
+  parity is proven; EN/RU docs were aligned.
 - Working official-store blocks: `aios-store` now parses both the object
   `index.json` (`schema_version` + `blocks`) and the legacy manifest array,
   normalizes localized descriptions and `sha256:` hashes, maps friendly
@@ -173,6 +181,10 @@
   `state extract|restore`, `fm jobs|cancel`) still report `ERR unavailable`.
 
 ### Fixed
+- The root `aios-integration-tests` package listed binary-only `aios-shell` as
+  an unused dev-dependency, so Cargo printed `ignoring invalid dependency
+  aios-shell which is missing a lib target` on every workspace command. The
+  dependency was removed; no test used it.
 - Local store catalog scanning visited files under `blocks/` twice (once while
   walking the source root and once while walking `blocks/` itself), so
   `store search` reported duplicate manifests. `collect_block_files` now sorts

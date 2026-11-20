@@ -139,7 +139,10 @@ Parity tests cover the vocabulary of `aios-tui`, the `aios` shell, the kernel
 shell, `SafeModeShell` and `aios-shell`: `aios-console/tests/legacy_parity.rs`
 pins canonical, ambiguous and deferred results, while unit tests in
 `aios-watchdog`, `aios-tui` and `aios-shell` compare the pure parser/translator
-seams.
+seams. Output-level tests pin the exact legacy lines for `help`/`?`, unknown
+commands, `kill`/`store`/`net` usage and empty `ps` in `aios/src/tui/mod.rs`,
+plus the canonical host wording for `help`, `clear` and usage errors in
+`aios-console/tests/host_backend.rs`.
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
@@ -231,10 +234,12 @@ separators, so `source C:\Users\script.txt` and
 `block load C:\blocks\mod.wasm` work unchanged.
 
 In the `aios` shell tab the new backend is available through the `console`
-prefix, for example `console process spawn worker --ram 64`. All other lines
-are still handled by the legacy dispatcher, so existing commands keep working
-unchanged. `console help` lists the canonical commands; `console clear` and
-`console exit` act on the shell buffer and close the TUI respectively.
+prefix, for example `console process spawn worker --ram 64`. Bare `clear`/`cls`
+are routed through the same path (case-insensitively): they emit no lines and
+clear the shell buffer exactly as before, and are recorded in the unified
+console history. Every other bare line still uses the legacy dispatcher, so
+existing commands keep working unchanged. `console help` lists the canonical
+commands; `console clear` and `console exit` keep their existing behaviour.
 
 The standalone `aios-shell` accepts the same prefix, case-insensitively:
 `console ps`, `CONSOLE metrics --json` and bare `console` (help) all reach the
