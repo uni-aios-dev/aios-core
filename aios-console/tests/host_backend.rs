@@ -39,6 +39,36 @@ fn backend(label: &str) -> HostBackend {
     HostBackend::with_config(config)
 }
 
+fn installed_stub(config: &HostBackendConfig, name: &str) {
+    std::fs::create_dir_all(&config.blocks_dir).expect("create blocks dir");
+    let wat = r#"
+        (module
+            (memory (export "memory") 1)
+            (func (export "handle_message") (param i32 i32) (result i64) i64.const 0)
+            (func (export "init"))
+            (func (export "start"))
+        )
+    "#;
+    let wasm = wat::parse_str(wat).expect("compile stub WAT");
+    std::fs::write(config.blocks_dir.join(format!("{name}_1.0.0.wasm")), wasm).expect("write wasm");
+    std::fs::write(
+        config.blocks_dir.join(format!("{name}_1.0.0.json")),
+        serde_json::json!({
+            "name": name,
+            "version": "1.0.0",
+            "description": "stub",
+            "author": "test",
+            "capabilities": [],
+            "wasm_size_bytes": 0,
+            "wasm_sha256": "",
+            "signature": null,
+            "store_url": null
+        })
+        .to_string(),
+    )
+    .expect("write sidecar");
+}
+
 fn script_path(label: &str) -> PathBuf {
     let unique = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
@@ -316,6 +346,28 @@ fn host_capability_denial_blocks_privileged_commands() {
     host.set_capabilities(CapabilitySet::all());
     assert_eq!(dispatch(&mut host, "store list").code, ExitCode::Ok);
     assert_eq!(dispatch(&mut host, "wd reset").code, ExitCode::Ok);
+}
+
+#[test]
+fn block_run_executes_installed_wasm_block() {
+    let (config, _) = test_config("block-run");
+    installed_stub(&config, "stub");
+    let mut host = HostBackend::with_config(config);
+
+    let output = dispatch(&mut host, "block run stub 2+2");
+    assert_ok("block run stub 2+2", &output);
+    assert!(output.as_text().contains("no response from block"));
+
+    let again = dispatch(&mut host, "block run stub ans");
+    assert_ok("block run stub ans", &again);
+}
+
+#[test]
+fn block_run_reports_missing_installation() {
+    let mut host = backend("block-run-missing");
+    let output = dispatch(&mut host, "block run absent 1+1");
+    assert_eq!(output.code, ExitCode::BackendError);
+    assert!(output.as_text().contains("not installed"));
 }
 
 #[test]

@@ -2,6 +2,12 @@
 
 ## Completed
 
+- [x] Working official store catalogs — object/array `index.json`, nested
+      `blocks/<name>/block.wasm`, localized descriptions, capability aliases and
+      hash/size enrichment
+- [x] Stateful console blocks — `block run <name> <text...>` over a shared
+      `BlockExecutor`, with calculator and minesweeper shipped in
+      `aios-official-store`
 - [x] Phase 1: Workspace scaffold + IPC binary protocol
 - [x] Phase 2: Hardware Abstraction Layer with detection and tier classification
 - [x] Phase 3: Block Manager (registry, loader, message router)

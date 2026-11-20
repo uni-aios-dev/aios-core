@@ -47,6 +47,7 @@ use aios_sys_control::SysControlHub;
 use aios_tee::TeeInfo;
 use aios_telemetry::trace::{SpanStatus, TraceContext};
 use aios_vfs::vfs::{AiosVfs, VfsPath, VirtualFileSystem};
+use aios_wasm::executor::BlockExecutor;
 use aios_wasm::{IsolationConfig, SandboxConfig, WasiFilter, WasmBlock, WasmSandbox};
 
 use crate::backend::{dispatch, CommandBackend};
@@ -130,6 +131,8 @@ pub struct HostBackend {
     pub scheduler: Arc<Mutex<Scheduler>>,
     /// Shared block registry so the host orchestrator and console see the same blocks.
     pub registry: Arc<Mutex<BlockRegistry>>,
+    /// WASM executor that preserves state between `block run` invocations.
+    pub executor: Arc<Mutex<BlockExecutor>>,
     config: HostBackendConfig,
     store: StoreManager,
     net: NetSettingsBlock,
@@ -149,6 +152,7 @@ pub struct HostBackend {
     context_store: EmbeddedContextStore,
     wasi_filter: WasiFilter,
     wasm_source: Option<Vec<u8>>,
+    runtime_blocks: BTreeMap<String, BlockId>,
     compat_manager: CompatSandboxManager,
     access_control: AccessControlLayer,
     cap_token_ids: Vec<u32>,
@@ -194,9 +198,14 @@ impl HostBackend {
         );
         let version = config.version.clone();
         let live_update = PersistedLiveUpdateEngine::new(30_000, config.blocks_dir.clone()).ok();
+        let executor = Arc::new(Mutex::new(
+            BlockExecutor::with_default_config()
+                .unwrap_or_else(|error| panic!("aios WASM sandbox: {error}")),
+        ));
         Self {
             scheduler,
             registry,
+            executor,
             config,
             store,
             net,
@@ -216,6 +225,7 @@ impl HostBackend {
             context_store: EmbeddedContextStore::new(1000),
             wasi_filter: WasiFilter::default(),
             wasm_source: None,
+            runtime_blocks: BTreeMap::new(),
             compat_manager: CompatSandboxManager::new(),
             access_control: AccessControlLayer::new(b"aios-console-issuer-v1".to_vec(), 3_600_000),
             cap_token_ids: Vec::new(),
@@ -243,6 +253,12 @@ impl HostBackend {
     /// Shares the host IPC bus so `ipc` commands observe real bus traffic.
     pub fn set_ipc_bus(&mut self, bus: Arc<Mutex<IpcBus>>) {
         self.ipc_bus = bus;
+    }
+
+    /// Shares the host WASM executor so `block run` reuses the same live
+    /// instances (and therefore the same block state) as the orchestrator.
+    pub fn set_executor(&mut self, executor: Arc<Mutex<BlockExecutor>>) {
+        self.executor = executor;
     }
 
     /// Injects the host-owned watchdog control surface for `wd` commands.
@@ -410,6 +426,7 @@ impl CommandBackend for HostBackend {
             ("fault", Some("resolve")) => self.fault_resolve(invocation),
             ("sched", Some(subcommand)) => self.sched_command(invocation, subcommand),
             ("block", Some("list")) => self.block_list(),
+            ("block", Some("run")) => self.block_run(invocation),
             ("block", Some("info")) => self.block_info(invocation),
             ("block", Some("load")) => self.block_load(invocation),
             ("block", Some("mock")) => self.block_mock(invocation),
@@ -1425,6 +1442,81 @@ impl HostBackend {
             format!("sha256:       {:02x?}", entry.manifest.sha256),
             format!("binary bytes: {}", entry.binary.len()),
         ])
+    }
+
+    /// Run a text command in an installed WASM block, keeping the instance
+    /// alive between calls so stateful blocks (calculator, minesweeper, …)
+    /// continue where the previous invocation stopped.
+    fn block_run(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(name) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let text = invocation.args.get(1..).unwrap_or_default().join(" ");
+        let installed = match self.store.find_installed(name) {
+            Some(installed) => installed,
+            None => {
+                return CommandOutput::error(&format!(
+                    "block '{name}' is not installed; run 'store install {name}' first"
+                ))
+            }
+        };
+        let binary = match std::fs::read(&installed.path) {
+            Ok(binary) => binary,
+            Err(error) => {
+                return CommandOutput::error(&format!(
+                    "read '{}': {error}",
+                    installed.path.display()
+                ))
+            }
+        };
+
+        let id = if let Some(id) = self.runtime_blocks.get(name).copied() {
+            id
+        } else {
+            let mut registry = guard(&self.registry);
+            match BlockLoader::load_from_binary(
+                &mut registry,
+                &installed.manifest.name,
+                &installed.manifest.version,
+                binary,
+            ) {
+                Ok(manifest) => manifest.id,
+                Err(error) => return CommandOutput::error(&format!("block load failed: {error}")),
+            }
+        };
+        self.runtime_blocks.insert(name.to_string(), id);
+
+        if !guard(&self.executor).is_executed(id) {
+            let registry = guard(&self.registry);
+            if let Err(error) =
+                guard(&self.executor).execute_block(&registry, id, IsolationConfig::default())
+            {
+                return CommandOutput::error(&format!("block execute failed: {error}"));
+            }
+        }
+
+        let packet = IpcPacket::new(
+            0,
+            1,
+            CommandId::Custom,
+            Payload::Custom(name.to_string(), text.into_bytes()),
+        );
+        match guard(&self.executor).dispatch_wasm_packet(id, &packet) {
+            Ok(Some(response)) => {
+                let payload = response.payload;
+                let reply = match payload {
+                    Payload::Text(text) => text,
+                    Payload::Custom(_, data) | Payload::Binary(data) => {
+                        String::from_utf8_lossy(&data).into_owned()
+                    }
+                    Payload::Empty => String::new(),
+                    other => format!("unexpected block reply: {other:?}"),
+                };
+                CommandOutput::ok(reply.lines().map(str::to_string).collect())
+            }
+            Ok(None) => CommandOutput::ok(vec!["no response from block".into()]),
+            Err(error) => CommandOutput::error(&format!("block run failed: {error}")),
+        }
     }
 
     fn block_load(&mut self, invocation: &Invocation) -> CommandOutput {

@@ -2304,3 +2304,31 @@ table via `sfdisk --dump` before the copy. If the target root already carries th
 AIOS label, an interactive run prompts `Type YES to FORCE reinstall` before wiping;
 the unattended `aios.yes` path proceeds without the extra prompt. The root partition
 always takes the rest of the disk and its actual size is recorded in the journal.
+
+## Official store blocks and `block run`
+
+The store catalog has two accepted shapes: the original `Vec<ManifestInfo>` array
+and the object form produced by `aios-official-store/tools/indexgen`
+(`schema_version`, `name`, `description`, `blocks`). `aios_store::catalog::parse_index`
+converts both into `ManifestInfo`, choosing the English text from localized
+`description` objects, stripping the `sha256:` prefix from `wasm_hash`, and
+mapping capability aliases such as `filesystem:read` onto `CAP_FS_READ`.
+`StoreSource::block_url` now points at `blocks/<name>/block.wasm` and falls back
+to the legacy flat `blocks/<name>.wasm` URL on HTTP 404; local sources read
+nested `block.wasm` plus sidecar `manifest.json` first. When a manifest omits
+`wasm_sha256` or `wasm_size_bytes`, the catalog loader computes both from the
+downloaded binary so `store install` can still verify it.
+
+`block run <name> <text...>` completes the console path from install to
+execution. `HostBackend` finds the installed binary through `StoreManager`,
+registers it once in the shared `BlockRegistry`, and keeps
+`BTreeMap<String, BlockId>` so repeated calls reuse the same instance. The text
+after the block name is wrapped in `IpcPacket::new(..., CommandId::Custom,
+Payload::Custom(name, bytes))` and delivered with
+`BlockExecutor::dispatch_wasm_packet`; `Payload::Text` replies are printed line
+by line. `HostBackend::set_executor` injects the orchestrator's executor, and
+`TuiApp::new` passes it, so console-launched blocks preserve their state across
+commands and share the same live WASM instances as boot-time blocks. This is
+why `block run calculator ans+1` works after `block run calculator 2+3*4`,
+unlike `wasm call`, which passes no payload and creates a fresh instance each
+time.

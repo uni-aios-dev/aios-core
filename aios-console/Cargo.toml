@@ -52,3 +52,6 @@ aios-tee = { path = "../aios-tee", optional = true }
 aios-telemetry = { path = "../aios-telemetry", optional = true }
 aios-wasm = { path = "../aios-wasm", optional = true }
 serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+wat = "1"

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// The kind of a block store source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceKind {
-    /// A GitHub repository containing `index.json` and `blocks/*.wasm`.
+    /// A GitHub repository containing `index.json` and `blocks/<name>/block.wasm`.
     GitHub,
     /// A local directory with `index.json` or `*.wasm`/`*.bin` files.
     Local,
@@ -106,8 +106,23 @@ impl StoreSource {
         }
     }
 
-    /// URL to download `name` for remote sources; `None` for local dirs.
+    /// URL to download `name` from the nested official-store layout.
+    ///
+    /// Returns `None` for local dirs, which are read from disk instead.
     pub fn block_url(&self, name: &str) -> Option<String> {
+        match self.kind {
+            SourceKind::GitHub => Some(format!(
+                "https://raw.githubusercontent.com/{}/HEAD/blocks/{}/block.wasm",
+                self.base, name
+            )),
+            SourceKind::Http => Some(format!("{}/blocks/{}/block.wasm", self.base, name)),
+            SourceKind::Local => None,
+        }
+    }
+
+    /// URL for the legacy flat layout `blocks/<name>.wasm`, used as a fallback
+    /// when the nested URL returns 404.
+    pub fn legacy_block_url(&self, name: &str) -> Option<String> {
         match self.kind {
             SourceKind::GitHub => Some(format!(
                 "https://raw.githubusercontent.com/{}/HEAD/blocks/{}.wasm",
@@ -159,6 +174,10 @@ mod tests {
         let s = StoreSource::github("acme/blocks");
         assert_eq!(
             s.block_url("net").unwrap(),
+            "https://raw.githubusercontent.com/acme/blocks/HEAD/blocks/net/block.wasm"
+        );
+        assert_eq!(
+            s.legacy_block_url("net").unwrap(),
             "https://raw.githubusercontent.com/acme/blocks/HEAD/blocks/net.wasm"
         );
     }
@@ -169,6 +188,10 @@ mod tests {
         assert_eq!(s.index_url().unwrap(), "http://127.0.0.1:8080/index.json");
         assert_eq!(
             s.block_url("x").unwrap(),
+            "http://127.0.0.1:8080/blocks/x/block.wasm"
+        );
+        assert_eq!(
+            s.legacy_block_url("x").unwrap(),
             "http://127.0.0.1:8080/blocks/x.wasm"
         );
     }

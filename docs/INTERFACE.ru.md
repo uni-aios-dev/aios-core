@@ -1389,3 +1389,32 @@ i8042 (`ps2`, `[ps2] aux/mouse up id=…` + `[ps2] i8042 ready (kbd+mouse)`).
   переключение вкладок), тачпад двигает стрелку мыши, левый клик переключает
   вкладки. ID PS/2-мыши (`0x00` PS/2, `0x03` IntelliMouse, `0x04`
   five-button) показывается как `ps2mouse=id0x..`.
+
+## Запуск блоков store (`block run`)
+
+Установленные блоки сообщества запускаются из единой текстовой консоли командой
+`block run <name> <text...>`. Всё, что стоит после имени блока, передаётся гостю
+одним текстовым запросом; экземпляр WASM переиспользуется, поэтому блоки с
+состоянием продолжают работу между вызовами:
+
+```
+store source local:F:/aiosproject/AIOS/aios-official-store
+store install calculator --source=local:F:/aiosproject/AIOS/aios-official-store
+block run calculator 2+3*4          # 14
+block run calculator ans+1          # 15
+block run calculator width=3
+block run calculator width*width    # 9
+block run calculator history
+store install minesweeper --source=local:F:/aiosproject/AIOS/aios-official-store
+block run minesweeper new 9 9 10
+block run minesweeper open 1 1
+block run minesweeper flag 5 5
+block run minesweeper show
+```
+
+Калькулятор понимает `help`, `reset`, `history`, `ans`, выражения и
+`<имя> = <выражение>` с операторами `+ - * / % ( )`. Сапёр понимает `help`,
+`new [w h mines]`, `open <x> <y>`, `flag <x> <y>`, `show`, `status` и `reset`;
+координаты начинаются с 1, а первая открытая клетка никогда не содержит мину.
+Используйте `block run`, а не `wasm call`: последняя команда не передаёт payload
+и каждый раз создаёт новый экземпляр модуля, поэтому состояние блока теряется.

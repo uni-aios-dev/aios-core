@@ -2314,3 +2314,32 @@ raw-записью на физическую USB-флешку.
 интерактивный запуск потребует `Type YES to FORCE reinstall` перед затиранием;
 безлюдный путь `aios.yes` продолжает без лишнего запроса. Корневой раздел всегда
 занимает остаток диска, а его фактический размер фиксируется в журнале.
+
+## Блоки официального store и `block run`
+
+Каталог store принимает две формы: исходный массив `Vec<ManifestInfo>` и объект,
+который создаёт `aios-official-store/tools/indexgen` (`schema_version`, `name`,
+`description`, `blocks`). `aios_store::catalog::parse_index` приводит обе формы к
+`ManifestInfo`: берёт английский текст из локализованного объекта `description`,
+срезает префикс `sha256:` у `wasm_hash` и преобразует псевдонимы прав вида
+`filesystem:read` в `CAP_FS_READ`. `StoreSource::block_url` теперь указывает на
+`blocks/<name>/block.wasm` и при HTTP 404 откатывается на плоский URL
+`blocks/<name>.wasm`; локальные источники сначала читают вложенный `block.wasm`
+и sidecar `manifest.json`. Если в манифесте нет `wasm_sha256` или
+`wasm_size_bytes`, загрузчик каталога вычисляет их из скачанного бинарника, чтобы
+`store install` всё равно мог проверить блок.
+
+Команда `block run <name> <text...>` замыкает путь консоли от установки до
+выполнения. `HostBackend` находит установленный бинарник через `StoreManager`,
+один раз регистрирует его в общем `BlockRegistry` и хранит
+`BTreeMap<String, BlockId>`, чтобы повторные вызовы использовали тот же
+экземпляр. Остаток строки после имени блока упаковывается в
+`IpcPacket::new(..., CommandId::Custom, Payload::Custom(name, bytes))` и
+доставляется через `BlockExecutor::dispatch_wasm_packet`; ответы `Payload::Text`
+печатаются по строкам. `HostBackend::set_executor` внедряет исполнитель
+оркестратора, а `TuiApp::new` его передаёт, поэтому блоки, запущенные из
+консоли, сохраняют состояние между командами и используют ту же живую WASM-среду,
+что и блоки, загруженные при старте. Именно поэтому
+`block run calculator ans+1` работает после `block run calculator 2+3*4`, в
+отличие от `wasm call`, который передаёт пустой payload и создаёт новый
+экземпляр при каждом вызове.

@@ -60,7 +60,7 @@ pub const SPECS: &[CommandSpec] = &[
     spec!("bg", CommandGroup::Process, Host, false, "bg <id>", "resume a job in background", [], []),
 
     // ── Block ──────────────────────────────────────────────────────────────
-    spec!("block", CommandGroup::Block, Both, false, "block list|info|load|mock|unload|activate|deps|verify|swap|rollback", "block lifecycle (load = real wasm, mock = synthetic)", ["list", "info", "load", "mock", "unload", "activate", "deps", "verify", "swap", "rollback"], []),
+    spec!("block", CommandGroup::Block, Both, false, "block list|info|load|run|mock|unload|activate|deps|verify|swap|rollback", "block lifecycle (load = real wasm, run = send text to installed block)", ["list", "info", "load", "run", "mock", "unload", "activate", "deps", "verify", "swap", "rollback"], []),
     spec!("update", CommandGroup::Block, Host, false, "update history|pending|recover", "live-update journal", ["history", "pending", "recover"], []),
     spec!("state", CommandGroup::Block, Host, false, "state extract|restore <block>", "block state transfer", ["extract", "restore"], []),
 

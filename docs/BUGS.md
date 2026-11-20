@@ -1,5 +1,32 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (official store): duplicate manifests in local catalog scans
+
+`collect_block_files` walked both the source root (descending into `blocks/`)
+and `blocks/` itself, so the same binary under `blocks/` was emitted twice and
+`store search` returned duplicate manifests for one installed block. The list is
+now sorted and deduplicated by path, with a regression test for a flat
+`blocks/<name>_<version>.wasm` layout.
+
+## FIXED (official store): catalog format and stateful block execution
+
+The official store published an object `index.json` with a `blocks` array while
+`aios-store::fetch_index` only accepted `Vec<ManifestInfo>`; `store search` and
+`store install` therefore failed with a JSON error. The loader also expected
+localized `description` objects, `wasm_hash` with a `sha256:` prefix and flat
+`blocks/<name>_<version>.wasm` files, while the repository used string
+descriptions, bare hashes and nested `blocks/<name>/block.wasm`. All three
+mismatches are resolved by `parse_index`, `manifest_from_value` and the nested
+URL/discovery paths, with legacy formats kept as fallbacks.
+
+Interactive blocks could not be driven from the console: `wasm call` passed an
+empty argument list and created a new `WasmBlock` per invocation, resetting
+`ans`, variables and minesweeper boards. `block run` now stages a
+`Payload::Custom` request through the shared `BlockExecutor`; repeated calls
+reuse one instance, and the TUI injects the orchestrator's executor so state is
+not duplicated across front-ends. No known issue remains in this path; the
+older `wasm call` command is unchanged and is still stateless by design.
+
 ## OPEN (unified console): conflicting command semantics in legacy dispatchers
 
 Found while designing `aios-console`; the new registry fixes them at the

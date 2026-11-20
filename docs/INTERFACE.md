@@ -1362,3 +1362,32 @@ PS/2 i8042 pair (`ps2`, `[ps2] aux/mouse up id=…` + `[ps2] i8042 ready
   touchpad relocates the mouse arrow and left-click switches tabs. The PS/2
   mouse ID (`0x00` PS/2, `0x03` IntelliMouse, `0x04` five-button) is shown as
   `ps2mouse=id0x..`.
+
+## Running store blocks (`block run`)
+
+Installed community-store blocks are driven from the unified text console with
+`block run <name> <text...>`. Everything after the block name is passed to the
+guest as one text request; the same WASM instance is reused, so stateful blocks
+continue across invocations:
+
+```
+store source local:F:/aiosproject/AIOS/aios-official-store
+store install calculator --source=local:F:/aiosproject/AIOS/aios-official-store
+block run calculator 2+3*4          # 14
+block run calculator ans+1          # 15
+block run calculator width=3
+block run calculator width*width    # 9
+block run calculator history
+store install minesweeper --source=local:F:/aiosproject/AIOS/aios-official-store
+block run minesweeper new 9 9 10
+block run minesweeper open 1 1
+block run minesweeper flag 5 5
+block run minesweeper show
+```
+
+The calculator understands `help`, `reset`, `history`, `ans`, expressions and
+`<name> = <expression>` with `+ - * / % ( )`. The minesweeper understands
+`help`, `new [w h mines]`, `open <x> <y>`, `flag <x> <y>`, `show`, `status` and
+`reset`; coordinates are 1-based and the first opened cell is never a mine.
+Use `block run`, not `wasm call`: the latter sends no payload and instantiates
+the module anew, which discards block state.

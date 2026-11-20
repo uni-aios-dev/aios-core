@@ -187,6 +187,7 @@ impl TuiApp {
                 config,
             );
             backend.set_ipc_bus(s.bridge.ipc_bus.clone());
+            backend.set_executor(s.executor.clone());
             backend.set_watchdog_control(Arc::new(HostWatchdogControl::new(
                 s.bridge.watchdog_handle(),
             )));

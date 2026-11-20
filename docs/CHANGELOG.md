@@ -3,6 +3,18 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- Working official-store blocks: `aios-store` now parses both the object
+  `index.json` (`schema_version` + `blocks`) and the legacy manifest array,
+  normalizes localized descriptions and `sha256:` hashes, maps friendly
+  capability aliases (`filesystem:read`) to `CAP_*`, and reads the nested
+  `blocks/<name>/block.wasm` layout with a fallback to flat binaries. Missing
+  hash/size values are filled from the binary during catalog fetch.
+- New `block run <name> <text...>` console command. `HostBackend` registers an
+  installed block once, executes it through a shared `BlockExecutor`, and sends
+  the remaining text as a `Payload::Custom` request. The instance (and its
+  state) survives across calls; the TUI passes the orchestrator's executor so
+  console and boot-time blocks share the same runtime. Four `aios-store` and
+  two `aios-console` tests cover the new paths; EN/RU docs were aligned.
 - The standalone `aios-tui` Shell tab now accepts `console <command> [args]`
   through one `HostBackend` owned by `main`. The prefix is matched
   case-insensitively before the TUI extras and the `SafeModeShell` fallback;
@@ -161,6 +173,11 @@
   `state extract|restore`, `fm jobs|cancel`) still report `ERR unavailable`.
 
 ### Fixed
+- Local store catalog scanning visited files under `blocks/` twice (once while
+  walking the source root and once while walking `blocks/` itself), so
+  `store search` reported duplicate manifests. `collect_block_files` now sorts
+  and deduplicates discovered paths; a regression test covers a flat file in
+  `blocks/`.
 - Console arguments containing Windows paths (for example `source
   C:\Users\script.txt` or `block load C:\blocks\mod.wasm`) lost their
   backslashes because the tokenizer treated every `\` as an escape. Only
