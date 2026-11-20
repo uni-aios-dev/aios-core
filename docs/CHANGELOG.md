@@ -3,6 +3,13 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `ps`, `processes` and `list` through
+  the unified `HostBackend` via a new `aios-console/src/legacy.rs` adapter. It
+  maps canonical process-list output back to the exact legacy `SafeModeShell`
+  text, including the empty-list line and original column layout; new binary
+  tests compare all three spellings byte-for-byte with `SafeModeShell`. Other
+  bare commands stay on the legacy dispatcher until their own adapters exist.
+  EN/RU docs were aligned.
 - `WatchdogControl` now has a real `reset` operation. The `aios` adapter resets
   the shared `Watchdog` while keeping its `WatchdogRunner` attached, and
   `wd reset` calls that seam before incrementing the bounded restart counter;

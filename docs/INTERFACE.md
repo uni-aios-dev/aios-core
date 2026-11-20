@@ -385,7 +385,7 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `open` | `<query or url>` | Open/search on the Web tab |
 | `intent` | `<request in natural language>` | Translate a request into an IPC intent and show the plan (see below) |
 | `clear` | — | Clear shell output |
-| `ps` / `list` | — | List running processes |
+| `ps` / `processes` / `list` | — | List running processes |
 | `blocks` / `ls` | — | List loaded blocks |
 | `kill` | `<pid>` | Kill a process |
 | `spawn` | `<name> [prio] [ram_mb]` | Spawn a process (prio: 0-4) |
@@ -407,8 +407,10 @@ cannot shadow it. Bare or whitespace-only `console` prints generated help.
 `console clear` clears the shell output and `console exit [code]` closes the TUI
 through the normal shutdown path. `console ps` and `console block list` share the
 same `Arc<Mutex<...>>` `Scheduler` and `BlockRegistry` as the dashboard and
-`SafeModeShell`, so they observe the live TUI runtime. All other commands keep
-their legacy behaviour.
+`SafeModeShell`, so they observe the live TUI runtime. Bare `ps`, `processes` and
+`list` now use the unified `HostBackend` through an exact-output adapter; their
+text is byte-for-byte identical to the legacy safe-mode shell. All other bare
+commands keep their legacy behaviour.
 
 Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
 

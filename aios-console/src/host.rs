@@ -1285,6 +1285,14 @@ impl HostBackend {
         }
     }
 
+    /// Renders the exact legacy `ps` text from the canonical host process list.
+    ///
+    /// Returns `None` if the canonical shape changes, so a frontend can fall
+    /// back to the legacy dispatcher instead of printing a partial table.
+    pub fn process_list_legacy_text(&self) -> Option<String> {
+        crate::legacy::process_list_text(&self.process_list())
+    }
+
     fn process_list(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let processes = scheduler.all_processes();

@@ -401,6 +401,33 @@ fn run_console_command(state: &mut DashboardState, console: &mut HostBackend, re
     }
 }
 
+fn execute_legacy_parity_command(
+    state: &mut DashboardState,
+    console: &HostBackend,
+    cmd: &str,
+) -> bool {
+    let mut parts = cmd.split_whitespace();
+    let Some(command) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    if !matches!(
+        command.to_ascii_lowercase().as_str(),
+        "ps" | "processes" | "list"
+    ) {
+        return false;
+    }
+    let Some(text) = console.process_list_legacy_text() else {
+        return false;
+    };
+    for line in text.lines() {
+        state.shell_state.add_output(line.to_string());
+    }
+    true
+}
+
 fn execute_shell_cmd(
     state: &mut DashboardState,
     cmd: &str,
@@ -411,6 +438,9 @@ fn execute_shell_cmd(
 ) -> bool {
     if let Some(rest) = aios_console::frontend::console_prefix(cmd) {
         return run_console_command(state, console, rest);
+    }
+    if execute_legacy_parity_command(state, console, cmd) {
+        return false;
     }
     let mut scheduler = scheduler.lock().unwrap();
     let mut registry = registry.lock().unwrap();
@@ -2292,6 +2322,79 @@ mod tests {
         );
         assert!(resp.output.contains("shared_worker"));
         assert!(resp.output.contains("Total: 1 processes"));
+    }
+
+    #[test]
+    fn test_bare_ps_matches_safe_mode_output_exactly() {
+        let mut state = make_dashboard_state();
+        let (scheduler, registry) = make_shared_handles();
+        {
+            let mut sched = scheduler.lock().unwrap();
+            sched
+                .spawn_process("shared_worker", aios_process_mgr::task::Priority::High, 64)
+                .unwrap();
+        }
+        let expected = {
+            let mut sched = scheduler.lock().unwrap();
+            let mut reg = registry.lock().unwrap();
+            let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            shell
+                .execute(
+                    aios_watchdog::safe_mode::ShellCommand::ListProcesses,
+                    &mut sched,
+                    &mut reg,
+                )
+                .output
+        };
+        state.shell_state.output.clear();
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = make_shared_console(&scheduler, &registry);
+        let exit = super::execute_shell_cmd(
+            &mut state,
+            "PS",
+            &scheduler,
+            &registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        assert!(!exit);
+        assert_eq!(state.shell_state.output.join("\n"), expected);
+    }
+
+    #[test]
+    fn test_bare_process_aliases_match_safe_mode_output_exactly() {
+        for command in ["processes", "list"] {
+            let mut state = make_dashboard_state();
+            let (scheduler, registry) = make_shared_handles();
+            let expected = {
+                let mut sched = scheduler.lock().unwrap();
+                let mut reg = registry.lock().unwrap();
+                let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+                shell
+                    .execute(
+                        aios_watchdog::safe_mode::ShellCommand::ListProcesses,
+                        &mut sched,
+                        &mut reg,
+                    )
+                    .output
+            };
+            state.shell_state.output.clear();
+            let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            let mut console = make_shared_console(&scheduler, &registry);
+            super::execute_shell_cmd(
+                &mut state,
+                command,
+                &scheduler,
+                &registry,
+                &mut safe_shell,
+                &mut console,
+            );
+            assert_eq!(
+                state.shell_state.output.join("\n"),
+                expected,
+                "command: {command}"
+            );
+        }
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub mod deferred;
 pub mod frontend;
 #[cfg(feature = "std")]
 pub mod host;
+/// Adapters from canonical output to exact legacy shell text.
+pub mod legacy;
 pub mod output;
 pub mod parser;
 pub mod registry;
