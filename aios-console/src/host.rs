@@ -41,6 +41,7 @@ use aios_security::capability::Capability as SecCapability;
 use aios_security::hardware_bridge::HardwareSecurityBridge;
 use aios_security::sandbox::Sandbox;
 use aios_store::manager::StoreManager;
+use aios_store::manifest::{sign_manifest, ManifestInfo};
 use aios_store::ManifestValidator;
 use aios_sys_control::net_manager::{NetManager, SimulatedWifi, WifiBackend};
 use aios_sys_control::SysControlHub;
@@ -49,6 +50,9 @@ use aios_telemetry::trace::{SpanStatus, TraceContext};
 use aios_vfs::vfs::{AiosVfs, VfsPath, VirtualFileSystem};
 use aios_wasm::executor::BlockExecutor;
 use aios_wasm::{IsolationConfig, SandboxConfig, WasiFilter, WasmBlock, WasmSandbox};
+use base64::Engine as _;
+use ed25519_dalek::SigningKey;
+use sha2::{Digest, Sha256};
 
 use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
@@ -134,6 +138,7 @@ pub struct HostBackend {
     /// WASM executor that preserves state between `block run` invocations.
     pub executor: Arc<Mutex<BlockExecutor>>,
     config: HostBackendConfig,
+    publish_url: Option<String>,
     store: StoreManager,
     net: NetSettingsBlock,
     telemetry: TelemetryStore,
@@ -207,6 +212,7 @@ impl HostBackend {
             registry,
             executor,
             config,
+            publish_url: None,
             store,
             net,
             telemetry: TelemetryStore::new(),
@@ -259,6 +265,15 @@ impl HostBackend {
     /// instances (and therefore the same block state) as the orchestrator.
     pub fn set_executor(&mut self, executor: Arc<Mutex<BlockExecutor>>) {
         self.executor = executor;
+    }
+
+    /// Overrides the bridge publish endpoint used by `store publish`.
+    ///
+    /// Without an override the command posts to
+    /// `http://localhost:$AIOS_BRIDGE_PORT/api/v1/store/publish` (port 8080 by
+    /// default). Tests use this seam to avoid depending on a running bridge.
+    pub fn set_publish_url(&mut self, url: impl Into<String>) {
+        self.publish_url = Some(url.into());
     }
 
     /// Injects the host-owned watchdog control surface for `wd` commands.
@@ -1953,6 +1968,212 @@ impl HostBackend {
         }
     }
 
+    fn signing_key(invocation: &Invocation) -> Result<Option<SigningKey>, String> {
+        let key_hex = match invocation.flag("key") {
+            Some(Some(value)) => Some(value.to_string()),
+            Some(None) => return Err("--key requires a 32-byte hex value".into()),
+            None => std::env::var("AIOS_STORE_SIGNING_KEY").ok(),
+        };
+        let Some(key_hex) = key_hex else {
+            return Ok(None);
+        };
+        let bytes =
+            hex::decode(key_hex.trim()).map_err(|error| format!("invalid key hex: {error}"))?;
+        let array: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| "signing key must be 32 bytes (64 hex chars)".to_string())?;
+        Ok(Some(SigningKey::from_bytes(&array)))
+    }
+
+    fn store_target(invocation: &Invocation) -> Result<(PathBuf, String, String), String> {
+        let file = invocation.first_arg().ok_or_else(|| {
+            "Usage: store <sign|publish> <file.wasm> [name] [version] [--key <secret_hex>]"
+                .to_string()
+        })?;
+        let path = PathBuf::from(file);
+        let default_name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "block".to_string());
+        let name = invocation
+            .arg(1)
+            .map(str::to_string)
+            .unwrap_or(default_name);
+        let version = invocation
+            .arg(2)
+            .map(str::to_string)
+            .unwrap_or_else(|| "1.0.0".to_string());
+        Ok((path, name, version))
+    }
+
+    fn signed_manifest(
+        binary: &[u8],
+        name: &str,
+        version: &str,
+        key: &SigningKey,
+    ) -> Result<ManifestInfo, String> {
+        let mut manifest = ManifestInfo {
+            name: name.to_string(),
+            version: version.to_string(),
+            description: "Managed from AIOS console".into(),
+            author: "local-user".into(),
+            capabilities: std::collections::HashSet::new(),
+            wasm_size_bytes: binary.len() as u64,
+            wasm_sha256: hex::encode(Sha256::digest(binary)),
+            signature: None,
+            store_url: None,
+        };
+        manifest.signature = Some(sign_manifest(&manifest, key));
+        Ok(manifest)
+    }
+
+    fn safe_file_token(value: &str) -> String {
+        let last = value
+            .split(['/', '\\'])
+            .rfind(|component| !component.is_empty())
+            .unwrap_or("block");
+        let token: String = last
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let trimmed = token.trim_matches('.');
+        if trimmed.is_empty() {
+            "block".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    fn store_sign(&self, invocation: &Invocation) -> CommandOutput {
+        let (path, name, version) = match Self::store_target(invocation) {
+            Ok(target) => target,
+            Err(error) => return CommandOutput::text(&error),
+        };
+        let key = match Self::signing_key(invocation) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return CommandOutput::text(
+                    "No signing key: pass --key <secret_hex> or set AIOS_STORE_SIGNING_KEY",
+                )
+            }
+            Err(error) => return CommandOutput::error(&error),
+        };
+        let binary = match std::fs::read(&path) {
+            Ok(binary) => binary,
+            Err(error) => {
+                return CommandOutput::error(&format!("read '{}': {error}", path.display()))
+            }
+        };
+        let manifest = match Self::signed_manifest(&binary, &name, &version, &key) {
+            Ok(manifest) => manifest,
+            Err(error) => return CommandOutput::error(&error),
+        };
+        let sidecar = path.with_file_name(format!(
+            "{}_{}.json",
+            Self::safe_file_token(&name),
+            Self::safe_file_token(&version)
+        ));
+        let text = match serde_json::to_string_pretty(&manifest) {
+            Ok(text) => text,
+            Err(error) => return CommandOutput::error(&format!("serialize manifest: {error}")),
+        };
+        if let Err(error) = std::fs::write(&sidecar, text) {
+            return CommandOutput::error(&format!("write '{}': {error}", sidecar.display()));
+        }
+        CommandOutput::ok(vec![
+            format!("signed '{name}' v{version} -> {}", sidecar.display()),
+            format!(
+                "public key: {}",
+                hex::encode(key.verifying_key().to_bytes())
+            ),
+        ])
+    }
+
+    fn store_publish(&self, invocation: &Invocation) -> CommandOutput {
+        let (path, name, version) = match Self::store_target(invocation) {
+            Ok(target) => target,
+            Err(error) => return CommandOutput::text(&error),
+        };
+        let key = match Self::signing_key(invocation) {
+            Ok(key) => key,
+            Err(error) => return CommandOutput::error(&error),
+        };
+        let binary = match std::fs::read(&path) {
+            Ok(binary) => binary,
+            Err(error) => {
+                return CommandOutput::error(&format!("read '{}': {error}", path.display()))
+            }
+        };
+        let mut body = serde_json::json!({
+            "name": name,
+            "version": version,
+            "description": "Published from AIOS console",
+            "author": "local-user",
+            "capabilities": [],
+            "checksum_sha256": hex::encode(Sha256::digest(&binary)),
+            "wasm_base64": base64::engine::general_purpose::STANDARD.encode(&binary),
+            "signature": serde_json::Value::Null,
+        });
+        if let Some(key) = key {
+            let manifest = match Self::signed_manifest(&binary, &name, &version, &key) {
+                Ok(manifest) => manifest,
+                Err(error) => return CommandOutput::error(&error),
+            };
+            match serde_json::to_value(manifest.signature) {
+                Ok(signature) => body["signature"] = signature,
+                Err(error) => {
+                    return CommandOutput::error(&format!("serialize signature: {error}"))
+                }
+            }
+        }
+        let url = self.publish_url.clone().unwrap_or_else(|| {
+            let port = std::env::var("AIOS_BRIDGE_PORT").unwrap_or_else(|_| "8080".to_string());
+            format!("http://localhost:{port}/api/v1/store/publish")
+        });
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => return CommandOutput::error(&format!("publish client: {error}")),
+        };
+        let response = match client.post(&url).json(&body).send() {
+            Ok(response) => response,
+            Err(error) => return CommandOutput::error(&format!("publish failed: {error}")),
+        };
+        let status = response.status();
+        let reply: serde_json::Value = match response.json() {
+            Ok(reply) => reply,
+            Err(error) => return CommandOutput::error(&format!("publish reply: {error}")),
+        };
+        if reply.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+            let published = reply
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(name.as_str());
+            let published_version = reply
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(version.as_str());
+            CommandOutput::ok(vec![format!(
+                "published '{published}' v{published_version}"
+            )])
+        } else {
+            let error = reply
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown error");
+            CommandOutput::error(&format!("publish failed: {error} (HTTP {status})"))
+        }
+    }
+
     fn store_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
         match subcommand {
             "list" => {
@@ -2126,6 +2347,8 @@ impl HostBackend {
                 }
                 CommandOutput::ok(lines)
             }
+            "sign" => self.store_sign(invocation),
+            "publish" => self.store_publish(invocation),
             _ => CommandOutput::unavailable(&format!("store {subcommand} has no host backend yet")),
         }
     }

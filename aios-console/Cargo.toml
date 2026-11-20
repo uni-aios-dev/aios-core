@@ -28,6 +28,11 @@ std = [
     "dep:aios-telemetry",
     "dep:aios-wasm",
     "dep:serde_json",
+    "dep:base64",
+    "dep:ed25519-dalek",
+    "dep:hex",
+    "dep:reqwest",
+    "dep:sha2",
 ]
 
 [dependencies]
@@ -52,6 +57,11 @@ aios-tee = { path = "../aios-tee", optional = true }
 aios-telemetry = { path = "../aios-telemetry", optional = true }
 aios-wasm = { path = "../aios-wasm", optional = true }
 serde_json = { workspace = true, optional = true }
+base64 = { version = "0.22", optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "system-proxy", "blocking", "json"], optional = true }
 
 [dev-dependencies]
 wat = "1"

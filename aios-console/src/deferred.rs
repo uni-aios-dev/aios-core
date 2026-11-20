@@ -21,8 +21,6 @@
 // Command::IntentNatural { text }// RU/EN natural language -> intent plan
 // Command::ClusterStatus         // cluster status/nodes
 // Command::ClusterSpawn { .. }   // cluster spawn/migrate/kill
-// Command::StorePublish { .. }   // POST /api/v1/store/publish + signing key
-// Command::StoreSign { .. }      // Ed25519 sidecar, developer workflow
 // Command::PerfTuneVideo         // intent "optimize for video editing"
 // Command::MemoryCompactionFake  // currently only {"compaction":"triggered"}
 //

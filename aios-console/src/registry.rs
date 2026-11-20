@@ -98,7 +98,7 @@ pub const SPECS: &[CommandSpec] = &[
     spec!("crash", CommandGroup::Diagnostics, Host, false, "crash report <kind> <message>", "submit a crash report", ["report"], []),
 
     // ── Store ──────────────────────────────────────────────────────────────
-    spec!("store", CommandGroup::Store, Host, false, "store list|sources|source|trust|search|install|update|check-updates|uninstall|rollback|verify", "package store (publish/sign are deferred)", ["list", "sources", "source", "trust", "search", "install", "update", "check-updates", "uninstall", "rollback", "verify"], [Capability::StoreInstall]),
+    spec!("store", CommandGroup::Store, Host, false, "store list|sources|source|trust|search|install|update|check-updates|uninstall|rollback|verify|sign|publish", "package store (sign/publish use Ed25519 + the bridge publish API)", ["list", "sources", "source", "trust", "search", "install", "update", "check-updates", "uninstall", "rollback", "verify", "sign", "publish"], [Capability::StoreInstall]),
 
     // ── Runtime ────────────────────────────────────────────────────────────
     spec!("wasm", CommandGroup::Runtime, Host, false, "wasm compile|call|mem|grow", "WASM sandbox", ["compile", "call", "mem", "grow"], []),
@@ -182,8 +182,6 @@ pub const ALIASES: &[Alias] = &[
     alias!("tui" => AliasTarget::Deferred("framebuffer view switching is outside the text console")),
     alias!("tabs" => AliasTarget::Deferred("tab overview has no meaning in a text-only console")),
     alias!("cluster" => AliasTarget::Deferred("cluster control has no local backend")),
-    alias!("store publish" => AliasTarget::Deferred("publishing needs a signing key and remote registry")),
-    alias!("store sign" => AliasTarget::Deferred("signing is a developer workflow, not console operation")),
     alias!("perf-tune-video" => AliasTarget::Deferred("intent-only performance tuning")),
     alias!("memory-compaction" => AliasTarget::Deferred("reported compaction is a stub, not a real operation")),
     alias!("theme" => AliasTarget::Deferred("theming is visual; text console stays monochrome")),

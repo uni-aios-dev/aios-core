@@ -1,7 +1,13 @@
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use sha2::Digest;
 
 use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
@@ -1519,4 +1525,125 @@ fn host_control_seams_enable_watchdog_bridge_and_auth() {
     assert_ok("auth me", &me);
     assert_eq!(me.lines, ["user-for-abc"]);
     assert_eq!(dispatch(&mut host, "auth me").code, ExitCode::Usage);
+}
+
+const TEST_SIGNING_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+
+#[test]
+fn store_sign_writes_a_signed_sidecar() {
+    let (config, base) = test_config("store-sign");
+    let _ = std::fs::create_dir_all(&base);
+    let wasm = base.join("demo.wasm");
+    std::fs::write(&wasm, b"wasm-bytes").unwrap();
+    let mut host = HostBackend::with_config(config);
+    host.set_capabilities(CapabilitySet::all());
+
+    let command = format!(
+        "store sign {} demo 1.2.3 --key {TEST_SIGNING_KEY}",
+        wasm.display()
+    );
+    let output = dispatch(&mut host, &command);
+    assert_ok(&command, &output);
+    assert!(output.as_text().contains("signed 'demo' v1.2.3"));
+    assert!(output.as_text().contains("public key:"));
+
+    let sidecar = base.join("demo_1.2.3.json");
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sidecar).unwrap()).unwrap();
+    assert_eq!(value["name"], "demo");
+    assert_eq!(value["version"], "1.2.3");
+    assert_eq!(
+        value["wasm_sha256"],
+        hex::encode(sha2::Sha256::digest(b"wasm-bytes"))
+    );
+    assert!(value["signature"].is_object());
+}
+
+#[test]
+fn store_sign_sanitizes_sidecar_name() {
+    let (config, base) = test_config("store-sign-sanitize");
+    let _ = std::fs::create_dir_all(&base);
+    let wasm = base.join("demo.wasm");
+    std::fs::write(&wasm, b"bytes").unwrap();
+    let mut host = HostBackend::with_config(config);
+    host.set_capabilities(CapabilitySet::all());
+
+    let command = format!(
+        "store sign {} ../evil 1.0.0 --key {TEST_SIGNING_KEY}",
+        wasm.display()
+    );
+    let output = dispatch(&mut host, &command);
+    assert_ok(&command, &output);
+    assert!(base.join("evil_1.0.0.json").is_file());
+    assert!(!base.parent().unwrap().join("evil_1.0.0.json").exists());
+}
+
+#[test]
+fn store_publish_signs_and_posts_to_bridge() {
+    let (config, base) = test_config("store-publish");
+    let _ = std::fs::create_dir_all(&base);
+    let wasm = base.join("demo.wasm");
+    std::fs::write(&wasm, b"wasm-bytes").unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (sender, receiver) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut raw = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let (body_start, content_length) = loop {
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0, "publish client closed the connection");
+            raw.extend_from_slice(&chunk[..count]);
+            if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+                let header = String::from_utf8_lossy(&raw[..position]);
+                let length = header
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                break (position + 4, length);
+            }
+        };
+        while raw.len() < body_start + content_length {
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0, "publish body was truncated");
+            raw.extend_from_slice(&chunk[..count]);
+        }
+        let body =
+            String::from_utf8_lossy(&raw[body_start..body_start + content_length]).into_owned();
+        let reply = r#"{"success":true,"name":"demo","version":"2.0.0","error":null}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+            reply.len()
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+        sender.send(body).unwrap();
+    });
+
+    let mut host = HostBackend::with_config(config);
+    host.set_capabilities(CapabilitySet::all());
+    host.set_publish_url(format!("http://127.0.0.1:{port}/api/v1/store/publish"));
+    let command = format!(
+        "store publish {} demo 2.0.0 --key {TEST_SIGNING_KEY}",
+        wasm.display()
+    );
+    let output = dispatch(&mut host, &command);
+    let body = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    server.join().unwrap();
+
+    assert_ok(&command, &output);
+    assert!(output.as_text().contains("published 'demo' v2.0.0"));
+    assert!(body.contains("\"name\":\"demo\""));
+    assert!(body.contains("\"version\":\"2.0.0\""));
+    assert!(body.contains("d2FzbS1ieXRlcw=="));
+    assert!(!body.contains("\"signature\":null"));
 }

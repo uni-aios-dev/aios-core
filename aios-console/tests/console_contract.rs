@@ -236,12 +236,20 @@ fn deferred_commands_report_unavailable() {
         "intent open the pod bay doors",
         "fetch http://example.test",
         "gui",
-        "store publish myblock",
         "theme mono",
     ] {
         let output = dispatch(&mut EchoBackend::host(), input);
         assert_eq!(output.code, ExitCode::Unavailable, "input: {input}");
         assert!(output.lines[0].starts_with("ERR unavailable:"));
+    }
+}
+
+#[test]
+fn store_sign_and_publish_are_registered_subcommands() {
+    for input in ["store sign block.wasm", "store publish block.wasm"] {
+        let invocation = resolve(input).unwrap_or_else(|error| panic!("{input}: {error:?}"));
+        assert_eq!(invocation.spec.id, "store");
+        assert!(matches!(invocation.subcommand, Some("sign" | "publish")));
     }
 }
 
