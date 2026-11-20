@@ -90,6 +90,11 @@ creates private handles for tests. Subcommands without a real implementation
 return `unavailable` rather than a fake success. `TuiApp` owns one `HostBackend`
 built from the orchestrator's handles, and the shell tab routes `console <...>`
 lines through it while the legacy dispatcher handles every other command.
+`aios-shell` likewise owns one `HostBackend` created in `main` and recognises a
+case-insensitive `console <...>` prefix before alias expansion, so the registry
+never sees the prefix itself. `console` alone prints generated help;
+`OutputControl::Clear` clears the terminal and `Exit(code)` exits the process.
+Every other line keeps the POSIX shell path (aliases, jobs, external programs).
 `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>` so the bridge, TUI
 and console observe the same blocks; `BridgeContext.ipc_bus` is likewise
 `Arc<Mutex<IpcBus>>`, shared with the console. The legacy dispatchers are kept

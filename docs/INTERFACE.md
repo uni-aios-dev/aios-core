@@ -236,6 +236,13 @@ are still handled by the legacy dispatcher, so existing commands keep working
 unchanged. `console help` lists the canonical commands; `console clear` and
 `console exit` act on the shell buffer and close the TUI respectively.
 
+The standalone `aios-shell` accepts the same prefix, case-insensitively:
+`console ps`, `CONSOLE metrics --json` and bare `console` (help) all reach the
+same `HostBackend` through `execute_line()`. Aliases are not expanded on the
+`console` path, so a shell alias named `console` cannot shadow it. `console clear`
+clears the terminal and `console exit <code>` exits the shell; all non-`console`
+lines keep POSIX behaviour (aliases, jobs, external programs).
+
 The kernel shell uses the same `console <...>` prefix. Its backend implements
 `help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`;

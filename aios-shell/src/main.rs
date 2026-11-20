@@ -11,6 +11,9 @@ use rustyline::error::ReadlineError;
 use rustyline::history::FileHistory;
 use rustyline::{Config, EditMode, Editor};
 
+use aios_console::host::HostBackend;
+use aios_console::output::OutputControl;
+
 #[derive(Clone)]
 struct Job {
     id: usize,
@@ -163,16 +166,47 @@ fn is_gui_app(name: &str) -> bool {
     )
 }
 
+fn console_prefix(line: &str) -> Option<&str> {
+    let mut parts = line.trim().splitn(2, char::is_whitespace);
+    let head = parts.next()?;
+    if head.eq_ignore_ascii_case("console") {
+        Some(parts.next().unwrap_or("").trim())
+    } else {
+        None
+    }
+}
+
+fn run_console_command(console: &mut HostBackend, rest: &str) {
+    let input = if rest.is_empty() { "help" } else { rest };
+    let output = console.execute_line(input);
+    for line in &output.lines {
+        println!("{line}");
+    }
+    match output.control {
+        OutputControl::Clear => {
+            print!("\x1b[2J\x1b[H");
+            let _ = io::stdout().flush();
+        }
+        OutputControl::Exit(code) => exit(i32::from(code)),
+        OutputControl::None => {}
+    }
+}
+
 fn run_command(
     line: &str,
     aliases: &mut HashMap<String, String>,
     jobs: &mut Vec<Job>,
     job_counter: &mut usize,
+    console: &mut HostBackend,
 ) {
     // Clean up completed jobs
     #[cfg(unix)]
     {
         jobs.retain(|j| unsafe { libc::kill(j.pid as i32, 0) == 0 });
+    }
+    if let Some(rest) = console_prefix(line) {
+        run_console_command(console, rest);
+        return;
     }
     let expanded = expand_aliases(line, aliases);
     let mut parts = expanded.split_whitespace();
@@ -231,6 +265,7 @@ fn run_command(
             println!("\x1b[1;33m[DEV]\x1b[0m git,make,cmake,gcc,g++,rustc,cargo,python,python3,node,npm,pip");
             println!("\x1b[1;33m[ARCHIVE]\x1b[0m tar,gzip,gunzip,bzip2,xz,zip,unzip");
             println!("\x1b[1;33m[AIOS]\x1b[0m gui,tui,aios,logs,hw,services,aios-shell-reload");
+            println!("\x1b[1;33m[CONSOLE]\x1b[0m console <command> (console help lists unified commands)");
             println!("\x1b[1;33m[EDITORS]\x1b[0m vi,vim,nano,emacs,micro");
             println!("\n\x1b[2mRun any program directly. Use & for background. TAB for completion.\x1b[0m");
         }
@@ -250,7 +285,7 @@ fn run_command(
                     println!("{}={}", a, v);
                 }
             } else {
-                run_command("env", aliases, jobs, job_counter);
+                run_command("env", aliases, jobs, job_counter, console);
             }
         }
         "unset" => {
@@ -390,7 +425,7 @@ fn run_command(
         }
         "aios-shell-reload" => {
             println!("Reloading shellrc...");
-            load_shellrc_simple(aliases);
+            load_shellrc_simple(aliases, console);
         }
         "logs" => {
             for f in [
@@ -560,7 +595,7 @@ fn run_command(
                             if l == "exit" || l == "quit" {
                                 continue;
                             }
-                            run_command(l, aliases, jobs, job_counter);
+                            run_command(l, aliases, jobs, job_counter, &mut *console);
                         }
                     } else {
                         eprintln!("source: {}: No such file", f);
@@ -686,7 +721,7 @@ fn run_command(
     }
 }
 
-fn load_shellrc_simple(aliases: &mut HashMap<String, String>) {
+fn load_shellrc_simple(aliases: &mut HashMap<String, String>, console: &mut HostBackend) {
     if let Some(p) = config_path() {
         if let Ok(content) = fs::read_to_string(p) {
             let mut jobs = vec![];
@@ -707,7 +742,7 @@ fn load_shellrc_simple(aliases: &mut HashMap<String, String>) {
                 } else if l == "exit" || l == "quit" {
                     continue; // don't exit on shellrc load
                 } else {
-                    run_command(l, aliases, &mut jobs, &mut jc);
+                    run_command(l, aliases, &mut jobs, &mut jc, console);
                 }
             }
             save_aliases(aliases);
@@ -717,7 +752,8 @@ fn load_shellrc_simple(aliases: &mut HashMap<String, String>) {
 
 fn main() {
     let mut aliases = load_aliases();
-    load_shellrc_simple(&mut aliases);
+    let mut console = HostBackend::new();
+    load_shellrc_simple(&mut aliases, &mut console);
 
     println!("\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m");
     println!("\x1b[1;36mтХС                AIOS Shell v2.2                    тХС\x1b[0m");
@@ -785,10 +821,16 @@ fn main() {
                             if sub.is_empty() {
                                 continue;
                             }
-                            run_command(sub, &mut aliases, &mut jobs, &mut job_counter);
+                            run_command(
+                                sub,
+                                &mut aliases,
+                                &mut jobs,
+                                &mut job_counter,
+                                &mut console,
+                            );
                         }
                     } else {
-                        run_command(cmd, &mut aliases, &mut jobs, &mut job_counter);
+                        run_command(cmd, &mut aliases, &mut jobs, &mut job_counter, &mut console);
                     }
                 }
             }
@@ -834,5 +876,25 @@ mod tests {
 
         assert!(matches!(resolve("gui"), Err(ResolveError::Deferred { .. })));
         assert!(matches!(resolve("tui"), Err(ResolveError::Deferred { .. })));
+    }
+
+    #[test]
+    fn console_prefix_is_case_insensitive_and_keeps_arguments() {
+        assert_eq!(console_prefix("console ps"), Some("ps"));
+        assert_eq!(console_prefix("CONSOLE   ps aux"), Some("ps aux"));
+        assert_eq!(console_prefix("  console  block list "), Some("block list"));
+        assert_eq!(console_prefix("console"), Some(""));
+        assert_eq!(console_prefix("ps"), None);
+        assert_eq!(console_prefix("consolett ps"), None);
+    }
+
+    #[test]
+    fn console_command_routes_through_the_unified_backend() {
+        let mut console = HostBackend::new();
+        let output = console.execute_line("echo MiXeD Case");
+        assert_eq!(output.lines, ["MiXeD Case"]);
+
+        let help = console.execute_line("help");
+        assert!(help.lines.iter().any(|line| line.contains("vfs")));
     }
 }

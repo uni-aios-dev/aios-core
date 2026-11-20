@@ -238,6 +238,13 @@ mock-профиль (`modern`, `legacy`, `legacy-2012`, `nvidia`, `intel-meteor-
 изменений. `console help` выводит список канонических команд, `console clear`
 очищает буфер шелла, а `console exit` закрывает TUI.
 
+Отдельный `aios-shell` принимает тот же префикс без учёта регистра: `console ps`,
+`CONSOLE metrics --json` и один `console` (справка) попадают в тот же `HostBackend`
+через `execute_line()`. На пути `console` алиасы не раскрываются, поэтому шелловый
+алиас с именем `console` не может его перехватить. `console clear` очищает терминал,
+а `console exit <code>` завершает шелл; все строки без префикса сохраняют POSIX-
+поведение (алиасы, задания, внешние программы).
+
 Ядерный шелл использует тот же префикс `console <...>`. Его бэкенд реализует
 `help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` и `socktest`;

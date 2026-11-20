@@ -4,14 +4,12 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
+aios-console = { path = "../aios-console" }
 rustyline = { version = "14", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
 libc = "0.2"
-
-[dev-dependencies]
-aios-console = { path = "../aios-console", default-features = false }
 
 [[bin]]
 name = "aios-shell"

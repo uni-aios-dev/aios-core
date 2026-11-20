@@ -156,6 +156,12 @@
   ICMP with raw-socket privileges; `net recheck` needs a host equivalent of the
   kernel-only `recheck()`; `state` needs live `StatefulBlock` handles in
   `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked.
+- [x] Add a `console <command> [args]` escape hatch to the standalone
+  `aios-shell`: `main` owns one `HostBackend`, `console_prefix` detects the
+  prefix case-insensitively before alias expansion, and bare `console` prints
+  generated help. `OutputControl::Clear` clears the terminal and `Exit(code)`
+  exits the process. All other lines keep the POSIX shell path; two unit tests
+  cover prefix detection and backend routing.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,

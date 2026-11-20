@@ -3,6 +3,13 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-shell` now accepts `console <command> [args]` as an
+  escape hatch into the unified `HostBackend`. The prefix is matched
+  case-insensitively before alias expansion (so an alias cannot shadow it), bare
+  `console` prints generated help, `console clear` clears the terminal and
+  `console exit <code>` exits the process. Every other line keeps the existing
+  POSIX shell behaviour (aliases, jobs, external programs). Two unit tests cover
+  prefix parsing and backend routing; EN/RU docs were aligned.
 - `aios-console/src/unavailable.rs` gives each registered-but-unsupported host
   command a precise reason instead of the generic `has no host backend yet`:
   `jobs|fg|bg` (no OS job control), `acl` (no path-scoped ACL API), `ping` (no
