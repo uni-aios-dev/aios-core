@@ -1222,6 +1222,19 @@ fn execute_shell_cmd_inner(
             state.shell_state.add_output(TUI_HELP_EXTRAS.to_string());
             return;
         }
+        Some("logs") | Some("log") => {
+            if let Some(text) = console.legacy_log_text() {
+                state.shell_state.add_output(text);
+            } else {
+                let resp = safe_shell.execute(
+                    aios_watchdog::safe_mode::ShellCommand::ViewLogs,
+                    scheduler,
+                    registry,
+                );
+                state.shell_state.add_output(resp.output);
+            }
+            return;
+        }
         _ => aios_watchdog::safe_mode::SafeModeShell::parse_command(cmd),
     };
     let resp = safe_shell.execute(command, scheduler, registry);
@@ -1481,12 +1494,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let mut telemetry = TelemetryStore::new();
-    let mut safe_shell = SafeModeShell::new(3);
+    let event_log = Arc::new(Mutex::new(Vec::new()));
+    let mut safe_shell = SafeModeShell::with_event_log(3, event_log.clone());
     let mut console = HostBackend::from_handles(
         scheduler.clone(),
         registry.clone(),
         HostBackendConfig::default(),
     );
+    console.set_event_log(event_log);
 
     if is_headless() {
         log::info!("AIOS: headless mode — running without TUI");
@@ -2157,6 +2172,22 @@ mod tests {
         )
     }
 
+    fn make_shared_event_log(entries: &[&str]) -> std::sync::Arc<std::sync::Mutex<Vec<String>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(
+            entries.iter().map(|entry| entry.to_string()).collect(),
+        ))
+    }
+
+    fn make_shared_console_with_log(
+        scheduler: &std::sync::Arc<std::sync::Mutex<aios_process_mgr::scheduler::Scheduler>>,
+        registry: &std::sync::Arc<std::sync::Mutex<aios_block_mgr::registry::BlockRegistry>>,
+        event_log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> aios_console::host::HostBackend {
+        let mut console = make_shared_console(scheduler, registry);
+        console.set_event_log(event_log);
+        console
+    }
+
     #[test]
     fn test_web_sidebar_move_wraps_around() {
         let mut state = make_dashboard_state();
@@ -2642,6 +2673,54 @@ mod tests {
                 format!("{}\n{}", expected, super::TUI_HELP_EXTRAS),
                 "command: {command}"
             );
+        }
+    }
+
+    #[test]
+    fn test_bare_log_aliases_match_safe_mode_output_exactly() {
+        let scenarios: [&[&str]; 2] = [
+            &[],
+            &["Spawned worker as PID 7", "Killed process 7 (worker)"],
+        ];
+        for entries in scenarios {
+            let event_log = make_shared_event_log(entries);
+            let expected = {
+                let (scheduler, registry) = make_shared_handles();
+                let mut sched = scheduler.lock().unwrap();
+                let mut reg = registry.lock().unwrap();
+                let mut shell =
+                    aios_watchdog::safe_mode::SafeModeShell::with_event_log(3, event_log.clone());
+                shell
+                    .execute(
+                        aios_watchdog::safe_mode::ShellCommand::ViewLogs,
+                        &mut sched,
+                        &mut reg,
+                    )
+                    .output
+            };
+            for command in ["LOGS", "log"] {
+                let mut state = make_dashboard_state();
+                state.shell_state.output.clear();
+                let (scheduler, registry) = make_shared_handles();
+                let mut safe_shell =
+                    aios_watchdog::safe_mode::SafeModeShell::with_event_log(3, event_log.clone());
+                let mut console =
+                    make_shared_console_with_log(&scheduler, &registry, event_log.clone());
+                let exit = super::execute_shell_cmd(
+                    &mut state,
+                    command,
+                    &scheduler,
+                    &registry,
+                    &mut safe_shell,
+                    &mut console,
+                );
+                assert!(!exit);
+                assert_eq!(
+                    state.shell_state.output.join("\n"),
+                    expected,
+                    "command: {command}, entries: {entries:?}"
+                );
+            }
         }
     }
 

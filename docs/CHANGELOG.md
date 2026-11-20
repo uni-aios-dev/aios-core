@@ -3,6 +3,12 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `logs` and `log` through
+  `HostBackend::legacy_log_text` and `legacy::log_text`. `SafeModeShell::with_event_log`
+  and `HostBackend::set_event_log` share an `Arc<Mutex<Vec<String>>>` so the console
+  reads the same safe-mode events the shell records, without a console→watchdog
+  dependency. New core unit tests and a binary test compare both spellings with
+  `SafeModeShell` for empty and populated logs. EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `help` and `?` through
   `HostBackend::legacy_help_text` and `legacy::help_text`. The adapter maps the
   generated all-commands help to the exact legacy `SafeModeShell` wording, while

@@ -159,6 +159,19 @@ pub fn help_text(output: &CommandOutput) -> Option<String> {
     Some(String::from(LEGACY_HELP))
 }
 
+/// Formats safe-mode event entries with the exact legacy numbering and empty text.
+pub fn log_text(entries: &[String]) -> String {
+    if entries.is_empty() {
+        return String::from("No safe mode events logged");
+    }
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| format!("{}: {}", index + 1, entry))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn legacy_process_row(row: &str) -> Option<String> {
     let fields = row.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 5 {
@@ -201,8 +214,8 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_list_text, exit_text, help_text, process_list_text, status_text, BLOCK_HEADER,
-        BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
+        block_list_text, exit_text, help_text, log_text, process_list_text, status_text,
+        BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -312,6 +325,18 @@ mod tests {
             String::new(),
         ]);
         assert_eq!(help_text(&output).as_deref(), Some(LEGACY_HELP));
+    }
+
+    #[test]
+    fn maps_event_entries_to_legacy_numbering() {
+        assert_eq!(log_text(&[]), "No safe mode events logged");
+        assert_eq!(
+            log_text(&[
+                "Spawned worker as PID 1".into(),
+                "Killed process 1 (worker)".into(),
+            ]),
+            "1: Spawned worker as PID 1\n2: Killed process 1 (worker)"
+        );
     }
 
     #[test]

@@ -143,7 +143,7 @@
   and `output` string is asserted verbatim, including failure wording and
   legacy column layout. The standalone TUI now shares its runtime handles with
   the console, and bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
-  `exit`/`quit`/`q` and `help`/`?` use host-side adapters
+  `exit`/`quit`/`q`, `help`/`?` and `logs`/`log` use host-side adapters
   (`aios-console/src/legacy.rs`) with byte-for-byte equality to `SafeModeShell`;
   remaining bare commands stay on the legacy dispatcher until their adapters
   exist. Canonical `console info` remains ambiguous.
@@ -175,6 +175,13 @@
   `TUI_HELP_EXTRAS` as a separate frontend block; a non-matching help topic falls
   back to the legacy dispatcher. Core unit tests and a binary test compare both
   spellings byte-for-byte with `SafeModeShell`. EN/RU docs were aligned.
+- [x] Add the log exact-output adapter (`HostBackend::legacy_log_text` and
+  `legacy::log_text`) and route bare `logs`/`log` in `aios-tui` through it.
+  `SafeModeShell::with_event_log` and `HostBackend::set_event_log` share the
+  `Arc<Mutex<Vec<String>>>` event log so both paths see the same safe-mode events
+  without a console→watchdog dependency. Core unit tests and a binary test compare
+  both spellings with `SafeModeShell` for empty and populated logs. EN/RU docs were
+  aligned.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

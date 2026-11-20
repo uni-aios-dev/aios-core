@@ -143,8 +143,8 @@ seams. Output-level tests pin the exact legacy lines for `help`/`?`, unknown
 commands, `kill`/`store`/`net` usage and empty `ps` in `aios/src/tui/mod.rs`,
 plus the canonical host wording for `help`, `clear` and usage errors in
 `aios-console/tests/host_backend.rs`. The standalone TUI additionally compares
-all migrated bare spellings, including `help`/`?`, byte-for-byte with
-`SafeModeShell`.
+all migrated bare spellings, including `help`/`?` and `logs`/`log`, byte-for-byte
+with `SafeModeShell`.
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
@@ -410,13 +410,14 @@ cannot shadow it. Bare or whitespace-only `console` prints generated help.
 through the normal shutdown path. `console ps` and `console block list` share the
 same `Arc<Mutex<...>>` `Scheduler` and `BlockRegistry` as the dashboard and
 `SafeModeShell`, so they observe the live TUI runtime. Bare `ps`, `processes`,
-`list`, `blocks`, `ls`, `status`, `info`, `exit`, `quit`, `q`, `help` and `?`
-now use the unified `HostBackend` through exact-output adapters; their text is
-byte-for-byte identical to the legacy safe-mode shell. The help adapter keeps
-the separate TUI extras block. Bare `exit`/`quit`/`q` still only print the legacy
-line — use `console exit` to close the TUI. Canonical `console info` stays
-ambiguous — only the bare legacy alias is adapter-backed. All other bare
-commands keep their legacy behaviour.
+`list`, `blocks`, `ls`, `status`, `info`, `exit`, `quit`, `q`, `help`, `?`, `logs`
+and `log` now use the unified `HostBackend` through exact-output adapters; their
+text is byte-for-byte identical to the legacy safe-mode shell. The log adapter
+reads a shared event-log handle, so `logs`/`log` shows the same safe-mode events
+as before; the help adapter keeps the separate TUI extras block. Bare
+`exit`/`quit`/`q` still only print the legacy line — use `console exit` to close
+the TUI. Canonical `console info` stays ambiguous — only the bare legacy alias is
+adapter-backed. All other bare commands keep their legacy behaviour.
 
 Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
 

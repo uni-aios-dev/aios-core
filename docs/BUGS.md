@@ -96,15 +96,18 @@ emit no lines with only `OutputControl::Clear`, so the shell buffer is cleared
 exactly as before; the inputs are also recorded in unified console history.
 `aios-shell` exposes the new backend through the `console <...>` prefix, while
 `aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls`,
-`status`/`info`, `exit`/`quit`/`q` and `help`/`?` through exact-output adapters;
-all other bare-command paths stay unchanged until output parity is proven: the
+`status`/`info`, `exit`/`quit`/`q`, `help`/`?` and `logs`/`log` through
+exact-output adapters; all other bare-command paths stay unchanged until output
+parity is proven: the
 unknown-command, usage and empty `ps` lines differ from the canonical host
 wording. Bare `exit`/`quit`/`q` keep the legacy shutdown flag (they print but do
 not close the TUI); only `console exit` breaks the event loop. Exact legacy
 `SafeModeShell` output is pinned in `aios-watchdog/src/safe_mode.rs` for all
 branches, and the migrated aliases match it byte-for-byte. The standalone TUI
 shares its `Scheduler` and `BlockRegistry` as `Arc<Mutex<...>>` with
-`HostBackend`, so `console ps` and `console block list` observe the same runtime
+`HostBackend`, and the safe-mode event log is shared as `Arc<Mutex<Vec<String>>>`
+between `SafeModeShell` and `HostBackend`, so `logs`/`log` sees the same events as
+the legacy shell. `console ps` and `console block list` observe the same runtime
 as safe-mode commands while legacy output stays unchanged. `KernelBackend` has
 the same limitation: only the commands backed by real kernel APIs are
 implemented, and the legacy kernel `clear` bug persists on the old dispatcher

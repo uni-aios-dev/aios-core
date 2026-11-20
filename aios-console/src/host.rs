@@ -174,6 +174,7 @@ pub struct HostBackend {
     watchdog_control: Option<Arc<dyn WatchdogControl>>,
     bridge_control: Option<Arc<dyn BridgeControl>>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
+    event_log: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl HostBackend {
@@ -248,6 +249,7 @@ impl HostBackend {
             watchdog_control: None,
             bridge_control: None,
             auth_provider: None,
+            event_log: None,
         }
     }
 
@@ -289,6 +291,15 @@ impl HostBackend {
     /// Injects the host-owned authentication surface for `auth` commands.
     pub fn set_auth_provider(&mut self, provider: Arc<dyn AuthProvider>) {
         self.auth_provider = Some(provider);
+    }
+
+    /// Shares the safe-mode event log so legacy `logs` output can be reproduced.
+    ///
+    /// The console only reads this handle; the owning shell appends events. Without
+    /// an injected handle the legacy adapter returns `None` and the frontend keeps
+    /// its old dispatcher instead of printing an empty event list.
+    pub fn set_event_log(&mut self, event_log: Arc<Mutex<Vec<String>>>) {
+        self.event_log = Some(event_log);
     }
 
     /// Overrides the hardware inventory used by `sys` and `hw` commands.
@@ -1324,6 +1335,15 @@ impl HostBackend {
     /// a frontend can keep the legacy dispatcher instead of printing a wrong list.
     pub fn legacy_help_text(&mut self) -> Option<String> {
         crate::legacy::help_text(&self.execute_line("help"))
+    }
+
+    /// Renders the exact legacy `logs` text from the injected event log.
+    ///
+    /// Returns `None` when no event log was shared, so a frontend can keep the
+    /// legacy dispatcher instead of inventing an empty event list.
+    pub fn legacy_log_text(&self) -> Option<String> {
+        let entries = self.event_log.as_ref()?.lock().ok()?;
+        Some(crate::legacy::log_text(&entries))
     }
 
     fn process_list(&self) -> CommandOutput {

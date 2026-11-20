@@ -1,6 +1,7 @@
 use aios_block_mgr::registry::BlockRegistry;
 use aios_process_mgr::scheduler::Scheduler;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ShellCommand {
@@ -37,16 +38,37 @@ pub struct ShellResponse {
 
 pub struct SafeModeShell {
     log: Vec<String>,
+    event_log: Arc<Mutex<Vec<String>>>,
     orchestrator_restarts: u32,
     max_restarts: u32,
 }
 
 impl SafeModeShell {
     pub fn new(max_restarts: u32) -> Self {
+        Self::with_event_log(max_restarts, Arc::new(Mutex::new(Vec::new())))
+    }
+
+    /// Creates a shell whose events are also visible through a shared handle.
+    ///
+    /// The handle starts as the source of truth, so a shell created after earlier
+    /// events still reports the same log as the backend reading that handle.
+    pub fn with_event_log(max_restarts: u32, event_log: Arc<Mutex<Vec<String>>>) -> Self {
+        let log = event_log
+            .lock()
+            .map(|entries| entries.clone())
+            .unwrap_or_default();
         Self {
-            log: Vec::new(),
+            log,
+            event_log,
             orchestrator_restarts: 0,
             max_restarts,
+        }
+    }
+
+    fn record(&mut self, entry: String) {
+        self.log.push(entry.clone());
+        if let Ok(mut shared) = self.event_log.lock() {
+            shared.push(entry);
         }
     }
 
@@ -135,7 +157,7 @@ impl SafeModeShell {
                 let pid = aios_process_mgr::task::ProcessId(pid);
                 match scheduler.kill_process(pid) {
                     Ok(p) => {
-                        self.log.push(format!("Killed process {} ({})", pid.0, p.name));
+                        self.record(format!("Killed process {} ({})", pid.0, p.name));
                         ShellResponse { success: true, output: format!("Process {} ({}) terminated", pid.0, p.name) }
                     }
                     Err(e) => ShellResponse { success: false, output: format!("Failed: {e}") },
@@ -145,7 +167,7 @@ impl SafeModeShell {
                 let prio = aios_process_mgr::task::Priority::from_u8(priority);
                 match scheduler.spawn_process(&name, prio, ram_mb) {
                     Ok(pid) => {
-                        self.log.push(format!("Spawned {} as PID {}", name, pid.0));
+                        self.record(format!("Spawned {} as PID {}", name, pid.0));
                         ShellResponse { success: true, output: format!("Spawned '{}' as PID {} (priority={}, RAM={}MB)", name, pid.0, prio, ram_mb) }
                     }
                     Err(e) => ShellResponse { success: false, output: format!("Failed: {e}") },
@@ -155,7 +177,7 @@ impl SafeModeShell {
                 let binary = format!("block_{name}_{version}").into_bytes();
                 match aios_block_mgr::loader::BlockLoader::load_from_binary(registry, &name, &version, binary) {
                     Ok(manifest) => {
-                        self.log.push(format!("Loaded block '{}' v{} as ID {}", name, version, manifest.id));
+                        self.record(format!("Loaded block '{}' v{} as ID {}", name, version, manifest.id));
                         ShellResponse { success: true, output: format!("Block '{}' v{} loaded as ID {}", name, version, manifest.id) }
                     }
                     Err(e) => ShellResponse { success: false, output: format!("Failed: {e}") },
@@ -164,7 +186,7 @@ impl SafeModeShell {
             ShellCommand::UnloadBlock { block_id } => {
                 match registry.unload_block(aios_core::block::BlockId(block_id)) {
                     Ok(_) => {
-                        self.log.push(format!("Unloaded block {block_id}"));
+                        self.record(format!("Unloaded block {block_id}"));
                         ShellResponse { success: true, output: format!("Block {block_id} unloaded") }
                     }
                     Err(e) => ShellResponse { success: false, output: format!("Failed: {e}") },
@@ -208,7 +230,7 @@ impl SafeModeShell {
                     };
                 }
                 self.orchestrator_restarts += 1;
-                self.log.push(format!(
+                self.record(format!(
                     "Orchestrator restart attempt {}/{}",
                     self.orchestrator_restarts, self.max_restarts
                 ));
@@ -720,6 +742,18 @@ mod tests {
         let resp = shell.execute(ShellCommand::ViewLogs, &mut sched, &mut reg);
         assert!(resp.output.contains("1:"));
         assert!(resp.output.contains("2:"));
+    }
+
+    #[test]
+    fn shared_event_log_sees_shell_events() {
+        let (mut sched, mut reg) = empty_system();
+        let shared = Arc::new(Mutex::new(Vec::new()));
+        let mut shell = SafeModeShell::with_event_log(3, shared.clone());
+        shell.execute(ShellCommand::RestartOrchestrator, &mut sched, &mut reg);
+        let expected = vec!["Orchestrator restart attempt 1/3".to_string()];
+        assert_eq!(shared.lock().unwrap().as_slice(), expected.as_slice());
+        let late_shell = SafeModeShell::with_event_log(3, shared);
+        assert_eq!(late_shell.log_entries(), expected.as_slice());
     }
 
     #[test]
