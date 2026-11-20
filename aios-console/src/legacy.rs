@@ -10,6 +10,13 @@ const PROCESS_HEADER: &str = "PID  NAME              PRIO  STATE     RAM";
 const PROCESS_SEPARATOR: &str = "---- ----------------  ---- --------- -----";
 const BLOCK_HEADER: &str = "ID   NAME         VERSION  STATE";
 const BLOCK_SEPARATOR: &str = "---- ------------ -------- --------";
+const STATUS_HEADER: &str = "status        host console";
+const STATUS_UPTIME: &str = "uptime        ";
+const STATUS_PROCESSES: &str = "processes     ";
+const STATUS_BLOCKS: &str = "blocks        ";
+const STATUS_MEMORY: &str = "memory        ";
+const STATUS_RESTARTS: &str = "restarts      ";
+const STATUS_LOG: &str = "log           ";
 
 /// Converts canonical `ps` output into the exact legacy safe-mode process text.
 ///
@@ -88,6 +95,40 @@ pub fn block_list_text(output: &CommandOutput) -> Option<String> {
     Some(text)
 }
 
+/// Converts canonical `status` output into the exact legacy safe-mode status text.
+///
+/// `crash_log_count` comes from the scheduler because the canonical status does
+/// not expose the crash log. Returns `None` for an unexpected canonical shape so
+/// a frontend can keep the legacy dispatcher instead of printing partial status.
+pub fn status_text(output: &CommandOutput, crash_log_count: usize) -> Option<String> {
+    if output.code != ExitCode::Ok {
+        return None;
+    }
+
+    let [status, uptime, processes, blocks, memory, restarts, log] = output.lines.as_slice() else {
+        return None;
+    };
+    if status != STATUS_HEADER
+        || !uptime.starts_with(STATUS_UPTIME)
+        || !restarts.starts_with(STATUS_RESTARTS)
+        || !log.starts_with(STATUS_LOG)
+    {
+        return None;
+    }
+
+    let processes = processes.strip_prefix(STATUS_PROCESSES)?;
+    let blocks = blocks.strip_prefix(STATUS_BLOCKS)?;
+    let memory = memory.strip_prefix(STATUS_MEMORY)?.strip_suffix(" MB")?;
+    let (used, total) = memory.split_once('/')?;
+    let used = used.parse::<u64>().ok()?;
+    let total = total.parse::<u64>().ok()?;
+    let pressure = used as f64 / total.max(1) as f64 * 100.0;
+
+    Some(format!(
+        "System: SAFE MODE\nProcesses: {processes}\nBlocks: {blocks} loaded\nRAM: {used}/{total} MB ({pressure:.1}%)\nCrash log: {crash_log_count} entries"
+    ))
+}
+
 fn legacy_process_row(row: &str) -> Option<String> {
     let fields = row.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 5 {
@@ -130,8 +171,8 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_list_text, process_list_text, BLOCK_HEADER, BLOCK_SEPARATOR, PROCESS_HEADER,
-        PROCESS_SEPARATOR,
+        block_list_text, process_list_text, status_text, BLOCK_HEADER, BLOCK_SEPARATOR,
+        PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -207,6 +248,21 @@ mod tests {
     }
 
     #[test]
+    fn maps_canonical_status_to_legacy_layout() {
+        let output = CommandOutput::ok(alloc::vec![
+            "status        host console".into(),
+            "uptime        3s".into(),
+            "processes     1 (0 running, 1 ready)".into(),
+            "blocks        2".into(),
+            "memory        64/65536 MB".into(),
+            "restarts      0/3".into(),
+            "log           0 entries".into(),
+        ]);
+        let expected = "System: SAFE MODE\nProcesses: 1 (0 running, 1 ready)\nBlocks: 2 loaded\nRAM: 64/65536 MB (0.1%)\nCrash log: 2 entries";
+        assert_eq!(status_text(&output, 2).as_deref(), Some(expected));
+    }
+
+    #[test]
     fn rejects_unexpected_outputs() {
         assert_eq!(process_list_text(&CommandOutput::usage("ps")), None);
         assert_eq!(
@@ -220,6 +276,11 @@ mod tests {
                 BLOCK_SEPARATOR.into(),
                 "Total: 1 blocks".into(),
             ])),
+            None
+        );
+        assert_eq!(status_text(&CommandOutput::usage("status"), 0), None);
+        assert_eq!(
+            status_text(&CommandOutput::ok(alloc::vec!["other".into()]), 0),
             None
         );
     }

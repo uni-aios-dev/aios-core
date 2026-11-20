@@ -95,20 +95,20 @@ surface, except bare `clear`/`cls`: they now go through `console_execute` and
 emit no lines with only `OutputControl::Clear`, so the shell buffer is cleared
 exactly as before; the inputs are also recorded in unified console history.
 `aios-shell` exposes the new backend through the `console <...>` prefix, while
-`aios-tui` also routes bare `ps`/`processes`/`list` and `blocks`/`ls` through
-exact-output adapters; all other bare-command paths stay unchanged until output
-parity is proven: legacy `help`/`?`, unknown-command, usage and empty `ps` lines
-differ from the canonical host wording. Exact legacy `SafeModeShell` output is
-pinned in `aios-watchdog/src/safe_mode.rs` for all branches, and the migrated
-list aliases match it byte-for-byte. The standalone TUI shares its `Scheduler`
-and `BlockRegistry` as `Arc<Mutex<...>>` with `HostBackend`, so `console ps` and
-`console block list` observe the same runtime as safe-mode commands while legacy
-output stays unchanged. `KernelBackend` has the same limitation: only the commands backed by
-real kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
-old dispatcher path (the new backend clears the shell history explicitly).
-`tabs`, `gui` and `tui` are deferred in the registry and bare `info` is
-ambiguous, so they stay on the legacy dispatcher instead of being forced into
-the console.
+`aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls` and
+`status`/`info` through exact-output adapters; all other bare-command paths stay
+unchanged until output parity is proven: legacy `help`/`?`, unknown-command,
+usage and empty `ps` lines differ from the canonical host wording. Exact legacy
+`SafeModeShell` output is pinned in `aios-watchdog/src/safe_mode.rs` for all
+branches, and the migrated aliases match it byte-for-byte. The standalone TUI
+shares its `Scheduler` and `BlockRegistry` as `Arc<Mutex<...>>` with
+`HostBackend`, so `console ps` and `console block list` observe the same runtime
+as safe-mode commands while legacy output stays unchanged. `KernelBackend` has
+the same limitation: only the commands backed by real kernel APIs are
+implemented, and the legacy kernel `clear` bug persists on the old dispatcher
+path (the new backend clears the shell history explicitly). `tabs`, `gui` and
+`tui` are deferred in the registry; canonical `console info` remains ambiguous,
+although the legacy safe-mode `info` alias is adapter-backed in `aios-tui`.
 
 ## FIXED (unified console): `wd reset` no longer fakes a restart
 

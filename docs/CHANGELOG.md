@@ -3,20 +3,26 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `status` and `info` through
+  `HostBackend::status_legacy_text` and `legacy::status_text`. The adapter maps
+  the canonical status back to the exact legacy `SafeModeShell` text, including
+  RAM pressure and the scheduler crash-log count supplied by the shared backend;
+  new core unit tests and two binary tests cover populated and empty systems.
+  Canonical `console info` remains ambiguous. EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `blocks` and `ls` through
   `HostBackend::block_list_legacy_text` and the shared adapter in
   `aios-console/src/legacy.rs`. Canonical block lists are mapped back to the
   exact legacy `SafeModeShell` text, including the empty-list line and original
   column widths; new core unit tests and two binary tests cover populated and
-  empty lists. Together with the process aliases, these are the first two
+  empty lists. Together with the process aliases, these became the first two
   migrated safe-mode command groups. EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `ps`, `processes` and `list` through
   the unified `HostBackend` via a new `aios-console/src/legacy.rs` adapter. It
   maps canonical process-list output back to the exact legacy `SafeModeShell`
   text, including the empty-list line and original column layout; new binary
-  tests compare all three spellings byte-for-byte with `SafeModeShell`. Other
-  bare commands stay on the legacy dispatcher until their own adapters exist.
-  EN/RU docs were aligned.
+  tests compare all three spellings byte-for-byte with `SafeModeShell`. The
+  remaining bare commands stay on the legacy dispatcher until their own adapters
+  exist. EN/RU docs were aligned.
 - `WatchdogControl` now has a real `reset` operation. The `aios` adapter resets
   the shared `Watchdog` while keeping its `WatchdogRunner` attached, and
   `wd reset` calls that seam before incrementing the bounded restart counter;

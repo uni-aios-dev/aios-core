@@ -142,10 +142,11 @@
   dispatcher in `aios-watchdog/src/safe_mode.rs`: every branch's `success` flag
   and `output` string is asserted verbatim, including failure wording and
   legacy column layout. The standalone TUI now shares its runtime handles with
-  the console, and bare `ps`/`processes`/`list` plus `blocks`/`ls` use host-side
-  adapters (`aios-console/src/legacy.rs`) with byte-for-byte equality to
-  `SafeModeShell`; remaining bare commands stay on the legacy dispatcher until
-  their adapters exist.
+  the console, and bare `ps`/`processes`/`list`, `blocks`/`ls` and `status`/`info`
+  use host-side adapters (`aios-console/src/legacy.rs`) with byte-for-byte
+  equality to `SafeModeShell`; remaining bare commands stay on the legacy
+  dispatcher until their adapters exist. Canonical `console info` remains
+  ambiguous.
 - [x] Add the first exact-output adapter (`aios-console/src/legacy.rs` and
   `HostBackend::process_list_legacy_text`) and route bare
   `ps`/`processes`/`list` in `aios-tui` through it. Core unit tests pin the
@@ -157,6 +158,11 @@
   through it. Core unit tests pin the canonical-to-legacy layout, and two binary
   tests compare populated and empty block lists with `SafeModeShell`. EN/RU docs
   were aligned.
+- [x] Add the status exact-output adapter (`HostBackend::status_legacy_text` and
+  `legacy::status_text`) and route bare `status`/`info` in `aios-tui` through it.
+  The crash-log count is read from the shared scheduler because canonical status
+  omits it; core unit tests and two binary tests match `SafeModeShell` for empty
+  and populated systems. EN/RU docs were aligned.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

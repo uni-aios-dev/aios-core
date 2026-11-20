@@ -1301,6 +1301,15 @@ impl HostBackend {
         crate::legacy::block_list_text(&self.block_list())
     }
 
+    /// Renders the exact legacy `status` text from the canonical host status.
+    ///
+    /// The scheduler crash log count is supplied separately because the canonical
+    /// status does not expose it. Returns `None` if the canonical shape changes.
+    pub fn status_legacy_text(&self) -> Option<String> {
+        let crash_log_count = guard(&self.scheduler).crash_log().len();
+        crate::legacy::status_text(&self.status(), crash_log_count)
+    }
+
     fn process_list(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let processes = scheduler.all_processes();
