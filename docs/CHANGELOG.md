@@ -3,6 +3,16 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `kill`, `spawn`, `load` and `unload`
+  through `HostBackend::legacy_kill`, `legacy_spawn`, `legacy_load` and
+  `legacy_unload` with `legacy.rs::LegacyMutation` formatters. Each adapter parses
+  the command exactly like `SafeModeShell`, performs the real scheduler/registry
+  operation through the shared handles, preserves exact legacy success text and
+  `Failed: <error>` wording (printed as `Error: Failed: <error>`), and appends the
+  legacy event to the shared event log on success. New core unit tests and a binary
+  test compare all four commands byte-for-byte with `SafeModeShell`, including
+  side effects and shared log entries, for success and failure. EN/RU docs were
+  aligned.
 - The standalone `aios-tui` now routes bare `logs` and `log` through
   `HostBackend::legacy_log_text` and `legacy::log_text`. `SafeModeShell::with_event_log`
   and `HostBackend::set_event_log` share an `Arc<Mutex<Vec<String>>>` so the console

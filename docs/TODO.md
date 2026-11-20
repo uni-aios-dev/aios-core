@@ -143,8 +143,9 @@
   and `output` string is asserted verbatim, including failure wording and
   legacy column layout. The standalone TUI now shares its runtime handles with
   the console, and bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
-  `exit`/`quit`/`q`, `help`/`?` and `logs`/`log` use host-side adapters
-  (`aios-console/src/legacy.rs`) with byte-for-byte equality to `SafeModeShell`;
+  `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load` and `unload`
+  use host-side adapters (`aios-console/src/legacy.rs`) with byte-for-byte equality
+  to `SafeModeShell`;
   remaining bare commands stay on the legacy dispatcher until their adapters
   exist. Canonical `console info` remains ambiguous.
 - [x] Add the first exact-output adapter (`aios-console/src/legacy.rs` and
@@ -182,6 +183,15 @@
   without a console→watchdog dependency. Core unit tests and a binary test compare
   both spellings with `SafeModeShell` for empty and populated logs. EN/RU docs were
   aligned.
+- [x] Add exact-output mutation adapters (`HostBackend::legacy_kill`, `legacy_spawn`,
+  `legacy_load`, `legacy_unload` and `legacy.rs::LegacyMutation`) and route bare
+  `kill`, `spawn`, `load` and `unload` in `aios-tui` through them. Each adapter parses
+  the command exactly like `SafeModeShell`, performs the real scheduler/registry
+  operation through the shared handles, preserves exact legacy success text and
+  `Failed: <error>` wording, and appends the legacy event to the shared event log on
+  success. Core unit tests and a binary test compare all four commands byte-for-byte
+  with `SafeModeShell`, including side effects and shared log entries, for success
+  and failure. EN/RU docs were aligned.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

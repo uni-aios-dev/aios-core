@@ -172,6 +172,67 @@ pub fn log_text(entries: &[String]) -> String {
         .join("\n")
 }
 
+/// Exact output and safe-mode event produced by a legacy mutation command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyMutation {
+    pub success: bool,
+    pub output: String,
+    pub event: Option<String>,
+}
+
+impl LegacyMutation {
+    fn ok(output: String, event: String) -> Self {
+        Self {
+            success: true,
+            output,
+            event: Some(event),
+        }
+    }
+}
+
+/// Formats the exact legacy output of a failed mutation (`Failed: <error>`).
+pub fn mutation_failed(error: &str) -> LegacyMutation {
+    LegacyMutation {
+        success: false,
+        output: format!("Failed: {error}"),
+        event: None,
+    }
+}
+
+/// Formats the exact legacy output and event of `kill <pid>`.
+pub fn kill_success(pid: u64, name: &str) -> LegacyMutation {
+    LegacyMutation::ok(
+        format!("Process {pid} ({name}) terminated"),
+        format!("Killed process {pid} ({name})"),
+    )
+}
+
+/// Formats the exact legacy output and event of `spawn <name> [prio] [ram]`.
+pub fn spawn_success(name: &str, pid: u64, priority: &str, ram_mb: u64) -> LegacyMutation {
+    LegacyMutation::ok(
+        format!("Spawned '{name}' as PID {pid} (priority={priority}, RAM={ram_mb}MB)"),
+        format!("Spawned {name} as PID {pid}"),
+    )
+}
+
+/// Formats the exact legacy output and event of `load <name> [version]`.
+///
+/// `id_display` is the `BlockId` rendering (`block_<n>`), matching legacy text.
+pub fn load_success(name: &str, version: &str, id_display: &str) -> LegacyMutation {
+    LegacyMutation::ok(
+        format!("Block '{name}' v{version} loaded as ID {id_display}"),
+        format!("Loaded block '{name}' v{version} as ID {id_display}"),
+    )
+}
+
+/// Formats the exact legacy output and event of `unload <id>`.
+pub fn unload_success(id: u32) -> LegacyMutation {
+    LegacyMutation::ok(
+        format!("Block {id} unloaded"),
+        format!("Unloaded block {id}"),
+    )
+}
+
 fn legacy_process_row(row: &str) -> Option<String> {
     let fields = row.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 5 {
@@ -214,7 +275,8 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_list_text, exit_text, help_text, log_text, process_list_text, status_text,
+        block_list_text, exit_text, help_text, kill_success, load_success, log_text,
+        mutation_failed, process_list_text, spawn_success, status_text, unload_success,
         BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
@@ -337,6 +399,42 @@ mod tests {
             ]),
             "1: Spawned worker as PID 1\n2: Killed process 1 (worker)"
         );
+    }
+
+    #[test]
+    fn maps_mutation_success_to_legacy_output_and_event() {
+        let kill = kill_success(7, "worker");
+        assert_eq!(kill.output, "Process 7 (worker) terminated");
+        assert_eq!(kill.event.as_deref(), Some("Killed process 7 (worker)"));
+
+        let spawn = spawn_success("new_worker", 1, "High", 128);
+        assert_eq!(
+            spawn.output,
+            "Spawned 'new_worker' as PID 1 (priority=High, RAM=128MB)"
+        );
+        assert_eq!(spawn.event.as_deref(), Some("Spawned new_worker as PID 1"));
+
+        let load = load_success("test_block", "1.0.0", "block_1");
+        assert_eq!(
+            load.output,
+            "Block 'test_block' v1.0.0 loaded as ID block_1"
+        );
+        assert_eq!(
+            load.event.as_deref(),
+            Some("Loaded block 'test_block' v1.0.0 as ID block_1")
+        );
+
+        let unload = unload_success(4);
+        assert_eq!(unload.output, "Block 4 unloaded");
+        assert_eq!(unload.event.as_deref(), Some("Unloaded block 4"));
+    }
+
+    #[test]
+    fn maps_mutation_failure_to_legacy_output() {
+        let failure = mutation_failed("Scheduler error: Insufficient RAM");
+        assert!(!failure.success);
+        assert_eq!(failure.output, "Failed: Scheduler error: Insufficient RAM");
+        assert_eq!(failure.event, None);
     }
 
     #[test]

@@ -432,6 +432,38 @@ fn execute_legacy_parity_command(
     true
 }
 
+fn execute_legacy_mutation_command(
+    state: &mut DashboardState,
+    console: &mut HostBackend,
+    cmd: &str,
+) -> bool {
+    let first = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mutation = match first.as_str() {
+        "kill" => console.legacy_kill(cmd),
+        "spawn" => console.legacy_spawn(cmd),
+        "load" => console.legacy_load(cmd),
+        "unload" => console.legacy_unload(cmd),
+        _ => return false,
+    };
+    let Some(mutation) = mutation else {
+        return false;
+    };
+    if mutation.success {
+        for line in mutation.output.lines() {
+            state.shell_state.add_output(line.to_string());
+        }
+    } else {
+        state
+            .shell_state
+            .add_output(format!("Error: {}", mutation.output));
+    }
+    true
+}
+
 fn execute_shell_cmd(
     state: &mut DashboardState,
     cmd: &str,
@@ -444,6 +476,9 @@ fn execute_shell_cmd(
         return run_console_command(state, console, rest);
     }
     if execute_legacy_parity_command(state, console, cmd) {
+        return false;
+    }
+    if execute_legacy_mutation_command(state, console, cmd) {
         return false;
     }
     let mut scheduler = scheduler.lock().unwrap();
@@ -2721,6 +2756,92 @@ mod tests {
                     "command: {command}, entries: {entries:?}"
                 );
             }
+        }
+    }
+
+    fn run_mutation_scenario(
+        cmd: &str,
+        ram_mb: u64,
+        setup: &dyn Fn(
+            &mut aios_process_mgr::scheduler::Scheduler,
+            &mut aios_block_mgr::registry::BlockRegistry,
+        ),
+        adapter: bool,
+    ) -> (Vec<String>, Vec<String>) {
+        let scheduler = std::sync::Arc::new(std::sync::Mutex::new(
+            aios_process_mgr::scheduler::Scheduler::new(ram_mb),
+        ));
+        let registry = std::sync::Arc::new(std::sync::Mutex::new(
+            aios_block_mgr::registry::BlockRegistry::new(),
+        ));
+        {
+            let mut sched = scheduler.lock().unwrap();
+            let mut reg = registry.lock().unwrap();
+            setup(&mut sched, &mut reg);
+        }
+        let event_log = make_shared_event_log(&[]);
+        let mut shell =
+            aios_watchdog::safe_mode::SafeModeShell::with_event_log(3, event_log.clone());
+        let mut console = make_shared_console_with_log(&scheduler, &registry, event_log.clone());
+        let mut state = make_dashboard_state();
+        state.shell_state.output.clear();
+        if adapter {
+            assert!(super::execute_legacy_mutation_command(
+                &mut state,
+                &mut console,
+                cmd
+            ));
+        } else {
+            let mut sched = scheduler.lock().unwrap();
+            let mut reg = registry.lock().unwrap();
+            super::execute_shell_cmd_inner(
+                &mut state,
+                cmd,
+                &mut sched,
+                &mut reg,
+                &mut shell,
+                &mut console,
+            );
+        }
+        let output = state.shell_state.output.clone();
+        let events = event_log.lock().unwrap().clone();
+        (output, events)
+    }
+
+    #[test]
+    fn test_bare_mutation_commands_match_safe_mode_exactly() {
+        type Setup = dyn Fn(
+            &mut aios_process_mgr::scheduler::Scheduler,
+            &mut aios_block_mgr::registry::BlockRegistry,
+        );
+        let no_setup = |_: &mut aios_process_mgr::scheduler::Scheduler,
+                        _: &mut aios_block_mgr::registry::BlockRegistry| {};
+        let with_worker =
+            |sched: &mut aios_process_mgr::scheduler::Scheduler,
+             _: &mut aios_block_mgr::registry::BlockRegistry| {
+                sched
+                    .spawn_process("worker", aios_process_mgr::task::Priority::Normal, 64)
+                    .unwrap();
+            };
+        let with_block =
+            |_: &mut aios_process_mgr::scheduler::Scheduler,
+             reg: &mut aios_block_mgr::registry::BlockRegistry| {
+                reg.register_block("test", "0.1.0", b"t".to_vec()).unwrap();
+            };
+
+        let scenarios: &[(&str, u64, &Setup)] = &[
+            ("spawn worker 3 128", 65536, &no_setup),
+            ("spawn worker 2 64", 1, &no_setup),
+            ("kill 1", 65536, &with_worker),
+            ("kill 999", 65536, &no_setup),
+            ("load test_block 1.0.0", 65536, &no_setup),
+            ("unload 1", 65536, &with_block),
+            ("unload 1", 65536, &no_setup),
+        ];
+        for (cmd, ram, setup) in scenarios {
+            let legacy = run_mutation_scenario(cmd, *ram, *setup, false);
+            let adapter = run_mutation_scenario(cmd, *ram, *setup, true);
+            assert_eq!(adapter, legacy, "command: {cmd}");
         }
     }
 

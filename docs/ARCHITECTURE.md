@@ -106,19 +106,25 @@ shutdown path, and `console clear` clears the shell buffer. Its `Scheduler` and
 `BlockRegistry` are now `Arc<Mutex<...>>` shared with `HostBackend::from_handles`,
 so `console ps` and `console block list` observe the same processes and blocks as
 the safe-mode commands and the dashboard. Bare `ps`, `processes`, `list`,
-`blocks`, `ls`, `status`, `info`, `exit`, `quit`, `q`, `help`, `?`, `logs` and
-`log` now use `HostBackend::process_list_legacy_text`,
-`HostBackend::block_list_legacy_text`, `HostBackend::status_legacy_text`,
-`HostBackend::exit_legacy_text`, `HostBackend::legacy_help_text` and
-`HostBackend::legacy_log_text`, which map runtime data back to the exact legacy
-text, so their output is unchanged. The log adapter reads an event-log handle
-injected with `HostBackend::set_event_log`; `SafeModeShell::with_event_log`
-appends safe-mode events to the same handle without adding a console→watchdog
-dependency. Bare `exit`/`quit`/`q` print the legacy line but keep the legacy
-shutdown flag: only `console exit` breaks the event loop. The help adapter
-preserves the separate TUI extras block. Canonical `console info` remains
-ambiguous; only the legacy safe-mode alias is adapter-backed. Other lines keep
-the existing TUI and safe-mode behaviour.
+`blocks`, `ls`, `status`, `info`, `exit`, `quit`, `q`, `help`, `?`, `logs`, `log`,
+`kill`, `spawn`, `load` and `unload` now use `HostBackend` legacy adapters, which
+map runtime data and real mutations back to the exact legacy text, so their
+output is unchanged. The read-only adapters are `process_list_legacy_text`,
+`block_list_legacy_text`, `status_legacy_text`, `exit_legacy_text`,
+`legacy_help_text` and `legacy_log_text`. The four mutation adapters
+(`legacy_kill`, `legacy_spawn`, `legacy_load`, `legacy_unload`) parse the whole
+command exactly like `SafeModeShell`, run the real scheduler/registry operation
+through the shared handles, and record the legacy event on success. Pure output
+and event formatting lives in `aios-console/src/legacy.rs::LegacyMutation`. The
+log adapter reads an event-log handle injected with `HostBackend::set_event_log`;
+`SafeModeShell::with_event_log` appends safe-mode events to the same handle
+without adding a console→watchdog dependency. Failure lines keep the exact
+legacy `Failed: <error>` wording, printed by the TUI as `Error: Failed: <error>`.
+Bare `exit`/`quit`/`q` print the legacy line but keep the legacy shutdown flag:
+only `console exit` breaks the event loop. The help adapter preserves the
+separate TUI extras block. Canonical `console info` remains ambiguous; only the
+legacy safe-mode alias is adapter-backed. Other lines keep the existing TUI and
+safe-mode behaviour.
 All four frontends use `aios_console::frontend::console_prefix`, a `no_std`
 helper in the core crate: it matches the prefix case-insensitively, preserves
 argument case and treats bare or whitespace-only `console` as a help request.
@@ -955,19 +961,21 @@ Monitoring → Suspended → Recovering → Monitoring (on heartbeat received)
 
 Exact output for every branch is pinned in `safe_mode.rs` tests. The standalone
 TUI now routes bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
-`exit`/`quit`/`q`, `help`/`?` and `logs`/`log` through `aios-console` legacy
-adapters and asserts byte-for-byte equality with `SafeModeShell`; those fourteen
-spellings are the first migrated safe-mode commands. The status adapter takes the
-scheduler crash-log count from the shared `HostBackend` because the canonical
-status does not include it. The exit adapter maps `OutputControl::Exit` to the
-legacy line without changing the bare-command shutdown flag, so `console exit`
-remains the only shell command that breaks the event loop. The help adapter maps
-the generated all-commands help to the legacy wording and keeps the TUI extras as
-a separate frontend block. The log seam shares an `Arc<Mutex<Vec<String>>>`
-between `SafeModeShell` and `HostBackend`; the console only reads it, so
-canonical console log entries are never mixed with safe-mode events. Canonical
-`console info` remains ambiguous. All other bare commands remain on the legacy
-dispatcher until a host-side adapter exists.
+`exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load` and `unload`
+through `aios-console` legacy adapters and asserts byte-for-byte equality with
+`SafeModeShell`, including side effects and shared event-log entries; those
+eighteen spellings are the first migrated safe-mode commands. The status adapter
+takes the scheduler crash-log count from the shared `HostBackend` because the
+canonical status does not include it. The exit adapter maps `OutputControl::Exit`
+to the legacy line without changing the bare-command shutdown flag, so `console
+exit` remains the only shell command that breaks the event loop. The help adapter
+maps the generated all-commands help to the legacy wording and keeps the TUI
+extras as a separate frontend block. The log seam shares an
+`Arc<Mutex<Vec<String>>>` between `SafeModeShell` and `HostBackend`; the console
+only reads it for `logs`, and mutation adapters append successful legacy events
+to it, so canonical console log entries are never mixed with safe-mode events.
+Canonical `console info` remains ambiguous. All other bare commands remain on
+the legacy dispatcher until a host-side adapter exists.
 The same TUI shares its scheduler and registry with `HostBackend`, so `console ps`
 and `console block list` observe the safe-mode runtime without changing legacy
 output.

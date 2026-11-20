@@ -1346,6 +1346,110 @@ impl HostBackend {
         Some(crate::legacy::log_text(&entries))
     }
 
+    /// Runs legacy `kill <pid>` against the shared scheduler with exact legacy text.
+    ///
+    /// Parses the whole command like `SafeModeShell`, performs the real kill, and
+    /// records the legacy event in the shared event log on success. Returns `None`
+    /// only when a shared handle is poisoned, letting the frontend fall back.
+    pub fn legacy_kill(&self, cmd: &str) -> Option<crate::legacy::LegacyMutation> {
+        let parts = legacy_parts(cmd);
+        let pid = parts
+            .get(1)
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        let result = {
+            let mut scheduler = self.scheduler.lock().ok()?;
+            scheduler.kill_process(ProcessId(pid))
+        };
+        let mutation = match result {
+            Ok(process) => crate::legacy::kill_success(pid, &process.name),
+            Err(error) => crate::legacy::mutation_failed(&error.to_string()),
+        };
+        self.record_mutation(&mutation);
+        Some(mutation)
+    }
+
+    /// Runs legacy `spawn <name> [prio] [ram]` with exact legacy text.
+    ///
+    /// Uses the legacy defaults (`unnamed`, priority `2`, `64` MB) and records the
+    /// legacy event on success. Returns `None` only on a poisoned shared handle.
+    pub fn legacy_spawn(&self, cmd: &str) -> Option<crate::legacy::LegacyMutation> {
+        let parts = legacy_parts(cmd);
+        let name = parts.get(1).cloned().unwrap_or_else(|| "unnamed".into());
+        let priority = parts
+            .get(2)
+            .and_then(|value| value.parse::<u8>().ok())
+            .unwrap_or(2);
+        let ram_mb = parts
+            .get(3)
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(64);
+        let prio = Priority::from_u8(priority);
+        let result = {
+            let mut scheduler = self.scheduler.lock().ok()?;
+            scheduler.spawn_process(&name, prio, ram_mb)
+        };
+        let mutation = match result {
+            Ok(pid) => crate::legacy::spawn_success(&name, pid.0, &prio.to_string(), ram_mb),
+            Err(error) => crate::legacy::mutation_failed(&error.to_string()),
+        };
+        self.record_mutation(&mutation);
+        Some(mutation)
+    }
+
+    /// Runs legacy `load <name> [version]` with exact legacy text.
+    ///
+    /// Uses the same synthetic binary and defaults as `SafeModeShell` and records
+    /// the legacy event on success. Returns `None` only on a poisoned shared handle.
+    pub fn legacy_load(&self, cmd: &str) -> Option<crate::legacy::LegacyMutation> {
+        let parts = legacy_parts(cmd);
+        let name = parts.get(1).cloned().unwrap_or_else(|| "unknown".into());
+        let version = parts.get(2).cloned().unwrap_or_else(|| "0.1.0".into());
+        let binary = format!("block_{name}_{version}").into_bytes();
+        let result = {
+            let mut registry = self.registry.lock().ok()?;
+            BlockLoader::load_from_binary(&mut registry, &name, &version, binary)
+        };
+        let mutation = match result {
+            Ok(manifest) => crate::legacy::load_success(&name, &version, &manifest.id.to_string()),
+            Err(error) => crate::legacy::mutation_failed(&error.to_string()),
+        };
+        self.record_mutation(&mutation);
+        Some(mutation)
+    }
+
+    /// Runs legacy `unload <id>` with exact legacy text.
+    ///
+    /// Defaults to block ID `0` like `SafeModeShell` and records the legacy event
+    /// on success. Returns `None` only on a poisoned shared handle.
+    pub fn legacy_unload(&self, cmd: &str) -> Option<crate::legacy::LegacyMutation> {
+        let parts = legacy_parts(cmd);
+        let block_id = parts
+            .get(1)
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        let result = {
+            let mut registry = self.registry.lock().ok()?;
+            registry.unload_block(BlockId(block_id))
+        };
+        let mutation = match result {
+            Ok(_) => crate::legacy::unload_success(block_id),
+            Err(error) => crate::legacy::mutation_failed(&error.to_string()),
+        };
+        self.record_mutation(&mutation);
+        Some(mutation)
+    }
+
+    fn record_mutation(&self, mutation: &crate::legacy::LegacyMutation) {
+        if let Some(event) = &mutation.event {
+            if let Some(log) = self.event_log.as_ref() {
+                if let Ok(mut entries) = log.lock() {
+                    entries.push(event.clone());
+                }
+            }
+        }
+    }
+
     fn process_list(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let processes = scheduler.all_processes();
@@ -3771,6 +3875,15 @@ fn guard<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Splits a legacy shell command exactly like `SafeModeShell::parse_command`.
+fn legacy_parts(cmd: &str) -> Vec<String> {
+    cmd.trim()
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
 }
 
 fn parse_pid(invocation: &Invocation) -> Option<ProcessId> {
