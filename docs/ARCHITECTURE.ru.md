@@ -120,7 +120,13 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 но не равенство вывода: `aios/src/tui/mod.rs` фиксирует точные старые строки для
 `help`/`?`, неизвестной команды, usage-сообщений `kill`/`store`/`net` и пустого
 `ps`, а `aios-console/tests/host_backend.rs` фиксирует канонический вывод хоста
-для `help`, `clear` и usage-ошибок.
+для `help`, `clear` и usage-ошибок. `aios-watchdog/src/safe_mode.rs` теперь также
+фиксирует точные старые `ShellResponse.success` и `output` для каждой ветки:
+пустые и заполненные списки, успех и ошибки жизненного цикла процессов и блоков,
+`status`, пустые и нумерованные `logs`, успешный перезапуск и достижение лимита,
+`help`, `exit` и смешанный регистр неизвестной команды. Это целевой вывод,
+которому должна соответствовать будущая миграция `SafeModeShell`; таблиц
+разрешения команд недостаточно.
 
 `HostBackendConfig.context_db_path` задаёт файл redb для `context persist`.
 `HostBackend::execute_line()` — точка входа с учётом алиасов и трассировки:
@@ -928,7 +934,13 @@ Monitoring → Suspended → Recovering → Monitoring (при получени�
 
 `SafeModeShell` — детерминированная CLI для восстановления системы, когда AI-оркестратор приостановлен:
 
-**Команды:** `ps`, `blocks`, `kill <pid>`, `unload <id>`, `status`, `logs`, `restart`, `help`, `exit`
+**Команды:** `ps`/`processes`/`list`, `blocks`/`ls`, `spawn`, `kill <pid>`,
+`load`, `unload <id>`, `status`/`info`, `logs`/`log`, `restart`/`recover`,
+`help`/`?`, `exit`/`quit`/`q`, а также обработка неизвестной команды с сохранением регистра.
+
+Точный вывод каждой ветки закреплён в тестах `safe_mode.rs`. Ни одна команда без
+префикса сейчас не имеет паритета вывода с `HostBackend`, поэтому все они остаются
+на старом диспетчере до появления хостового адаптера и общих дескрипторов.
 
 **Ограничение перезапусков:** Настраиваемый `max_restarts` предотвращает бесконечные циклы перезапуска.
 

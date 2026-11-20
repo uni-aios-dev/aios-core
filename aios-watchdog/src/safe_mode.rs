@@ -268,6 +268,310 @@ mod tests {
         (sched, reg)
     }
 
+    fn empty_system() -> (Scheduler, BlockRegistry) {
+        (Scheduler::new(8192), BlockRegistry::new())
+    }
+
+    #[test]
+    fn legacy_empty_list_outputs_are_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let mut shell = SafeModeShell::new(3);
+        assert_eq!(
+            shell.execute(ShellCommand::ListProcesses, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "No processes running".into()
+            }
+        );
+        assert_eq!(
+            shell.execute(ShellCommand::ListBlocks, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "No blocks loaded".into()
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_process_list_output_is_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let process = sched
+            .spawn_process(
+                "ai_orchestrator",
+                aios_process_mgr::task::Priority::High,
+                512,
+            )
+            .unwrap();
+        let expected = format!(
+            "PID  NAME              PRIO  STATE     RAM\n{:<4} {:<17} {:<5} {:<9} {}MB\n\nTotal: 1 processes",
+            process.0,
+            "ai_orchestrator",
+            aios_process_mgr::task::Priority::High,
+            aios_process_mgr::task::ProcessState::Ready,
+            512
+        );
+        let mut shell = SafeModeShell::new(3);
+        let resp = shell.execute(ShellCommand::ListProcesses, &mut sched, &mut reg);
+        assert!(resp.success);
+        assert_eq!(resp.output, expected);
+    }
+
+    #[test]
+    fn legacy_block_list_output_is_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let manifest = aios_block_mgr::loader::BlockLoader::load_from_binary(
+            &mut reg,
+            "hal",
+            "0.1.0",
+            b"hal-data".to_vec(),
+        )
+        .unwrap();
+        let expected = format!(
+            "ID   NAME         VERSION  STATE\n{:<5} {:<13} {:<9} {:?}\n\nTotal: 1 blocks",
+            manifest.id,
+            "hal",
+            "0.1.0",
+            aios_core::block::BlockState::Active
+        );
+        let mut shell = SafeModeShell::new(3);
+        let resp = shell.execute(ShellCommand::ListBlocks, &mut sched, &mut reg);
+        assert!(resp.success);
+        assert_eq!(resp.output, expected);
+    }
+
+    #[test]
+    fn legacy_kill_and_spawn_outputs_are_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let pid = sched
+            .spawn_process("worker", aios_process_mgr::task::Priority::Normal, 64)
+            .unwrap();
+        let mut shell = SafeModeShell::new(3);
+        assert_eq!(
+            shell.execute(
+                ShellCommand::KillProcess { pid: pid.0 },
+                &mut sched,
+                &mut reg
+            ),
+            ShellResponse {
+                success: true,
+                output: format!("Process {} (worker) terminated", pid.0)
+            }
+        );
+        assert_eq!(
+            shell.log_entries(),
+            &[format!("Killed process {} (worker)", pid.0)]
+        );
+        assert_eq!(
+            shell.execute(
+                ShellCommand::KillProcess { pid: 9999 },
+                &mut sched,
+                &mut reg
+            ),
+            ShellResponse {
+                success: false,
+                output: "Failed: Process not found: 9999".into()
+            }
+        );
+
+        let (mut spawn_sched, mut spawn_reg) = empty_system();
+        let mut spawn_shell = SafeModeShell::new(3);
+        assert_eq!(
+            spawn_shell.execute(
+                ShellCommand::SpawnProcess {
+                    name: "new_worker".into(),
+                    priority: 3,
+                    ram_mb: 128,
+                },
+                &mut spawn_sched,
+                &mut spawn_reg,
+            ),
+            ShellResponse {
+                success: true,
+                output: "Spawned 'new_worker' as PID 1 (priority=High, RAM=128MB)".into()
+            }
+        );
+        assert_eq!(
+            spawn_shell.log_entries(),
+            &["Spawned new_worker as PID 1".to_string()]
+        );
+
+        let (mut tiny_sched, mut tiny_reg) = (Scheduler::new(1), BlockRegistry::new());
+        let mut fail_shell = SafeModeShell::new(3);
+        assert_eq!(
+            fail_shell.execute(
+                ShellCommand::SpawnProcess {
+                    name: "huge".into(),
+                    priority: 2,
+                    ram_mb: 64,
+                },
+                &mut tiny_sched,
+                &mut tiny_reg,
+            ),
+            ShellResponse {
+                success: false,
+                output: "Failed: Scheduler error: Insufficient RAM: requested 64MB, available 1MB"
+                    .into()
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_block_load_unload_outputs_are_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let mut shell = SafeModeShell::new(3);
+        assert_eq!(
+            shell.execute(
+                ShellCommand::LoadBlock {
+                    name: "test_block".into(),
+                    version: "1.0.0".into(),
+                },
+                &mut sched,
+                &mut reg,
+            ),
+            ShellResponse {
+                success: true,
+                output: "Block 'test_block' v1.0.0 loaded as ID block_1".into()
+            }
+        );
+        assert_eq!(
+            shell.log_entries(),
+            &["Loaded block 'test_block' v1.0.0 as ID block_1".to_string()]
+        );
+        assert_eq!(
+            shell.execute(
+                ShellCommand::UnloadBlock { block_id: 1 },
+                &mut sched,
+                &mut reg
+            ),
+            ShellResponse {
+                success: true,
+                output: "Block 1 unloaded".into()
+            }
+        );
+        assert_eq!(shell.log_entries()[1], "Unloaded block 1".to_string());
+        assert_eq!(
+            shell.execute(
+                ShellCommand::UnloadBlock { block_id: 99 },
+                &mut sched,
+                &mut reg
+            ),
+            ShellResponse {
+                success: false,
+                output: "Failed: Block not found: block_99".into()
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_status_output_is_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let mut shell = SafeModeShell::new(3);
+        assert_eq!(
+            shell.execute(ShellCommand::SystemStatus, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "System: SAFE MODE\nProcesses: 0 (0 running, 0 ready)\nBlocks: 0 loaded\nRAM: 0/8192 MB (0.0%)\nCrash log: 0 entries".into()
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_logs_output_is_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let mut shell = SafeModeShell::new(3);
+        assert_eq!(
+            shell.execute(ShellCommand::ViewLogs, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "No safe mode events logged".into()
+            }
+        );
+        let spawned = shell.execute(
+            ShellCommand::SpawnProcess {
+                name: "worker".into(),
+                priority: 2,
+                ram_mb: 64,
+            },
+            &mut sched,
+            &mut reg,
+        );
+        assert!(spawned.success);
+        let pid = sched.all_processes()[0].pid.0;
+        let killed = shell.execute(ShellCommand::KillProcess { pid }, &mut sched, &mut reg);
+        assert!(killed.success);
+        assert_eq!(
+            shell.execute(ShellCommand::ViewLogs, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: format!("1: Spawned worker as PID {pid}\n2: Killed process {pid} (worker)")
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_restart_outputs_are_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let mut shell = SafeModeShell::new(2);
+        assert_eq!(
+            shell.execute(ShellCommand::RestartOrchestrator, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "Orchestrator restart initiated (1/2)".into()
+            }
+        );
+        assert_eq!(
+            shell.execute(ShellCommand::RestartOrchestrator, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "Orchestrator restart initiated (2/2)".into()
+            }
+        );
+        assert_eq!(
+            shell.execute(ShellCommand::RestartOrchestrator, &mut sched, &mut reg),
+            ShellResponse {
+                success: false,
+                output: "Max restarts (2) reached. Manual intervention required.".into()
+            }
+        );
+        assert_eq!(
+            shell.log_entries(),
+            &[
+                "Orchestrator restart attempt 1/2".to_string(),
+                "Orchestrator restart attempt 2/2".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_help_exit_and_unknown_outputs_are_exact() {
+        let (mut sched, mut reg) = empty_system();
+        let mut shell = SafeModeShell::new(3);
+        assert_eq!(
+            shell.execute(ShellCommand::Help, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "Commands:\n  ps                         — list processes\n  blocks                     — list loaded blocks\n  spawn <name> [prio] [ram]  — spawn a process\n  kill <pid>                 — kill a process\n  load <name> [version]      — load a block\n  unload <id>                — unload a block\n  status                     — system status\n  logs                       — view safe mode logs\n  restart                    — restart orchestrator\n  help                       — show this help\n  exit                       — exit safe mode".into()
+            }
+        );
+        assert_eq!(
+            shell.execute(ShellCommand::Exit, &mut sched, &mut reg),
+            ShellResponse {
+                success: true,
+                output: "Exiting safe mode shell".into()
+            }
+        );
+        let command = SafeModeShell::parse_command("  WhAt Ever  ");
+        assert!(matches!(command, ShellCommand::Unknown(ref value) if value == "  WhAt Ever  "));
+        assert_eq!(
+            shell.execute(command, &mut sched, &mut reg),
+            ShellResponse {
+                success: false,
+                output: "Unknown command: '  WhAt Ever  '. Type 'help' for available commands."
+                    .into()
+            }
+        );
+    }
+
     #[test]
     fn test_parse_help() {
         assert_eq!(SafeModeShell::parse_command("help"), ShellCommand::Help);

@@ -119,7 +119,12 @@ handlers stay out of these tests; the table asserts resolution results only.
 `aios/src/tui/mod.rs` pins the exact legacy lines for `help`/`?`, unknown
 commands, `kill`/`store`/`net` usage strings and empty `ps`, while
 `aios-console/tests/host_backend.rs` pins the canonical host wording for
-`help`, `clear` and usage errors.
+`help`, `clear` and usage errors. `aios-watchdog/src/safe_mode.rs` now also pins
+the exact legacy `ShellResponse.success` and `output` for every branch — empty
+and populated lists, process/block lifecycle success and failure, `status`,
+empty and numbered `logs`, restart success and limit, `help`, `exit` and the
+mixed-case unknown-command fallback. These are the output-level targets any
+future `SafeModeShell` migration must match; resolver-only tables are not enough.
 
 `HostBackendConfig.context_db_path` selects the redb file used by `context
 persist`. `HostBackend::execute_line()` is the alias- and trace-aware entry
@@ -926,7 +931,13 @@ Monitoring → Suspended → Recovering → Monitoring (on heartbeat received)
 
 `SafeModeShell` — deterministic CLI for system recovery when AI Orchestrator is suspended:
 
-**Commands:** `ps`, `blocks`, `kill <pid>`, `unload <id>`, `status`, `logs`, `restart`, `help`, `exit`
+**Commands:** `ps`/`processes`/`list`, `blocks`/`ls`, `spawn`, `kill <pid>`,
+`load`, `unload <id>`, `status`/`info`, `logs`/`log`, `restart`/`recover`,
+`help`/`?`, `exit`/`quit`/`q`, plus a mixed-case unknown-command fallback.
+
+Exact output for every branch is pinned in `safe_mode.rs` tests. No bare command
+currently has output-level parity with `HostBackend`, so all of them remain on
+the legacy dispatcher until a host-side adapter and shared handles exist.
 
 **Restart limiting:** Configurable `max_restarts` prevents infinite restart loops.
 

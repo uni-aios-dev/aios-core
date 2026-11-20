@@ -97,7 +97,10 @@ exactly as before; the inputs are also recorded in unified console history.
 `aios-shell` and `aios-tui` expose the new backend only through the
 `console <...>` prefix; `SafeModeShell` and the remaining bare-command paths
 stay unchanged until output parity is proven: legacy `help`/`?`, unknown-command,
-usage and empty `ps` lines differ from the canonical host wording.
+usage and empty `ps` lines differ from the canonical host wording. Exact legacy
+`SafeModeShell` output is now pinned in `aios-watchdog/src/safe_mode.rs` for all
+branches, but no bare safe-mode command matches `HostBackend` output yet; the
+standalone TUI also has no shared `Arc<Mutex<...>>` handles between the two.
 `KernelBackend` has the same limitation: only the commands backed by real
 kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
 old dispatcher path (the new backend clears the shell history explicitly).

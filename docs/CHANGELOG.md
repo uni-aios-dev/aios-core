@@ -3,6 +3,13 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `aios-watchdog/src/safe_mode.rs` now pins the exact legacy `ShellResponse`
+  success flag and output string for every `SafeModeShell` branch: empty and
+  populated process/block lists, kill/spawn/load/unload success and failure,
+  `status`, empty and numbered logs, restart success and limit, `help`, `exit`
+  and the mixed-case unknown-command fallback. This gives the final legacy
+  dispatcher an output-level migration target instead of relying on
+  resolver-only tables; no runtime behaviour changed. EN/RU docs were aligned.
 - `aios-console/src/frontend.rs` now owns the `console_prefix` seam shared by
   `aios`, `aios-shell`, `aios-tui` and the kernel shell: it is `no_std`,
   case-insensitive for `console`, preserves argument case, and maps bare or

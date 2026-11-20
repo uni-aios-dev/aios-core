@@ -138,6 +138,11 @@
   `aios-tui` and `aios-shell` unit tests. Added `processes`, `ver`, `cls` and
   argument-free `log`/`wifi` aliases so old spellings resolve without capturing
   real subcommands.
+- [x] Pin exact output-level parity targets for the final `SafeModeShell`
+  dispatcher in `aios-watchdog/src/safe_mode.rs`: every branch's `success` flag
+  and `output` string is asserted verbatim, including failure wording and
+  legacy column layout. No bare command matches `HostBackend` output yet, so
+  routing stays legacy until shared handles and a host-side adapter exist.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,
