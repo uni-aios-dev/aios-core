@@ -95,6 +95,12 @@ case-insensitive `console <...>` prefix before alias expansion, so the registry
 never sees the prefix itself. `console` alone prints generated help;
 `OutputControl::Clear` clears the terminal and `Exit(code)` exits the process.
 Every other line keeps the POSIX shell path (aliases, jobs, external programs).
+The standalone `aios-tui` binary likewise owns one `HostBackend` created in
+`main`. Its Shell tab recognises the same case-insensitive `console <...>` prefix
+before the TUI extras and the `SafeModeShell` fallback. `execute_shell_cmd`
+returns a flag so `console exit` can break the event loop through the normal
+shutdown path, and `console clear` clears the shell buffer. Other lines keep the
+existing TUI and safe-mode behaviour.
 `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>` so the bridge, TUI
 and console observe the same blocks; `BridgeContext.ipc_bus` is likewise
 `Arc<Mutex<IpcBus>>`, shared with the console. The legacy dispatchers are kept

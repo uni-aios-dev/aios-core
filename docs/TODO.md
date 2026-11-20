@@ -162,6 +162,11 @@
   generated help. `OutputControl::Clear` clears the terminal and `Exit(code)`
   exits the process. All other lines keep the POSIX shell path; two unit tests
   cover prefix detection and backend routing.
+- [x] Add the same `console <command> [args]` escape hatch to the standalone
+  `aios-tui` binary: one `HostBackend` in `main`, case-insensitive prefix before
+  TUI extras and the `SafeModeShell` fallback, `Clear` clears the shell buffer
+  and `Exit` breaks the event loop cleanly. Three unit tests cover prefix
+  parsing, backend routing and control actions.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,

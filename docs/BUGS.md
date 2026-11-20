@@ -44,10 +44,10 @@ records a swap and a rollback entry but does not replace live block code: the
 old state is recorded as empty because the registry does not expose live block
 instances.
 
-The `aios` shell and `aios-shell` currently expose the new backend only through
-the `console <...>` prefix; `aios-tui`, `SafeModeShell` and the bare-command
-paths of both shells remain the default command surface until parity is verified.
-`KernelBackend` has the same limitation: only
+The `aios` shell, `aios-shell` and `aios-tui` currently expose the new backend
+only through the `console <...>` prefix; `SafeModeShell` and the bare-command
+paths of all three frontends remain the default command surface until parity is
+verified. `KernelBackend` has the same limitation: only
 the commands backed by real kernel APIs are implemented, and the legacy kernel
 `clear` bug persists on the old dispatcher path (the new backend clears the
 shell history explicitly).

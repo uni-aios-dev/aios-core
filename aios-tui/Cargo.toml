@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
+aios-console = { path = "../aios-console" }
 aios-core = { path = "../aios-core" }
 aios-hal = { path = "../aios-hal" }
 aios-block-mgr = { path = "../aios-block-mgr" }
@@ -34,6 +35,3 @@ ed25519-dalek = { workspace = true }
 [[bin]]
 name = "aios-tui"
 path = "src/main.rs"
-
-[dev-dependencies]
-aios-console = { path = "../aios-console", default-features = false }

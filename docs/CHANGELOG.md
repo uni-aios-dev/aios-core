@@ -3,6 +3,12 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` Shell tab now accepts `console <command> [args]`
+  through one `HostBackend` owned by `main`. The prefix is matched
+  case-insensitively before the TUI extras and the `SafeModeShell` fallback;
+  `console clear` clears the shell buffer and `console exit [code]` breaks the
+  event loop so terminal cleanup still runs. Three unit tests cover prefix
+  parsing, routing and controls; EN/RU docs were aligned.
 - The standalone `aios-shell` now accepts `console <command> [args]` as an
   escape hatch into the unified `HostBackend`. The prefix is matched
   case-insensitively before alias expansion (so an alias cannot shadow it), bare

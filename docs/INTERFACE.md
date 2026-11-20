@@ -386,7 +386,14 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `store` | `<sub>` | Block store management (see below) |
 | `net` | `<sub>` | Network settings (see below) |
 | `help` / `?` | — | Show all available commands |
+| `console` | `<command> [args]` | Unified console command (`console help` lists canonical commands) |
 | `exit` | — | Exit the safe-mode shell |
+
+The `console` prefix is case-insensitive and is matched before the TUI extras
+and the `SafeModeShell` fallback, so an existing command named `console` cannot
+shadow it. `console clear` clears the shell output and `console exit [code]`
+closes the TUI through the normal shutdown path. All other commands keep their
+legacy behaviour.
 
 Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
 

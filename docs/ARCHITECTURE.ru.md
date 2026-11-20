@@ -95,6 +95,12 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 реестр никогда не видит сам префикс. Один `console` выводит генерируемую справку;
 `OutputControl::Clear` очищает терминал, а `Exit(code)` завершает процесс. Все
 остальные строки идут по PATH POSIX-шелла (алиасы, задания, внешние программы).
+Отдельный бинарик `aios-tui` также владеет одним `HostBackend`, созданным в
+`main`. Его вкладка Shell распознаёт тот же префикс `console <...>` без учёта
+регистра до TUI-дополнений и отката на `SafeModeShell`. `execute_shell_cmd`
+возвращает флаг, чтобы `console exit` вышел из event loop через обычный путь
+завершения, а `console clear` очищает буфер шелла. Остальные строки сохраняют
+прежнее поведение TUI и безопасного режима.
 `BridgeContext.registry` теперь имеет тип `Arc<Mutex<BlockRegistry>>`,
 поэтому bridge, TUI и консоль видят одни и те же блоки; `BridgeContext.ipc_bus`
 также стал `Arc<Mutex<IpcBus>>` и разделяется с консолью. Старые диспетчеры

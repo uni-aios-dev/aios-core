@@ -16,6 +16,8 @@ use aios_bridge::dto::{StorePublishRequest, StorePublishResponse};
 use aios_browser::engine::BrowserEngine;
 use aios_browser::html_parser::HtmlParser;
 use aios_browser::types::BrowserConfig;
+use aios_console::host::HostBackend;
+use aios_console::output::OutputControl;
 use aios_context::persistence::PersistentStore;
 use aios_context::store::EmbeddedContextStore;
 use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
@@ -383,7 +385,48 @@ where
         }
     });
 }
+fn console_prefix(line: &str) -> Option<&str> {
+    let mut parts = line.trim().splitn(2, char::is_whitespace);
+    let head = parts.next()?;
+    if head.eq_ignore_ascii_case("console") {
+        Some(parts.next().unwrap_or("").trim())
+    } else {
+        None
+    }
+}
+
+fn run_console_command(state: &mut DashboardState, console: &mut HostBackend, rest: &str) -> bool {
+    let input = if rest.is_empty() { "help" } else { rest };
+    let output = console.execute_line(input);
+    for line in &output.lines {
+        state.shell_state.add_output(line.clone());
+    }
+    match output.control {
+        OutputControl::Clear => {
+            state.shell_state.output.clear();
+            false
+        }
+        OutputControl::Exit(_) => true,
+        OutputControl::None => false,
+    }
+}
+
 fn execute_shell_cmd(
+    state: &mut DashboardState,
+    cmd: &str,
+    scheduler: &mut Scheduler,
+    registry: &mut BlockRegistry,
+    safe_shell: &mut SafeModeShell,
+    console: &mut HostBackend,
+) -> bool {
+    if let Some(rest) = console_prefix(cmd) {
+        return run_console_command(state, console, rest);
+    }
+    execute_shell_cmd_inner(state, cmd, scheduler, registry, safe_shell);
+    false
+}
+
+fn execute_shell_cmd_inner(
     state: &mut DashboardState,
     cmd: &str,
     scheduler: &mut Scheduler,
@@ -1139,7 +1182,7 @@ fn execute_shell_cmd(
             );
             state.shell_state.add_output(resp.output);
             state.shell_state.add_output(
-                "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <query|url> — open/search on the Web tab\n  clear           — clear shell output"
+                "TUI extras:\n  fetch <url>     — download and load a block from a URL\n  search <query>  — DuckDuckGo web search\n  open <query|url> — open/search on the Web tab\n  clear           — clear shell output\n  console <cmd>   — unified console (console help lists commands)"
                     .into(),
             );
             return;
@@ -1403,6 +1446,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut telemetry = TelemetryStore::new();
     let mut safe_shell = SafeModeShell::new(3);
+    let mut console = HostBackend::new();
 
     if is_headless() {
         log::info!("AIOS: headless mode — running without TUI");
@@ -1636,14 +1680,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if !cmd.is_empty() {
                                     state.shell_state.add_output(format!("$ {cmd}"));
                                     state.shell_state.push_history(cmd.clone());
-                                    execute_shell_cmd(
+                                    let console_exit = execute_shell_cmd(
                                         &mut state,
                                         &cmd,
                                         &mut scheduler,
                                         &mut registry,
                                         &mut safe_shell,
+                                        &mut console,
                                     );
                                     state.shell_state.input_buffer.clear();
+                                    if console_exit {
+                                        break;
+                                    }
                                 }
                             }
                             KeyCode::Backspace => {
@@ -2126,12 +2174,14 @@ mod tests {
         let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
         let mut registry = aios_block_mgr::registry::BlockRegistry::new();
         let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = aios_console::host::HostBackend::new();
         super::execute_shell_cmd(
             &mut state,
             "intent free up memory",
             &mut scheduler,
             &mut registry,
             &mut safe_shell,
+            &mut console,
         );
         let out = state.shell_state.output.join("\n");
         assert!(out.contains("intent: Free up memory"), "got {out}");
@@ -2144,14 +2194,83 @@ mod tests {
         let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
         let mut registry = aios_block_mgr::registry::BlockRegistry::new();
         let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = aios_console::host::HostBackend::new();
         super::execute_shell_cmd(
             &mut state,
             "intent make me a sandwich",
             &mut scheduler,
             &mut registry,
             &mut safe_shell,
+            &mut console,
         );
         let out = state.shell_state.output.join("\n");
         assert!(out.contains("no intent matched"), "got {out}");
+    }
+
+    #[test]
+    fn test_console_prefix_is_case_insensitive_and_keeps_arguments() {
+        assert_eq!(super::console_prefix("console ps"), Some("ps"));
+        assert_eq!(super::console_prefix("CONSOLE   ps aux"), Some("ps aux"));
+        assert_eq!(
+            super::console_prefix("  console  echo MiXeD Case "),
+            Some("echo MiXeD Case")
+        );
+        assert_eq!(super::console_prefix("console"), Some(""));
+        assert_eq!(super::console_prefix("ps"), None);
+        assert_eq!(super::console_prefix("consolett ps"), None);
+    }
+
+    #[test]
+    fn test_console_command_routes_to_unified_backend() {
+        let mut state = make_dashboard_state();
+        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
+        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = aios_console::host::HostBackend::new();
+
+        let exit = super::execute_shell_cmd(
+            &mut state,
+            "CONSOLE echo MiXeD Case",
+            &mut scheduler,
+            &mut registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        assert!(!exit);
+        assert_eq!(
+            state.shell_state.output.last().map(String::as_str),
+            Some("MiXeD Case")
+        );
+    }
+
+    #[test]
+    fn test_console_clear_and_exit_controls_reach_the_frontend() {
+        let mut state = make_dashboard_state();
+        let mut scheduler = aios_process_mgr::scheduler::Scheduler::new(65536);
+        let mut registry = aios_block_mgr::registry::BlockRegistry::new();
+        let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+        let mut console = aios_console::host::HostBackend::new();
+
+        state.shell_state.add_output("old line".into());
+        let exit = super::execute_shell_cmd(
+            &mut state,
+            "console clear",
+            &mut scheduler,
+            &mut registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        assert!(!exit);
+        assert!(state.shell_state.output.is_empty());
+
+        let exit = super::execute_shell_cmd(
+            &mut state,
+            "console exit 3",
+            &mut scheduler,
+            &mut registry,
+            &mut safe_shell,
+            &mut console,
+        );
+        assert!(exit);
     }
 }
