@@ -12,6 +12,7 @@ pub mod backend;
 pub mod capability;
 pub mod control;
 pub mod deferred;
+pub mod frontend;
 #[cfg(feature = "std")]
 pub mod host;
 pub mod output;

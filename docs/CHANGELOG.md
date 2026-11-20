@@ -3,6 +3,15 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `aios-console/src/frontend.rs` now owns the `console_prefix` seam shared by
+  `aios`, `aios-shell`, `aios-tui` and the kernel shell: it is `no_std`,
+  case-insensitive for `console`, preserves argument case, and maps bare or
+  whitespace-only input to generated help. The kernel `console <...>` path is
+  therefore case-insensitive (`CONSOLE VER`, `CoNsOlE echo MiXeD Case`) while
+  bare legacy commands stay unchanged. `KernelBackend` also accepts the direct
+  no-subcommand `wifi` form, and resolver tests pin all canonical kernel forms;
+  three core unit tests and one `aios` test cover the shared seam. EN/RU docs
+  were aligned.
 - The `aios` shell now routes bare `clear`/`cls` through the unified
   `HostBackend`: they emit no lines and only `OutputControl::Clear`, matching
   the legacy buffer clear, and are recorded in the unified console history.
@@ -23,6 +32,13 @@
   state) survives across calls; the TUI passes the orchestrator's executor so
   console and boot-time blocks share the same runtime. Four `aios-store` and
   two `aios-console` tests cover the new paths; EN/RU docs were aligned.
+- `store sign` and `store publish` are now implemented in `aios-console` with
+  the same wire format as the legacy TUI. `HostBackend` hashes and base64-encodes
+  the wasm, signs the manifest with Ed25519 when `--key` or
+  `AIOS_STORE_SIGNING_KEY` is present, writes a sanitized sidecar and posts the
+  bridge publish request; `HostBackend::set_publish_url` and a loopback HTTP test
+  pin the request without a live bridge. Registry/parity tests that treated these
+  commands as deferred were updated; EN/RU docs were aligned.
 - The standalone `aios-tui` Shell tab now accepts `console <command> [args]`
   through one `HostBackend` owned by `main`. The prefix is matched
   case-insensitively before the TUI extras and the `SafeModeShell` fallback;
@@ -184,12 +200,17 @@
 - The root `aios-integration-tests` package listed binary-only `aios-shell` as
   an unused dev-dependency, so Cargo printed `ignoring invalid dependency
   aios-shell which is missing a lib target` on every workspace command. The
-  dependency was removed; no test used it.
+  dependency was removed; no test used it. `aios-shell` was added explicitly to
+  the workspace `members` so its unit tests and clippy stay verified.
 - Local store catalog scanning visited files under `blocks/` twice (once while
   walking the source root and once while walking `blocks/` itself), so
   `store search` reported duplicate manifests. `collect_block_files` now sorts
   and deduplicates discovered paths; a regression test covers a flat file in
   `blocks/`.
+- `store sign` used the raw name/version as the sidecar file token, so a value
+  like `../evil` produced `.._evil_1.0.0.json` instead of a safe name beside the
+  input. `HostBackend::safe_file_token` now takes the final path component for
+  both separators and rejects `.`/`..`; a regression test covers `../evil`.
 - Console arguments containing Windows paths (for example `source
   C:\Users\script.txt` or `block load C:\blocks\mod.wasm`) lost their
   backslashes because the tokenizer treated every `\` as an escape. Only
@@ -201,9 +222,10 @@
 - This is the language/core phase only. The old dispatchers in `aios-tui`,
   `aios`, `aios-kernel` and `SafeModeShell` are still present; they are to be
   replaced by host/kernel backend implementations in the next phases.
-- GUI, WebView, web browsing, LLM intents, cluster control, store
-  publish/sign, pipes/redirection and theming are commented out in
-  `aios-console/src/deferred.rs` and return a clear `unavailable` result.
+- GUI, WebView, web browsing, LLM intents, cluster control, pipes/redirection
+  and theming are commented out in `aios-console/src/deferred.rs` and return a
+  clear `unavailable` result. `store sign` and `store publish` are now real host
+  commands.
 
 ## v2.79.0 (M5.2) - Secure Boot signing and OVMF verification (2026-11-18)
 

@@ -102,9 +102,14 @@
   remain the default while parity is verified.
 - [x] Kernel backend: `aios-kernel/src/console_backend.rs` adapts `run_command`,
   `cmd_udp`, `cmd_http`, `cmd_socktest`, Wi-Fi and fault APIs as a `no_std`
-  dependency; available as `console <...>` in the kernel shell. Verified for
-  `x86_64-unknown-none` (release, limine). Remaining kernel commands report
-  `unavailable` until real adapters exist.
+  dependency; available as `console <...>` in the kernel shell through the shared
+  case-insensitive prefix helper. `tabs`/`gui`/`tui` stay deferred and bare
+  `info` stays ambiguous. Verified for `x86_64-unknown-none` (release, limine).
+  Remaining kernel commands report `unavailable` until real adapters exist.
+- [x] Share the `console_prefix` frontend seam in
+  `aios-console/src/frontend.rs` across all four text frontends; three core unit
+  tests and one `aios` test pin case-insensitive matching, argument preservation
+  and bare/whitespace-only help.
 - [x] `source <file>` adapter in `HostBackend`: runs a UTF-8 script through the
   shared dispatcher with comment skipping, first-failure reporting, control
   propagation and an 8-level recursion guard (5 integration tests). The
@@ -180,6 +185,10 @@
   assertions in `aios-console/tests/host_backend.rs` pin canonical `help`,
   `clear` and usage output. Other bare commands keep the legacy dispatcher
   until output parity is proven.
+- [x] Port `store sign` and `store publish` into the unified `aios-console`:
+  real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
+  and the bridge `POST /api/v1/store/publish` call. They are registered
+  subcommands again, with loopback HTTP and contract tests; EN/RU docs aligned.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
 - [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
@@ -700,7 +709,7 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [x] Enforcement in `BlockInstaller`: `trusted_keys`, `with_trusted_keys`/`from_env`, `Default` reads `AIOS_TRUSTED_PUBLIC_KEYS`; sidecar persists the full manifest incl. signature (16 tests)
   - [x] Per-source trust policy: `StoreSource.trusted_public_keys`, `StoreManager::verify_source_manifest` in `install()`/`update()`, official GitHub key via `AIOS_OFFICIAL_PUBLIC_KEY` (2 manager tests)
   - [x] TUI shell `store sign <file.wasm> [name] [version] [--key <hex>]` + `store verify <name>`
-  - [x] Future: signed `store publish` (manifest signed before the bridge installs it) — `store publish --key` signs the manifest Ed25519 and the bridge verifies it (plus its local trust policy) before installing — and `store trust <source> [--key <public_hex>] [--clear]` to set a source's trusted keys from the shell, persisted via the source config (implemented, documented in v2.16.0)
+  - [x] Future: signed `store publish` (manifest signed before the bridge installs it) — `store publish --key` signs the manifest Ed25519 and the bridge verifies it (plus its local trust policy) before installing — and `store trust <source> [--key <public_hex>] [--clear]` to set a source's trusted keys from the shell, persisted via the source config (implemented, documented in v2.16.0; also available through `aios-console`)
 
 - [x] **Phase 43: AI Console — slash commands, help panel, runtime reconfiguration — COMPLETE (v2.6.0)**
   - [x] Kernel TUI AI Console (tab 3): slash commands `/help /status /clear /history /system /model /backend /key /temp /tokens`

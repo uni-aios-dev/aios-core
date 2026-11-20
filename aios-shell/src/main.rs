@@ -166,16 +166,6 @@ fn is_gui_app(name: &str) -> bool {
     )
 }
 
-fn console_prefix(line: &str) -> Option<&str> {
-    let mut parts = line.trim().splitn(2, char::is_whitespace);
-    let head = parts.next()?;
-    if head.eq_ignore_ascii_case("console") {
-        Some(parts.next().unwrap_or("").trim())
-    } else {
-        None
-    }
-}
-
 fn run_console_command(console: &mut HostBackend, rest: &str) {
     let input = if rest.is_empty() { "help" } else { rest };
     let output = console.execute_line(input);
@@ -204,7 +194,7 @@ fn run_command(
     {
         jobs.retain(|j| unsafe { libc::kill(j.pid as i32, 0) == 0 });
     }
-    if let Some(rest) = console_prefix(line) {
+    if let Some(rest) = aios_console::frontend::console_prefix(line) {
         run_console_command(console, rest);
         return;
     }
@@ -880,12 +870,21 @@ mod tests {
 
     #[test]
     fn console_prefix_is_case_insensitive_and_keeps_arguments() {
-        assert_eq!(console_prefix("console ps"), Some("ps"));
-        assert_eq!(console_prefix("CONSOLE   ps aux"), Some("ps aux"));
-        assert_eq!(console_prefix("  console  block list "), Some("block list"));
-        assert_eq!(console_prefix("console"), Some(""));
-        assert_eq!(console_prefix("ps"), None);
-        assert_eq!(console_prefix("consolett ps"), None);
+        assert_eq!(
+            aios_console::frontend::console_prefix("console ps"),
+            Some("ps")
+        );
+        assert_eq!(
+            aios_console::frontend::console_prefix("CONSOLE   ps aux"),
+            Some("ps aux")
+        );
+        assert_eq!(
+            aios_console::frontend::console_prefix("  console  block list "),
+            Some("block list")
+        );
+        assert_eq!(aios_console::frontend::console_prefix("console"), Some(""));
+        assert_eq!(aios_console::frontend::console_prefix("ps"), None);
+        assert_eq!(aios_console::frontend::console_prefix("consolett ps"), None);
     }
 
     #[test]

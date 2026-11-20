@@ -1189,13 +1189,12 @@ fn console_execute(app: &mut TuiApp, input: &str) {
 }
 
 fn shell_execute(app: &mut TuiApp, line: &str) {
-    let trimmed = line.trim();
-    let mut head_and_rest = trimmed.splitn(2, char::is_whitespace);
-    let head = head_and_rest.next().unwrap_or("");
-    if head.eq_ignore_ascii_case("console") {
-        console_execute(app, head_and_rest.next().unwrap_or("help").trim());
+    if let Some(rest) = aios_console::frontend::console_prefix(line) {
+        console_execute(app, if rest.is_empty() { "help" } else { rest });
         return;
     }
+    let trimmed = line.trim();
+    let head = trimmed.split_whitespace().next().unwrap_or("");
     if head.eq_ignore_ascii_case("clear") || head.eq_ignore_ascii_case("cls") {
         console_execute(app, head);
         return;
@@ -1993,6 +1992,21 @@ mod tests {
             "got {:?}",
             app.shell_output
         );
+    }
+
+    #[test]
+    fn bare_console_prints_help_including_trailing_space() {
+        for input in ["CONSOLE", "console "] {
+            let mut app = console_test_app();
+            shell_execute(&mut app, input);
+            assert!(
+                app.shell_output
+                    .iter()
+                    .any(|line| line == "AIOS text console commands"),
+                "{input} produced {:?}",
+                app.shell_output
+            );
+        }
     }
 
     #[test]

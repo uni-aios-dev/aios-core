@@ -145,15 +145,16 @@ usage-ошибок в `aios-console/tests/host_backend.rs`.
 
 Неоднозначные старые имена не раскрываются молча: консоль печатает список
 канонических альтернатив. GUI, WebView, веб-серфинг, LLM-интенты, кластер,
-публикация/подпись пакетов, конвейеры/перенаправление и темы закоментированы в
-`deferred.rs` и возвращают `ERR unavailable: ...` с причиной.
+конвейеры/перенаправление и темы закоментированы в `deferred.rs` и возвращают
+`ERR unavailable: ...` с причиной. `store sign` и `store publish` имеют реальные
+реализации в `HostBackend` и больше не являются отложенными.
 
 `HostBackend` уже выполняет реализованные команды в реальном хостовом окружении.
 Процессы, блоки, store, VFS и интроспекция: `ps`,
 `process spawn|kill|renice|suspend|resume|affinity`,
 `block list|info|load|mock|unload|activate|deps|verify`,
 `store list|sources|source|search|install|update|check-updates|uninstall|
-rollback|trust|verify`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|stat|exists|
+rollback|trust|verify|sign|publish`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|stat|exists|
 resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `sys info|tier` и `hw detect|rescan|profile|fingerprints`. Планировщик, сеть и
 безопасность: `sleep`, `fault resolve`,
@@ -250,7 +251,10 @@ mock-профиль (`modern`, `legacy`, `legacy-2012`, `nvidia`, `intel-meteor-
 а `console exit <code>` завершает шелл; все строки без префикса сохраняют POSIX-
 поведение (алиасы, задания, внешние программы).
 
-Ядерный шелл использует тот же префикс `console <...>`. Его бэкенд реализует
+Ядерный шелл использует тот же общий префикс `console <...>` без учёта регистра:
+`CONSOLE VER` и `CoNsOlE echo MiXeD Case` попадают в бэкенд, а голые старые
+команды сохраняют прежнюю регистрочувствительность. Голый `console` или ввод
+только из пробелов выводит генерируемую справку. Его бэкенд реализует
 `help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` и `socktest`;
 остальные команды возвращают `ERR unavailable`. В отличие от старого ядерного
@@ -396,8 +400,10 @@ cargo run --bin aios-tui
 | `console` | `<команда> [аргументы]` | Команда единой консоли (`console help` выводит канонические команды) |
 | `exit` | — | Выйти из оболочки безопасного режима |
 
-Префикс `console` распознаётся без учёта регистра до TUI-дополнений и отката на
+Префикс `console` распознаётся без учёта регистра через общую функцию
+`aios_console::frontend::console_prefix` до TUI-дополнений и отката на
 `SafeModeShell`, поэтому существующая команда `console` не может его перехватить.
+Голый `console` или ввод только из пробелов выводит генерируемую справку.
 `console clear` очищает вывод шелла, а `console exit [code]` закрывает TUI через
 обычный путь завершения. Все остальные команды сохраняют прежнее поведение.
 

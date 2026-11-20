@@ -6,6 +6,8 @@ The root `aios-integration-tests` package declared binary-only `aios-shell` as a
 dev-dependency. Cargo ignored it and printed `ignoring invalid dependency
 aios-shell which is missing a lib target` on every workspace command. No
 integration test imports the crate, so the unused dependency was removed.
+`aios-shell` is now an explicit workspace member, so its own unit tests and
+clippy remain part of workspace verification.
 
 ## FIXED (official store): duplicate manifests in local catalog scans
 
@@ -14,6 +16,16 @@ and `blocks/` itself, so the same binary under `blocks/` was emitted twice and
 `store search` returned duplicate manifests for one installed block. The list is
 now sorted and deduplicated by path, with a regression test for a flat
 `blocks/<name>_<version>.wasm` layout.
+
+## FIXED (unified console): `store sign` sidecar path sanitization
+
+`HostBackend::safe_file_token` previously kept `..` from a name such as
+`../evil`, so the signed sidecar was written as `.._evil_<version>.json` instead
+of beside the input as `evil_<version>.json`. It now uses only the final path
+component (for both `/` and `\`), rejects `.`/`..` and strips leading/trailing
+dots. `store sign` and `store publish` are implemented in `aios-console` instead
+of being deferred; both use the same Ed25519/bridge path as the legacy TUI, and
+a loopback HTTP test pins the published JSON.
 
 ## FIXED (official store): catalog format and stateful block execution
 
@@ -51,7 +63,7 @@ switched over.
 | Invalid `kill` PID becomes `0` in one shell but a usage error in another | `safe_mode.rs:59-65`, `aios/src/tui/mod.rs:1223-1233` | `process kill <pid>` with a single usage error |
 | `net reset` exists in the block but is unreachable from the host TUI | `aios-net-config/src/block.rs:63,79-82` | `net reset` is a registered subcommand |
 | Global hotkeys `g`/`l` shadow AI-console actions | `aios/src/tui/mod.rs:1669-1672`, `:1633-1639` | Text console has no global hotkeys |
-| Kernel commands are case-sensitive (`HELP`, `Clear` fail) | `aios-kernel/src/tui.rs:178-304` | Registry lookup is case-insensitive |
+| Bare legacy kernel commands are case-sensitive (`HELP`, `Clear` fail); the `console` prefix is not | `aios-kernel/src/tui.rs:184-192`, `aios-console/src/frontend.rs` | Shared `console_prefix`; canonical registry lookup is case-insensitive |
 
 A known limitation of the new backend: `HostBackend` implements only the
 subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
@@ -89,6 +101,9 @@ usage and empty `ps` lines differ from the canonical host wording.
 `KernelBackend` has the same limitation: only the commands backed by real
 kernel APIs are implemented, and the legacy kernel `clear` bug persists on the
 old dispatcher path (the new backend clears the shell history explicitly).
+`tabs`, `gui` and `tui` are deferred in the registry and bare `info` is
+ambiguous, so they stay on the legacy dispatcher instead of being forced into
+the console.
 
 ## FIXED (unified console): Windows paths lost backslashes in arguments
 

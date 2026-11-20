@@ -146,15 +146,16 @@ plus the canonical host wording for `help`, `clear` and usage errors in
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
-control, store publish/sign, pipes/redirection and theming are commented out in
-`deferred.rs` and report `ERR unavailable: ...` with the reason.
+control, pipes/redirection and theming are commented out in `deferred.rs` and
+report `ERR unavailable: ...` with the reason. `store sign` and `store publish`
+have real `HostBackend` implementations and are no longer deferred.
 
 `HostBackend` already executes the implemented commands against the real host
 runtime. Process/block/store/VFS and introspection commands: `ps`,
 `process spawn|kill|renice|suspend|resume|affinity`,
 `block list|info|load|mock|unload|activate|deps|verify`,
 `store list|sources|source|search|install|update|check-updates|uninstall|
-rollback|trust|verify`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|stat|exists|
+rollback|trust|verify|sign|publish`, `vfs ls|cat|head|write|mkdir|rm|mv|cp|stat|exists|
 resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `sys info|tier` and `hw detect|rescan|profile|fingerprints`. Scheduling,
 networking and security: `sleep`, `fault resolve`,
@@ -248,7 +249,10 @@ same `HostBackend` through `execute_line()`. Aliases are not expanded on the
 clears the terminal and `console exit <code>` exits the shell; all non-`console`
 lines keep POSIX behaviour (aliases, jobs, external programs).
 
-The kernel shell uses the same `console <...>` prefix. Its backend implements
+The kernel shell uses the same shared, case-insensitive `console <...>` prefix:
+`CONSOLE VER` and `CoNsOlE echo MiXeD Case` reach the backend, while bare legacy
+commands keep their old case-sensitive spelling. Bare or whitespace-only
+`console` prints generated help. Its backend implements
 `help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`;
 other commands return `ERR unavailable`. Unlike the legacy kernel `clear`,
@@ -394,11 +398,13 @@ The omnibox accepts either a full URL (`example.com`, `https://...`) or a plain 
 | `console` | `<command> [args]` | Unified console command (`console help` lists canonical commands) |
 | `exit` | — | Exit the safe-mode shell |
 
-The `console` prefix is case-insensitive and is matched before the TUI extras
-and the `SafeModeShell` fallback, so an existing command named `console` cannot
-shadow it. `console clear` clears the shell output and `console exit [code]`
-closes the TUI through the normal shutdown path. All other commands keep their
-legacy behaviour.
+The `console` prefix is case-insensitive through the shared
+`aios_console::frontend::console_prefix` helper and is matched before the TUI
+extras and the `SafeModeShell` fallback, so an existing command named `console`
+cannot shadow it. Bare or whitespace-only `console` prints generated help.
+`console clear` clears the shell output and `console exit [code]` closes the TUI
+through the normal shutdown path. All other commands keep their legacy
+behaviour.
 
 Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
 

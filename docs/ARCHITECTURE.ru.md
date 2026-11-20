@@ -104,6 +104,10 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 возвращает флаг, чтобы `console exit` вышел из event loop через обычный путь
 завершения, а `console clear` очищает буфер шелла. Остальные строки сохраняют
 прежнее поведение TUI и безопасного режима.
+Все четыре фронтенда используют `aios_console::frontend::console_prefix` —
+вспомогательную функцию ядра без `std`: она распознаёт префикс без учёта регистра,
+сохраняет регистр аргументов, а голый или состоящий только из пробелов `console`
+трактует как запрос справки.
 `BridgeContext.registry` теперь имеет тип `Arc<Mutex<BlockRegistry>>`,
 поэтому bridge, TUI и консоль видят одни и те же блоки; `BridgeContext.ipc_bus`
 также стал `Arc<Mutex<IpcBus>>` и разделяется с консолью. Старые диспетчеры
@@ -172,8 +176,10 @@ ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connec
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` и `socktest`.
 Всё остальное возвращает `unavailable`. Баг ядерного `clear` исправлен: бэкенд
 очищает `SHELL.history` и выдаёт явное `OutputControl::Clear`. Ядерный шелл
-предоставляет бэкенд как `console <...>`, а старый диспетчер обрабатывает все
-остальные команды. Это отдельная реализация, поскольку `aios-kernel` собирается
+предоставляет бэкенд как `console <...>` через общий префикс без учёта регистра,
+поэтому `CONSOLE VER` и `CoNsOlE echo MiXeD Case` попадают в бэкенд; старый
+диспетчер обрабатывает все остальные команды и сохраняет регистрочувствительность
+голых написаний. Это отдельная реализация, поскольку `aios-kernel` собирается
 под `x86_64-unknown-none` и не может линковать `std`, `ratatui`, `tokio` или
 `reqwest`.
 
@@ -1454,12 +1460,13 @@ User Input (TUI)
 - **Политика доверия по источникам** — `StoreSource.trusted_public_keys` (`#[serde(default)]`); `StoreManager::verify_source_manifest(source, manifest)` применяется в `install()` и `update()`. Источник GitHub по умолчанию наследует официальный ключ из `AIOS_OFFICIAL_PUBLIC_KEY` через `official_public_key()`. Если ключи не заданы, подпись всё равно проверяется по встроенному ключу (неподписанные установки разрешены)
 - **TUI-шелл** — `store sign <file.wasm> [name] [version] [--key <secret_hex>]` подписывает локальный wasm (ключ из `AIOS_STORE_SIGNING_KEY`, если `--key` опущен) и пишет подписанный sidecar; `store verify <name>` проверяет SHA-256 + Ed25519 установленного блока
 - **Подписанная публикация** — `store publish ... [--key <secret_hex>]` строит манифест, подписывает его по Ed25519 и включает `SignatureInfo` в `StorePublishRequest`; мост проверяет подпись через `ManifestValidator::verify_signature` перед `install_from_bytes` (установщик создаётся через `from_env`, поэтому к подписанным публикациям применяется и локальная политика `AIOS_TRUSTED_PUBLIC_KEYS`; неподписанные публикации остаются разрешёнными, пока не настроены ключи)
+- **Паритет единой консоли** — `HostBackend` реализует те же семантики `store sign` и `store publish`, что и TUI. `store sign` вычисляет SHA-256, пишет `{name}_{version}.json` рядом с входным файлом, используя только последний компонент пути имени и версии, и выводит публичный ключ Ed25519; `store publish` включает подпись при наличии `--key` или `AIOS_STORE_SIGNING_KEY`. Обе команды снова зарегистрированы как подкоманды и больше не сообщают об отложенном статусе.
 - **`store trust <source> [--key <public_hex>] [--clear]`** — задаёт/очищает `StoreSource.trusted_public_keys` из шелла `aios-tui` (hex-ключ валидируется как настоящий публичный ключ Ed25519), сохраняется через `StoreManager::save_config` в конфиг источников; `store sources` показывает число доверенных ключей на источник
 
 ### Интеграция `net_settings` в ядро (Фаза 41)
 - `net_settings` регистрируется в реестре блоков ядра при загрузке (`aios/src/orchestrator.rs`), обработчик подключается к `MessageRouter`; итоговый `BlockId` доступен как `OrchestratorState::net_block_id`
 - Горячая клавиша `n` в TUI ядра (`aios`) открывает режим ввода пар `key=value`; по `Enter` токены преобразуются в частичное JSON-обновление и уходят как `net_set` через IPC, возвращённый JSON конфигурации выводится в панель событий
-- Команда `store publish <file.wasm> [name] [version]` (`aios-tui`) вычисляет SHA-256 файла, кодирует wasm в base64 и отправляет `StorePublishRequest` в `POST /api/v1/store/publish` (порт моста из `AIOS_BRIDGE_PORT`, по умолчанию `8080`); имя по умолчанию — имя файла без расширения, версия — `1.0.0`
+- Команда `store publish <file.wasm> [name] [version]` (доступна в `aios-tui` и через `console ...` в `aios-console`) вычисляет SHA-256 файла, кодирует wasm в base64 и отправляет `StorePublishRequest` в `POST /api/v1/store/publish` (порт моста из `AIOS_BRIDGE_PORT`, по умолчанию `8080`); имя по умолчанию — имя файла без расширения, версия — `1.0.0`. `HostBackend` собирает тот же JSON через `serde_json::json!` без зависимости от `aios-bridge`, а `HostBackend::set_publish_url` подменяет адрес в тестах
 - `StorePublishRequest` / `StorePublishResponse` в `aios-bridge::dto` оба `Serialize + Deserialize` для клиентских round-trip
 
 ---

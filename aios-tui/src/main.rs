@@ -385,16 +385,6 @@ where
         }
     });
 }
-fn console_prefix(line: &str) -> Option<&str> {
-    let mut parts = line.trim().splitn(2, char::is_whitespace);
-    let head = parts.next()?;
-    if head.eq_ignore_ascii_case("console") {
-        Some(parts.next().unwrap_or("").trim())
-    } else {
-        None
-    }
-}
-
 fn run_console_command(state: &mut DashboardState, console: &mut HostBackend, rest: &str) -> bool {
     let input = if rest.is_empty() { "help" } else { rest };
     let output = console.execute_line(input);
@@ -419,7 +409,7 @@ fn execute_shell_cmd(
     safe_shell: &mut SafeModeShell,
     console: &mut HostBackend,
 ) -> bool {
-    if let Some(rest) = console_prefix(cmd) {
+    if let Some(rest) = aios_console::frontend::console_prefix(cmd) {
         return run_console_command(state, console, rest);
     }
     execute_shell_cmd_inner(state, cmd, scheduler, registry, safe_shell);
@@ -2209,15 +2199,21 @@ mod tests {
 
     #[test]
     fn test_console_prefix_is_case_insensitive_and_keeps_arguments() {
-        assert_eq!(super::console_prefix("console ps"), Some("ps"));
-        assert_eq!(super::console_prefix("CONSOLE   ps aux"), Some("ps aux"));
         assert_eq!(
-            super::console_prefix("  console  echo MiXeD Case "),
+            aios_console::frontend::console_prefix("console ps"),
+            Some("ps")
+        );
+        assert_eq!(
+            aios_console::frontend::console_prefix("CONSOLE   ps aux"),
+            Some("ps aux")
+        );
+        assert_eq!(
+            aios_console::frontend::console_prefix("  console  echo MiXeD Case "),
             Some("echo MiXeD Case")
         );
-        assert_eq!(super::console_prefix("console"), Some(""));
-        assert_eq!(super::console_prefix("ps"), None);
-        assert_eq!(super::console_prefix("consolett ps"), None);
+        assert_eq!(aios_console::frontend::console_prefix("console"), Some(""));
+        assert_eq!(aios_console::frontend::console_prefix("ps"), None);
+        assert_eq!(aios_console::frontend::console_prefix("consolett ps"), None);
     }
 
     #[test]

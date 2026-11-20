@@ -182,11 +182,9 @@ fn shell_exec() {
 }
 
 pub(crate) fn run_command(cmd: &str) -> Vec<String> {
-    if let Some(rest) = cmd.strip_prefix("console ") {
-        return crate::console_backend::dispatch_line(rest.trim());
-    }
-    if cmd == "console" {
-        return crate::console_backend::dispatch_line("help");
+    if let Some(rest) = aios_console::frontend::console_prefix(cmd) {
+        let target = if rest.is_empty() { "help" } else { rest };
+        return crate::console_backend::dispatch_line(target);
     }
     match cmd {
         "help" => vec![

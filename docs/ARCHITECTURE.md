@@ -104,6 +104,9 @@ before the TUI extras and the `SafeModeShell` fallback. `execute_shell_cmd`
 returns a flag so `console exit` can break the event loop through the normal
 shutdown path, and `console clear` clears the shell buffer. Other lines keep the
 existing TUI and safe-mode behaviour.
+All four frontends use `aios_console::frontend::console_prefix`, a `no_std`
+helper in the core crate: it matches the prefix case-insensitively, preserves
+argument case and treats bare or whitespace-only `console` as a help request.
 `BridgeContext.registry` is now `Arc<Mutex<BlockRegistry>>` so the bridge, TUI
 and console observe the same blocks; `BridgeContext.ipc_bus` is likewise
 `Arc<Mutex<IpcBus>>`, shared with the console. The legacy dispatchers are kept
@@ -172,8 +175,10 @@ the existing kernel entry points: generated `help`, `echo`, `version`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`.
 Everything else returns `unavailable`. The kernel `clear` bug is fixed here:
 the backend clears `SHELL.history` and emits an explicit `OutputControl::Clear`.
-The kernel shell exposes the backend as `console <...>`, while the legacy
-dispatcher remains for all other commands. This is a separate implementation
+The kernel shell exposes the backend as `console <...>` through the shared
+case-insensitive prefix helper, so `CONSOLE VER` and `CoNsOlE echo MiXeD Case`
+reach it; the legacy dispatcher remains for all other commands and keeps its
+case-sensitive bare spellings. This is a separate implementation
 because `aios-kernel` is `x86_64-unknown-none` and cannot link `std`, `ratatui`,
 `tokio` or `reqwest`.
 
@@ -1450,7 +1455,7 @@ Three adaptive AI modes depending on hardware resources:
 ### Kernel `net_settings` integration (Phase 41)
 - `net_settings` is registered in the kernel block registry at boot (`aios/src/orchestrator.rs`) and its handler is wired into the `MessageRouter`; the resulting `BlockId` is exposed as `OrchestratorState::net_block_id`
 - Kernel TUI (`aios`) hotkey `n` opens a `key=value` input mode; on `Enter` the tokens are converted to a partial-JSON update and dispatched as `net_set` over IPC, with the returned config JSON logged to the Events pane
-- Shell command `store publish <file.wasm> [name] [version]` (`aios-tui`) computes the file SHA-256, base64-encodes the wasm and posts a `StorePublishRequest` to `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); name defaults to the file stem, version to `1.0.0`
+- Shell command `store publish <file.wasm> [name] [version]` (available in `aios-tui` and through `console ...` in `aios-console`) computes the file SHA-256, base64-encodes the wasm and posts a `StorePublishRequest` to `POST /api/v1/store/publish` (bridge port from `AIOS_BRIDGE_PORT`, default `8080`); name defaults to the file stem, version to `1.0.0`. `HostBackend` builds the same JSON body with `serde_json::json!` without adding an `aios-bridge` dependency, and `HostBackend::set_publish_url` overrides the endpoint in tests
 - `StorePublishRequest` / `StorePublishResponse` in `aios-bridge::dto` are both `Serialize + Deserialize` for client round-trips
 
 
@@ -1465,6 +1470,7 @@ Three adaptive AI modes depending on hardware resources:
 - **Per-source trust policy** — `StoreSource.trusted_public_keys` (`#[serde(default)]`); `StoreManager::verify_source_manifest(source, manifest)` is enforced in `install()` and `update()`. The default GitHub source inherits its official key from `AIOS_OFFICIAL_PUBLIC_KEY` via `official_public_key()`. With no keys configured, signatures are still checked against the embedded key (unsigned installs allowed)
 - **TUI shell** — `store sign <file.wasm> [name] [version] [--key <secret_hex>]` signs a local wasm (key from `AIOS_STORE_SIGNING_KEY` if `--key` is omitted) and writes the signed sidecar; `store verify <name>` checks SHA-256 + Ed25519 of an installed block
 - **Signed publish** — `store publish ... [--key <secret_hex>]` builds the manifest, signs it with Ed25519 and includes the `SignatureInfo` in `StorePublishRequest`; the bridge verifies the signature via `ManifestValidator::verify_signature` before `install_from_bytes` (which is constructed with `from_env` and therefore also applies the local `AIOS_TRUSTED_PUBLIC_KEYS` policy to signed publishes; unsigned publishes remain allowed unless keys are configured)
+- **Unified console parity** — `HostBackend` implements the same `store sign` and `store publish` semantics as the TUI. `store sign` computes SHA-256, writes `{name}_{version}.json` next to the input using only the final path component of name/version, and prints the Ed25519 public key; `store publish` includes the signature when `--key` or `AIOS_STORE_SIGNING_KEY` is set. Both are registered subcommands and are no longer reported as deferred.
 - **`store trust <source> [--key <public_hex>] [--clear]`** — sets/clears `StoreSource.trusted_public_keys` from the `aios-tui` shell (key hex validated as a real Ed25519 public key), persisted through `StoreManager::save_config` into the source config; `store sources` shows the trusted-key count per source
 
 ---

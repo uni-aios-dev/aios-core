@@ -345,6 +345,119 @@ fn kernel_surface_maps_to_canonical_commands() {
 }
 
 #[test]
+fn kernel_backend_canonical_forms_resolve() {
+    let cases: &[(&str, Expected<'_>)] = &[
+        (
+            "version",
+            Expected::Canonical {
+                id: "version",
+                sub: None,
+                args: &[],
+            },
+        ),
+        (
+            "cls",
+            Expected::Canonical {
+                id: "clear",
+                sub: None,
+                args: &[],
+            },
+        ),
+        (
+            "kernel info",
+            Expected::Canonical {
+                id: "kernel",
+                sub: Some("info"),
+                args: &[],
+            },
+        ),
+        (
+            "kernel ver",
+            Expected::Canonical {
+                id: "kernel",
+                sub: Some("ver"),
+                args: &[],
+            },
+        ),
+        (
+            "faults stats",
+            Expected::Canonical {
+                id: "faults",
+                sub: Some("stats"),
+                args: &[],
+            },
+        ),
+        (
+            "faults history",
+            Expected::Canonical {
+                id: "faults",
+                sub: Some("history"),
+                args: &[],
+            },
+        ),
+        (
+            "faults pending",
+            Expected::Canonical {
+                id: "faults",
+                sub: Some("pending"),
+                args: &[],
+            },
+        ),
+        (
+            "fault resolve 7 resume",
+            Expected::Canonical {
+                id: "fault",
+                sub: Some("resolve"),
+                args: &["7", "resume"],
+            },
+        ),
+        (
+            "wifi scan",
+            Expected::Canonical {
+                id: "wifi",
+                sub: Some("scan"),
+                args: &[],
+            },
+        ),
+        (
+            "wifi connect test pass",
+            Expected::Canonical {
+                id: "wifi",
+                sub: Some("connect"),
+                args: &["test", "pass"],
+            },
+        ),
+        (
+            "wifi disconnect",
+            Expected::Canonical {
+                id: "wifi",
+                sub: Some("disconnect"),
+                args: &[],
+            },
+        ),
+        (
+            "wifi sim",
+            Expected::Canonical {
+                id: "wifi",
+                sub: Some("sim"),
+                args: &[],
+            },
+        ),
+        (
+            "wifi real",
+            Expected::Canonical {
+                id: "wifi",
+                sub: Some("real"),
+                args: &[],
+            },
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_expected(input, expected);
+    }
+}
+
+#[test]
 fn aios_shell_surface_maps_to_canonical_commands() {
     let cases: &[(&str, Expected<'_>)] = &[
         (
@@ -522,8 +635,6 @@ fn deferred_surface_names_stay_deferred_across_legacy_shells() {
         "tui",
         "tabs",
         "cluster status",
-        "store publish my_block",
-        "store sign my_block",
         "perf-tune-video",
         "memory-compaction",
         "theme mono",

@@ -91,7 +91,9 @@ impl CommandBackend for KernelBackend {
                 CommandOutput::ok(lines)
             }
             ("fault", Some("resolve")) => self.fault_resolve(invocation),
-            ("wifi", Some("status")) => CommandOutput::ok(crate::tui::run_command("wifi")),
+            ("wifi", None) | ("wifi", Some("status")) => {
+                CommandOutput::ok(crate::tui::run_command("wifi"))
+            }
             ("wifi", Some("sim")) => CommandOutput::ok(crate::tui::run_command("wifi sim")),
             ("wifi", Some("real")) => CommandOutput::ok(crate::tui::run_command("wifi real")),
             ("wifi", Some("scan")) => match crate::wifi::start_scan() {
