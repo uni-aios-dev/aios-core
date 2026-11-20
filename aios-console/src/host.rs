@@ -1310,6 +1310,14 @@ impl HostBackend {
         crate::legacy::status_text(&self.status(), crash_log_count)
     }
 
+    /// Renders the exact legacy `exit` text from the canonical exit control.
+    ///
+    /// The frontend still owns the shutdown decision; this helper only supplies
+    /// the legacy wording. Returns `None` if the canonical shape changes.
+    pub fn exit_legacy_text(&mut self) -> Option<String> {
+        crate::legacy::exit_text(&self.execute_line("exit"))
+    }
+
     fn process_list(&self) -> CommandOutput {
         let scheduler = guard(&self.scheduler);
         let processes = scheduler.all_processes();

@@ -403,7 +403,7 @@ fn run_console_command(state: &mut DashboardState, console: &mut HostBackend, re
 
 fn execute_legacy_parity_command(
     state: &mut DashboardState,
-    console: &HostBackend,
+    console: &mut HostBackend,
     cmd: &str,
 ) -> bool {
     let mut parts = cmd.split_whitespace();
@@ -418,6 +418,7 @@ fn execute_legacy_parity_command(
         "ps" | "processes" | "list" => console.process_list_legacy_text(),
         "blocks" | "ls" => console.block_list_legacy_text(),
         "status" | "info" => console.status_legacy_text(),
+        "exit" | "quit" | "q" => console.exit_legacy_text(),
         _ => return false,
     };
     let Some(text) = text else {
@@ -2557,6 +2558,43 @@ mod tests {
         );
         assert!(!exit);
         assert_eq!(state.shell_state.output.join("\n"), expected);
+    }
+
+    #[test]
+    fn test_bare_exit_aliases_match_safe_mode_output_exactly() {
+        for command in ["EXIT", "quit", "q"] {
+            let mut state = make_dashboard_state();
+            let (scheduler, registry) = make_shared_handles();
+            let expected = {
+                let mut sched = scheduler.lock().unwrap();
+                let mut reg = registry.lock().unwrap();
+                let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+                shell
+                    .execute(
+                        aios_watchdog::safe_mode::ShellCommand::Exit,
+                        &mut sched,
+                        &mut reg,
+                    )
+                    .output
+            };
+            state.shell_state.output.clear();
+            let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            let mut console = make_shared_console(&scheduler, &registry);
+            let exit = super::execute_shell_cmd(
+                &mut state,
+                command,
+                &scheduler,
+                &registry,
+                &mut safe_shell,
+                &mut console,
+            );
+            assert_eq!(
+                state.shell_state.output.join("\n"),
+                expected,
+                "command: {command}"
+            );
+            assert!(!exit, "bare {command} keeps the legacy shutdown flag");
+        }
     }
 
     #[test]

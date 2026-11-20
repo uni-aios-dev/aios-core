@@ -3,6 +3,13 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `exit`, `quit` and `q` through
+  `HostBackend::exit_legacy_text` and `legacy::exit_text`. The adapter maps the
+  canonical `OutputControl::Exit` back to the exact legacy `SafeModeShell` line
+  without changing the bare-command shutdown flag, so only `console exit` breaks
+  the event loop. New core unit tests and a binary test compare all three
+  spellings byte-for-byte with `SafeModeShell` and pin the legacy flag semantics.
+  EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `status` and `info` through
   `HostBackend::status_legacy_text` and `legacy::status_text`. The adapter maps
   the canonical status back to the exact legacy `SafeModeShell` text, including

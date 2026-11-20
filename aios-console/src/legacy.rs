@@ -4,7 +4,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::output::{CommandOutput, ExitCode};
+use crate::output::{CommandOutput, ExitCode, OutputControl};
 
 const PROCESS_HEADER: &str = "PID  NAME              PRIO  STATE     RAM";
 const PROCESS_SEPARATOR: &str = "---- ----------------  ---- --------- -----";
@@ -129,6 +129,21 @@ pub fn status_text(output: &CommandOutput, crash_log_count: usize) -> Option<Str
     ))
 }
 
+/// Converts canonical `exit` output into the exact legacy safe-mode exit text.
+///
+/// Returns `None` unless the output is a clean `OutputControl::Exit` with no
+/// lines, so a frontend can keep the legacy dispatcher instead of inventing a
+/// shutdown message for an unexpected canonical result.
+pub fn exit_text(output: &CommandOutput) -> Option<String> {
+    if output.code != ExitCode::Ok || !output.lines.is_empty() {
+        return None;
+    }
+    match output.control {
+        OutputControl::Exit(_) => Some(String::from("Exiting safe mode shell")),
+        _ => None,
+    }
+}
+
 fn legacy_process_row(row: &str) -> Option<String> {
     let fields = row.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 5 {
@@ -171,7 +186,7 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_list_text, process_list_text, status_text, BLOCK_HEADER, BLOCK_SEPARATOR,
+        block_list_text, exit_text, process_list_text, status_text, BLOCK_HEADER, BLOCK_SEPARATOR,
         PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
@@ -263,6 +278,18 @@ mod tests {
     }
 
     #[test]
+    fn maps_canonical_exit_to_legacy_text() {
+        assert_eq!(
+            exit_text(&CommandOutput::exit(0)).as_deref(),
+            Some("Exiting safe mode shell")
+        );
+        assert_eq!(
+            exit_text(&CommandOutput::exit(7)).as_deref(),
+            Some("Exiting safe mode shell")
+        );
+    }
+
+    #[test]
     fn rejects_unexpected_outputs() {
         assert_eq!(process_list_text(&CommandOutput::usage("ps")), None);
         assert_eq!(
@@ -281,6 +308,11 @@ mod tests {
         assert_eq!(status_text(&CommandOutput::usage("status"), 0), None);
         assert_eq!(
             status_text(&CommandOutput::ok(alloc::vec!["other".into()]), 0),
+            None
+        );
+        assert_eq!(exit_text(&CommandOutput::ok(Vec::new())), None);
+        assert_eq!(
+            exit_text(&CommandOutput::text("Exiting safe mode shell")),
             None
         );
     }

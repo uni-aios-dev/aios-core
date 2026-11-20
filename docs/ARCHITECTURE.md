@@ -106,12 +106,14 @@ shutdown path, and `console clear` clears the shell buffer. Its `Scheduler` and
 `BlockRegistry` are now `Arc<Mutex<...>>` shared with `HostBackend::from_handles`,
 so `console ps` and `console block list` observe the same processes and blocks as
 the safe-mode commands and the dashboard. Bare `ps`, `processes`, `list`,
-`blocks`, `ls`, `status` and `info` now use `HostBackend::process_list_legacy_text`,
-`HostBackend::block_list_legacy_text` and `HostBackend::status_legacy_text`,
-which map canonical output back to the exact legacy text, so their output is
-unchanged. Canonical `console info` remains ambiguous; only the legacy safe-mode
-alias is adapter-backed. Other lines keep the existing TUI and safe-mode
-behaviour.
+`blocks`, `ls`, `status`, `info`, `exit`, `quit` and `q` now use
+`HostBackend::process_list_legacy_text`, `HostBackend::block_list_legacy_text`,
+`HostBackend::status_legacy_text` and `HostBackend::exit_legacy_text`, which map
+canonical output back to the exact legacy text, so their output is unchanged.
+Bare `exit`/`quit`/`q` print the legacy line but keep the legacy shutdown flag:
+only `console exit` breaks the event loop. Canonical `console info` remains
+ambiguous; only the legacy safe-mode alias is adapter-backed. Other lines keep
+the existing TUI and safe-mode behaviour.
 All four frontends use `aios_console::frontend::console_prefix`, a `no_std`
 helper in the core crate: it matches the prefix case-insensitively, preserves
 argument case and treats bare or whitespace-only `console` as a help request.
@@ -947,15 +949,18 @@ Monitoring → Suspended → Recovering → Monitoring (on heartbeat received)
 `help`/`?`, `exit`/`quit`/`q`, plus a mixed-case unknown-command fallback.
 
 Exact output for every branch is pinned in `safe_mode.rs` tests. The standalone
-TUI now routes bare `ps`/`processes`/`list`, `blocks`/`ls` and `status`/`info`
-through `aios-console` legacy adapters and asserts byte-for-byte equality with
-`SafeModeShell`; those seven spellings are the first migrated safe-mode commands.
-The status adapter takes the scheduler crash-log count from the shared
-`HostBackend` because the canonical status does not include it. Canonical
-`console info` remains ambiguous. All other bare commands remain on the legacy
-dispatcher until a host-side adapter exists. The same TUI shares its scheduler
-and registry with `HostBackend`, so `console ps` and `console block list` observe
-the safe-mode runtime without changing legacy output.
+TUI now routes bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info` and
+`exit`/`quit`/`q` through `aios-console` legacy adapters and asserts byte-for-byte
+equality with `SafeModeShell`; those ten spellings are the first migrated
+safe-mode commands. The status adapter takes the scheduler crash-log count from
+the shared `HostBackend` because the canonical status does not include it. The
+exit adapter maps `OutputControl::Exit` to the legacy line without changing the
+bare-command shutdown flag, so `console exit` remains the only shell command that
+breaks the event loop. Canonical `console info` remains ambiguous. All other bare
+commands remain on the legacy dispatcher until a host-side adapter exists. The
+same TUI shares its scheduler and registry with `HostBackend`, so `console ps` and
+`console block list` observe the safe-mode runtime without changing legacy
+output.
 
 **Restart limiting:** Configurable `max_restarts` prevents infinite restart loops.
 

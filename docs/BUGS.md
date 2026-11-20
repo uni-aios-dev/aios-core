@@ -95,10 +95,12 @@ surface, except bare `clear`/`cls`: they now go through `console_execute` and
 emit no lines with only `OutputControl::Clear`, so the shell buffer is cleared
 exactly as before; the inputs are also recorded in unified console history.
 `aios-shell` exposes the new backend through the `console <...>` prefix, while
-`aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls` and
-`status`/`info` through exact-output adapters; all other bare-command paths stay
-unchanged until output parity is proven: legacy `help`/`?`, unknown-command,
-usage and empty `ps` lines differ from the canonical host wording. Exact legacy
+`aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls`,
+`status`/`info` and `exit`/`quit`/`q` through exact-output adapters; all other
+bare-command paths stay unchanged until output parity is proven: legacy
+`help`/`?`, unknown-command, usage and empty `ps` lines differ from the canonical
+host wording. Bare `exit`/`quit`/`q` keep the legacy shutdown flag (they print but
+do not close the TUI); only `console exit` breaks the event loop. Exact legacy
 `SafeModeShell` output is pinned in `aios-watchdog/src/safe_mode.rs` for all
 branches, and the migrated aliases match it byte-for-byte. The standalone TUI
 shares its `Scheduler` and `BlockRegistry` as `Arc<Mutex<...>>` with
