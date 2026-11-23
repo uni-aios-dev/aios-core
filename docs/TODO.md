@@ -145,9 +145,9 @@
   the console, and bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
   `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load`, `unload`,
   `restart` and `recover` use host-side adapters (`aios-console/src/legacy.rs`)
-  with byte-for-byte equality to `SafeModeShell`;
-  remaining bare commands stay on the legacy dispatcher until their adapters
-  exist. Canonical `console info` remains ambiguous.
+  with byte-for-byte equality to `SafeModeShell`; the unknown-command fallback
+  is now adapter-backed too, so no bare shell command executes `SafeModeShell`.
+  Canonical `console info` remains ambiguous.
 - [x] Add the first exact-output adapter (`aios-console/src/legacy.rs` and
   `HostBackend::process_list_legacy_text`) and route bare
   `ps`/`processes`/`list` in `aios-tui` through it. Core unit tests pin the
@@ -200,6 +200,11 @@
   prefix. Core unit tests and a binary test compare four sequential calls
   (including mixed case and the limit) byte-for-byte with `SafeModeShell::new(3)`.
   EN/RU docs were aligned.
+- [x] Replace the final `SafeModeShell` unknown-command fallback in `aios-tui`
+  with `legacy.rs::unknown_text`. It formats the exact legacy unknown line from
+  the verbatim input, including case and whitespace, so bare unknown commands
+  no longer execute the legacy shell. Core unit tests and a binary test pin
+  byte-for-byte equality with `SafeModeShell`. EN/RU docs were aligned.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

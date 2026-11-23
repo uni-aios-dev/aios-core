@@ -97,10 +97,11 @@ exactly as before; the inputs are also recorded in unified console history.
 `aios-shell` exposes the new backend through the `console <...>` prefix, while
 `aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls`,
 `status`/`info`, `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`,
-`load`, `unload`, `restart` and `recover` through exact-output adapters; all
-other bare-command paths stay unchanged until output parity is proven: the
-unknown-command, usage and empty `ps` lines differ from the canonical host
-wording. Bare `exit`/`quit`/`q` keep the legacy shutdown flag (they print but do
+`load`, `unload`, `restart` and `recover` plus the unknown-command fallback
+through exact-output adapters; the unknown line is produced by
+`legacy::unknown_text` from the verbatim input, so no bare shell command executes
+`SafeModeShell` any more. The `aios` shell's usage and empty `ps` lines still
+differ from the canonical host wording. Bare `exit`/`quit`/`q` keep the legacy shutdown flag (they print but do
 not close the TUI); only `console exit` breaks the event loop. Exact legacy
 `SafeModeShell` output is pinned in `aios-watchdog/src/safe_mode.rs` for all
 branches, and the migrated aliases match it byte-for-byte. The standalone TUI

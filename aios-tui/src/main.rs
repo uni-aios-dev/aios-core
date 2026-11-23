@@ -1271,7 +1271,16 @@ fn execute_shell_cmd_inner(
             }
             return;
         }
-        _ => aios_watchdog::safe_mode::SafeModeShell::parse_command(cmd),
+        _ => match aios_watchdog::safe_mode::SafeModeShell::parse_command(cmd) {
+            aios_watchdog::safe_mode::ShellCommand::Unknown(original) => {
+                state.shell_state.add_output(format!(
+                    "Error: {}",
+                    aios_console::legacy::unknown_text(&original)
+                ));
+                return;
+            }
+            command => command,
+        },
     };
     let resp = safe_shell.execute(command, scheduler, registry);
     if resp.success {
@@ -2707,6 +2716,38 @@ mod tests {
             assert_eq!(
                 state.shell_state.output.join("\n"),
                 format!("{}\n{}", expected, super::TUI_HELP_EXTRAS),
+                "command: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bare_unknown_command_matches_safe_mode_exactly() {
+        for command in ["  WhAt Ever  ", "nonexistent", "MiXeD CaSe Arg"] {
+            let mut state = make_dashboard_state();
+            let (scheduler, registry) = make_shared_handles();
+            let expected = {
+                let mut sched = scheduler.lock().unwrap();
+                let mut reg = registry.lock().unwrap();
+                let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+                let parsed = aios_watchdog::safe_mode::SafeModeShell::parse_command(command);
+                let resp = shell.execute(parsed, &mut sched, &mut reg);
+                format!("Error: {}", resp.output)
+            };
+            let mut safe_shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
+            let mut console = make_shared_console(&scheduler, &registry);
+            state.shell_state.output.clear();
+            super::execute_shell_cmd(
+                &mut state,
+                command,
+                &scheduler,
+                &registry,
+                &mut safe_shell,
+                &mut console,
+            );
+            assert_eq!(
+                state.shell_state.output.join("\n"),
+                expected,
                 "command: {command}"
             );
         }

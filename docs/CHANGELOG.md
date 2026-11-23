@@ -3,6 +3,15 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The final `SafeModeShell` fallback in `aios-tui` is now adapter-backed:
+  `aios-console/src/legacy.rs::unknown_text` produces the exact legacy
+  `Unknown command: '<input>'. Type 'help' for available commands.` line (with
+  the TUI's `Error: ` prefix) from the verbatim input, so bare unknown commands
+  no longer execute `SafeModeShell`. A core unit test pins case and whitespace
+  preservation, and a binary test compares the rendered line byte-for-byte with
+  the legacy dispatcher. `SafeModeShell` stays in the TUI only for non-shell UI
+  actions and direct legacy-path parity tests; all bare shell commands are now
+  adapter-backed. EN/RU docs were aligned.
 - The standalone `aios-tui` now routes bare `restart` and `recover` through
   `HostBackend::legacy_restart` and `legacy.rs::restart_success` /
   `restart_limit_reached`. The adapter uses the host-owned restart counter and

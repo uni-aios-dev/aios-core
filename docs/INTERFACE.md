@@ -421,11 +421,14 @@ failures keep the legacy `Error: Failed: <error>` wording, except the restart
 limit (`Max restarts (<max>) reached. Manual intervention required.`, printed as
 `Error: Max restarts ...`). `restart`/`recover` use the host restart counter
 instead of `WatchdogControl::reset`, so only canonical `wd reset` calls the
-injected watchdog seam. The help adapter keeps the separate TUI
+injected watchdog seam. Unknown commands are rendered by
+`legacy::unknown_text` from the verbatim input (including case and whitespace)
+and never execute `SafeModeShell`. The help adapter keeps the separate TUI
 extras block. Bare `exit`/`quit`/`q` still only print the legacy line — use
 `console exit` to close the TUI. Canonical `console info` stays ambiguous — only
-the bare legacy alias is adapter-backed. All other bare commands keep their
-legacy behaviour.
+the bare legacy alias is adapter-backed. All safe-mode bare commands and the
+unknown-command fallback are adapter-backed; TUI-specific commands (`intent`,
+`fetch`, `search`, web/network controls) keep their own handlers.
 
 Network commands never block the UI: `fetch`, `search`, `store search`, `store install` and `store update` run in a background worker and their result is printed in the shell output when it arrives. While such a task is running the shell prints `Task already running: <label>` if another one is started.
 

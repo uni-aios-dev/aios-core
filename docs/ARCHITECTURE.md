@@ -129,9 +129,10 @@ prefix). `legacy_restart` deliberately uses `HostBackend::restarts` /
 `wd reset` calls the injected watchdog seam.
 Bare `exit`/`quit`/`q` print the legacy line but keep the legacy shutdown flag:
 only `console exit` breaks the event loop. The help adapter preserves the
-separate TUI extras block. Canonical `console info` remains ambiguous; only the
-legacy safe-mode alias is adapter-backed. Other lines keep the existing TUI and
-safe-mode behaviour.
+separate TUI extras block. The unknown-command fallback also uses a console
+adapter (`legacy::unknown_text`), so it no longer executes `SafeModeShell`.
+Canonical `console info` remains ambiguous; only the legacy safe-mode alias is
+adapter-backed. Other lines keep the existing TUI behaviour.
 All four frontends use `aios_console::frontend::console_prefix`, a `no_std`
 helper in the core crate: it matches the prefix case-insensitively, preserves
 argument case and treats bare or whitespace-only `console` as a help request.
@@ -985,8 +986,14 @@ to it, so canonical console log entries are never mixed with safe-mode events.
 The restart adapter shares the restart counter with canonical `wd reset` via
 `HostBackend`, so status and health see the same bounded count; it records the
 legacy event on success and keeps the exact limit failure without a `Failed:`
-prefix. Canonical `console info` remains ambiguous. All other bare commands remain on
-the legacy dispatcher until a host-side adapter exists.
+prefix. The final unknown-command fallback now uses
+`legacy::unknown_text`, so the TUI prints the exact legacy
+`Error: Unknown command: '<input>'. Type 'help' for available commands.` line
+without executing `SafeModeShell`; the input is preserved verbatim, including
+case and whitespace. `SafeModeShell` is still owned by the TUI for non-shell UI
+actions (for example the `x` status key) and for direct legacy-path parity
+tests, but no bare shell command executes through it. Canonical `console info`
+remains ambiguous.
 The same TUI shares its scheduler and registry with `HostBackend`, so `console ps`
 and `console block list` observe the safe-mode runtime without changing legacy
 output.

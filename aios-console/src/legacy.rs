@@ -218,6 +218,15 @@ pub fn restart_limit_reached(max: u32) -> LegacyMutation {
     ))
 }
 
+/// Formats the exact legacy `SafeModeShell` response for an unknown command.
+///
+/// The original input is preserved verbatim, including case and surrounding
+/// whitespace, so a frontend can replace the final legacy fallback without
+/// changing its output.
+pub fn unknown_text(cmd: &str) -> String {
+    format!("Unknown command: '{cmd}'. Type 'help' for available commands.")
+}
+
 /// Formats the exact legacy output and event of `kill <pid>`.
 pub fn kill_success(pid: u64, name: &str) -> LegacyMutation {
     LegacyMutation::ok(
@@ -296,8 +305,8 @@ mod tests {
     use super::{
         block_list_text, exit_text, help_text, kill_success, load_success, log_text,
         mutation_failed, process_list_text, restart_limit_reached, restart_success, spawn_success,
-        status_text, unload_success, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP,
-        PROCESS_HEADER, PROCESS_SEPARATOR,
+        status_text, unknown_text, unload_success, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER,
+        LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -474,6 +483,14 @@ mod tests {
             "Max restarts (3) reached. Manual intervention required."
         );
         assert_eq!(limit.event, None);
+    }
+
+    #[test]
+    fn maps_unknown_command_to_legacy_output() {
+        assert_eq!(
+            unknown_text("  WhAt Ever  "),
+            "Unknown command: '  WhAt Ever  '. Type 'help' for available commands."
+        );
     }
 
     #[test]
