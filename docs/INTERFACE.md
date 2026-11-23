@@ -186,16 +186,19 @@ dispatch; every invocation is recorded as a `TraceContext` span shown by
 recovery. Swap output says that the swap was recorded and a rollback entry
 stored; it does not claim live block code was replaced.
 
-`wd`, `bridge` and `auth` run through injection seams from
+`wd`, `bridge`, `auth` and `fm` run through injection seams from
 `aios-console/src/control.rs` (`WatchdogControl`, `BridgeControl`,
-`AuthProvider`). The `aios` binary implements them in `aios/src/console_control.rs`
-over the shared watchdog, the bridge listener's graceful-shutdown channel and
-`AuthStore`, so `bridge stop` requests a graceful shutdown and `bridge start`
-spawns the listener again. `wd reset` resets the shared watchdog through
-`WatchdogControl::reset` and only then increments the bounded restart counter.
-Without an injected adapter these commands report
-`unavailable`; the remaining commands still report `ERR unavailable`, but with a
-concrete reason from `aios-console/src/unavailable.rs`:
+`AuthProvider`, `FileManagerControl`). The `aios` binary implements the first
+three in `aios/src/console_control.rs` over the shared watchdog, the bridge
+listener's graceful-shutdown channel and `AuthStore`, so `bridge stop` requests a
+graceful shutdown and `bridge start` spawns the listener again. `wd reset` resets
+the shared watchdog through `WatchdogControl::reset` and only then increments the
+bounded restart counter. `aios-tui` injects a `FileManagerConsoleControl`
+(`aios-fm/src/console_control.rs`) over its live `FileManager`, so `console fm
+jobs`/`fm cancel <id>` operate on real background transfers. Without an injected
+adapter these commands report `unavailable`; the remaining commands still report
+`ERR unavailable`, but with a concrete reason from
+`aios-console/src/unavailable.rs`:
 
 | Command | Why it is unavailable |
 |---------|-----------------------|
@@ -204,9 +207,12 @@ concrete reason from `aios-console/src/unavailable.rs`:
 | `ping` | no ICMP API or raw-socket privilege; TCP connect is not an echo reply |
 | `net recheck` on host | real `recheck()` is kernel-only; host `NetManager` reports cached status |
 | `state` | `BlockRegistry` stores no live `StatefulBlock` instances |
-| `fm` | the host owns no live `FileManager` to inspect or cancel |
 
-The table is host-only. On the kernel backend `console net recheck` is real: it
+The table is host-only and describes a `HostBackend` with no injected control
+seams. `console fm jobs` and `console fm cancel <id>` become real as soon as a
+live `FileManagerControl` is injected: `aios-tui` does this after starting its
+`FileManager`, mapping the real job snapshot to console text and cancelling the
+actual `Progress` token. On the kernel backend `console net recheck` is real: it
 calls `crate::net::recheck()` and prints `network recheck requested`.
 
 The generic `has no host backend yet` message is kept only for commands outside

@@ -11,7 +11,9 @@ use sha2::Digest;
 
 use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
-use aios_console::control::{AuthProvider, BridgeControl, WatchdogControl};
+use aios_console::control::{
+    AuthProvider, BridgeControl, FileManagerControl, FmJobInfo, WatchdogControl,
+};
 use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::{ExitCode, OutputControl};
 use aios_hal::hardware::HardwareProfile;
@@ -1551,6 +1553,62 @@ fn host_control_seams_enable_watchdog_bridge_and_auth() {
     assert_ok("auth me", &me);
     assert_eq!(me.lines, ["user-for-abc"]);
     assert_eq!(dispatch(&mut host, "auth me").code, ExitCode::Usage);
+}
+
+#[test]
+fn host_file_manager_control_seam_enables_fm_jobs_and_cancel() {
+    use std::sync::Mutex;
+
+    struct MockFileManager {
+        canceled: Mutex<Vec<u64>>,
+    }
+    impl FileManagerControl for MockFileManager {
+        fn jobs(&self) -> Vec<FmJobInfo> {
+            vec![FmJobInfo {
+                id: 3,
+                label: "Copy report.txt".to_string(),
+                percent: 42.5,
+                status: "running".to_string(),
+                error: None,
+            }]
+        }
+        fn cancel(&self, id: u64) -> Result<(), String> {
+            if id == 3 {
+                self.canceled.lock().unwrap().push(id);
+                Ok(())
+            } else {
+                Err(format!("no job {id}"))
+            }
+        }
+    }
+
+    let mut host = backend("fm-seam");
+    assert_eq!(dispatch(&mut host, "fm jobs").code, ExitCode::Unavailable);
+    assert_eq!(
+        dispatch(&mut host, "fm cancel 3").code,
+        ExitCode::Unavailable
+    );
+
+    let control = Arc::new(MockFileManager {
+        canceled: Mutex::new(Vec::new()),
+    });
+    host.set_file_manager_control(control.clone());
+
+    let jobs = dispatch(&mut host, "fm jobs");
+    assert_ok("fm jobs with seam", &jobs);
+    assert_eq!(jobs.lines, ["[3] running 42.5% Copy report.txt"]);
+
+    let cancel = dispatch(&mut host, "fm cancel 3");
+    assert_ok("fm cancel 3", &cancel);
+    assert_eq!(cancel.lines, ["fm: canceled job 3"]);
+    assert_eq!(*control.canceled.lock().unwrap(), vec![3]);
+
+    let missing = dispatch(&mut host, "fm cancel 99");
+    assert_eq!(missing.code, ExitCode::BackendError);
+    assert_eq!(missing.lines, ["fm: no job 99"]);
+
+    assert_eq!(dispatch(&mut host, "fm cancel").code, ExitCode::Usage);
+    assert_eq!(dispatch(&mut host, "fm cancel abc").code, ExitCode::Usage);
 }
 
 const TEST_SIGNING_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";

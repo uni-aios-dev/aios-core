@@ -56,7 +56,7 @@ use sha2::{Digest, Sha256};
 
 use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
-use crate::control::{AuthProvider, BridgeControl, WatchdogControl};
+use crate::control::{AuthProvider, BridgeControl, FileManagerControl, WatchdogControl};
 use crate::output::{CommandOutput, ExitCode, OutputControl};
 use crate::registry::{help, Invocation};
 
@@ -174,6 +174,7 @@ pub struct HostBackend {
     watchdog_control: Option<Arc<dyn WatchdogControl>>,
     bridge_control: Option<Arc<dyn BridgeControl>>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
+    file_manager_control: Option<Arc<dyn FileManagerControl>>,
     event_log: Option<Arc<Mutex<Vec<String>>>>,
 }
 
@@ -249,6 +250,7 @@ impl HostBackend {
             watchdog_control: None,
             bridge_control: None,
             auth_provider: None,
+            file_manager_control: None,
             event_log: None,
         }
     }
@@ -291,6 +293,14 @@ impl HostBackend {
     /// Injects the host-owned authentication surface for `auth` commands.
     pub fn set_auth_provider(&mut self, provider: Arc<dyn AuthProvider>) {
         self.auth_provider = Some(provider);
+    }
+
+    /// Injects the host-owned file-manager surface for `fm` commands.
+    ///
+    /// Without a live frontend control the `fm jobs`/`fm cancel` commands report
+    /// `unavailable`; the console never fabricates background jobs.
+    pub fn set_file_manager_control(&mut self, control: Arc<dyn FileManagerControl>) {
+        self.file_manager_control = Some(control);
     }
 
     /// Shares the safe-mode event log so legacy `logs` output can be reproduced.
@@ -509,6 +519,8 @@ impl CommandBackend for HostBackend {
             ("hub", Some(subcommand)) => self.hub_command(invocation, subcommand),
             ("bridge", Some(subcommand)) => self.bridge_command(invocation, subcommand),
             ("auth", Some(subcommand)) => self.auth_command(invocation, subcommand),
+            ("fm", Some("jobs")) => self.fm_jobs(),
+            ("fm", Some("cancel")) => self.fm_cancel(invocation),
             ("source", _) => self.source(invocation),
             _ => {
                 let name = invocation.display_name();
@@ -2244,6 +2256,39 @@ impl HostBackend {
                 }
             }
             _ => CommandOutput::usage(invocation.spec.usage),
+        }
+    }
+
+    fn fm_unavailable(&self, subcommand: &str) -> CommandOutput {
+        let reason = crate::unavailable::host_unavailable_reason("fm", Some(subcommand))
+            .unwrap_or("needs a live host FileManager control seam");
+        CommandOutput::unavailable(&format!("'fm {subcommand}' is unavailable: {reason}"))
+    }
+
+    fn fm_jobs(&self) -> CommandOutput {
+        let Some(control) = self.file_manager_control.as_ref() else {
+            return self.fm_unavailable("jobs");
+        };
+        CommandOutput::ok(crate::legacy::fm_jobs_text(&control.jobs()))
+    }
+
+    fn fm_cancel(&self, invocation: &Invocation) -> CommandOutput {
+        let Some(control) = self.file_manager_control.as_ref() else {
+            return self.fm_unavailable("cancel");
+        };
+        let Some(raw_id) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Ok(id) = raw_id.parse::<u64>() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        match control.cancel(id) {
+            Ok(()) => CommandOutput::ok(crate::legacy::fm_cancel_text(id)),
+            Err(_) => CommandOutput {
+                lines: crate::legacy::fm_cancel_missing_text(id),
+                code: ExitCode::BackendError,
+                ..CommandOutput::default()
+            },
         }
     }
 

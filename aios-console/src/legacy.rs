@@ -5,6 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::control::FmJobInfo;
 use crate::output::{CommandOutput, ExitCode, OutputControl};
 
 const PROCESS_HEADER: &str = "PID  NAME              PRIO  STATE     RAM";
@@ -508,6 +509,35 @@ pub fn shell_job_error_text(command: &str, message: &str) -> Vec<String> {
     vec![format!("{command}: {message}")]
 }
 
+/// Formats the canonical text console file-manager job list.
+pub fn fm_jobs_text(jobs: &[FmJobInfo]) -> Vec<String> {
+    if jobs.is_empty() {
+        return vec!["fm: no jobs".to_string()];
+    }
+    jobs.iter()
+        .map(|job| match &job.error {
+            Some(error) => format!(
+                "[{}] {} {:.1}% {} ({error})",
+                job.id, job.status, job.percent, job.label
+            ),
+            None => format!(
+                "[{}] {} {:.1}% {}",
+                job.id, job.status, job.percent, job.label
+            ),
+        })
+        .collect()
+}
+
+/// Formats the canonical text console file-manager cancellation result.
+pub fn fm_cancel_text(id: u64) -> Vec<String> {
+    vec![format!("fm: canceled job {id}")]
+}
+
+/// Formats the canonical text console file-manager unknown-job error.
+pub fn fm_cancel_missing_text(id: u64) -> Vec<String> {
+    vec![format!("fm: no job {id}")]
+}
+
 /// Outcome of the legacy `aios` shell net IPC dispatch.
 pub enum AiosNetResult {
     /// Text returned by the net settings block, or a local validation message.
@@ -663,6 +693,7 @@ mod tests {
         unload_success, AiosNetResult, AIOS_HELP, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER,
         LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
+    use crate::control::FmJobInfo;
     use crate::output::CommandOutput;
 
     #[test]
@@ -1050,6 +1081,36 @@ mod tests {
             super::shell_job_error_text("fg", "no current job"),
             ["fg: no current job"]
         );
+    }
+
+    #[test]
+    fn maps_file_manager_job_text_exactly() {
+        assert_eq!(super::fm_jobs_text(&[]), ["fm: no jobs"]);
+        let jobs = vec![
+            FmJobInfo {
+                id: 3,
+                label: "Copy report.txt".to_string(),
+                percent: 42.5,
+                status: "running".to_string(),
+                error: None,
+            },
+            FmJobInfo {
+                id: 4,
+                label: "Delete old".to_string(),
+                percent: 100.0,
+                status: "failed".to_string(),
+                error: Some("denied".to_string()),
+            },
+        ];
+        assert_eq!(
+            super::fm_jobs_text(&jobs),
+            [
+                "[3] running 42.5% Copy report.txt",
+                "[4] failed 100.0% Delete old (denied)"
+            ]
+        );
+        assert_eq!(super::fm_cancel_text(3), ["fm: canceled job 3"]);
+        assert_eq!(super::fm_cancel_missing_text(9), ["fm: no job 9"]);
     }
 
     #[test]

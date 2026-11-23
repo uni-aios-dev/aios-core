@@ -3,6 +3,17 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `console fm jobs` and `console fm cancel <id>` are now real on the host through
+  a new `FileManagerControl` injection seam (`aios-console/src/control.rs`).
+  `aios-fm/src/console_control.rs` adapts a live `FileManager`: it maps the real
+  job snapshot into console text (id, label, percent, status, error) and calls
+  `Progress::cancel()` on the selected job, reporting unknown ids as backend
+  errors. `FileManager::cancel_job(id)` and exact `no_std` formatters were added;
+  `aios-tui` injects the control after starting its `FileManager`, so the
+  canonical commands inspect and cancel actual background transfers. A bare
+  `HostBackend` without the seam still reports `unavailable`. New contract tests
+  cover jobs/cancel/unknown-id/usage/no-seam and two live-adapter tests in
+  `aios-fm`. EN/RU docs were aligned.
 - Bare `jobs`/`fg`/`bg` in `aios-shell` now use `execute_shell_adapter` with new
   exact formatters in `aios-console/src/legacy.rs`. The adapter keeps the real
   frontend side effects: pruning dead PIDs, listing the shell-owned job table,

@@ -234,7 +234,8 @@
   ICMP with raw-socket privileges; `net recheck` needs a host equivalent of the
   kernel-only `recheck()`; `state` needs live `StatefulBlock` handles in
   `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked. The
-  kernel half of `net recheck` is now real and wired into `KernelBackend`.
+  kernel half of `net recheck` is now real and wired into `KernelBackend`, and
+  `fm` is now real via an injected `FileManagerControl` seam (see below).
 - [x] Add a `console <command> [args]` escape hatch to the standalone
   `aios-shell`: `main` owns one `HostBackend`, `console_prefix` detects the
   prefix case-insensitively before alias expansion, and bare `console` prints
@@ -300,8 +301,17 @@
   `network recheck requested` from a new `no_std` formatter. The host command
   remains honestly `unavailable` because `NetManager` is cached-only. EN/RU docs
   were aligned.
-- [ ] Implement the remaining host-side APIs before re-enabling those commands;
-  do not alias them to `caps`, TCP connect or cached network status.
+- [x] Enable `console fm jobs`/`console fm cancel <id>` on the host through a new
+  `FileManagerControl` injection seam in `aios-console/src/control.rs`.
+  `aios-fm/src/console_control.rs` adapts a live `FileManager`, mapping its real
+  job snapshot to console text and calling `Progress::cancel()` on a real job;
+  `aios-tui` injects the control after starting its `FileManager`. A bare
+  `HostBackend` without the seam stays honestly `unavailable`. Contract tests use
+  a mock control (jobs, cancel, unknown id, usage, no seam), and aios-fm tests
+  exercise the live adapter. EN/RU docs were aligned.
+- [ ] Implement the remaining host-side APIs (`acl`, `ping`, host `net recheck`,
+  `state`) before re-enabling those commands; do not alias them to `caps`, TCP
+  connect or cached network status.
 - [x] Migrate the static bare `aios-shell` builtins (`help`/`?`, `clear`/`cls`,
   `pwd`, `echo`, `history`, `alias`, `unalias`) to exact text formatters in
   `aios-console/src/legacy.rs` plus the `ShellOutcome` adapter in

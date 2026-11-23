@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 aios-core = { path = "../aios-core" }
+aios-console = { path = "../aios-console", default-features = false }
 aios-vfs = { path = "../aios-vfs" }
 tokio = { workspace = true }
 serde = { workspace = true }

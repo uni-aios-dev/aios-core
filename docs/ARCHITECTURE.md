@@ -232,17 +232,22 @@ real `PersistedLiveUpdateEngine` journal, rollback entries and crash recovery.
 does not claim live block code was replaced because the registry does not expose
 live block instances.
 
-Dependency cycles for watchdog/bridge/auth commands are avoided with the
-injection seams in `aios-console/src/control.rs` (`WatchdogControl`,
-`BridgeControl`, `AuthProvider`). The `aios` binary implements them in
-`aios/src/console_control.rs` over its own handles: `WatchdogRunner::from_watchdog`
-attaches a monitoring thread to the same `Watchdog` the bridge status endpoint
-reads, `start_server_with_shutdown` lets `bridge stop` gracefully close the
-listener and `bridge start` spawn it again, and `auth` calls the real `AuthStore`.
-`WatchdogControl::reset` calls `Watchdog::reset` on the shared instance (keeping
-an attached runner alive) and `wd reset` requires that seam before incrementing
-the bounded restart counter. Without an injected adapter these commands still
-return `unavailable`.
+Dependency cycles for watchdog/bridge/auth/file-manager commands are avoided
+with the injection seams in `aios-console/src/control.rs` (`WatchdogControl`,
+`BridgeControl`, `AuthProvider`, `FileManagerControl`). The `aios` binary
+implements the first three in `aios/src/console_control.rs` over its own handles:
+`WatchdogRunner::from_watchdog` attaches a monitoring thread to the same
+`Watchdog` the bridge status endpoint reads, `start_server_with_shutdown` lets
+`bridge stop` gracefully close the listener and `bridge start` spawn it again,
+and `auth` calls the real `AuthStore`. `WatchdogControl::reset` calls
+`Watchdog::reset` on the shared instance (keeping an attached runner alive) and
+`wd reset` requires that seam before incrementing the bounded restart counter.
+The `FileManagerControl` seam is implemented in `aios-fm/src/console_control.rs`
+over a live `FileManager`: `jobs()` maps the engine's job snapshot into console
+text and `cancel()` calls the real `Progress::cancel()` token. `aios-tui`
+injects this control after starting its `FileManager`, so `console fm jobs` and
+`console fm cancel <id>` observe and cancel actual background transfers. Without
+an injected adapter these commands still return `unavailable`.
 
 `aios-console/src/unavailable.rs` holds the precise reason for each registered
 command with no real host API, so `ERR unavailable` names the missing capability
@@ -254,9 +259,10 @@ ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
 connect is not an echo reply; host `net recheck` has no equivalent because the
 real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached;
 `state extract|restore` cannot reach a live `StatefulBlock` because
-`BlockRegistry` stores no instances; `fm jobs|cancel` needs a `FileManager`
-instance in the host, which currently owns none. These host commands stay
-`unavailable` until those real APIs exist. `KernelBackend` is an exception for
+`BlockRegistry` stores no instances. These host commands stay `unavailable`
+until those real APIs exist. `fm jobs|cancel` is now real wherever a live
+`FileManagerControl` is injected (`aios-tui`); a bare `HostBackend` without that
+seam still reports `unavailable`. `KernelBackend` is an exception for
 `net recheck`: it calls the real `crate::net::recheck()` and prints
 `network recheck requested`.
 

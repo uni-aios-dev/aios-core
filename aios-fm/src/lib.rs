@@ -9,6 +9,7 @@
 //! (egui) render the same engine snapshot, which guarantees UI parity.
 
 pub mod commands;
+pub mod console_control;
 pub mod engine;
 pub mod state;
 pub mod ui_gui;

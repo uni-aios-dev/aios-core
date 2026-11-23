@@ -185,14 +185,17 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 восстановление после краша. Вывод swap сообщает, что swap записан и сохранена
 запись отката; он не утверждает, что код работающего блока был заменён.
 
-`wd`, `bridge` и `auth` работают через точки внедрения из
+`wd`, `bridge`, `auth` и `fm` работают через точки внедрения из
 `aios-console/src/control.rs` (`WatchdogControl`, `BridgeControl`,
-`AuthProvider`). Бинарник `aios` реализует их в `aios/src/console_control.rs`
-на основе общего watchdog, канала корректного завершения слушателя bridge и
-`AuthStore`: `bridge stop` запрашивает корректное завершение, а `bridge start`
-снова запускает слушатель. `wd reset` сбрасывает общий watchdog через
-`WatchdogControl::reset` и только после этого увеличивает ограниченный счётчик
-перезапусков. Без внедрённого адаптера эти команды возвращают
+`AuthProvider`, `FileManagerControl`). Бинарник `aios` реализует первые три в
+`aios/src/console_control.rs` на основе общего watchdog, канала корректного
+завершения слушателя bridge и `AuthStore`: `bridge stop` запрашивает корректное
+завершение, а `bridge start` снова запускает слушатель. `wd reset` сбрасывает
+общий watchdog через `WatchdogControl::reset` и только после этого увеличивает
+ограниченный счётчик перезапусков. `aios-tui` внедряет
+`FileManagerConsoleControl` (`aios-fm/src/console_control.rs`) поверх своего
+живого `FileManager`, поэтому `console fm jobs`/`fm cancel <id>` работают с
+реальными фоновыми передачами. Без внедрённого адаптера эти команды возвращают
 `unavailable`; остальные команды по-прежнему возвращают `ERR unavailable`, но с
 конкретной причиной из `aios-console/src/unavailable.rs`:
 
@@ -203,10 +206,13 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 | `ping` | нет ICMP-API и привилегий raw-сокета; TCP connect не является эхо-ответом |
 | `net recheck` на хосте | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
 | `state` | `BlockRegistry` не хранит живые экземпляры `StatefulBlock` |
-| `fm` | в хосте нет живого `FileManager`, который можно проверить или остановить |
 
-Таблица описывает только хост. В ядерном бэкенде `console net recheck` реален: он
-вызывает `crate::net::recheck()` и печатает `network recheck requested`.
+Таблица описывает только хост без внедрённых адаптеров. `console fm jobs` и
+`console fm cancel <id>` становятся реальными, как только внедрён живой
+`FileManagerControl`: `aios-tui` делает это после запуска своего `FileManager`,
+отображая реальный снимок заданий в текст консоли и отменяя настоящий токен
+`Progress`. В ядерном бэкенде `console net recheck` реален: он вызывает
+`crate::net::recheck()` и печатает `network recheck requested`.
 
 Универсальное сообщение `has no host backend yet` остаётся только для команд вне
 этого исследованного множества.

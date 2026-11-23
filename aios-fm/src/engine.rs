@@ -146,6 +146,22 @@ impl FileManager {
         }
     }
 
+    /// Requests cancellation of a background job by id.
+    ///
+    /// Returns `true` when a job with that id exists (even if it already
+    /// finished), `false` when the id is unknown. The real cancellation is
+    /// delivered through the job's live [`Progress`] token.
+    pub fn cancel_job(&self, id: u64) -> bool {
+        let st = self.state.lock().unwrap();
+        match st.jobs.iter().find(|job| job.id == id) {
+            Some(job) => {
+                job.progress.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Move focus to the other panel.
     pub fn switch_panel(&self) {
         let mut st = self.state.lock().unwrap();

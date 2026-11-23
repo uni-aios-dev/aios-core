@@ -107,23 +107,26 @@ A known limitation of the new backend: `HostBackend` implements only the
 subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
 `store verify`, `vfs readat` and `wifi status` now have real adapters, as do
 `block swap|rollback` and `update history|pending|recover` (the real
-`PersistedLiveUpdateEngine` journal) and the `wd`/`bridge`/`auth` commands
-(host adapters injected through the `control.rs` seams). Valid registry entries
-such as `jobs|fg|bg`, `acl grant|revoke`, `ping`, host `net recheck`,
-`state extract|restore` and `fm jobs|cancel` still return `ERR unavailable`
-because no real host library API exists for them. `aios-console/src/unavailable.rs`
-now reports a concrete cause for each: missing OS job control, no path-scoped
-ACL API, no ICMP/reachability API or raw-socket privilege, a host equivalent of
-the kernel-only `recheck()`, no live `StatefulBlock` instances in the registry,
-and no live `FileManager` in the host. The kernel side of `net recheck` is now
-real: `KernelBackend` calls `crate::net::recheck()`. Keeping the host entries
+`PersistedLiveUpdateEngine` journal), the `wd`/`bridge`/`auth` commands and
+`fm jobs|cancel` (host adapters injected through the `control.rs` seams).
+`fm jobs|cancel` is real wherever `aios-tui` injects its live
+`FileManagerControl`; a bare `HostBackend` without the seam still returns
+`unavailable`. The remaining valid registry entries `jobs|fg|bg`,
+`acl grant|revoke`, `ping`, host `net recheck` and `state extract|restore` still
+return `ERR unavailable` because no real host library API exists for them.
+`aios-console/src/unavailable.rs` now reports a concrete cause for each: missing
+OS job control, no path-scoped ACL API, no ICMP/reachability API or raw-socket
+privilege, a host equivalent of the kernel-only `recheck()`, and no live
+`StatefulBlock` instances in the registry. The kernel side of `net recheck` is
+now real: `KernelBackend` calls `crate::net::recheck()`. Keeping the host entries
 `unavailable` with an exact reason is deliberate — aliasing them to `caps`,
 block state or TCP connect would discard their declared semantics.
 
-The dependency cycle for watchdog/bridge/auth commands is resolved:
-`aios-console` defines control traits and the `aios` binary injects real
-implementations over its own handles. Commands still report `unavailable` when
-no adapter is injected (for example in standalone tests). `bridge stop` sends a
+The dependency cycle for watchdog/bridge/auth/file-manager commands is resolved:
+`aios-console` defines control traits; the `aios` binary injects watchdog/bridge/auth
+implementations over its own handles and `aios-tui` injects a live
+`FileManagerControl` over its file manager. Commands still report `unavailable`
+when no adapter is injected (for example in standalone tests). `bridge stop` sends a
 graceful shutdown signal instead of dropping active connections. `block swap`
 records a swap and a rollback entry but does not replace live block code: the
 old state is recorded as empty because the registry does not expose live block

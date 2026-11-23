@@ -240,16 +240,22 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 что код работающего блока был заменён, поскольку реестр не раскрывает живые
 экземпляры блоков.
 
-Циклические зависимости для команд watchdog/bridge/auth устранены через точки
-внедрения в `aios-console/src/control.rs` (`WatchdogControl`, `BridgeControl`,
-`AuthProvider`). Бинарник `aios` реализует их в `aios/src/console_control.rs`
-на своих дескрипторах: `WatchdogRunner::from_watchdog` подключает поток мониторинга
-к тому же `Watchdog`, который читает endpoint статуса bridge;
-`start_server_with_shutdown` позволяет `bridge stop` корректно закрыть слушатель,
-а `bridge start` — запустить его заново; `auth` вызывает реальный `AuthStore`.
-`WatchdogControl::reset` вызывает `Watchdog::reset` на общем экземпляре (подключённый
-раннер остаётся подключённым), а `wd reset` требует этот адаптер до увеличения
-ограниченного счётчика перезапусков. Без внедрённого адаптера эти команды
+Циклические зависимости для команд watchdog/bridge/auth/file-manager устранены
+через точки внедрения в `aios-console/src/control.rs` (`WatchdogControl`,
+`BridgeControl`, `AuthProvider`, `FileManagerControl`). Бинарник `aios` реализует
+первые три в `aios/src/console_control.rs` на своих дескрипторах:
+`WatchdogRunner::from_watchdog` подключает поток мониторинга к тому же `Watchdog`,
+который читает endpoint статуса bridge; `start_server_with_shutdown` позволяет
+`bridge stop` корректно закрыть слушатель, а `bridge start` — запустить его
+заново; `auth` вызывает реальный `AuthStore`. `WatchdogControl::reset` вызывает
+`Watchdog::reset` на общем экземпляре (подключённый раннер остаётся подключённым),
+а `wd reset` требует этот адаптер до увеличения ограниченного счётчика
+перезапусков. Адаптер `FileManagerControl` реализован в
+`aios-fm/src/console_control.rs` поверх живого `FileManager`: `jobs()` отображает
+снимок заданий движка в текст консоли, а `cancel()` вызывает реальный токен
+`Progress::cancel()`. `aios-tui` внедряет этот адаптер после запуска своего
+`FileManager`, поэтому `console fm jobs` и `console fm cancel <id>` наблюдают и
+отменяют реальные фоновые передачи. Без внедрённого адаптера эти команды
 по-прежнему возвращают `unavailable`.
 
 `aios-console/src/unavailable.rs` хранит точную причину для каждой зарегистрированной
@@ -262,11 +268,12 @@ ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connec
 эхо-ответом; у хостового `net recheck` нет аналога, так как настоящий `recheck()`
 существует только в ядре (`no_std`), а `NetManager::status()` возвращает кэш;
 `state extract|restore` не может найти живой `StatefulBlock`, потому что
-`BlockRegistry` не хранит экземпляры блоков; `fm jobs|cancel` нужен живой
-`FileManager` в хосте, которого сейчас нет. Эти хостовые команды остаются
-`unavailable`, пока не появятся указанные реальные API. `KernelBackend` —
-исключение для `net recheck`: он вызывает настоящий `crate::net::recheck()` и
-печатает `network recheck requested`.
+`BlockRegistry` не хранит экземпляры блоков. Эти хостовые команды остаются
+`unavailable`, пока не появятся указанные реальные API. `fm jobs|cancel` теперь
+реальны там, где внедрён живой `FileManagerControl` (`aios-tui`); обычный
+`HostBackend` без этого адаптера по-прежнему сообщает `unavailable`.
+`KernelBackend` — исключение для `net recheck`: он вызывает настоящий
+`crate::net::recheck()` и печатает `network recheck requested`.
 
 `aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
 `aios-console` без `std` (`default-features = false`). Он адаптирует существующие

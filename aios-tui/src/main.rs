@@ -24,6 +24,7 @@ use aios_context::telemetry::{TelemetryEntry, TelemetryStore};
 use aios_core::block::BlockId;
 use aios_core::ipc_protocol::CommandId;
 use aios_fm::commands::Command;
+use aios_fm::console_control::FileManagerConsoleControl;
 use aios_fm::engine::FileManager;
 use aios_fm::state::PanelSide;
 use aios_fm::ui_tui::{key_to_action, TuiAction};
@@ -1574,6 +1575,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let vfs: Arc<dyn VirtualFileSystem> = Arc::new(AiosVfs::new(fm_root.clone())?);
         rt.block_on(async move { FileManager::new(vfs, Arc::new(AclContext::new())) })
     };
+    console.set_file_manager_control(Arc::new(FileManagerConsoleControl::new(Arc::new(
+        fm.clone(),
+    ))));
     state.fm = Some(fm);
     state.fm_ack = Some(fm_ack);
     log::info!("AIOS: file manager started on {}", fm_root.display());
