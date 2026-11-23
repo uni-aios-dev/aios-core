@@ -1122,7 +1122,15 @@ fn deliver_pointer(
     last
 }
 
+/// Scheduler idle path: polls every driver and routes input/render calls to
+/// the native desktop, falling back to the kernel TUI when the desktop is left.
 pub fn idle_loop() -> ! {
+    // The native windowed desktop is the one user-facing GUI: enter it as soon
+    // as the scheduler is live. `Esc` with no focused window (or the `tui`
+    // shell command) still exposes the console/TUI as a diagnostic fallback.
+    if !gui::active() {
+        gui::enter();
+    }
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
     let mut last_sc_ext = false;
@@ -1237,6 +1245,14 @@ pub fn idle_loop() -> ! {
                 match sc {
                     0x1D => interrupts::CTRL_DOWN.store(true, Ordering::Relaxed),
                     0x9D => interrupts::CTRL_DOWN.store(false, Ordering::Relaxed),
+                    // Left Win toggles Start; arrows navigate it and extended
+                    // Enter activates the selected row. The GUI ignores these
+                    // codes when Start is closed, so no other key path shifts.
+                    0x5B | 0x48 | 0x50 | 0x1C => {
+                        if gui::active() {
+                            gui::handle_ext_scancode(sc);
+                        }
+                    }
                     _ => {}
                 }
                 continue;

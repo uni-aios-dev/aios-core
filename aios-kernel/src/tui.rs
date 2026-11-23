@@ -1,21 +1,23 @@
 //! Interactive framebuffer TUI for the AIOS kernel.
 //!
-//! The TUI is the primary screen: a compact boot-log strip (a few rows) sits at
-//! the top and the interactive panel fills every row below it down to the
-//! bottom status strip, so the whole tab content is always visible. Seven tabs
+//! The TUI is the console fallback behind the native AIOS Desktop: the idle
+//! loop enters the framebuffer desktop at boot, and `tui` / `Esc` returns here.
+//! A compact boot-log strip (a few rows) sits at the top and the interactive
+//! panel fills every row below it down to the bottom status strip, so the whole
+//! tab content is always visible. Seven tabs
 //! mirror the host AIOS TUI (System / Sched /
 //! USB / IPC / Storage / Shell / About). Keys and the USB mouse drive the panel
 //! directly: `1`-`7` (outside the Shell tab) or a left-click on a tab switches
 //! tabs; the Shell tab collects text input (`Enter` runs the command,
 //! `Backspace` edits, `Esc` clears). The 8x8 mouse arrow is redrawn on top of
-//! every repaint so a panel refresh can never erase it. Text is rendered on the
-//! PSF path: the embedded PSF2 stream (synthesized from the `font8x8` bitmap at
-//! first use) is parsed back through [`crate::psf`] and used as the glyph
-//! source, with the `font8x8` table kept as the fallback. The panel never
+//! every repaint so a panel refresh can never erase it. ASCII text uses the
+//! PSF path (the embedded PSF2 stream synthesized from `font8x8` and parsed
+//! through [`crate::psf`]); Cyrillic text uses the generated glyph table in
+//! [`crate::font8x8`]. The panel never
 //! writes the rightmost 16 px (owned by the boot tick bar) or the reserved
 //! bottom strip (status bar + heartbeat).
 
-use crate::font8x8::BASIC;
+use crate::font8x8::{BASIC, CYRILLIC};
 use crate::framebuffer::{colors, Color, Framebuffer};
 use crate::interrupts::{IRQ32_SEEN, LAST_SCANCODE, TICKS, TIMER_HZ};
 use crate::{console, psf, sched, syscalls};
@@ -25,10 +27,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// Number of glyph rows the interactive panel owns. The TUI is the primary
-/// screen: a compact `CONSOLE_TOP_ROWS` boot-log strip sits on top and every
-/// row below it (down to the bottom status strip) belongs to the panel, so the
-/// full tab contents are always visible regardless of the framebuffer height.
+/// Number of glyph rows the interactive panel owns when the TUI fallback is
+/// active. A compact `CONSOLE_TOP_ROWS` boot-log strip sits on top and every row
+/// below it (down to the bottom status strip) belongs to the panel, so the full
+/// tab contents are always visible regardless of the framebuffer height.
 pub fn panel_rows() -> usize {
     let total = console::framebuffer()
         .map(|fb| fb.height() / console::GLYPH_H)
@@ -96,6 +98,53 @@ pub(crate) fn glyph_bits(byte: u8) -> [u8; 8] {
     out
 }
 
+/// Glyph bitmap for one Unicode scalar, adding Cyrillic to the PSF/BASIC ASCII
+/// path. U+0410..U+044F map to the first 64 [`CYRILLIC`] rows, Ё/ё to the last
+/// two; unsupported codepoints render as a blank cell.
+pub(crate) fn char_bits(c: char) -> [u8; 8] {
+    let cp = c as u32;
+    if (0x0410..=0x044f).contains(&cp) {
+        return CYRILLIC[(cp - 0x0410) as usize];
+    }
+    if cp == 0x0401 {
+        return CYRILLIC[64];
+    }
+    if cp == 0x0451 {
+        return CYRILLIC[65];
+    }
+    if cp < 128 {
+        return glyph_bits(cp as u8);
+    }
+    [0u8; 8]
+}
+
+/// Pixel width of `s` on the kernel glyph grid (one cell per scalar).
+pub(crate) fn text_width(s: &str) -> usize {
+    s.chars().count() * console::GLYPH_W
+}
+
+/// Paints one glyph cell at pixel `(px, py)` from a Unicode scalar.
+pub(crate) fn draw_char(fb: &Framebuffer, px: usize, py: usize, c: char, fg: Color, bg: Color) {
+    unsafe {
+        fb.fill_rect(px, py, console::GLYPH_W, console::GLYPH_H, bg);
+    }
+    for (row, bits) in char_bits(c).iter().enumerate() {
+        for col in 0..8usize {
+            if bits & (1 << col) != 0 {
+                unsafe {
+                    fb.fill_rect(
+                        px + col * console::SCALE,
+                        py + row * console::SCALE,
+                        console::SCALE,
+                        console::SCALE,
+                        fg,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Paints one glyph cell at pixel `(px, py)`, scaling the 8x8 bitmap by the
 /// console `SCALE`.
 pub(crate) fn draw_glyph(fb: &Framebuffer, px: usize, py: usize, byte: u8, fg: Color, bg: Color) {
@@ -120,9 +169,10 @@ pub(crate) fn draw_glyph(fb: &Framebuffer, px: usize, py: usize, byte: u8, fg: C
     }
 }
 
-/// Draws an ASCII string glyph by glyph, clearing each cell to `bg` first so
-/// stale previous-frame digits cannot leak. `max_px` bounds the right edge so
-/// the string cannot reach the tick bar's column.
+/// Draws a string glyph by glyph, clearing each cell to `bg` first so stale
+/// previous-frame digits cannot leak. Both ASCII and Cyrillic scalars are
+/// supported; `max_px` bounds the right edge so the string cannot reach the
+/// tick bar's column.
 pub(crate) fn draw_text(
     fb: &Framebuffer,
     x: usize,
@@ -133,11 +183,11 @@ pub(crate) fn draw_text(
     max_px: usize,
 ) {
     let mut px = x;
-    for byte in s.bytes() {
+    for c in s.chars() {
         if px + console::GLYPH_W > max_px {
             break;
         }
-        draw_glyph(fb, px, y, byte, fg, bg);
+        draw_char(fb, px, y, c, fg, bg);
         px += console::GLYPH_W;
     }
 }

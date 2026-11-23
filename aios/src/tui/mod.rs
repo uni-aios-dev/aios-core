@@ -1697,13 +1697,10 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
             app.web.input_focused = false;
             app.net_mode = false;
         }
-        KeyCode::Char('W') => match aios_webview::launcher::launch_gui() {
-            Ok(path) => push_log(
-                &app.logs,
-                format!("AIOS: GUI dashboard launched: {}", path.display()),
-            ),
-            Err(e) => push_log(&app.logs, format!("AIOS: GUI launch failed: {e}")),
-        },
+        KeyCode::Char('W') => push_log(
+            &app.logs,
+            "AIOS: one GUI only — the native kernel desktop; no host GUI process launched".into(),
+        ),
         KeyCode::Char(' ') => {
             app.log_paused = !app.log_paused;
         }

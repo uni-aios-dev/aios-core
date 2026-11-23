@@ -2,6 +2,14 @@
 
 ## Completed
 
+- [x] Native kernel desktop (`aios-kernel/src/gui.rs`) — the single user-facing
+      GUI entered from `idle_loop()` at boot: dark desktop, bottom taskbar with
+      `☰ Пуск`, sorted/searchable Start, taskbar buttons for open windows,
+      `F1`-`F9` functions and `F10`-`F12` window controls; kernel TUI is a fallback
+- [x] Cyrillic framebuffer glyphs and Unicode-aware text helpers — Russian Start,
+      taskbar, titles and text fields; ↑/↓/Enter/Esc/Win navigation of Start
+- [x] One-GUI policy — host TUIs no longer spawn `aios-gui`; the legacy
+      `aios-webview` launcher is documented as compatibility-only
 - [x] Working official store catalogs — object/array `index.json`, nested
       `blocks/<name>/block.wasm`, localized descriptions, capability aliases and
       hash/size enrichment
@@ -380,7 +388,9 @@
 
 ## GUI Roadmap (full-fledged desktop, backlog)
 
-The v2.38.22 GUI is a first step; a real windowing system needs:
+Since v2.81.0 the native `aios-kernel` window shell is the one user-facing GUI;
+the host `aios-gui` tree is legacy reference code. The v2.38.22 milestone was
+the first step of that shell; the remaining windowing-system work is:
 
 - [x] **Damage-based partial repaint (v2.38.23)** — `gui::render()` now redraws only dirty rectangles (per-window/per-cursor `Rect` damage unioned on every mutation, `mark_live_dirty` keeps live windows refreshing).
 - [x] **Double buffering / backframebuffer (v2.38.24)** — the whole frame is painted into a RAM backbuffer and only the dirty rectangle is published to the scanout buffer via `blit_region`, so the panel never sees a half-drawn frame; this removes the residual tearing risk on a real panel. (Full vsync-flip swap is future work; the current dirty-rect blit is strictly better than a full-frame copy at 1280×800.)

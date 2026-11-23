@@ -1,8 +1,9 @@
-//! Launch the native AIOS GUI dashboard as a separate process.
+//! Legacy helper for locating the standalone `aios-gui` binary.
 //!
-//! The GUI (`aios-gui`) is a standalone binary. These helpers locate it next to
-//! the calling executable or on `PATH`, then spawn it. Used by the TUI and
-//! kernel to jump into the GUI dashboard with a single hotkey.
+//! Kept only for compatibility with older tooling. The AIOS Desktop is now the
+//! single user-facing GUI and runs inside `aios-kernel` on the raw framebuffer;
+//! neither TUI launches a host GUI process. New code must not call these
+//! helpers — they exist solely so existing integrations keep compiling.
 
 use std::path::PathBuf;
 use std::process::Command;

@@ -2,7 +2,10 @@
 
 ## System Overview
 
-AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 33 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (TUI/GUI/Integrated binary) at the top.
+AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 33 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (the native kernel
+framebuffer GUI, host TUI, integrated binary) at the top. Since v2.81.0 the
+`aios-kernel` desktop is the single user-facing GUI; host egui/eframe code is
+legacy reference only.
 
 All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios` crate provides a unified system binary with both interactive TUI mode and headless daemon mode, replacing the separate `aios-tui` and `aios-daemon` entry points.
 
@@ -11,7 +14,7 @@ All inter-crate communication flows through a binary IPC protocol. Blocks (kerne
 ```
 ┌──────────────────────────────────────────────────────┐
 │              Interface Layer (User-Facing)            │
-│  TUI (ratatui)  │  GUI (egui)  │  Unified `aios` bin │
+│  Kernel GUI (fb) │  Host TUI   │  Unified `aios` bin │
 ├──────────────────────────────────────────────────────┤
 │              Safety & Security Layer                  │
 │  watchdog (heartbeat/safe-mode)                       │
@@ -2046,7 +2049,7 @@ Since **v2.78.0** the same crate has **two build-time-selected boot paths** (see
   - `main.rs`: with `--features limine` it declares the Limine request statics (`BaseRevision`, `EntryPoint(_start)`, `StackSize(64 KiB)`, `Hhdm`, `Memmap`, `Rsdp`, `Framebuffer`) and a no-argument `#[no_mangle] pub unsafe extern "C" fn _start() -> !`; `limine_bootinfo()` converts the responses into `BootInfo`. Without the feature, `_start(bootinfo: *const BootInfo)` is the unchanged `aios-boot` entry point. Since v2.78.0 both call the shared `kmain` and log the active loader via `LOADER_NAME`.
   - `serial` — COM1 polling UART driver (`outb`/`inb`), `kprintln!`.
   - `framebuffer` — `Framebuffer` over the Limine GOP/VBE buffer: `put_pixel`/`fill_rect`/`clear`/`scroll_up`/`read_pixel`, 2/3/4 bytes-per-pixel chosen from the Limine channel masks; `colors` palette. The base pointer is Limine's `address` verbatim — per the protocol it already carries the HHDM offset (`phys + hhdm`), so no extra translation is ever applied (v2.38.13 documents this on `base_addr()`). Since v2.38.13 `direct_test(color)` fills the whole panel strictly through `core::ptr::write_volatile`, addressing pixels by the physical stride (`pitch / bytes_per_pixel`), so the compiler cannot elide the stores and the scanline walk matches hardware layout even when `pitch != width * bytes_per_pixel`. Since v2.38.39 `fill_rect` fills row-wise through the private `write_row` (one `pack` per call, 4/3/2 bpp branch chosen once) instead of a naive per-pixel loop, and the module gained `fill_rect_vgrad` (two-stop vertical wash, one channel lerp per row) plus `get_color` (pixel readback used by the vector layer's blender).
-  - `console` — spin-locked text console on the framebuffer (glyphs drawn through the font below, wraps at the screen width, scrolls); `vprintln!`. Since v2.38.10 it reserves the bottom `GLYPH_H` row as a fixed overlay strip; `scroll_up(pixels, fill, region_height)` is bounded to the console region so overlay pixels (heartbeat square, drawn by `idle_loop`) are never scrolled/ghosted. Since v2.38.21 the console only owns a compact top strip (`CONSOLE_TOP_ROWS` = 6 rows); the interactive TUI panel owns every row below it, so the boot log scrolls in its own small window and the panel is the primary screen. Since v2.38.22 `print`/`write_bytes` return early while `gui::active()`, so the windowed desktop is never garbled by kernel log lines (serial logging is unaffected).
+  - `console` — spin-locked text console on the framebuffer (glyphs drawn through the font below, wraps at the screen width, scrolls); `vprintln!`. Since v2.38.10 it reserves the bottom `GLYPH_H` row as a fixed overlay strip; `scroll_up(pixels, fill, region_height)` is bounded to the console region so overlay pixels (heartbeat square, drawn by `idle_loop`) are never scrolled/ghosted. Since v2.38.21 the console only owns a compact top strip (`CONSOLE_TOP_ROWS` = 6 rows); the interactive TUI panel owns every row below it, so the boot log scrolls in its own small window and the panel is the screen only after the desktop is left. Since v2.38.22 `print`/`write_bytes` return early while `gui::active()`, so the windowed desktop is never garbled by kernel log lines (serial logging is unaffected); since v2.81.0 that desktop is the boot screen.
   - `font8x8` — vendored public-domain 8x8 bitmap font, `BASIC: [[u8; 8]; 128]` (Basic Latin). The `font8x8` crate 0.3.1 is `std`-only and cannot be used here.
   - `psf` — (v2.38.13) `no_std` parser for the Linux console-font formats: PSF1 (`36 04` magic, 256/512-glyph mode flag, width fixed at 8 bits, height from the header) and PSF2 (`72 B5 4A 86` magic; header size, glyph count, bytes/glyph, width and height as little-endian `u32`), plus a bounds-checked `glyph(index)` accessor over the bitmap area. `synth_psf2_basic()` builds a valid PSF2 stream from the embedded `font8x8::BASIC` glyphs so the whole parse/render path is exercised at boot without shipping a separate font binary.
   - `port` — `outb`/`inb`/`outl`/`inl`/`io_wait` helpers for x86 port I/O.
@@ -2054,7 +2057,7 @@ Since **v2.78.0** the same crate has **two build-time-selected boot paths** (see
   - `ec` — (v2.38.20) ACPI Embedded Controller probe over the fixed 0x62/0x66 ports (the ACPI EC is not listed in the FADT): `read_ram(off)` point reads with every IBF/OBF wait bounded (up to 1,000,000 iterations so boards without an EC degrade cleanly), `dump_full()` reads all 256 RAM bytes, `probe()` logs the full dump in 16-byte rows. `active()` = FADT found and 16+ bytes read back.
   - `lid` — (v2.38.20) lid switch detection from EC RAM: an 8-byte scan window rings through the 256-byte space; the first bit flip pins a candidate offset+bit, later scans of the same bit confirm polarity. Live `lid_open()` value, `candidate_offset()`/`candidate_bit()` for MSI calibration, `lid_state()` (`--`/`?`/`0`/`1`) and `lid_detail()` (`1@0x..b`) feed the TUI. The RAM layout and open/closed polarity are board-specific (see BUGS).
   - `thermal` — (v2.38.20, honesty pass v2.68.4) CPU digital thermal sensor: gated on CPUID.06H:EAX[0] (leaf-1 EDX bit 22 as a fallback since v2.68.4), TjMax from MSR 0x1A2 bits 16:23 (falling back to a documented 100 °C when the register is unavailable or implausible), live temperature from MSR 0x19C (7-bit digital delta, `temp = TjMax - delta`); the status word's invalid-readout bit (31) and implausible deltas are rejected instead of showing a fake 0 °C/TjMax. Every RDMSR runs inside a **#GP-safe assembly probe** (`_aios_probe_rdmsr` / `_aios_probe_rdmsr_fault`): the vector-13 arm of the dispatcher redirects a fault to the fault label, so an MSR that raises #GP (QEMU advertises DTS but faults on the thermal MSRs) degrades to a synthetic 45..60 °C wave instead of halting. The synthetic value is marked `~` in the TUI status bar (`sim=1` in the System tab, `temp …c~ (simulated)` in the GUI System window) and never drives the gate; `critical()` (≥ `THRESHOLD_C` = 90 °C) pauses ring-3 tasks on real DTS readings only.
-  - `ps2` — (v2.38.20) IRQ-free polled PS/2 driver over the i8042 (status 0x64 bit5 MOBF = aux / bit0 OBF = keyboard): `drain()` harvests up to 32 bytes per call, `init()` raises the AUX port (`CMD_ENABLE_AUX` 0xA8), switches the mouse to report mode (`SET_REPORTING` 0xF4) and reads its ID over `GET_ID` 0xF2 (the ACK is drained separately so the stored ID is real: 0x00 PS/2, 0x03 IntelliMouse, 0x04 five-button). 3-byte packets decode with sign-extended `sign9` dx/dy (y inverted); keys reuse `scancode_to_char`. Since v2.38.23 `feed_key` holds a one-key `EXT` latch that consumes extended (0xE0/0xE1) prefixes and their payload so `KEY_SCANCODE` only ever carries plain set-1 make codes (Windows/arrow/Fn keys are dropped instead of making it to the GUI/TUI tables); since v2.38.36 `feed_key` pushes each surviving byte into the shared 256-slot keyboard FIFO (`interrupts::key_push`) together with the IRQ1 path, so polled and IRQ-fed bytes queue in arrival order. Atomically publishes `KEY_SEQ`/`KEY_SCANCODE`, `MOUSE_SEQ`/`MOUSE_DX`/`MOUSE_DY`/`MOUSE_BUTTONS`, `MOUSE_ID`; since v2.38.38 `decode_packet` additionally latches the button press edge (`prev & !cur & 0x07`) into `MOUSE_BTN_EDGE`, consumed by `take_button_edges()` (swap to zero), so a press+release pair coalesced into one `drain()` still surfaces a press to the main loop (BUGS v2.38.38). Since v2.38.30 the mouse deltas are *accumulated* (`fetch_add` in `decode_packet`) and drained by the reader (`mouse_dx`/`mouse_dy` swap to zero): the PS/2 controller splits movements larger than one packet, and the old store-per-packet published only the newest chunk when several packets arrived between two input polls (see BUGS v2.38.30). Since v2.38.35 `decode_packet` also **drops whole packets whose 8042 overflow bits are set** (`b0 & 0xC0 != 0` — the controller already discarded that movement; decoding the wrapped sign bits produced multi-hundred-pixel jumps) without bumping `MOUSE_SEQ` or publishing the button nibble, and the reader's drain goes through `drain_axis`: one application is clamped to `MOUSE_MAX_STEP = 256` px per axis with the remainder left in the accumulator (`fetch_add` back, applied on later iterations — see BUGS v2.38.35).
+  - `ps2` — (v2.38.20) IRQ-free polled PS/2 driver over the i8042 (status 0x64 bit5 MOBF = aux / bit0 OBF = keyboard): `drain()` harvests up to 32 bytes per call, `init()` raises the AUX port (`CMD_ENABLE_AUX` 0xA8), switches the mouse to report mode (`SET_REPORTING` 0xF4) and reads its ID over `GET_ID` 0xF2 (the ACK is drained separately so the stored ID is real: 0x00 PS/2, 0x03 IntelliMouse, 0x04 five-button). 3-byte packets decode with sign-extended `sign9` dx/dy (y inverted); keys reuse `scancode_to_char`. Since v2.38.23 `feed_key` holds a one-key `EXT` latch that consumes extended (0xE0/0xE1) prefixes and their payload so `KEY_SCANCODE` only ever carries plain set-1 make codes (Windows/arrow/Fn keys leave the plain stream); since v2.81.0 Win and arrow payloads are forwarded to `gui::handle_ext_scancode()` by a dedicated `idle_loop` branch; since v2.38.36 `feed_key` pushes each surviving byte into the shared 256-slot keyboard FIFO (`interrupts::key_push`) together with the IRQ1 path, so polled and IRQ-fed bytes queue in arrival order. Atomically publishes `KEY_SEQ`/`KEY_SCANCODE`, `MOUSE_SEQ`/`MOUSE_DX`/`MOUSE_DY`/`MOUSE_BUTTONS`, `MOUSE_ID`; since v2.38.38 `decode_packet` additionally latches the button press edge (`prev & !cur & 0x07`) into `MOUSE_BTN_EDGE`, consumed by `take_button_edges()` (swap to zero), so a press+release pair coalesced into one `drain()` still surfaces a press to the main loop (BUGS v2.38.38). Since v2.38.30 the mouse deltas are *accumulated* (`fetch_add` in `decode_packet`) and drained by the reader (`mouse_dx`/`mouse_dy` swap to zero): the PS/2 controller splits movements larger than one packet, and the old store-per-packet published only the newest chunk when several packets arrived between two input polls (see BUGS v2.38.30). Since v2.38.35 `decode_packet` also **drops whole packets whose 8042 overflow bits are set** (`b0 & 0xC0 != 0` — the controller already discarded that movement; decoding the wrapped sign bits produced multi-hundred-pixel jumps) without bumping `MOUSE_SEQ` or publishing the button nibble, and the reader's drain goes through `drain_axis`: one application is clamped to `MOUSE_MAX_STEP = 256` px per axis with the remainder left in the accumulator (`fetch_add` back, applied on later iterations — see BUGS v2.38.35).
   - `crt` — **removed in v2.36.0**: the strong `memcpy`/`memmove`/`memset`/`memcmp`/`bcmp` this module defined produced a circular PLT for `memset` and hung the boot (see BUGS); the kernel now relies on `compiler_builtins`' weak `mem*`.
   - `pci` — PCI configuration-space access over the legacy `0xCF8`/`0xCFC` ports; full bus/device/function enumeration into a fixed array of `PciDevice` records (ids, class/subclass/prog-if, BARs, IRQ) with `class_name()` decoding — the discovery layer for the AHCI/NVMe and xHCI drivers.
   - `ahci` — AHCI (SATA) block driver (v2.36.0): enables PCI memory space + bus-mastering, resets the HBA (`GHC.HR`/`AE`), builds per-port command-list / FIS-receive / command-table frames with `memory::alloc_frame`, starts each implemented port, reads `PxSIG` after start (skipping ATAPI/SEMB/PM), issues `IDENTIFY DEVICE` (word-swapped model + 28/48-bit capacity) and moves sectors with `READ`/`WRITE DMA EXT` over a PRDT entry; `AhciDrive`/`read_sectors()`. The controller BAR is reached through `memory::map_mmio`.
@@ -2109,7 +2112,8 @@ match on the bound local port and require the reply to come from the connected p
   unlike `intercept` it runs inside `schedule`, so it never re-schedules.
   Kernel-context frames still take `interrupts::fatal_with`.
 - `tui` — interactive on-screen TUI (v2.38.11, view-only dashboard; **interactive
-  since v2.38.19**): the TUI is the **primary screen** — a compact boot-log strip
+  since v2.38.19**): the TUI is the **diagnostic fallback screen** since v2.81.0
+  (the native framebuffer desktop is primary) — a compact boot-log strip
   (`console::CONSOLE_TOP_ROWS` = 6 rows) stays on top and `render()` paints the
   panel over the whole remaining height (`panel_rows()` = total glyph rows − log
   strip − status bar, tab bar first, content below) at ~20 Hz (every 5 ticks)
@@ -2136,17 +2140,18 @@ match on the bound local port and require the reply to come from the connected p
   `psf` parser (`ensure_font()` re-parses the boot-synthesised PSF2 stream into a
   cached font) with the `font8x8` table as fallback.
 - `gui` — windowed desktop (v2.38.22; damage-based repaint since v2.38.23; RAM
-  backbuffer + dirty-rect blit + 60 FPS cadence since v2.38.24): a
-  full-screen alternative to the
-  console/TUI launched from the kernel shell (`gui` command; `tui` or `Esc`
-  with no window focused returns). While `gui::active()` the console's
-  `vprintln!` path is bypassed and the heartbeat pauses. Owns a desktop
-  background, a left icon column (System / Uptime / About / Network, one app instance per
-   kind in `MAX_WINS = 8` static slots), a bottom task bar (stable button order —
-   see below) and a z-ordered window list (title bar with the
-   minimize/maximize/close cluster, draggable body, edge/corner resize handles)
-  rendered with the TUI's PSF
-  text helpers (`draw_text`/`draw_glyph`/`paint_cursor`, `pub(crate)`). Input:
+  backbuffer + dirty-rect blit + 60 FPS cadence since v2.38.24): the single
+  user-facing GUI, entered from `idle_loop()` at boot since v2.81.0. The
+  console/TUI is a diagnostic fallback: `tui` or `Esc` with no focused window
+  leaves the desktop. While `gui::active()` the console's `vprintln!` path is
+  bypassed and the heartbeat pauses. Owns a dark desktop background, a
+  bottom-left `☰ Пуск` button and a sorted searchable Start panel
+  (`start_entries`/`start_click`, `START_*` layout), a bottom task bar with one
+  button per open window (stable order, see below), and a z-ordered window list
+  (title bar with the minimize/maximize/close cluster, draggable body,
+  edge/corner resize handles) in `MAX_WINS = 8` static slots. Text uses the
+  TUI's char-aware `draw_text`/`draw_char`/`text_width` helpers, so Cyrillic
+  Start titles and text fields render from `font8x8::CYRILLIC`. Input:
   `Tab` cycles focus, `Esc` closes/leaves, printable keys type into the focused
    window; mouse clicks open/focus/close/drag (and, since v2.38.27, resize —
    `hit_resize` maps a press inside `RESIZE_BORDER = 5` px of a window's outer
@@ -2170,7 +2175,7 @@ match on the bound local port and require the reply to come from the connected p
   `fill_round_grad` / `stroke_round` / `fill_circle` / `stroke_ellipse` /
   `line` / `shadow_round`, corner masks `TL/TR/BR/BL/ALL/TOP`, colour
   helpers `mix`/`blend`) that keeps edge cost O(perimeter) by reusing row
-  fills for interiors: windows and icon tiles get 7px rounding, a soft drop
+  fills for interiors: windows and the Start panel get 7px rounding, a soft drop
   shadow and an edge stroke, the desktop and task bar get two-stop washes
   (`Framebuffer::fill_rect_vgrad`), the tray globe becomes a true circle
   with ring/meridian/equator, and every `dirty_rect` is padded by
@@ -2182,9 +2187,10 @@ match on the bound local port and require the reply to come from the connected p
   renders at 100 Hz and the lid/thermal probes stay on a ~20 Hz gate. The
   runaway-pointer gate is measured in elapsed ticks (`TIMER_HZ`, one second)
   rather than a packet count, so it no longer trips ten times faster at 1000 Hz.
-  Extended (0xE0/0xE1) scan
-   codes are
-   dropped before the GUI/TUI tables ever see them (see `ps2`/`main`).
+  Most extended (0xE0/0xE1) scan codes are dropped before the GUI/TUI tables
+   ever see them; since v2.81.0 Win (`0x5B`), Up/Down (`0x48`/`0x50`) and
+   Enter (`0x1C`) are forwarded to `gui::handle_ext_scancode()` for Start
+   navigation (see `ps2`/`main`/`xhci`).
    System window reuses `tui::tick_mode()`/`lid_state()`
    and `VERSION`.
     Since v2.38.25 the window system is open to ring-3: `syscalls.rs` routes
@@ -2223,22 +2229,26 @@ match on the bound local port and require the reply to come from the connected p
     hit-testing ignores it, `cycle_focus` filters it) and drops focus to the
     topmost visible window, `toggle_maximize` snaps to the desktop minus the
     task bar and restores the saved rectangle on the second press, and
-    `focus_window` un-minimizes — every task-bar/icon click flows through it,
+    `focus_window` un-minimizes — every task-bar/Start click flows through it,
     logging `[gui] restore … -> WxH` (`[gui] minimize …`,
     `[gui] maximize|restore … -> WxH` for the other transitions). Task-bar
     buttons are laid out by `taskbar_slots()`/`kind_rank` (Welcome < System <
     Clock < About < clients by id) instead of z-order, so a focus shuffle can
     never move a button under the pointer; minimized windows get the dim
-    `BAR_MIN` fill. Since v2.38.29 `handle_scancode` also owns four window
-    hotkeys on plain F-key make codes (`idle_loop` filters break codes via
-    `sc & 0x80` and E0/E1 prefixes, so no modifier tracking is needed):
-    F2 → `toggle_maximize`, F4 → `close_window`, F5 → `minimize_window`,
-    F9 → `cycle_focus`, each returning `true` so nothing leaks into the
-    typed-text note; the targets come from the new `focused_kind()`, and the
-    transitions log `[gui] close …` / `[gui] focus …` (the focus label is
-    captured before `focus_window` because `bring_to_front` re-slots the
-    window). Since v2.38.30 `close_window` also gates on unsaved text: a
-    window with `note_len > 0` (reached via Esc / `X` / `F4`) opens the
+    `BAR_MIN` fill. Hotkeys use plain F-key make codes (`idle_loop` filters
+    break codes via `sc & 0x80` and E0/E1 prefixes, so no modifier tracking is
+    needed). Since v2.81.0 `F1`-`F9` open or focus the nine `APPS` entries via
+    `open_app`, while window controls moved to `F10` (`toggle_maximize`),
+    `F11` (`close_window`) and `F12` (`minimize_window`); each returns `true`
+    so nothing leaks into the typed-text note. The targets come from
+    `focused_kind()`/`focused_idx()`, and the transitions log `[gui] close …` /
+    `[gui] focus …` (the focus label is captured before `focus_window` because
+    `bring_to_front` re-slots the window). Start toggles with the Win key
+    (`0x5B` on PS/2, HID `0xE3` on USB), navigates with ↑/↓ (`0x48`/`0x50`),
+    activates with Enter (`0x1C`) and closes with Esc;
+    `handle_ext_scancode()` ignores those codes while a crash or modal dialog
+    owns the keyboard. Since v2.38.30 `close_window` also gates on unsaved text:
+    a window with `note_len > 0` (reached via Esc / `X` / `F11`) opens the
     modal confirm dialog — `MODAL: Option<(WinKind, title)>` — instead of
     closing, and `close_window_raw` is the forced teardown the confirm path
     uses. The dialog is a fixed 464×140 overlay drawn above windows and the
@@ -2274,7 +2284,7 @@ match on the bound local port and require the reply to come from the connected p
     freshly placed window and mirror its restored v2.38.31 z-rank — while
     `CloseHost` reuses `close_window`, keeping the modal note gate.
     Since v2.38.34 the desktop also hosts a **Network** window
-    (`WinKind::Network`, label `Net` in the icon column, also opened from
+    (`WinKind::Network`, label `Net` in Start, also opened from
     the tray globe at the task bar's right end): `DHCP`/`Static` mode
     buttons, five address fields (`ip`/`mask`/`gw`/`dns1`/`dns2`) +
     `Apply`/`Test`, and the Wi-Fi group (`ssid`/`pass` + `Scan`/
@@ -2299,7 +2309,7 @@ match on the bound local port and require the reply to come from the connected p
     typing trail `[serial] [gui] type '<c>' focus=N ssid_len=N pass_len=N`
     and `[serial] [gui] backspace focus=N len=N` (v2.38.36).
     Since v2.38.35 there is also a **Task Manager** window
-    (`WinKind::Tasks`, label `Tasks` in the icon column, 440×248 at
+    (`WinKind::Tasks`, label `Tasks` in Start, 440×248 at
     (460,140)): a `Task`/`Status` header strip, one 16 px row per open
     window in `taskbar_slots` (rank) order — selected via
     `task_row_click` into `TASK_SEL: Option<WinKind>`, drawn with the
@@ -2336,7 +2346,8 @@ match on the bound local port and require the reply to come from the connected p
     Since v2.68.0 text fields hold UTF-8 scalars: `form_type_char` appends the
     encoded char when it fits whole in `LAB_FIELD_CAP`, `form_backspace` removes
     one whole scalar, and the field painter walks chars with the caret counted
-    in scalars (non-ASCII shows `?` until a scalable font lands). A
+    in scalars; since v2.81.0 both the caret and `draw_field_text` use the
+    shared Cyrillic-aware glyph path instead of painting non-ASCII as `?`. A
     kernel-internal clipboard (`CLIP`, 128 bytes) backs
     `Ctrl+C`/`Ctrl+X`/`Ctrl+V` through `form_clip_copy`/`form_clip_cut`/
     `form_clip_paste`, logging `[gui] clipboard copy|cut|paste <n> bytes` and
@@ -2352,7 +2363,7 @@ match on the bound local port and require the reply to come from the connected p
     `form_check_toggle`, `form_checked`, `form_radio`, `form_radio_select`,
     `form_slider` and `form_slider_set` are host-generic.
     The desktop gains a **Widget Lab** window (`WinKind::Widgets`, label
-    `Widgets` in the icon column, 460?332) that hosts two text fields, a
+    `Widgets` in Start, 460?332) that hosts two text fields, a
     ten-row scrollable list with a bound scrollbar, an `Edit` dropdown, a
     close button, two checkboxes (`Auto-connect` / `Persist config`), two radios
     (`DHCP` / `Static`) and a `Volume` slider. Keyboard input is routed to the
@@ -2375,7 +2386,19 @@ match on the bound local port and require the reply to come from the connected p
     item <n> click`, `[gui] widget Widget Lab/check <label> = on|off`, `[gui]
     widget Widget Lab/radio <label> = <value>`, `[gui] widget Widget Lab/slider
     <label> = <value>`.
-- `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and five ring-3 tasks (the four IPC/GUI demos plus, since v2.51.0, the socket ping-pong client), declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `tui::render()` (or, since v2.38.22, `gui::render()` while the `gui` command left the windowed desktop active) are driven. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. Keyboard bytes come from the 256-slot FIFO drained with `while let Some(sc) = key_pop()` at the top of each iteration (v2.38.36 — extended/shift filtering happens on the drained stream, so a stalled loop no longer loses burst input to the old single-slot overwrite), and on a PS/2 button edge the band first flushes every pending `mouse_dx`/`mouse_dy` (up to 64 `drain_axis` steps) before calling `on_mouse`, so a press is dispatched at the pointer's settled position rather than mid-backlog (v2.38.36, the missed-click fix). Mouse deltas are drained **every idle-loop iteration** — both bands read `ps2::mouse_dx`/`mouse_dy` and `xhci::take_mouse_delta` unconditionally, so the 256 px clamp's carry-over residue is applied even when no new report arrived, while packets that arrived while the loop was elsewhere accumulate instead of overwriting each other (v2.38.30) — and since v2.38.38 a latched press edge (`take_button_edges()` in both bands) or a button-state change (`btn_changed = seq_changed && buttons != last`) is delivered through the new `deliver_pointer`, which replays up to three states (stale release → press carrying dx/dy → final release) so a press+release pair coalesced between two loop iterations still reaches `gui::on_mouse` (BUGS v2.38.38); the per-application clamp itself lives in the drivers (`MOUSE_MAX_STEP`, v2.38.35). Before anything is logged or rendered the loop calls the screen owner's `gui::input_allowed`/`tui::input_allowed` (v2.38.33 runaway gate): 60 consecutive packets pushing an already-clamped cursor further into an edge suppress the pointer input until a moving packet pushes away, and movement itself is aggregated into at most one serial line per band per second (`MoveLog`, `USB_MOVE`/`PS2_MOVE` statics — `[serial] usb mouse +N pkts dx=… dy=…`); button changes keep their per-report lines. It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
+    Since v2.81.0 the shell is the boot screen: `idle_loop()` calls
+    `gui::enter()` before its driver polls. `start_entries()` assembles a sorted
+    catalog from `START_BASE` (system windows and actions), the nine `APPS`,
+    live `SYS_GUI` ring-3 clients and system actions (`Обновить всё`,
+    `Консоль ядра`); `start_matches()` folds Latin and Cyrillic case
+    insensitively. Host-only external programs stay in the catalog for parity
+    but open `WinKind::App(id)` notice windows because the bare-metal kernel has
+    no process launcher, WebView, audio or LLM backend. Nine function entries
+    map to `WinKind::App(0..8)`; entries `0` and `4` resolve to the real
+    `WinKind::System` and `WinKind::Network` windows. The host `aios-gui` crate
+    is legacy reference code and is never launched from the kernel or either
+    host TUI.
+- `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and five ring-3 tasks (the four IPC/GUI demos plus, since v2.51.0, the socket ping-pong client), declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `gui::render()` (or `tui::render()` after the desktop is left) are driven; since v2.81.0 `idle_loop()` calls `gui::enter()` at boot. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. Keyboard bytes come from the 256-slot FIFO drained with `while let Some(sc) = key_pop()` at the top of each iteration (v2.38.36 — extended/shift filtering happens on the drained stream, so a stalled loop no longer loses burst input to the old single-slot overwrite), and on a PS/2 button edge the band first flushes every pending `mouse_dx`/`mouse_dy` (up to 64 `drain_axis` steps) before calling `on_mouse`, so a press is dispatched at the pointer's settled position rather than mid-backlog (v2.38.36, the missed-click fix). Mouse deltas are drained **every idle-loop iteration** — both bands read `ps2::mouse_dx`/`mouse_dy` and `xhci::take_mouse_delta` unconditionally, so the 256 px clamp's carry-over residue is applied even when no new report arrived, while packets that arrived while the loop was elsewhere accumulate instead of overwriting each other (v2.38.30) — and since v2.38.38 a latched press edge (`take_button_edges()` in both bands) or a button-state change (`btn_changed = seq_changed && buttons != last`) is delivered through the new `deliver_pointer`, which replays up to three states (stale release → press carrying dx/dy → final release) so a press+release pair coalesced between two loop iterations still reaches `gui::on_mouse` (BUGS v2.38.38); the per-application clamp itself lives in the drivers (`MOUSE_MAX_STEP`, v2.38.35). Before anything is logged or rendered the loop calls the screen owner's `gui::input_allowed`/`tui::input_allowed` (v2.38.33 runaway gate): 60 consecutive packets pushing an already-clamped cursor further into an edge suppress the pointer input until a moving packet pushes away, and movement itself is aggregated into at most one serial line per band per second (`MoveLog`, `USB_MOVE`/`PS2_MOVE` statics — `[serial] usb mouse +N pkts dx=… dy=…`); button changes keep their per-report lines. It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
   - Panic handler prints via the framebuffer console and serial, then `halt_loop`s.
 - `aios-kernel-run`: builds the kernel with the Limine path enabled (`cargo build --target x86_64-unknown-none --release --features limine`, since v2.78.0), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.
 - Flash to a real USB stick: run `scripts\flash-usb.ps1` as Administrator (it writes the image to `\\.\PhysicalDriveN`, verifies SHA-256 and the MBR `55 AA` signature). A bare-metal AIOS stick boots on both legacy BIOS and UEFI laptops. For the native UEFI-only GPT image use `aios-install` instead: it validates the GPT/ESP layout before writing (see the Native UEFI Boot Chain section above).

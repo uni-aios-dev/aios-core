@@ -1,5 +1,29 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (kernel GUI): the desktop needed a second host process
+
+The old `W` hotkey in both host TUIs spawned `aios-gui` as a separate egui/eframe
+process, so the framebuffer desktop and the "GUI" were two different interfaces.
+`idle_loop()` now calls `gui::enter()` at boot and the window shell runs inside
+`aios-kernel`; `W` only reports that one GUI is supported. EN/RU docs aligned.
+
+## FIXED (kernel GUI): Cyrillic search and Start/modal input priority
+
+`start_matches()` folded only ASCII bytes and `draw_field_text()` painted every
+non-ASCII scalar as `?`, so Russian queries and values were wrong. Both paths
+now use the shared Unicode `sort_key()` / `draw_char()` path. Extended scancodes
+also bypassed the modal and crash gates: Win could open Start over a blocking
+dialog. The order is now crash → modal → Start → Win. EN/RU docs aligned.
+
+## KNOWN LIMITATION (kernel GUI): host-only programs are notice windows
+
+Start lists external programs (calculator, browser, editor, file manager, etc.)
+because it shares the historical catalog, but `aios-kernel` is `no_std` and has
+no process launcher, WebView, audio stack or LLM backend. Selecting one opens an
+honest window explaining that the function is host-only; it does not fake a
+launch. WebView, audio, voice control and remote AI Studio remain host-side
+capabilities. EN/RU docs aligned.
+
 ## FIXED (GUI): startup seeded demo processes and fake IPC traffic
 
 `GuiRuntime::start()` spawned four real OS-thread processes (`ai_orchestrator`,

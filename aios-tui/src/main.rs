@@ -2087,12 +2087,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('r') => {
                             state.add_log("System refreshed".into());
                         }
-                        KeyCode::Char('W') => match aios_webview::launcher::launch_gui() {
-                            Ok(path) => {
-                                state.add_log(format!("GUI dashboard launched: {}", path.display()))
-                            }
-                            Err(e) => state.add_log(format!("GUI launch failed: {e}")),
-                        },
+                        KeyCode::Char('W') => state.add_log(
+                            "One GUI only: the native kernel desktop; no host GUI process launched"
+                                .into(),
+                        ),
                         KeyCode::Char('s') => {
                             let (process_count, used_ram) = {
                                 let sched = scheduler.lock().unwrap();

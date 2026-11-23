@@ -1,17 +1,21 @@
 //! Bare-metal windowed GUI for the AIOS kernel.
 //!
-//! A full-screen graphical desktop that the kernel shell can switch to with the
-//! `gui` command (back to the console/TUI with `tui`, or `Esc` with no window
-//! focused). It replaces the console + interactive TUI while active: the
-//! console's `vprintln!` calls are skipped so stray log lines cannot garble the
-//! desktop, and the heartbeat square is paused. The screen owns a desktop
-//! background, a left icon column (one tile per app), a bottom task bar and a
-//! z-ordered list of windows with a title bar, minimize/maximize/close
-//! buttons, draggable body and resize handles on every edge/corner.
+//! The single AIOS Desktop: a full-screen graphical shell drawn straight onto
+//! the kernel's linear framebuffer. It is the default screen after boot (the
+//! idle loop calls [`enter()`]) and needs no host GUI process, X11 or eframe.
+//! The console/TUI remains an escape hatch (`tui` command, or `Esc` with no
+//! window focused). While the desktop owns the screen, `vprintln!` output is
+//! suppressed and the heartbeat square paused so stray log lines cannot
+//! garble the pixels. The screen owns a desktop background, a bottom task bar
+//! with a `☰ Пуск` button on the left and the network tray on the right, a
+//! sorted/searchable Start menu, and a z-ordered list of windows with title
+//! bar, minimize/maximize/close buttons, draggable body and resize handles.
+//! `F1`-`F9` open/focus the nine Start functions; window controls moved to
+//! `F10`/`F11`/`F12` so no desktop shortcut is shadowed.
 //!
 //! Rendering is double-buffered and damage-based: every change records a dirty
 //! rectangle and `render()` repaints only what intersects it (desktop
-//! background, then icons and the task bar strip, then every window whose
+//! background, then the task bar/Start strip, then every window whose
 //! rectangle overlaps, then the 8x8 arrow last) into a RAM backbuffer, then
 //! publishes the damaged rectangle to VRAM with a single `copy_nonoverlapping`
 //! per scanline. Idle frames therefore refresh only the live System/Uptime
@@ -19,12 +23,14 @@
 //! and the static desktop stays untouched. The backbuffer is mapped once from
 //! the frame allocator on `enter()` and its absence degrades gracefully to
 //! direct-VRAM painting (never a panic). Text uses the same PSF path as the TUI
-//! (`tui::draw_text`). Input comes from both key sources (PS/2 + USB-HID) via
-//! `handle_scancode` (Tab cycles focus, `Esc` closes / leaves, printable keys
-//! type into the focused kernel window or queue an event for a focused
-//! ring-3 client) and from the mouse via `on_mouse` (icon/close/task-bar
-//! clicks, title-bar drag, edge/corner resize); the loop reads these through
-//! lock-free atomics and never blocks on `inb`/spin for input.
+//! (`tui::draw_text`, now Unicode-aware: Basic Latin + generated Cyrillic, so
+//! Russian Start labels render on the raw framebuffer). Input comes from both
+//! key sources (PS/2 + USB-HID) via `handle_scancode` (Tab cycles focus, `Esc`
+//! closes / leaves, `F1`-`F9` open apps, printable keys type into Start search
+//! or the focused kernel window and queue events for ring-3 clients) and from
+//! the mouse via `on_mouse` (Start/task-bar/window clicks, title drag, resize);
+//! the loop reads these through lock-free atomics and never blocks on
+//! `inb`/spin for input.
 //!
 //! Window geometry also has two explicit states: maximize grows a window to
 //! the whole desktop above the task bar (geometry saved for restore, further
@@ -36,6 +42,7 @@ use crate::interrupts::{TICKS, TIMER_HZ};
 use crate::{console, tui, vector};
 use alloc::format;
 use alloc::string::String;
+use core::cmp::Ordering as CmpOrdering;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Ceiling on open windows (one slot per app instance).
@@ -48,11 +55,21 @@ const TITLE_BTN: usize = 16;
 /// Width of the three-button cluster (minimize / maximize-restore / close)
 /// anchored to the right end of the title bar.
 const TITLE_BTNS: usize = 3 * TITLE_BTN;
-/// Desktop icon tile width: fits the longest label (`System` / `Uptime` =
-/// 6 glyphs x 16 px) with margin at the centered position.
-const ICON_W: usize = 104;
-const ICON_H: usize = 56;
 const TASKBAR_H: usize = 18;
+/// Width reserved for the bottom-left `☰ Пуск` button; task-bar window buttons
+/// start after it so the button never moves when windows open or close.
+const START_BTN_W: usize = 88;
+/// Width/height of the Start panel above the task bar.
+const START_W: usize = 384;
+const START_HEADER_H: usize = 42;
+const START_ROW_H: usize = 34;
+const START_VISIBLE: usize = 10;
+const START_PAD: usize = 6;
+/// Maximum number of Start entries after built-ins, catalog programs, actions
+/// and live ring-3 clients have been merged and sorted.
+const START_CAP: usize = 40;
+/// Maximum characters accepted by the Start search field.
+const START_QUERY_CAP: usize = 24;
 /// Width of the hit zone along a window's outer edge that starts a resize
 /// drag (edges/corners, checked before title/body).
 const RESIZE_BORDER: usize = 5;
@@ -119,8 +136,6 @@ const DESK_TOP: Color = 0x00_0c_10_18;
 const DESK_BOT: Color = 0x00_04_08_10;
 /// Corner radius shared by windows, dialogs and desktop icon tiles.
 const WIN_R: i32 = 7;
-/// Desktop icon tile background (v2.38.39 vector restyle).
-const TILE_BG: Color = 0x00_0e_16_28;
 /// Damage pad: soft shadows spill a few pixels past their shape, so every
 /// damage rectangle is unioned wider than its content by this margin.
 const SHADOW_PAD: usize = 7;
@@ -131,7 +146,6 @@ const TITLE_OFF: Color = 0x00_20_2c_48;
 const WIN_BG: Color = 0x00_18_24_48;
 const BAR_BG: Color = 0x00_10_16_2c;
 const BAR_ON: Color = 0x00_2a_4a_92;
-const ICON_ACC: Color = 0x00_38_8a_e8;
 const CLOSE_BG: Color = 0x00_b0_40_40;
 const BTN_BG: Color = 0x00_28_30_50;
 const BAR_MIN: Color = 0x00_0a_0e_1c;
@@ -163,7 +177,216 @@ enum WinKind {
     /// A window owned by a ring-3 task; the id indexes [`CLIENTS`], whose
     /// buffer the window composites on every repaint.
     Client(u8),
+    /// A Start-catalog application window; the id indexes [`APPS`]. Used for
+    /// the nine desktop functions and for external programs whose host-only
+    /// runtime is unavailable in the native kernel.
+    App(u8),
 }
+
+/// One application exposed in the kernel Start menu.
+#[derive(Clone, Copy)]
+struct AppInfo {
+    /// Name shown in Start, the task bar and the window title.
+    title: &'static str,
+    /// Short hint shown under the name in Start.
+    subtitle: &'static str,
+    /// Body lines rendered in the application window.
+    body: &'static [&'static str],
+}
+
+/// Start catalog in `F1`-`F9` order, followed by the shared external program
+/// list. Index 0 (Dashboard) and 4 (Network) are backed by real kernel windows;
+/// the rest open an [`WinKind::App`] window with an honest capability note.
+static APPS: &[AppInfo] = &[
+    AppInfo {
+        title: "System Dashboard",
+        subtitle: "F1 · Система",
+        body: &["Live kernel metrics, scheduler and IPC counters."],
+    },
+    AppInfo {
+        title: "WASM Blocks",
+        subtitle: "F2 · Блоки",
+        body: &[
+            "WASM blocks are loaded by the kernel block manager.",
+            "Use the TUI block tab to inspect and hot-swap them.",
+        ],
+    },
+    AppInfo {
+        title: "AI Studio",
+        subtitle: "F3 · ИИ",
+        body: &[
+            "Streaming LLM chat needs the host inference runtime.",
+            "The native kernel exposes no model backend.",
+        ],
+    },
+    AppInfo {
+        title: "App Store",
+        subtitle: "F4 · Магазин",
+        body: &["The kernel has no package marketplace or network updater."],
+    },
+    AppInfo {
+        title: "Network Settings",
+        subtitle: "F5 · Сеть",
+        body: &["Wired DHCP and software Wi-Fi settings."],
+    },
+    AppInfo {
+        title: "Dependencies",
+        subtitle: "F6 · Зависимости",
+        body: &["Block dependencies are tracked by aios-block-mgr.", "No graph view exists in the native kernel yet."],
+    },
+    AppInfo {
+        title: "Native Browser",
+        subtitle: "F7 · Браузер",
+        body: &["WebView needs a host windowing stack.", "The kernel desktop renders pixels only."],
+    },
+    AppInfo {
+        title: "Files",
+        subtitle: "F8 · Файлы",
+        body: &["A kernel file manager is not available in this build."],
+    },
+    AppInfo {
+        title: "Hardware & Drivers",
+        subtitle: "F9 · Оборудование",
+        body: &[
+            "PCI, USB, NIC, storage and thermal drivers are probed at boot.",
+            "Live state is shown in the System window.",
+        ],
+    },
+    AppInfo {
+        title: "Калькулятор",
+        subtitle: "Программа · calculator",
+        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+    },
+    AppInfo {
+        title: "Настройки",
+        subtitle: "Программа · settings",
+        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+    },
+    AppInfo {
+        title: "Браузер",
+        subtitle: "Программа · browser",
+        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+    },
+    AppInfo {
+        title: "Терминал",
+        subtitle: "Программа · terminal",
+        body: &["External program from the shared AIOS catalog.", "Use the kernel console via Esc for a shell."],
+    },
+    AppInfo {
+        title: "Файловый менеджер",
+        subtitle: "Программа · files",
+        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+    },
+    AppInfo {
+        title: "Настройки звука",
+        subtitle: "Программа · sound",
+        body: &["External program from the shared AIOS catalog.", "The kernel has no audio stack."],
+    },
+    AppInfo {
+        title: "Сменить обои",
+        subtitle: "Программа · wallpaper",
+        body: &["External program from the shared AIOS catalog.", "The kernel desktop uses a fixed dark gradient."],
+    },
+    AppInfo {
+        title: "Настройки сети",
+        subtitle: "Программа · network",
+        body: &["External program from the shared AIOS catalog.", "Open Network Settings (F5) for the kernel stack."],
+    },
+    AppInfo {
+        title: "Текстовый редактор",
+        subtitle: "Программа · editor",
+        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+    },
+    AppInfo {
+        title: "Скриншот",
+        subtitle: "Программа · screenshot",
+        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+    },
+    AppInfo {
+        title: "Перезагрузка",
+        subtitle: "Программа · reboot",
+        body: &["Use the machine power button or the boot loader menu.", "The kernel desktop does not reset hardware."],
+    },
+    AppInfo {
+        title: "Выключение",
+        subtitle: "Программа · shutdown",
+        body: &["Use the machine power button or the boot loader menu.", "The kernel desktop does not power off hardware."],
+    },
+];
+
+/// Compact label for a ring-3 window in Start (titles there are dynamic).
+static CLIENT_LABELS: [&str; MAX_CLIENTS] = [
+    "ring3 client 0",
+    "ring3 client 1",
+    "ring3 client 2",
+    "ring3 client 3",
+];
+
+/// What happens when a Start entry is activated.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StartAction {
+    /// Open or focus a kernel window.
+    Open(WinKind),
+    /// Open or focus a Start-catalog application window.
+    App(u8),
+    /// Repaint every live desktop surface.
+    Refresh,
+    /// Leave the desktop for the kernel console/TUI.
+    Console,
+}
+
+/// One sorted entry in the native Start menu.
+#[derive(Clone, Copy)]
+struct StartEntry {
+    /// Display name.
+    title: &'static str,
+    /// Short hint shown under the name.
+    subtitle: &'static str,
+    /// Action executed on activation.
+    action: StartAction,
+}
+
+/// Kernel windows that are not part of the nine desktop functions. Together
+/// with [`APPS`], the live ring-3 clients and the two system actions they form
+/// the complete, sorted Start catalog.
+static START_BASE: &[StartEntry] = &[
+    StartEntry {
+        title: "About",
+        subtitle: "AIOS · информация",
+        action: StartAction::Open(WinKind::About),
+    },
+    StartEntry {
+        title: "Task Manager",
+        subtitle: "Система · задачи",
+        action: StartAction::Open(WinKind::Tasks),
+    },
+    StartEntry {
+        title: "Uptime",
+        subtitle: "Система · время",
+        action: StartAction::Open(WinKind::Clock),
+    },
+    StartEntry {
+        title: "Welcome",
+        subtitle: "AIOS · приветствие",
+        action: StartAction::Open(WinKind::Welcome),
+    },
+    StartEntry {
+        title: "Widget Lab",
+        subtitle: "Система · виджеты",
+        action: StartAction::Open(WinKind::Widgets),
+    },
+];
+
+/// Whether the Start panel is currently visible.
+static START_OPEN: AtomicBool = AtomicBool::new(false);
+/// Selected row in the filtered Start list.
+static mut START_SEL: usize = 0;
+/// First visible row in the filtered Start list.
+static mut START_SCROLL: usize = 0;
+/// ASCII/UTF-8 bytes of the Start search query.
+static mut START_QUERY: [u8; START_QUERY_CAP] = [0; START_QUERY_CAP];
+/// Length of [`START_QUERY`] in bytes.
+static mut START_QUERY_LEN: usize = 0;
 
 #[derive(Clone, Copy)]
 struct Window {
@@ -637,6 +860,7 @@ fn win_title(kind: WinKind) -> &'static str {
         WinKind::Tasks => "Task Manager",
         WinKind::Widgets => "Widget Lab",
         WinKind::Client(_) => "ring3 client",
+        WinKind::App(id) => APPS.get(id as usize).map(|a| a.title).unwrap_or("AIOS"),
     }
 }
 
@@ -1263,6 +1487,7 @@ fn kind_rank(kind: WinKind) -> u8 {
         WinKind::Tasks => 5,
         WinKind::Widgets => 6,
         WinKind::Client(id) => 7 + id,
+        WinKind::App(id) => 7 + MAX_CLIENTS as u8 + id,
     }
 }
 
@@ -1273,7 +1498,7 @@ fn kind_rank(kind: WinKind) -> u8 {
 fn taskbar_slots() -> [usize; MAX_WINS] {
     let mut out = [usize::MAX; MAX_WINS];
     let mut n = 0usize;
-    for rank in 0u8..(7 + MAX_CLIENTS as u8) {
+    for rank in 0u8..(7 + MAX_CLIENTS as u8 + APPS.len() as u8) {
         for i in 0..MAX_WINS {
             let hit = unsafe {
                 (*core::ptr::addr_of!(WINS))[i].map(|w| kind_rank(w.kind) == rank) == Some(true)
@@ -1288,7 +1513,446 @@ fn taskbar_slots() -> [usize; MAX_WINS] {
     out
 }
 
-/// Enters GUI mode from the kernel shell (`gui` command).
+/// Lowercase key of one title scalar, so Latin and Cyrillic names sort
+/// naturally without an allocation or a locale table.
+fn sort_key(c: char) -> u32 {
+    let cp = c as u32;
+    if c.is_ascii_uppercase() {
+        cp + 32
+    } else if (0x0410..=0x042f).contains(&cp) {
+        cp + 0x20
+    } else if cp == 0x0401 {
+        0x0451
+    } else {
+        cp
+    }
+}
+
+/// Case-insensitive, locale-free ordering of two Start titles.
+fn start_cmp(a: &str, b: &str) -> CmpOrdering {
+    let mut ai = a.chars().map(sort_key);
+    let mut bi = b.chars().map(sort_key);
+    loop {
+        match (ai.next(), bi.next()) {
+            (Some(x), Some(y)) => match x.cmp(&y) {
+                CmpOrdering::Equal => {}
+                order => return order,
+            },
+            (Some(_), None) => return CmpOrdering::Greater,
+            (None, Some(_)) => return CmpOrdering::Less,
+            (None, None) => return CmpOrdering::Equal,
+        }
+    }
+}
+
+/// Inserts `entry` into the sorted Start array with a linear insertion sort
+/// (the catalog is at most [`START_CAP`] long).
+fn start_push(out: &mut [Option<StartEntry>; START_CAP], n: &mut usize, entry: StartEntry) {
+    if *n >= out.len() {
+        return;
+    }
+    let mut j = *n;
+    while j > 0 && start_cmp(entry.title, out[j - 1].unwrap().title) == CmpOrdering::Less {
+        out[j] = out[j - 1];
+        j -= 1;
+    }
+    out[j] = Some(entry);
+    *n += 1;
+}
+
+/// Builds the full Start catalog: built-in windows, the nine functions, the
+/// shared external program list, live ring-3 windows and system actions — all
+/// sorted by title with [`start_cmp`].
+fn start_entries() -> [Option<StartEntry>; START_CAP] {
+    let mut out = [None; START_CAP];
+    let mut n = 0usize;
+    for entry in START_BASE {
+        start_push(&mut out, &mut n, *entry);
+    }
+    for (i, app) in APPS.iter().enumerate() {
+        let action = match i {
+            0 => StartAction::Open(WinKind::System),
+            4 => StartAction::Open(WinKind::Network),
+            _ => StartAction::App(i as u8),
+        };
+        start_push(
+            &mut out,
+            &mut n,
+            StartEntry {
+                title: app.title,
+                subtitle: app.subtitle,
+                action,
+            },
+        );
+    }
+    for id in 0..MAX_CLIENTS as u8 {
+        if client_slot(id).is_some() {
+            start_push(
+                &mut out,
+                &mut n,
+                StartEntry {
+                    title: CLIENT_LABELS[id as usize],
+                    subtitle: "ring-3 · клиент",
+                    action: StartAction::Open(WinKind::Client(id)),
+                },
+            );
+        }
+    }
+    start_push(
+        &mut out,
+        &mut n,
+        StartEntry {
+            title: "Обновить всё",
+            subtitle: "Система · refresh",
+            action: StartAction::Refresh,
+        },
+    );
+    start_push(
+        &mut out,
+        &mut n,
+        StartEntry {
+            title: "Консоль ядра",
+            subtitle: "Система · terminal",
+            action: StartAction::Console,
+        },
+    );
+    out
+}
+
+/// Current Start search text (only characters typed on the kernel key path).
+fn start_query() -> &'static str {
+    unsafe {
+        let n = *core::ptr::addr_of!(START_QUERY_LEN);
+        let p = core::ptr::addr_of!(START_QUERY) as *const u8;
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(p, n))
+    }
+}
+
+/// Case-insensitive substring match on both the title and the hint. The same
+/// case folding as [`start_cmp`] covers Latin and Cyrillic, so `net`, `F5` and
+/// `систем` all narrow the sorted list.
+fn start_matches(entry: &StartEntry, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    [entry.title, entry.subtitle].iter().any(|haystack| {
+        haystack.char_indices().any(|(i, _)| {
+            let mut q = query.chars();
+            let mut h = haystack[i..].chars();
+            loop {
+                match (q.next(), h.next()) {
+                    (Some(a), Some(b)) => {
+                        if sort_key(a) != sort_key(b) {
+                            return false;
+                        }
+                    }
+                    (None, _) => return true,
+                    (Some(_), None) => return false,
+                }
+            }
+        })
+    })
+}
+
+/// Array index of the `n`-th entry that survives the current search filter.
+fn start_visible_index(
+    entries: &[Option<StartEntry>; START_CAP],
+    query: &str,
+    n: usize,
+) -> Option<usize> {
+    let mut seen = 0usize;
+    for (i, entry) in entries.iter().enumerate() {
+        if let Some(entry) = entry {
+            if start_matches(entry, query) {
+                if seen == n {
+                    return Some(i);
+                }
+                seen += 1;
+            }
+        }
+    }
+    None
+}
+
+/// Number of entries surviving the current search filter.
+fn start_count() -> usize {
+    let entries = start_entries();
+    let query = start_query();
+    entries
+        .iter()
+        .flatten()
+        .filter(|entry| start_matches(entry, query))
+        .count()
+}
+
+/// Keeps the selected/scrolled rows inside the filtered list after edits.
+fn clamp_start_sel() {
+    let count = start_count();
+    unsafe {
+        if count == 0 {
+            START_SEL = 0;
+            START_SCROLL = 0;
+        } else {
+            if START_SEL >= count {
+                START_SEL = count - 1;
+            }
+            if START_SEL < START_SCROLL {
+                START_SCROLL = START_SEL;
+            }
+            if START_SEL >= START_SCROLL + START_VISIBLE {
+                START_SCROLL = START_SEL + 1 - START_VISIBLE;
+            }
+        }
+    }
+}
+
+/// Whether the Start panel is visible.
+fn start_open() -> bool {
+    START_OPEN.load(Ordering::Relaxed)
+}
+
+/// Opens or closes the Start panel: the task-bar button and the left `Win`
+/// key both route here.
+fn toggle_start() {
+    let open = !start_open();
+    START_OPEN.store(open, Ordering::Relaxed);
+    unsafe {
+        START_SEL = 0;
+        START_SCROLL = 0;
+        START_QUERY_LEN = 0;
+        START_QUERY[0] = 0;
+    }
+    dirty_all();
+}
+
+fn close_start() {
+    START_OPEN.store(false, Ordering::Relaxed);
+    dirty_all();
+}
+
+/// Handles one key while the Start panel owns the keyboard.
+fn start_key(sc: u8) -> bool {
+    match sc {
+        0x01 => {
+            close_start();
+            return true;
+        }
+        0x48 => unsafe {
+            if START_SEL > 0 {
+                START_SEL -= 1;
+            }
+            clamp_start_sel();
+            dirty_all();
+            return true;
+        },
+        0x50 => unsafe {
+            let count = start_count();
+            if count > 0 && START_SEL + 1 < count {
+                START_SEL += 1;
+            }
+            clamp_start_sel();
+            dirty_all();
+            return true;
+        },
+        0x1C => {
+            let entries = start_entries();
+            let query = start_query();
+            let sel = unsafe { START_SEL };
+            if let Some(i) = start_visible_index(&entries, query, sel) {
+                let entry = entries[i].unwrap();
+                close_start();
+                activate_start(entry);
+            }
+            return true;
+        }
+        0x0E => unsafe {
+            let mut n = START_QUERY_LEN;
+            while n > 0 {
+                n -= 1;
+                if START_QUERY[n] & 0xc0 != 0x80 {
+                    break;
+                }
+            }
+            START_QUERY_LEN = n;
+            START_QUERY[n] = 0;
+            START_SEL = 0;
+            START_SCROLL = 0;
+            dirty_all();
+            return true;
+        },
+        _ => {}
+    }
+    let Some(c) = crate::interrupts::scancode_to_char(sc) else {
+        return true;
+    };
+    if !c.is_control() {
+        unsafe {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                if START_QUERY_LEN + 1 >= START_QUERY_CAP {
+                    break;
+                }
+                START_QUERY[START_QUERY_LEN] = b;
+                START_QUERY_LEN += 1;
+            }
+            START_QUERY[START_QUERY_LEN] = 0;
+            START_SEL = 0;
+            START_SCROLL = 0;
+        }
+        dirty_all();
+    }
+    true
+}
+
+/// Executes one Start entry after the panel has closed.
+fn activate_start(entry: StartEntry) {
+    match entry.action {
+        StartAction::Open(kind) => open_or_focus(kind),
+        StartAction::App(id) => open_app(id),
+        StartAction::Refresh => {
+            dirty_all();
+            crate::kprintln!("[gui] start: refresh all");
+        }
+        StartAction::Console => leave(),
+    }
+}
+
+/// Opens (or focuses) one of the nine desktop functions; Dashboard and
+/// Network Settings are backed by real kernel windows.
+fn open_app(id: u8) {
+    match id {
+        0 => open_or_focus(WinKind::System),
+        4 => open_or_focus(WinKind::Network),
+        _ if (id as usize) < APPS.len() => open_or_focus(WinKind::App(id)),
+        _ => {}
+    }
+}
+
+/// Geometry `(x, y, w, h)` of the Start panel above the task bar.
+fn start_pos(fb: &Framebuffer) -> (usize, usize, usize, usize) {
+    let w = START_W.min(fb.width().saturating_sub(4));
+    let h = START_HEADER_H + START_VISIBLE * START_ROW_H + START_PAD;
+    let y = fb.height().saturating_sub(TASKBAR_H + h);
+    (2, y, w, h)
+}
+
+/// Paints the Start panel: title, search field and the sorted, filtered list
+/// with the selected row highlighted. Cyrillic labels use the same glyph path
+/// as every other kernel string.
+fn draw_start(fb: &Framebuffer) {
+    if !start_open() {
+        return;
+    }
+    let (x, y, w, h) = start_pos(fb);
+    unsafe {
+        vector::shadow_round(
+            fb,
+            x as i32,
+            y as i32,
+            w as i32,
+            h as i32,
+            WIN_R,
+            5,
+            95,
+            0x00_00_03_07,
+        );
+        vector::fill_round(fb, x as i32, y as i32, w as i32, h as i32, WIN_R, vector::ALL, WIN_BG);
+        vector::stroke_round(
+            fb,
+            x as i32,
+            y as i32,
+            w as i32,
+            h as i32,
+            WIN_R,
+            vector::ALL,
+            vector::mix(WIN_BG, TEXT_DIM, 110),
+        );
+        vector::fill_round(
+            fb,
+            (x + 6) as i32,
+            (y + 22) as i32,
+            (w - 12) as i32,
+            16,
+            3,
+            vector::ALL,
+            BAR_MIN,
+        );
+    }
+    tui::draw_text(fb, x + 8, y + 3, "Пуск", TEXT, WIN_BG, x + w - 8);
+    tui::draw_text(fb, x + 144, y + 3, "^v Enter Esc", TEXT_DIM, WIN_BG, x + w - 6);
+    let mut query = String::from(start_query());
+    query.push('_');
+    tui::draw_text(fb, x + 10, y + 22, &query, TEXT, BAR_MIN, x + w - 10);
+    let entries = start_entries();
+    let filter = start_query();
+    let mut row = 0usize;
+    let sel = unsafe { START_SEL };
+    let scroll = unsafe { START_SCROLL };
+    for entry in entries.iter().flatten() {
+        if !start_matches(entry, filter) {
+            continue;
+        }
+        if row < scroll {
+            row += 1;
+            continue;
+        }
+        let visible = row - scroll;
+        if visible >= START_VISIBLE {
+            break;
+        }
+        let ry = y + START_HEADER_H + visible * START_ROW_H;
+        let bg = if visible == sel { BAR_ON } else { WIN_BG };
+        unsafe {
+            fb.fill_rect(x + 4, ry, w - 8, START_ROW_H, bg);
+        }
+        tui::draw_text(fb, x + 8, ry, entry.title, TEXT, bg, x + w - 8);
+        tui::draw_text(fb, x + 8, ry + 16, entry.subtitle, TEXT_DIM, bg, x + w - 8);
+        row += 1;
+    }
+}
+
+/// Click on a Start row activates it; clicks in the header only keep the panel
+/// open so the user can continue typing a search.
+fn start_click(fb: &Framebuffer, _x: usize, y: usize) {
+    let (_px, py, _pw, _ph) = start_pos(fb);
+    let Some(rel) = y.checked_sub(py + START_HEADER_H) else {
+        return;
+    };
+    let row = rel / START_ROW_H;
+    if row >= START_VISIBLE {
+        return;
+    }
+    let entries = start_entries();
+    let filter = start_query();
+    let target = unsafe { START_SCROLL } + row;
+    if let Some(i) = start_visible_index(&entries, filter, target) {
+        unsafe {
+            START_SEL = target;
+        }
+        let entry = entries[i].unwrap();
+        close_start();
+        activate_start(entry);
+    }
+}
+
+/// Forwards the extended make codes the idle loop normally swallows: `Win`
+/// toggles Start, arrows move the selection and extended Enter activates it.
+pub fn handle_ext_scancode(sc: u8) -> bool {
+    if !active() || crate::fault::pending() || modal_active() {
+        return false;
+    }
+    if sc == 0x5B {
+        toggle_start();
+        return true;
+    }
+    if start_open() {
+        return start_key(sc);
+    }
+    false
+}
+
+/// Enters GUI mode. The idle loop calls this once at boot, so the desktop is
+/// the only user-facing GUI; the `gui` shell command can re-enter it later.
 pub fn enter() {
     if active() {
         return;
@@ -1296,15 +1960,16 @@ pub fn enter() {
     if let Some(fb) = console::framebuffer() {
         ensure_backbuffer(fb);
     }
-    open_or_focus(WinKind::Welcome);
-    if window_count() == 1 {
-        open_or_focus(WinKind::System);
-    }
-    if window_count() == 2 {
-        open_or_focus(WinKind::Clock);
+    START_OPEN.store(false, Ordering::Relaxed);
+    unsafe {
+        START_SEL = 0;
+        START_SCROLL = 0;
+        START_QUERY_LEN = 0;
+        START_QUERY[0] = 0;
     }
     raise_clients();
     ACTIVE.store(true, Ordering::Relaxed);
+    dirty_all();
     render();
 }
 
@@ -1349,6 +2014,13 @@ pub fn leave() {
         return;
     }
     ACTIVE.store(false, Ordering::Relaxed);
+    START_OPEN.store(false, Ordering::Relaxed);
+    unsafe {
+        START_SEL = 0;
+        START_SCROLL = 0;
+        START_QUERY_LEN = 0;
+        START_QUERY[0] = 0;
+    }
     unsafe {
         for i in 0..MAX_WINS {
             (*core::ptr::addr_of_mut!(WINS))[i] = None;
@@ -1675,6 +2347,16 @@ pub fn handle_scancode(sc: u8) -> bool {
     if modal_active() {
         return modal_key(sc);
     }
+    // The Start panel owns the keyboard while visible: arrows, Enter, Esc and
+    // printable search characters must never reach a window behind it.
+    if start_open() {
+        return start_key(sc);
+    }
+    if sc == 0x5B {
+        // Left Win (USB path; PS/2 arrives as an extended code) toggles Start.
+        toggle_start();
+        return true;
+    }
     // The focused Task Manager window takes Enter first: Switch To on the
     // current selection (v2.38.35).
     if task_key(sc) {
@@ -1722,34 +2404,65 @@ pub fn handle_scancode(sc: u8) -> bool {
             }
             return true;
         }
-        // Window hotkeys on plain F-key make codes: `idle_loop` forwards only
-        // non-extended make bytes (break codes are filtered out by the
-        // `sc & 0x80` gate), so F-keys need no modifier/release tracking and
-        // can never collide with typing (they are not printable).
+        // Desktop function keys on plain make codes: `idle_loop` forwards only
+        // non-extended make bytes, so F-keys need no release tracking and can
+        // never collide with typing. Window controls moved to F10/F11/F12 so
+        // F1-F9 stay reserved for the nine Start functions.
+        0x3B => {
+            open_app(0);
+            return true;
+        }
         0x3C => {
-            // F2 — maximize/restore the focused window.
+            open_app(1);
+            return true;
+        }
+        0x3D => {
+            open_app(2);
+            return true;
+        }
+        0x3E => {
+            open_app(3);
+            return true;
+        }
+        0x3F => {
+            open_app(4);
+            return true;
+        }
+        0x40 => {
+            open_app(5);
+            return true;
+        }
+        0x41 => {
+            open_app(6);
+            return true;
+        }
+        0x42 => {
+            open_app(7);
+            return true;
+        }
+        0x43 => {
+            open_app(8);
+            return true;
+        }
+        0x44 => {
+            // F10 — maximize/restore the focused window.
             if let Some(kind) = focused_kind() {
                 toggle_maximize(kind);
             }
             return true;
         }
-        0x3E => {
-            // F4 — close the focused window (same path as Esc and the X button).
+        0x57 => {
+            // F11 — close the focused window (same path as Esc / X button).
             if let Some(i) = focused_idx() {
                 close_window(i);
             }
             return true;
         }
-        0x3F => {
-            // F5 — minimize the focused window.
+        0x58 => {
+            // F12 — minimize the focused window.
             if let Some(kind) = focused_kind() {
                 minimize_window(kind);
             }
-            return true;
-        }
-        0x43 => {
-            // F9 — cycle focus (Tab twin).
-            cycle_focus();
             return true;
         }
         _ => {}
@@ -2149,34 +2862,23 @@ fn hit_resize(win: &Window, x: usize, y: usize) -> Option<u8> {
     }
 }
 
-fn hit_icon(x: usize, y: usize) -> Option<WinKind> {
-    let icons = [
-        (WinKind::System, 20, 40),
-        (WinKind::Clock, 20, 108),
-        (WinKind::About, 20, 176),
-        (WinKind::Network, 20, 244),
-        (WinKind::Tasks, 20, 312),
-        (WinKind::Widgets, 20, 380),
-    ];
-    for (kind, ix, iy) in icons {
-        if x >= ix && x < ix + ICON_W && y >= iy && y < iy + ICON_H {
-            return Some(kind);
-        }
-    }
-    None
+/// Whether `(x, y)` hits the bottom-left `☰ Пуск` button. Checked before the
+/// window buttons so its hit zone never drifts with the open-window list.
+fn hit_start_button(fb: &Framebuffer, x: usize, y: usize) -> bool {
+    y >= fb.height().saturating_sub(TASKBAR_H) && x < START_BTN_W
 }
 
 fn hit_taskbar(fb: &Framebuffer, x: usize, y: usize) -> Option<usize> {
     if y < fb.height().saturating_sub(TASKBAR_H) {
         return None;
     }
-    let mut bx = 4;
+    let mut bx = START_BTN_W + 4;
     for i in taskbar_slots() {
         if i == usize::MAX {
             break;
         }
         if let Some(win) = unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() } {
-            let w = 8 + win.title.len() * console::GLYPH_W;
+            let w = 8 + tui::text_width(win_live_title(win));
             if x >= bx && x < bx + w {
                 return Some(i);
             }
@@ -2561,7 +3263,7 @@ const fn form_slot(kind: WinKind) -> usize {
         WinKind::Network => 4,
         WinKind::Tasks => 5,
         WinKind::Widgets => 6,
-        WinKind::Client(_) => 7,
+        WinKind::Client(_) | WinKind::App(_) => 7,
     }
 }
 
@@ -3271,7 +3973,7 @@ fn draw_plate(
             plate,
         );
     }
-    let tx = ax + w.saturating_sub(label.len() * console::GLYPH_W) / 2;
+    let tx = ax + w.saturating_sub(tui::text_width(label)) / 2;
     let ty = ay + h.saturating_sub(console::GLYPH_H) / 2;
     tui::draw_text(fb, tx, ty, label, TEXT, plate, (ax + w).min(fb.width()));
 }
@@ -3524,18 +4226,16 @@ fn utf8_chars(bytes: &[u8]) -> usize {
     bytes.iter().filter(|b| (**b & 0xC0) != 0x80).count()
 }
 
-/// Paints a text field's value one glyph cell per scalar (v2.68.0). ASCII keeps
-/// its glyph; a non-ASCII scalar renders as `?` because the PSF console font
-/// carries no Unicode glyphs yet (docs/BUGS.md, scalable-font backlog). The
-/// string never crosses `max_px`, so it stays inside the field frame.
+/// Paints a text field's value one glyph cell per scalar. ASCII and Cyrillic
+/// scalars use the kernel's shared Unicode glyph path; the string never crosses
+/// `max_px`, so it stays inside the field frame.
 fn draw_field_text(fb: &Framebuffer, x: usize, y: usize, s: &str, max_px: usize) {
     let mut px = x;
     for ch in s.chars() {
         if px + console::GLYPH_W > max_px {
             break;
         }
-        let byte = if ch.is_ascii() { ch as u8 } else { b'?' };
-        tui::draw_glyph(fb, px, y, byte, TEXT, NET_BOX_BG);
+        tui::draw_char(fb, px, y, ch, TEXT, NET_BOX_BG);
         px += console::GLYPH_W;
     }
 }
@@ -3555,6 +4255,19 @@ fn log_resize(kind: WinKind) {
 }
 
 fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
+    if hit_start_button(fb, x, y) {
+        toggle_start();
+        return;
+    }
+    if start_open() {
+        let (px, py, pw, ph) = start_pos(fb);
+        if x >= px && x < px + pw && y >= py && y < py + ph {
+            start_click(fb, x, y);
+        } else {
+            close_start();
+        }
+        return;
+    }
     if hit_globe(fb, x, y) {
         crate::kprintln!("[gui] tray globe click");
         open_or_focus(WinKind::Network);
@@ -3562,19 +4275,6 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
     }
     if let Some(i) = hit_taskbar(fb, x, y) {
         focus_window(i);
-        return;
-    }
-    if let Some(kind) = hit_icon(x, y) {
-        let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
-        for (i, win) in wins.iter().enumerate() {
-            if let Some(win) = win {
-                if win.kind == kind {
-                    focus_window(i);
-                    return;
-                }
-            }
-        }
-        spawn(kind);
         return;
     }
     // An open Widget Lab dropdown swallows its item clicks before ordinary
@@ -3688,11 +4388,11 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
 /// backbuffer is unavailable the renderer falls back to painting directly into
 /// VRAM (identical damage logic, v2.38.23 behaviour).
 ///
-/// The partial path repaints desktop, then intersecting icons, the task-bar
-/// strip (redrawn whole if touched), then every window whose rectangle overlaps
-/// the damage (drawn bottom-up so the z-order stays correct), then the arrow
-/// last. Idle repaints are therefore limited to the live telemetry windows
-/// instead of the whole screen.
+/// The partial path repaints desktop, then the task-bar strip (redrawn whole
+/// if touched), then every window whose rectangle overlaps the damage (drawn
+/// bottom-up so the z-order stays correct), then Start, then the arrow last.
+/// Idle repaints are therefore limited to the live telemetry windows instead
+/// of the whole screen.
 /// Desktop background colour of scanline `row`: the slow vertical wash from
 /// [`DESK_TOP`] to [`DESK_BOT`]. Channel steps truncate toward zero, which
 /// makes the screen midpoint land exactly on the classic flat desktop tone.
@@ -3737,7 +4437,6 @@ pub fn render() {
             target.fill_rect(rx0, row, rw, 1, desk_color(row, screen_h));
         }
     }
-    draw_icons(target, &d);
     let task_y = vram.height().saturating_sub(TASKBAR_H);
     if full || rect_overlaps(&d, 0, task_y, vram.width(), TASKBAR_H) {
         draw_taskbar(target);
@@ -3751,6 +4450,14 @@ pub fn render() {
             if full || rect_overlaps(&d, win.x, win.y, win.w, win.h) {
                 draw_window(target, win);
             }
+        }
+    }
+    // Start is the topmost desktop surface; it stays above open windows and
+    // below the modal/crash dialogs.
+    if start_open() {
+        let (sx, sy, sw, sh) = start_pos(target);
+        if full || rect_overlaps(&d, sx, sy, sw, sh) {
+            draw_start(target);
         }
     }
     // The modal dialog paints above windows and the task bar; it is
@@ -3826,141 +4533,39 @@ fn mark_live_dirty() {
     }
 }
 
-fn icon_label(kind: WinKind) -> &'static str {
-    match kind {
-        WinKind::Welcome => "Welcome",
-        WinKind::System => "System",
-        WinKind::Clock => "Uptime",
-        WinKind::About => "About",
-        WinKind::Network => "Net",
-        WinKind::Tasks => "Tasks",
-        WinKind::Widgets => "Widgets",
-        WinKind::Client(_) => "ring3",
-    }
-}
-
-fn draw_icons(fb: &Framebuffer, clip: &Rect) {
-    let icons = [
-        (WinKind::System, 20, 40),
-        (WinKind::Clock, 20, 108),
-        (WinKind::About, 20, 176),
-        (WinKind::Network, 20, 244),
-        (WinKind::Tasks, 20, 312),
-        (WinKind::Widgets, 20, 380),
-    ];
-    for (kind, ix, iy) in icons {
-        if !rect_overlaps(clip, ix, iy, ICON_W, ICON_H) {
-            continue;
-        }
-        let (tx, ty) = (ix as i32, iy as i32);
-        unsafe {
-            vector::shadow_round(
-                fb,
-                tx,
-                ty,
-                ICON_W as i32,
-                ICON_H as i32,
-                WIN_R,
-                4,
-                80,
-                0x00_00_04_0a,
-            );
-            vector::fill_round(
-                fb,
-                tx,
-                ty,
-                ICON_W as i32,
-                ICON_H as i32,
-                WIN_R,
-                vector::ALL,
-                TILE_BG,
-            );
-            vector::stroke_round(
-                fb,
-                tx,
-                ty,
-                ICON_W as i32,
-                ICON_H as i32,
-                WIN_R,
-                vector::ALL,
-                vector::mix(TILE_BG, TEXT_DIM, 90),
-            );
-            vector::fill_round(fb, tx + 6, ty + 6, 18, 4, 2, vector::ALL, ICON_ACC);
-            draw_icon_glyph(fb, kind, tx + ICON_W as i32 / 2, ty + 21);
-        }
-        let label = icon_label(kind);
-        let lw = label.len() * console::GLYPH_W;
-        tui::draw_text(
-            fb,
-            ix + ICON_W.saturating_sub(lw) / 2,
-            iy + 34,
-            label,
-            TEXT,
-            TILE_BG,
-            ix + ICON_W,
-        );
-    }
-}
-
-/// Vector glyph centred inside a desktop icon tile: sliders (System), clock
-/// face (Uptime), info circle (About), wireframe globe (Net) and stacked
-/// bars (Tasks), painted in accent/dim tints over [`TILE_BG`].
-fn draw_icon_glyph(fb: &Framebuffer, kind: WinKind, cx: i32, cy: i32) {
-    let dim = vector::mix(TILE_BG, TEXT, 210);
-    unsafe {
-        match kind {
-            WinKind::System => {
-                for (row, knob) in [(-6i32, -4), (0, 5), (6, -7)] {
-                    vector::line(fb, cx - 10, cy + row, cx + 10, cy + row, dim);
-                    vector::fill_circle(fb, cx + knob, cy + row, 2, ICON_ACC);
-                }
-            }
-            WinKind::Clock => {
-                vector::stroke_ellipse(fb, cx, cy, 8, 8, dim);
-                vector::line(fb, cx, cy, cx, cy - 5, ICON_ACC);
-                vector::line(fb, cx, cy, cx + 4, cy + 2, ICON_ACC);
-            }
-            WinKind::About => {
-                vector::stroke_ellipse(fb, cx, cy, 8, 8, dim);
-                vector::fill_round(fb, cx - 1, cy - 5, 2, 7, 1, vector::ALL, ICON_ACC);
-                vector::fill_circle(fb, cx, cy + 4, 1, ICON_ACC);
-            }
-            WinKind::Network => {
-                vector::stroke_ellipse(fb, cx, cy, 8, 8, ICON_ACC);
-                vector::stroke_ellipse(fb, cx, cy, 4, 8, dim);
-                vector::line(fb, cx - 8, cy, cx + 8, cy, dim);
-            }
-            WinKind::Tasks => {
-                for (row, w) in [(0i32, 18), (6, 14), (12, 10)] {
-                    let c = if row == 0 { ICON_ACC } else { dim };
-                    vector::fill_round(fb, cx - w / 2, cy - 8 + row, w, 3, 1, vector::ALL, c);
-                }
-            }
-            WinKind::Widgets => {
-                for (gx, gy) in [(-8i32, -8i32), (0, -8), (-8, 0), (0, 0)] {
-                    vector::fill_round(fb, cx + gx, cy + gy, 6, 6, 1, vector::ALL, ICON_ACC);
-                }
-                vector::fill_round(fb, cx - 8, cy + 8, 16, 3, 1, vector::ALL, dim);
-            }
-            _ => {}
-        }
-    }
-}
-
 fn draw_taskbar(fb: &Framebuffer) {
     let y = fb.height().saturating_sub(TASKBAR_H);
     unsafe {
         fb.fill_rect_vgrad(0, y, fb.width(), TASKBAR_H, BAR_TOP, BAR_BG);
         fb.fill_rect(0, y, fb.width(), 1, vector::mix(BAR_TOP, TEXT_DIM, 110));
     }
-    let mut bx = 4;
+    // Bottom-left Start button: the three bars are vector-painted because the
+    // glyph font has no U+2630 box, the label uses the Cyrillic glyph table.
+    let start_bg = if start_open() { BAR_ON } else { TITLE_ON };
+    unsafe {
+        vector::fill_round(
+            fb,
+            2,
+            y as i32,
+            (START_BTN_W - 4) as i32,
+            (TASKBAR_H - 1) as i32,
+            3,
+            vector::ALL,
+            start_bg,
+        );
+        for row in 0..3 {
+            fb.fill_rect(8, y + 4 + row * 4, 12, 2, TEXT);
+        }
+    }
+    tui::draw_text(fb, 26, y, "Пуск", TEXT, start_bg, START_BTN_W);
+    let mut bx = START_BTN_W + 4;
     for i in taskbar_slots() {
         if i == usize::MAX {
             break;
         }
         if let Some(win) = unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() } {
             let title = win_live_title(win);
-            let w = 8 + title.len() * console::GLYPH_W;
+            let w = 8 + tui::text_width(title);
             let bg = if win.focused {
                 BAR_ON
             } else if win.minimized {
@@ -4145,6 +4750,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::Tasks => draw_tasks(fb, win, max_px),
         WinKind::Widgets => draw_lab(fb, win, max_px),
         WinKind::Client(_) => draw_client(fb, win),
+        WinKind::App(id) => draw_app(fb, win.x + 8, &mut y, max_px, id),
     }
     draw_widgets(fb, win);
 }
@@ -4392,7 +4998,7 @@ fn modal_btn_label(
     rw: usize,
     bg: Color,
 ) {
-    let tx = rx + (rw - label.len() * console::GLYPH_W) / 2;
+    let tx = rx + rw.saturating_sub(tui::text_width(label)) / 2;
     tui::draw_text(
         fb,
         tx,
@@ -4559,6 +5165,20 @@ fn draw_about(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
         WIN_BG,
         max_px,
     );
+}
+
+/// Body of a Start-catalog application window: the application name plus the
+/// honest capability lines from [`APPS`]. Dashboard and Network Settings use
+/// their real kernel windows, so only placeholder functions land here.
+fn draw_app(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize, id: u8) {
+    let Some(app) = APPS.get(id as usize) else {
+        return;
+    };
+    text_line(fb, x, y, app.title, colors::OK, WIN_BG, max_px);
+    *y += 4;
+    for line in app.body {
+        text_line(fb, x, y, line, TEXT, WIN_BG, max_px);
+    }
 }
 
 /// Background of the Network window's input boxes (darker than [`WIN_BG`]).

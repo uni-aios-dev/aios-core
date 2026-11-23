@@ -91,10 +91,13 @@ AIOS provides three interfaces for system management:
 |-----------|------|---------------|----------|
 | **Web** | Browser SPA (HTML/CSS/JS) | `aios-studio/` served at `http://<host>:<port>/` | Remote management, visual dashboard, any device |
 | **TUI** | Terminal (ratatui) | `aios-tui` | SSH, interactive, keyboard-driven |
-| **GUI** | Native window (egui/eframe) | `aios-gui` | Desktop shell with Start menu, windows and taskbar, mouse + keyboard |
+| **GUI** | Kernel framebuffer shell | `aios-kernel` (`gui.rs`) | The single user-facing AIOS Desktop: Start menu, windows and taskbar, mouse + keyboard |
 | **Daemon** | Headless server | `aiosd` | Docker, background, CI/CD, no terminal required |
 
-Both interfaces display the same data and expose the same operations. The GUI is a graphical equivalent of the TUI.
+The host `aios-gui` (egui/eframe) tree is legacy reference tooling and is not
+launched by the kernel or either host TUI. The kernel desktop and the host TUI do
+not share a widget model: the desktop owns its own framebuffer windows and reads
+live kernel state directly.
 
 ---
 
@@ -355,7 +358,7 @@ Far Manager / Midnight Commander style: top status bar, dual 50/50 panels (tab c
 | `r` | Refresh data |
 | `s` | Show telemetry |
 | `x` | Show status |
-| `W` | Launch the AIOS GUI desktop shell (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
+| `W` | Reports that one GUI is supported — the native `aios-kernel` desktop; no host GUI process is launched |
 | `q` | Quit (all tabs except the Shell tab, where `q` is typed into the command line) |
 | `F10` / `Alt`+`q` | Quit from **any** tab (including Shell and Files) |
 | `F1` or `?` | Toggle help overlay |
@@ -579,7 +582,7 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `Tab` / `F1` / `?` | Next tab / help overlay |
 | `1`-`7` | Direct tab select |
 | `Alt`+`1`-`7` | Direct tab select even while typing in the Shell / Web URL / AI input / net line |
-| `W` | Launch the AIOS GUI desktop shell (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
+| `W` | Reports that one GUI is supported — the native `aios-kernel` desktop; no host GUI process is launched |
 | `Space` | Pause/resume event log |
 | `L` | Toggle EN/RU input layout (the sys status line shows the active pair) |
 | `F10` | Re-probe the hardware (System & HW tab refresh) |
@@ -717,7 +720,95 @@ With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks
 
 ---
 
-## GUI (`aios-gui`)
+## Native kernel desktop (`aios-kernel`, AIOS Desktop)
+
+### Launch
+
+The desktop is the boot screen: `idle_loop()` calls `gui::enter()` as soon as
+the scheduler is live. There is no host process to start.
+
+```bash
+cargo build --manifest-path aios-kernel/Cargo.toml --target x86_64-unknown-none
+cargo run --manifest-path aios-kernel-run/Cargo.toml       # Limine/QEMU smoke boot
+```
+
+`Esc` with no focused window or `Start → Консоль ядра` drops to the kernel TUI
+diagnostic screen; the shell commands `tui` / `gui` switch between that fallback
+and the desktop. Running `cargo run --bin aios-gui` is **not** part of this path
+(see the legacy host section below).
+
+### Layout
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│                      AIOS Desktop                            │
+│           (functions open as separate windows)               │
+│                                                              │
+│   ┌─────────────────┐   ┌──────────────────────┐             │
+│   │ WASM Blocks F2  │   │ System Dashboard F1  │             │
+│   └─────────────────┘   └──────────────────────┘             │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ ☰ Пуск │ System Dashboard │ WASM Blocks │ …                 │  ← Taskbar
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Start menu
+
+`☰ Пуск` at the bottom left opens a sorted panel with a search field. A row
+shows a title and a hint (`F1 · Система`, `ring-3 · клиент`, `Система · задачи`,
+`Программа · calculator`). The catalog joins built-in windows, the nine `F1`-`F9`
+functions, live ring-3 clients, external programs and the system actions
+`Обновить всё` / `Консоль ядра`. Search matches title and hint case-insensitively
+in Latin **and** Cyrillic (`систем`, `net`, `F5`). The panel shows ten rows at a
+time and scrolls with ↑/↓ or the mouse wheel.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Win` / `☰ Пуск` | Toggle the Start panel |
+| `↑` / `↓` | Move the Start selection |
+| `Enter` | Open the selected Start entry |
+| `Esc` | Close Start; with no focused window, leave to the kernel TUI |
+| `F1`-`F9` | Open/focus System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Dependencies, Native Browser, Files, Hardware & Drivers |
+| `F10` / `F11` / `F12` | Maximize/restore, close, minimize the focused window |
+| `Tab` | Cycle focus between open windows |
+| Printable keys | Type into Start search or the focused window |
+
+Win and arrow navigation work on both PS/2 and USB keyboards: xHCI maps the HID
+usages to extended Set-1 codes and `idle_loop` forwards `0x5B`/`0x48`/`0x50`/
+`0x1C` to `gui::handle_ext_scancode()`. Crash and modal dialogs own the keyboard
+first, so those codes can never open Start over a blocking dialog.
+
+### Mouse
+
+- Click `☰ Пуск`, type a query, then click a row (or use ↑/↓ + Enter).
+- Click a taskbar button to focus or minimize its window; buttons follow a stable
+  order and appear only for open windows.
+- Drag a title bar to move a window; drag an edge/corner to resize it; use the
+  right-anchored minimize / maximize / close plates or `F10`-`F12`.
+- Click widget plates and text fields inside windows (Network, Task Manager,
+  Widget Lab); the kernel-internal clipboard works with `Ctrl+C`/`Ctrl+X`/`Ctrl+V`.
+
+### Rendering and limits
+
+Text is drawn by the `no_std` framebuffer renderer. ASCII and Cyrillic use the
+same char-aware helpers; the generated `font8x8::CYRILLIC` table covers Russian
+titles, hints, fields and notifications. Windows are painted into a RAM
+backbuffer and only dirty rectangles are blitted to the scanout buffer, so there
+is no flicker or tearing.
+
+The kernel is bare metal: there is no process launcher, WebView, audio stack,
+voice recognition or LLM backend. Host-only Start entries are honest notice
+windows — they do not fake a launch. WebView, voice control and remote AI Studio
+remain host-side capabilities. The palette is fixed in `aios-kernel/src/gui.rs`;
+`aios-gui/src/theme.rs` applies only to the legacy host tree.
+
+---
+
+## Legacy host GUI (`aios-gui`, reference only)
 
 ### Launch
 
@@ -725,7 +816,12 @@ With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks
 cargo run --bin aios-gui
 ```
 
-`aios-gui` is a **desktop shell**, not a tabbed dashboard. A dark desktop fills the window; built-in functions open as separate egui windows, and external programs are launched from the same catalog used by voice commands. The native window title is `AIOS Desktop v1.0.0`. When built `--no-default-features` (e.g. the live USB image) the **Native Browser** entry is absent from the Start menu and `F7` is inactive. The kernel TUI `W` key still opens the GUI in that configuration.
+This crate is kept as a historical reference for the egui/eframe desktop model
+(Start catalog, window state, theme). It is **not** the AIOS Desktop: neither the
+kernel nor the host TUIs launch it, and `W` no longer starts a host GUI process.
+The sections below describe that legacy host UI only; their window features,
+voice control, WebView and host process actions are not available in the native
+kernel desktop described above. The native window title was `AIOS Desktop v1.0.0`.
 
 ### Layout
 
@@ -878,7 +974,9 @@ The bottom taskbar has `☰ Пуск` on the left, a button for each open functi
 
 ### Theming
 
-Dark theme with customizable colors in `aios-gui/src/theme.rs`:
+Dark theme with customizable colors in `aios-gui/src/theme.rs`. These colors
+apply only to the legacy host UI; the native desktop palette is compiled into
+`aios-kernel/src/gui.rs`:
 
 | Color | Usage |
 |-------|-------|
@@ -960,11 +1058,16 @@ As of v2.30.0 the Web Studio requires a local account before it will load the da
 
 ## Architecture Notes
 
-- **TUI** uses `ratatui` + `crossterm` — runs in any terminal, works over SSH
-- **GUI** uses `egui` + `eframe` — native window, GPU-accelerated rendering
-- Both read from the same `DashboardState` / `AiosApp` model
-- Neither interface performs hardware operations directly — they request operations via the scheduler/block manager
-- All data is snapshot-based: `DashboardState::update_from_scheduler()` (TUI) or `AiosApp::new()` (GUI, initial only)
+- **Kernel desktop** (`aios-kernel/src/gui.rs`) is the single user-facing GUI:
+  a `no_std` framebuffer shell with its own windows, Start catalog and taskbar.
+  It reads live kernel state directly and never launches a host process.
+- **Host TUI** uses `ratatui` + `crossterm` — runs in any terminal, works over SSH;
+  the kernel TUI (`src/tui.rs`) is a diagnostic fallback in the bare-metal image.
+- The legacy host GUI used `egui` + `eframe` with a native GPU window and a shared
+  `DashboardState` / `AiosApp` model; it is reference code, not the AIOS Desktop.
+- The kernel desktop and host TUI do not share a widget model. The host interfaces
+  request operations via the scheduler/block manager; the kernel desktop reads
+  atomic kernel counters directly.
 
 ---
 
@@ -1004,13 +1107,19 @@ The daemon performs the same initialisation as `aios-tui` but runs without a ter
 
 ## Running All Interfaces
 
-All four interfaces (Web, TUI, GUI, Daemon) can run simultaneously. The Web SPA connects to `aios-bridge` via HTTP/WebSocket and is purely a remote client. TUI and GUI are in-process interfaces that create their own `Scheduler` and `BlockRegistry` instances locally.
+The host interfaces (Web, host TUI, Daemon) can run simultaneously on a host:
+the Web SPA connects to `aios-bridge` via HTTP/WebSocket as a remote client, and
+the host TUI is an in-process interface with its own `Scheduler` and
+`BlockRegistry`. The native kernel desktop is not a host interface — it boots
+inside `aios-kernel` on bare metal, shows the framebuffer GUI first, and exposes
+the in-kernel TUI as a fallback via `tui`/`gui` or `Esc`.
 
 ---
 
 ## Bare-Metal Microkernel Interactive TUI (v2.38.19)
 
-The microkernel TUI is the **primary screen**: a compact boot-log strip
+The microkernel TUI is the **diagnostic fallback screen** (since v2.81.0 the
+native framebuffer desktop is the primary screen): a compact boot-log strip
 (`CONSOLE_TOP_ROWS` = 6 glyph rows) sits at the top and the interactive panel
 fills the whole remaining height down to the bottom status strip, so the full
 tab content is always visible regardless of the framebuffer size. The panel

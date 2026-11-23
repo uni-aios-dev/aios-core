@@ -1,5 +1,39 @@
 # AIOS Development Log
 
+## v2.81.0 - One native GUI: AIOS Desktop in aios-kernel (2026-11-24)
+
+### Added
+- `aios-kernel` now enters the framebuffer desktop directly from `idle_loop()`
+  at boot. The dark desktop, bottom taskbar with `☰ Пуск`, sorted searchable
+  Start menu, one taskbar button per open window and draggable/resizable windows
+  live in `aios-kernel/src/gui.rs`. No `aios-gui` host process is started.
+- Cyrillic glyphs (`aios-kernel/src/font8x8.rs`) and char-aware text helpers
+  (`aios-kernel/src/tui.rs`) render Start, the taskbar, titles and text fields in
+  Russian. The Start panel accepts ↑/↓/Enter/Esc and the Win key; USB arrow and
+  Win scancodes are mapped in `aios-kernel/src/xhci.rs`.
+- `F1`-`F9` open or focus the nine desktop functions; `F10`/`F11`/`F12`
+  maximize, close and minimize the focused window.
+
+### Changed
+- The `aios-gui` crate remains in-tree as legacy reference tooling only. `W` in
+  both host TUIs now reports the one-GUI policy instead of spawning a host GUI
+  process, and `aios-webview/src/launcher.rs` is documented as a compatibility
+  helper that new code must not use.
+- The kernel TUI is a diagnostic fallback (`tui` command or `Esc` with no focused
+  window). Host-only Start entries still appear in the catalog but open an
+  honest notice window: the bare-metal kernel has no process launcher, WebView,
+  audio stack or LLM backend.
+
+### Fixed
+- Blocking crash/modal dialogs now outrank Start, and Start outranks the Win
+  toggle; extended scancodes can no longer open Start over a blocking dialog.
+- Cyrillic Start search and text-field rendering share the Unicode case-folding
+  and glyph path used by the rest of the desktop, so `систем` matches `Система`.
+
+### Documentation
+- EN/RU `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` and `INTERFACE` now describe
+  the native kernel desktop, its hotkeys and its honest host-program limits.
+
 ## v2.80.0 - Desktop shell in aios-gui (2026-11-23)
 
 ### Added
