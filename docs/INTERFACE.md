@@ -244,11 +244,13 @@ prefix, for example `console process spawn worker --ram 64`. Bare `clear`/`cls`
 are routed through the same path (case-insensitively): they emit no lines and
 clear the shell buffer exactly as before, and are recorded in the unified
 console history. Bare `help`, `?`, `ps`, `blocks`, valid `kill`, `logs`, `status`,
-the fixed `kill`/`spawn`/`store`/`net` usage lines and unknown commands also use
-exact-output console adapters, so their text is unchanged. Bare `spawn`, `store`,
-`net`, `cluster` and `restart` still use the legacy dispatcher. `console help`
-lists the canonical commands; `console clear` and `console exit` keep their
-existing behaviour.
+`restart`, `store list`, the fixed `kill`/`spawn`/`store`/`net` usage lines and
+unknown commands also use exact-output console adapters, so their text is
+unchanged. Bare `spawn` with a path, valid `store search`/`store install`,
+`net get`/`net set` and `cluster` still use the legacy dispatcher. Bare `restart`
+still re-probes hardware, but its output and log lines come from `aios-console`.
+`console help` lists the canonical commands; `console clear` and `console exit`
+keep their existing behaviour.
 
 The standalone `aios-shell` accepts the same prefix, case-insensitively:
 `console ps`, `CONSOLE metrics --json` and bare `console` (help) all reach the

@@ -93,18 +93,23 @@ lines through it. Bare `clear`/`cls` now go through the same `console_execute`
 path: both emit no lines and only `OutputControl::Clear`, matching the legacy
 buffer clear; they are also recorded in `HostBackend` history. The first batch of
 bare `aios` adapters also covers `help`/`?`, `ps`, `blocks`, valid `kill`, `logs`,
-`status`, the usage lines for `kill`/`spawn`/`store`/`net` and the unknown-command
-fallback. `execute_aios_adapter` returns a flag, and `shell_execute` falls back to
-`shell_execute_legacy` for everything else. Pure formatters live in
-`aios-console/src/legacy.rs` (`AIOS_HELP`, `aios_unknown_text`,
-`aios_usage_text`, `aios_kill_success`, `aios_kill_failed`, `aios_log_text`,
-`aios_status_text`) and the data adapters in `HostBackend`
-(`aios_process_list_text`, `aios_block_list_text`, `aios_kill`). The `kill`
-adapter keeps the distinct `aios` wording (`  killed '<name>' (<pid>)` /
+`status`, `restart`, `store list`, the fixed usage lines for
+`kill`/`spawn`/`store`/`net` (including missing `store search`/`store install`
+arguments) and the unknown-command fallback. `execute_aios_adapter` returns a
+flag, and `shell_execute` falls back to `shell_execute_legacy` for everything
+else. Pure formatters live in `aios-console/src/legacy.rs` (`AIOS_HELP`,
+`aios_unknown_text`, `aios_usage_text`, `aios_kill_success`, `aios_kill_failed`,
+`aios_log_text`, `aios_status_text`, `aios_restart_text`, `aios_restart_log`) and
+the data adapters in `HostBackend` (`aios_process_list_text`,
+`aios_block_list_text`, `aios_kill`, `aios_store_list_text`). The `kill` adapter
+keeps the distinct `aios` wording (`  killed '<name>' (<pid>)` /
 `  kill failed: <error>`) instead of the safe-mode `LegacyMutation` text and
-records no event, because the `aios` dispatcher does not log kills. The remaining
-bare `spawn`, `store`, `net`, `cluster` and `restart` commands keep the legacy
-dispatcher until their TUI-bound seams have exact-output adapters.
+records no event, because the `aios` dispatcher does not log kills. Bare
+`restart` keeps its hardware re-probe in the frontend and its fixed output/log
+lines in `aios-console`; it is a different operation from canonical `wd reset`
+and safe-mode `recover`. The remaining bare `spawn` (with a path), valid
+`store search`/`store install`, `net` (with arguments), `cluster` commands keep
+the legacy dispatcher until their TUI-bound seams have exact-output adapters.
 `aios-shell` likewise owns one `HostBackend` created in `main` and recognises a
 case-insensitive `console <...>` prefix before alias expansion, so the registry
 never sees the prefix itself. `console` alone prints generated help;
@@ -158,10 +163,11 @@ unit tests against the pure seams `SafeModeShell::parse_command`,
 handlers stay out of these tests; the table asserts resolution results only.
 `legacy_parity.rs` therefore proves resolution but not output equality:
 `aios/src/tui/mod.rs` pins the exact legacy lines for `help`/`?`, unknown
-commands, `kill`/`store`/`net` usage strings and empty `ps`, and eight binary
+commands, `kill`/`store`/`net` usage strings and empty `ps`, and eleven binary
 parity tests compare the adapter path with `shell_execute_legacy` byte-for-byte
 (read-only commands share one `TuiApp` instance so the `HashMap` iteration order
-in `Scheduler::all_processes` is identical for both paths), while
+in `Scheduler::all_processes` is identical for both paths); one more test checks
+that bare `restart` still appends the legacy log entry, while
 `aios-console/tests/host_backend.rs` pins the canonical host wording for
 `help`, `clear` and usage errors. `aios-watchdog/src/safe_mode.rs` now also pins
 the exact legacy `ShellResponse.success` and `output` for every branch — empty

@@ -1192,7 +1192,8 @@ fn console_execute(app: &mut TuiApp, input: &str) {
 /// adapter; the legacy dispatcher then stays untouched for everything else.
 fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
     use aios_console::legacy::{
-        aios_log_text, aios_status_text, aios_unknown_text, aios_usage_text, AIOS_HELP,
+        aios_log_text, aios_restart_log, aios_restart_text, aios_status_text, aios_unknown_text,
+        aios_usage_text, AIOS_HELP,
     };
 
     let lower = line.trim().to_lowercase();
@@ -1232,11 +1233,23 @@ fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
         "spawn" if parts.get(1).is_none_or(|name| name.is_empty()) => {
             vec![aios_usage_text("spawn").expect("spawn has a usage line")]
         }
+        "store" if parts.get(1) == Some(&"list") => app.console.aios_store_list_text(),
+        "store" if parts.get(1) == Some(&"search") && parts.len() <= 2 => {
+            vec![aios_usage_text("store search").expect("store search has a usage line")]
+        }
+        "store" if parts.get(1) == Some(&"install") && parts.len() <= 2 => {
+            vec![aios_usage_text("store install").expect("store install has a usage line")]
+        }
         "store" if !matches!(parts.get(1).copied(), Some("list" | "search" | "install")) => {
             vec![aios_usage_text("store").expect("store has a usage line")]
         }
         "net" if !matches!(parts.get(1).copied(), Some("get" | "set")) => {
             vec![aios_usage_text("net").expect("net has a usage line")]
+        }
+        "restart" => {
+            app.refresh_hw();
+            push_log(&app.logs, aios_restart_log().to_string());
+            vec![aios_restart_text().to_string()]
         }
         _ if !is_aios_legacy_command(command) => vec![aios_unknown_text(command)],
         _ => return false,
@@ -2300,6 +2313,36 @@ mod tests {
         app.shell_output.clear();
         shell_execute(&mut app, "status");
         assert_eq!(app.shell_output, legacy_out);
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_store_list() {
+        assert_readonly_parity("store list", &[], true);
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_store_usage() {
+        for input in ["store search", "STORE INSTALL", "store bogus"] {
+            assert_readonly_parity(input, &[], true);
+        }
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_restart() {
+        assert_readonly_parity("restart", &[], true);
+        assert_readonly_parity("RESTART", &[], true);
+    }
+
+    #[test]
+    fn bare_restart_adapter_pushes_the_legacy_log_line() {
+        let mut app = aios_parity_app(&[], true);
+        shell_execute(&mut app, "restart");
+        let logs = app.logs.lock().unwrap();
+        assert!(
+            logs.iter()
+                .any(|line| line == "AIOS: restart requested via shell"),
+            "got {logs:?}"
+        );
     }
 
     fn test_node(id: u64, name: &str, addr: &str) -> NodeInfo {

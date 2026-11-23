@@ -1519,6 +1519,21 @@ impl HostBackend {
         out
     }
 
+    /// Produces the exact legacy `aios` TUI shell store list.
+    ///
+    /// Reads the same installed blocks as canonical `store list` from the
+    /// backend-owned `StoreManager`, then applies the legacy two-column text.
+    pub fn aios_store_list_text(&self) -> Vec<String> {
+        let installed = self.store.list_installed();
+        if installed.is_empty() {
+            return vec![String::from("  no blocks installed")];
+        }
+        installed
+            .iter()
+            .map(|block| format!("  {} {}", block.manifest.name, block.manifest.version))
+            .collect()
+    }
+
     fn record_mutation(&self, mutation: &crate::legacy::LegacyMutation) {
         if let Some(event) = &mutation.event {
             if let Some(log) = self.event_log.as_ref() {

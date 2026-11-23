@@ -93,18 +93,23 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 `console_execute`: оба не выводят строк и возвращают только `OutputControl::Clear`,
 как и прежняя очистка буфера; при этом они добавляются в историю `HostBackend`.
 Первая партия адаптеров для команд без префикса охватывает `help`/`?`, `ps`,
-`blocks`, корректный `kill`, `logs`, `status`, usage-строки для
-`kill`/`spawn`/`store`/`net` и откат на неизвестную команду.
+`blocks`, корректный `kill`, `logs`, `status`, `restart`, `store list`,
+фиксированные usage-строки для `kill`/`spawn`/`store`/`net` (включая отсутствующие
+аргументы `store search`/`store install`) и откат на неизвестную команду.
 `execute_aios_adapter` возвращает флаг, а `shell_execute` прибегает к
 `shell_execute_legacy` для всего остального. Чистые форматтеры находятся в
 `aios-console/src/legacy.rs` (`AIOS_HELP`, `aios_unknown_text`,
 `aios_usage_text`, `aios_kill_success`, `aios_kill_failed`, `aios_log_text`,
-`aios_status_text`), а адаптеры данных — в `HostBackend`
-(`aios_process_list_text`, `aios_block_list_text`, `aios_kill`). Адаптер `kill`
-сохраняет особую формулировку `aios` (`  killed '<name>' (<pid>)` /
-`  kill failed: <error>`) вместо текста `LegacyMutation` безопасного режима и не
-записывает событие, поскольку старый диспетчер `aios` не журналирует kill.
-Оставшиеся команды без префикса `spawn`, `store`, `net`, `cluster` и `restart`
+`aios_status_text`, `aios_restart_text`, `aios_restart_log`), а адаптеры данных —
+в `HostBackend` (`aios_process_list_text`, `aios_block_list_text`, `aios_kill`,
+`aios_store_list_text`). Адаптер `kill` сохраняет особую формулировку `aios`
+(`  killed '<name>' (<pid>)` / `  kill failed: <error>`) вместо текста
+`LegacyMutation` безопасного режима и не записывает событие, поскольку старый
+диспетчер `aios` не журналирует kill. Команда без префикса `restart` оставляет
+повторное зондирование оборудования во фронтенде, а фиксированные строки вывода и
+журнала — в `aios-console`; это другая операция, нежели каноническое `wd reset` и
+`recover` безопасного режима. Оставшиеся команды без префикса: `spawn` с путём,
+корректные `store search`/`store install`, `net` с аргументами и `cluster` —
 пользуются старым диспетчером, пока их TUI-зависимые точки не получат адаптеры
 точного вывода.
 `aios-shell` также владеет одним `HostBackend`, созданным в `main`, и
@@ -165,10 +170,12 @@ legacy-алиас безопасного режима. Остальные стр
 результаты разрешения команд. Поэтому `legacy_parity.rs` подтверждает разрешение,
 но не равенство вывода: `aios/src/tui/mod.rs` фиксирует точные старые строки для
 `help`/`?`, неизвестной команды, usage-сообщений `kill`/`store`/`net` и пустого
-`ps`, а восемь бинарных тестов паритета сравнивают путь адаптера с
+`ps`, а одиннадцать бинарных тестов паритета сравнивают путь адаптера с
 `shell_execute_legacy` побайтово (команды только для чтения используют один
 экземпляр `TuiApp`, чтобы порядок итерации `HashMap` в
-`Scheduler::all_processes` совпадал для обоих путей); `aios-console/tests/host_backend.rs`
+`Scheduler::all_processes` совпадал для обоих путей); ещё один тест проверяет, что
+`restart` без префикса добавляет legacy-строку в журнал;
+`aios-console/tests/host_backend.rs`
 фиксирует канонический вывод хоста для `help`, `clear` и usage-ошибок.
 `aios-watchdog/src/safe_mode.rs` теперь также
 фиксирует точные старые `ShellResponse.success` и `output` для каждой ветки:

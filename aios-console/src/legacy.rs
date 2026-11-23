@@ -249,6 +249,8 @@ pub fn aios_usage_text(command: &str) -> Option<String> {
         "store" => Some(String::from(
             "Usage: store list | store search <q> | store install <name>",
         )),
+        "store search" => Some(String::from("Usage: store search <query>")),
+        "store install" => Some(String::from("Usage: store install <name>")),
         "net" => Some(String::from("Usage: net get | net set key=value ...")),
         _ => None,
     }
@@ -273,6 +275,16 @@ pub fn aios_log_text(entries: &[String]) -> Vec<String> {
         .rev()
         .map(|line| format!("  {line}"))
         .collect()
+}
+
+/// Formats the exact legacy `aios` TUI shell `restart` output line.
+pub fn aios_restart_text() -> &'static str {
+    "  hardware re-probed (hardware engine rescanned)"
+}
+
+/// Formats the exact legacy `aios` TUI shell `restart` log entry.
+pub fn aios_restart_log() -> &'static str {
+    "AIOS: restart requested via shell"
 }
 
 /// Formats the exact legacy `aios` TUI shell `status` output from system values.
@@ -370,11 +382,12 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        aios_kill_failed, aios_kill_success, aios_log_text, aios_status_text, aios_unknown_text,
-        aios_usage_text, block_list_text, exit_text, help_text, kill_success, load_success,
-        log_text, mutation_failed, process_list_text, restart_limit_reached, restart_success,
-        spawn_success, status_text, unknown_text, unload_success, AIOS_HELP, BLOCK_HEADER,
-        BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
+        aios_kill_failed, aios_kill_success, aios_log_text, aios_restart_log, aios_restart_text,
+        aios_status_text, aios_unknown_text, aios_usage_text, block_list_text, exit_text,
+        help_text, kill_success, load_success, log_text, mutation_failed, process_list_text,
+        restart_limit_reached, restart_success, spawn_success, status_text, unknown_text,
+        unload_success, AIOS_HELP, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP,
+        PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -588,6 +601,19 @@ mod tests {
             Some("Usage: net get | net set key=value ...")
         );
         assert_eq!(aios_usage_text("cluster"), None);
+        assert_eq!(
+            aios_usage_text("store search").as_deref(),
+            Some("Usage: store search <query>")
+        );
+        assert_eq!(
+            aios_usage_text("store install").as_deref(),
+            Some("Usage: store install <name>")
+        );
+        assert_eq!(
+            aios_restart_text(),
+            "  hardware re-probed (hardware engine rescanned)"
+        );
+        assert_eq!(aios_restart_log(), "AIOS: restart requested via shell");
     }
 
     #[test]

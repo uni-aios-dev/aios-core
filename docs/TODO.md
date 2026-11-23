@@ -267,6 +267,11 @@
   usage lines and the unknown-command fallback. Eight binary parity tests compare
   the adapter path with `shell_execute_legacy` byte-for-byte; `aios`-specific text
   formatters live in `legacy.rs` and the data adapters in `HostBackend`.
+- [x] Extend the `aios` shell adapters with bare `restart`, `store list` and the
+  missing-argument usage lines for `store search`/`store install`. `legacy.rs`
+  gained `aios_restart_text`/`aios_restart_log`; `HostBackend` gained
+  `aios_store_list_text` over the same installed blocks as canonical `store list`.
+  Eleven binary parity tests plus one restart-log test pass.
 - [x] Port `store sign` and `store publish` into the unified `aios-console`:
   real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
   and the bridge `POST /api/v1/store/publish` call. They are registered
@@ -274,8 +279,9 @@
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
 - [ ] Finish replacing the five legacy dispatchers (`aios-tui` done, `aios`
-  partial, kernel TUI, `SafeModeShell`, `aios-shell`) only after the remaining
-  adapters and parity checks are green.
+  mostly done — only argument-bound `spawn`/`store`/`net`/`cluster` remain, kernel
+  TUI, `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
+  checks are green.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 
