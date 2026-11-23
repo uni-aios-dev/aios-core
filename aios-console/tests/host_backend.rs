@@ -445,6 +445,46 @@ fn block_run_reports_missing_installation() {
 }
 
 #[test]
+fn state_extract_and_restore_use_the_live_wasm_instance() {
+    let (config, _) = test_config("state-transfer");
+    installed_stub(&config, "stub");
+    let mut host = HostBackend::with_config(config);
+
+    assert_eq!(dispatch(&mut host, "state extract").code, ExitCode::Usage);
+    assert_eq!(dispatch(&mut host, "state restore").code, ExitCode::Usage);
+    assert_eq!(
+        dispatch(&mut host, "state extract absent").code,
+        ExitCode::BackendError
+    );
+    assert_eq!(
+        dispatch(&mut host, "state extract stub").code,
+        ExitCode::BackendError
+    );
+    assert_eq!(
+        dispatch(&mut host, "state restore stub").code,
+        ExitCode::BackendError
+    );
+
+    assert_ok(
+        "block run stub",
+        &dispatch(&mut host, "block run stub ping"),
+    );
+
+    let extracted = dispatch(&mut host, "state extract stub");
+    assert_ok("state extract stub", &extracted);
+    assert!(extracted.lines[0].starts_with("state extracted: stub ("));
+    assert!(extracted.lines[0].ends_with(" bytes)"));
+
+    let restored = dispatch(&mut host, "state restore stub");
+    assert_ok("state restore stub", &restored);
+    assert!(restored.lines[0].starts_with("state restored: stub ("));
+    assert_eq!(
+        restored.lines[0].replace("restored", "extracted"),
+        extracted.lines[0]
+    );
+}
+
+#[test]
 fn host_unimplemented_subcommands_are_unavailable() {
     let mut host = backend("unavailable");
 
@@ -455,7 +495,6 @@ fn host_unimplemented_subcommands_are_unavailable() {
         "acl grant net raw",
         "ping example.com",
         "net recheck",
-        "state extract browser",
         "fm jobs",
         "wd force-safe-mode",
         "bridge status",
@@ -482,7 +521,6 @@ fn host_unavailable_commands_report_precise_reasons() {
         ("acl grant CAP_FS_READ /tmp", "no path-scoped ACL API"),
         ("ping example.com", "no ICMP reachability API"),
         ("net recheck", "recheck() is kernel-only"),
-        ("state extract browser", "no live StatefulBlock instances"),
         ("fm jobs", "owns no live FileManager"),
     ] {
         let output = dispatch(&mut host, input);

@@ -5,7 +5,7 @@
 //! unimplemented subcommand is reported as unavailable instead of being silently
 //! accepted.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -158,6 +158,7 @@ pub struct HostBackend {
     wasi_filter: WasiFilter,
     wasm_source: Option<Vec<u8>>,
     runtime_blocks: BTreeMap<String, BlockId>,
+    state_snapshots: HashMap<BlockId, Vec<u8>>,
     compat_manager: CompatSandboxManager,
     access_control: AccessControlLayer,
     cap_token_ids: Vec<u32>,
@@ -234,6 +235,7 @@ impl HostBackend {
             wasi_filter: WasiFilter::default(),
             wasm_source: None,
             runtime_blocks: BTreeMap::new(),
+            state_snapshots: HashMap::new(),
             compat_manager: CompatSandboxManager::new(),
             access_control: AccessControlLayer::new(b"aios-console-issuer-v1".to_vec(), 3_600_000),
             cap_token_ids: Vec::new(),
@@ -521,6 +523,8 @@ impl CommandBackend for HostBackend {
             ("auth", Some(subcommand)) => self.auth_command(invocation, subcommand),
             ("fm", Some("jobs")) => self.fm_jobs(),
             ("fm", Some("cancel")) => self.fm_cancel(invocation),
+            ("state", Some("extract")) => self.state_extract(invocation),
+            ("state", Some("restore")) => self.state_restore(invocation),
             ("source", _) => self.source(invocation),
             _ => {
                 let name = invocation.display_name();
@@ -2290,6 +2294,66 @@ impl HostBackend {
                 ..CommandOutput::default()
             },
         }
+    }
+
+    /// Resolves a block name or numeric id that has a live WASM instance.
+    fn state_target(&self, target: &str) -> Option<BlockId> {
+        if let Some(id) = self.runtime_blocks.get(target).copied() {
+            return Some(id);
+        }
+        let registry = guard(&self.registry);
+        resolve_block(&registry, target)
+    }
+
+    /// Captures the live linear memory of an executed block as a session snapshot.
+    fn state_extract(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(target) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Some(id) = self.state_target(target) else {
+            return CommandOutput::error(&format!("block '{target}' not found"));
+        };
+        let mut executor = guard(&self.executor);
+        if !executor.is_executed(id) {
+            return CommandOutput::error(&format!(
+                "block '{target}' has no live instance; run 'block run {target}' first"
+            ));
+        }
+        let snapshot = match executor.extract_state(id) {
+            Ok(bytes) => bytes,
+            Err(error) => return CommandOutput::error(&format!("state extract failed: {error}")),
+        };
+        let bytes = snapshot.len();
+        self.state_snapshots.insert(id, snapshot);
+        CommandOutput::ok(vec![format!("state extracted: {target} ({bytes} bytes)")])
+    }
+
+    /// Restores a previously extracted snapshot into the live WASM instance.
+    fn state_restore(&mut self, invocation: &Invocation) -> CommandOutput {
+        let Some(target) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Some(id) = self.state_target(target) else {
+            return CommandOutput::error(&format!("block '{target}' not found"));
+        };
+        let Some(snapshot) = self.state_snapshots.get(&id).cloned() else {
+            return CommandOutput::error(&format!(
+                "no extracted state for '{target}'; run 'state extract {target}' first"
+            ));
+        };
+        let mut executor = guard(&self.executor);
+        if !executor.is_executed(id) {
+            return CommandOutput::error(&format!(
+                "block '{target}' has no live instance; run 'block run {target}' first"
+            ));
+        }
+        if let Err(error) = executor.restore_state(id, &snapshot) {
+            return CommandOutput::error(&format!("state restore failed: {error}"));
+        }
+        CommandOutput::ok(vec![format!(
+            "state restored: {target} ({} bytes)",
+            snapshot.len()
+        )])
     }
 
     fn net_set(&mut self, invocation: &Invocation) -> CommandOutput {

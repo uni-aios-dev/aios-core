@@ -266,14 +266,17 @@ OS-группы процессов, сигналы и foreground TTY, котор
 глобальные токены процесса, а токены `caps` привязаны к block ID; `ping` требует
 ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connect не является
 эхо-ответом; у хостового `net recheck` нет аналога, так как настоящий `recheck()`
-существует только в ядре (`no_std`), а `NetManager::status()` возвращает кэш;
-`state extract|restore` не может найти живой `StatefulBlock`, потому что
-`BlockRegistry` не хранит экземпляры блоков. Эти хостовые команды остаются
-`unavailable`, пока не появятся указанные реальные API. `fm jobs|cancel` теперь
-реальны там, где внедрён живой `FileManagerControl` (`aios-tui`); обычный
-`HostBackend` без этого адаптера по-прежнему сообщает `unavailable`.
-`KernelBackend` — исключение для `net recheck`: он вызывает настоящий
-`crate::net::recheck()` и печатает `network recheck requested`.
+существует только в ядре (`no_std`), а `NetManager::status()` возвращает кэш.
+Эти хостовые команды остаются `unavailable`, пока не появятся указанные реальные
+API. `fm jobs|cancel` теперь реальны там, где внедрён живой `FileManagerControl`
+(`aios-tui`); обычный `HostBackend` без этого адаптера по-прежнему сообщает
+`unavailable`. `state extract|restore` теперь реальны:
+`BlockExecutor::extract_state` и `restore_state` снимают и восстанавливают снимок
+живой линейной памяти исполняемого WASM-блока (тот же механизм миграции, что
+использует `WasmLiveUpdateEngine`), а `HostBackend` хранит снимок в сессии, чтобы
+`state restore <block>` записал его обратно в живой экземпляр. `KernelBackend` —
+исключение для `net recheck`: он вызывает настоящий `crate::net::recheck()` и
+печатает `network recheck requested`.
 
 `aios-kernel/src/console_backend.rs` реализует `KernelBackend` с зависимостью
 `aios-console` без `std` (`default-features = false`). Он адаптирует существующие

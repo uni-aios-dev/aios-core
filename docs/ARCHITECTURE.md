@@ -257,12 +257,15 @@ groups, signals and TTY foreground that `aios-process-mgr` does not model;
 process-global tokens and `caps` tokens are keyed by block ID; `ping` needs an
 ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
 connect is not an echo reply; host `net recheck` has no equivalent because the
-real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached;
-`state extract|restore` cannot reach a live `StatefulBlock` because
-`BlockRegistry` stores no instances. These host commands stay `unavailable`
-until those real APIs exist. `fm jobs|cancel` is now real wherever a live
-`FileManagerControl` is injected (`aios-tui`); a bare `HostBackend` without that
-seam still reports `unavailable`. `KernelBackend` is an exception for
+real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached.
+These host commands stay `unavailable` until those real APIs exist.
+`fm jobs|cancel` is now real wherever a live `FileManagerControl` is injected
+(`aios-tui`); a bare `HostBackend` without that seam still reports
+`unavailable`. `state extract|restore` is now real: `BlockExecutor::extract_state`
+and `restore_state` snapshot the live linear memory of a WASM block that has been
+executed (the same migration primitive `WasmLiveUpdateEngine` uses), and
+`HostBackend` keeps the snapshot in the session so `state restore <block>` writes
+it back into the live instance. `KernelBackend` is an exception for
 `net recheck`: it calls the real `crate::net::recheck()` and prints
 `network recheck requested`.
 

@@ -111,17 +111,19 @@ Ed25519/моста, что и старый TUI, а тест с локальны�
 `PersistedLiveUpdateEngine`), команды `wd`/`bridge`/`auth` и `fm jobs|cancel`
 (хостовые адаптеры через точки внедрения `control.rs`). `fm jobs|cancel` реальны
 там, где `aios-tui` внедряет живой `FileManagerControl`; обычный `HostBackend`
-без адаптера по-прежнему возвращает `unavailable`. Оставшиеся корректные записи
-реестра — `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck` на хосте и
-`state extract|restore` — по-прежнему возвращают `ERR unavailable`, поскольку для
-них нет реального хостового API. `aios-console/src/unavailable.rs` теперь сообщает
-конкретную причину для каждой: отсутствие OS job control, нет API ACL для путей,
-нет ICMP-API или привилегий raw-сокета, нужен хостовый аналог `recheck()`, который
-есть только в ядре, в реестре нет живых экземпляров `StatefulBlock`. Ядерная
-сторона `net recheck` теперь реальна: `KernelBackend` вызывает
-`crate::net::recheck()`. Оставлять хостовые команды `unavailable` с точной
-причиной — осознанное решение: подмена через `caps`, состояние блоков или TCP
-connect отбросила бы их объявленную семантику.
+без адаптера по-прежнему возвращает `unavailable`. `state extract|restore` реальны
+поверх общего исполнителя WASM: они используют живую линейную память
+исполняемого блока, поэтому снимок существует только после `block run <block>`, а
+восстановление — только после extract в той же сессии. Оставшиеся корректные
+записи реестра — `jobs|fg|bg`, `acl grant|revoke`, `ping` и `net recheck` на
+хосте — по-прежнему возвращают `ERR unavailable`, поскольку для них нет реального
+хостового API. `aios-console/src/unavailable.rs` теперь сообщает конкретную
+причину для каждой: отсутствие OS job control, нет API ACL для путей, нет
+ICMP-API или привилегий raw-сокета, нужен хостовый аналог `recheck()`, который
+есть только в ядре. Ядерная сторона `net recheck` теперь реальна: `KernelBackend`
+вызывает `crate::net::recheck()`. Оставлять хостовые команды `unavailable` с
+точной причиной — осознанное решение: подмена через `caps` или TCP connect
+отбросила бы их объявленную семантику.
 
 Циклическая зависимость для команд watchdog/bridge/auth/file-manager устранена:
 `aios-console` задаёт трейты управления; бинарник `aios` внедряет реализации

@@ -205,14 +205,16 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 | `acl` | нет API ACL для путей; гранты `AclContext` глобальны, `caps` использует block ID |
 | `ping` | нет ICMP-API и привилегий raw-сокета; TCP connect не является эхо-ответом |
 | `net recheck` на хосте | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
-| `state` | `BlockRegistry` не хранит живые экземпляры `StatefulBlock` |
 
 Таблица описывает только хост без внедрённых адаптеров. `console fm jobs` и
 `console fm cancel <id>` становятся реальными, как только внедрён живой
 `FileManagerControl`: `aios-tui` делает это после запуска своего `FileManager`,
 отображая реальный снимок заданий в текст консоли и отменяя настоящий токен
-`Progress`. В ядерном бэкенде `console net recheck` реален: он вызывает
-`crate::net::recheck()` и печатает `network recheck requested`.
+`Progress`. `console state extract|restore <block>` реален на хосте: он снимает
+снимок живой линейной памяти исполняемого WASM-блока и восстанавливает его по
+запросу; для restore нужен предыдущий extract в той же сессии и живой экземпляр
+(сначала `block run <block>`). В ядерном бэкенде `console net recheck` реален: он
+вызывает `crate::net::recheck()` и печатает `network recheck requested`.
 
 Универсальное сообщение `has no host backend yet` остаётся только для команд вне
 этого исследованного множества.

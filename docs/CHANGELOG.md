@@ -3,6 +3,15 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `console state extract|restore <block>` is now real on the host. `BlockExecutor`
+  gained `extract_state`/`restore_state` over the live linear memory of an
+  executed WASM block (the same migration primitive used by
+  `WasmLiveUpdateEngine`), and `HostBackend` keeps the snapshot for the session so
+  restore writes it back into the live instance. Missing blocks, missing
+  snapshots, unexecuted blocks and blocks without an exported `memory` return
+  backend errors. Two `aios-wasm` tests cover the round trip and failure modes;
+  one host contract test covers usage, missing block/snapshot and output text.
+  The `unavailable` reason table and EN/RU docs were updated.
 - `console fm jobs` and `console fm cancel <id>` are now real on the host through
   a new `FileManagerControl` injection seam (`aios-console/src/control.rs`).
   `aios-fm/src/console_control.rs` adapts a live `FileManager`: it maps the real

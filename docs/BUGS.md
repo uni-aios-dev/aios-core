@@ -111,16 +111,18 @@ subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
 `fm jobs|cancel` (host adapters injected through the `control.rs` seams).
 `fm jobs|cancel` is real wherever `aios-tui` injects its live
 `FileManagerControl`; a bare `HostBackend` without the seam still returns
-`unavailable`. The remaining valid registry entries `jobs|fg|bg`,
-`acl grant|revoke`, `ping`, host `net recheck` and `state extract|restore` still
-return `ERR unavailable` because no real host library API exists for them.
-`aios-console/src/unavailable.rs` now reports a concrete cause for each: missing
-OS job control, no path-scoped ACL API, no ICMP/reachability API or raw-socket
-privilege, a host equivalent of the kernel-only `recheck()`, and no live
-`StatefulBlock` instances in the registry. The kernel side of `net recheck` is
-now real: `KernelBackend` calls `crate::net::recheck()`. Keeping the host entries
-`unavailable` with an exact reason is deliberate — aliasing them to `caps`,
-block state or TCP connect would discard their declared semantics.
+`unavailable`. `state extract|restore` is real over the shared WASM executor: it
+uses the live linear memory of an executed block, so a snapshot only exists after
+`block run <block>` and a restore only after an extract in the same session. The
+remaining valid registry entries `jobs|fg|bg`, `acl grant|revoke`, `ping` and
+host `net recheck` still return `ERR unavailable` because no real host library
+API exists for them. `aios-console/src/unavailable.rs` now reports a concrete
+cause for each: missing OS job control, no path-scoped ACL API, no
+ICMP/reachability API or raw-socket privilege, and a host equivalent of the
+kernel-only `recheck()`. The kernel side of `net recheck` is now real:
+`KernelBackend` calls `crate::net::recheck()`. Keeping the host entries
+`unavailable` with an exact reason is deliberate — aliasing them to `caps` or
+TCP connect would discard their declared semantics.
 
 The dependency cycle for watchdog/bridge/auth/file-manager commands is resolved:
 `aios-console` defines control traits; the `aios` binary injects watchdog/bridge/auth

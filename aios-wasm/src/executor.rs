@@ -236,6 +236,41 @@ impl BlockExecutor {
         Ok(Some(bytes))
     }
 
+    /// Extracts the live linear-memory snapshot of an executed block.
+    ///
+    /// Uses the same migration primitive as the live-update engine
+    /// ([`WasmBlock::extract_linear_memory`]). Fails when the block was never
+    /// executed or exports no `memory`.
+    pub fn extract_state(&mut self, id: BlockId) -> Result<Vec<u8>> {
+        let (block, store) = self
+            .executed
+            .get_mut(&id)
+            .ok_or_else(|| AIOSException::BlockNotFound(format!("Block {} not executed", id)))?;
+        block.extract_linear_memory(store).ok_or_else(|| {
+            AIOSException::Generic(format!("Block '{}' exports no linear memory", block.name()))
+        })
+    }
+
+    /// Restores a linear-memory snapshot into an executed block.
+    ///
+    /// Fails when the block was never executed, exports no `memory`, or the
+    /// snapshot is larger than the block's current linear memory.
+    pub fn restore_state(&mut self, id: BlockId, state: &[u8]) -> Result<()> {
+        let (block, store) = self
+            .executed
+            .get_mut(&id)
+            .ok_or_else(|| AIOSException::BlockNotFound(format!("Block {} not executed", id)))?;
+        if block.restore_linear_memory(store, state) {
+            Ok(())
+        } else {
+            Err(AIOSException::Generic(format!(
+                "Block '{}' cannot restore {} bytes: no exported memory or snapshot exceeds live memory",
+                block.name(),
+                state.len()
+            )))
+        }
+    }
+
     pub fn executed_count(&self) -> usize {
         self.executed.len()
     }
@@ -758,5 +793,66 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(response, packet);
+    }
+
+    #[test]
+    fn test_extract_and_restore_state_round_trip() {
+        let wat = r#"
+            (module
+                (memory (export "memory") 1)
+                (func (export "write_val") (param i32)
+                    (i32.store (i32.const 0) (local.get 0)))
+                (func (export "read_val") (result i32)
+                    (i32.load (i32.const 0)))
+            )
+        "#;
+        let mut registry = BlockRegistry::new();
+        let manifest = BlockLoader::load_from_binary(
+            &mut registry,
+            "stateful",
+            "1.0.0",
+            wat.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let mut executor = BlockExecutor::with_default_config().unwrap();
+        executor
+            .execute_block(&registry, manifest.id, IsolationConfig::default())
+            .unwrap();
+
+        executor
+            .call_block_func(manifest.id, "write_val", &[wasmtime::Val::I32(42)])
+            .unwrap();
+        let snapshot = executor.extract_state(manifest.id).unwrap();
+        assert_eq!(snapshot.len(), 64 * 1024);
+
+        executor
+            .call_block_func(manifest.id, "write_val", &[wasmtime::Val::I32(7)])
+            .unwrap();
+        let changed = executor
+            .call_block_func(manifest.id, "read_val", &[])
+            .unwrap();
+        assert_eq!(changed[0].i32(), Some(7));
+
+        executor.restore_state(manifest.id, &snapshot).unwrap();
+        let restored = executor
+            .call_block_func(manifest.id, "read_val", &[])
+            .unwrap();
+        assert_eq!(restored[0].i32(), Some(42));
+    }
+
+    #[test]
+    fn test_state_requires_a_live_instance_with_memory() {
+        let mut registry = BlockRegistry::new();
+        let manifest =
+            BlockLoader::load_from_binary(&mut registry, "no_state", "1.0.0", sample_wasm_binary())
+                .unwrap();
+        let mut executor = BlockExecutor::with_default_config().unwrap();
+
+        assert!(executor.extract_state(manifest.id).is_err());
+        executor
+            .execute_block(&registry, manifest.id, IsolationConfig::default())
+            .unwrap();
+        assert!(executor.extract_state(manifest.id).is_err());
+        assert!(executor.restore_state(manifest.id, &[0; 8]).is_err());
     }
 }
