@@ -17,6 +17,9 @@ pub mod frontend;
 pub mod host;
 /// Adapters from canonical output to exact legacy shell text.
 pub mod legacy;
+/// Host-only exact-output adapters for legacy shell commands with crate backends.
+#[cfg(feature = "std")]
+pub mod legacy_host;
 pub mod output;
 pub mod parser;
 pub mod registry;

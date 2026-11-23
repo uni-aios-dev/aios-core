@@ -10,8 +10,6 @@ use crate::orchestrator::{push_log, OrchestratorState};
 use aios_block_mgr::loader::BlockLoader;
 use aios_browser::engine::BrowserEngine;
 use aios_browser::types::BrowserConfig;
-use aios_cluster::scheduler::DistributedScheduler;
-use aios_cluster::types::{RemoteProcessId, RemoteProcessSpec};
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 use aios_llm::{provider_name, BackendKind, CloudProvider, LlmConfig, LlmEngine};
 use aios_process_mgr::task::ProcessId;
@@ -1246,6 +1244,10 @@ fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
         "net" if !matches!(parts.get(1).copied(), Some("get" | "set")) => {
             vec![aios_usage_text("net").expect("net has a usage line")]
         }
+        "cluster" => {
+            let cluster = locked(&app.state).cluster.clone();
+            aios_console::legacy_host::aios_cluster_text(cluster, &parts)
+        }
         "restart" => {
             app.refresh_hw();
             push_log(&app.logs, aios_restart_log().to_string());
@@ -1433,6 +1435,12 @@ fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
                 _ => out.push("Usage: store list | store search <q> | store install <name>".into()),
             }
         }
+        "cluster" => {
+            let cluster = locked(&app.state).cluster.clone();
+            out.extend(aios_console::legacy_host::aios_cluster_text(
+                cluster, &parts,
+            ));
+        }
         "net" => {
             let sub = parts.get(1).copied().unwrap_or("");
             match sub {
@@ -1448,9 +1456,6 @@ fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
                 }
                 _ => out.push("Usage: net get | net set key=value ...".into()),
             }
-        }
-        "cluster" => {
-            cluster_execute(app, &parts, &mut out);
         }
         "status" => {
             let state = locked(&app.state);
@@ -1493,122 +1498,6 @@ fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
     for l in out {
         app.shell_push(l);
     }
-}
-
-fn cluster_execute(app: &TuiApp, parts: &[&str], out: &mut Vec<String>) {
-    let cluster = locked(&app.state).cluster.clone();
-    out.extend(cluster_run(cluster, parts));
-}
-
-fn cluster_run(cluster: Option<Arc<Mutex<DistributedScheduler>>>, parts: &[&str]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let Some(cluster) = cluster else {
-        out.push("  clustering disabled (set AIOS_CLUSTER_PEERS to enable)".into());
-        return out;
-    };
-    let sub = parts.get(1).copied().unwrap_or("");
-    match sub {
-        "" | "help" => {
-            out.push("Usage: cluster status | cluster nodes | cluster spawn <name> [ram_mb] [priority] [target_node] | cluster kill <node> <pid> | cluster migrate <node> <pid> [target_node]".into());
-        }
-        "status" => {
-            let s = cluster.lock().unwrap();
-            out.push(format!(
-                "  self: [{}] {} tier={}",
-                s.self_info().id,
-                s.self_info().name,
-                s.self_info().tier
-            ));
-            for n in s.nodes() {
-                out.push(format!(
-                    "  [{}] {} tier={} {:?} load={:.1}%",
-                    n.id,
-                    n.name,
-                    n.tier,
-                    n.status,
-                    n.metrics.load_fraction() * 100.0
-                ));
-            }
-            let remote = s.processes();
-            if remote.is_empty() {
-                out.push("  remote processes: none".into());
-            } else {
-                out.push(format!("  remote processes ({}):", remote.len()));
-                for p in remote {
-                    out.push(format!(
-                        "    {} {} [{}] {}MB",
-                        p.id, p.name, p.state, p.ram_mb
-                    ));
-                }
-            }
-            out.push(format!(
-                "  local processes hosted: {}",
-                s.local_processes().len()
-            ));
-        }
-        "nodes" => {
-            let s = cluster.lock().unwrap();
-            for n in s.nodes() {
-                out.push(format!(
-                    "  [{}] {} tier={} {:?} load={:.1}%",
-                    n.id,
-                    n.name,
-                    n.tier,
-                    n.status,
-                    n.metrics.load_fraction() * 100.0
-                ));
-            }
-        }
-        "spawn" => {
-            let name = parts.get(2).copied().unwrap_or("");
-            if name.is_empty() {
-                out.push("Usage: cluster spawn <name> [ram_mb] [priority] [target_node]".into());
-                return out;
-            }
-            let ram = parts
-                .get(3)
-                .and_then(|p| p.parse::<u64>().ok())
-                .unwrap_or(128);
-            let prio = parts.get(4).and_then(|p| p.parse::<u8>().ok()).unwrap_or(2);
-            let target = parts.get(5).and_then(|p| p.parse::<u64>().ok());
-            let spec = RemoteProcessSpec::new(name, prio, ram);
-            match cluster.lock().unwrap().spawn(spec, target) {
-                Ok(rid) => out.push(format!("  spawned {rid} on node {}", rid.node)),
-                Err(e) => out.push(format!("  spawn failed: {e}")),
-            }
-        }
-        "kill" => {
-            let node = parts.get(2).and_then(|p| p.parse::<u64>().ok());
-            let pid = parts.get(3).and_then(|p| p.parse::<u64>().ok());
-            let (Some(node), Some(pid)) = (node, pid) else {
-                out.push("Usage: cluster kill <node> <pid>".into());
-                return out;
-            };
-            let rid = RemoteProcessId { node, pid };
-            match cluster.lock().unwrap().kill(rid) {
-                Ok(()) => out.push(format!("  killed {rid}")),
-                Err(e) => out.push(format!("  kill failed: {e}")),
-            }
-        }
-        "migrate" => {
-            let node = parts.get(2).and_then(|p| p.parse::<u64>().ok());
-            let pid = parts.get(3).and_then(|p| p.parse::<u64>().ok());
-            let (Some(node), Some(pid)) = (node, pid) else {
-                out.push("Usage: cluster migrate <node> <pid> [target_node]".into());
-                return out;
-            };
-            let rid = RemoteProcessId { node, pid };
-            let target = parts.get(4).and_then(|p| p.parse::<u64>().ok());
-            match cluster.lock().unwrap().migrate(rid, target) {
-                Ok(new_rid) => out.push(format!("  migrated {rid} -> {new_rid}")),
-                Err(e) => out.push(format!("  migrate failed: {e}")),
-            }
-        }
-        _ => {
-            out.push("Usage: cluster status | cluster nodes | cluster spawn ... | cluster kill <node> <pid> | cluster migrate <node> <pid> [target_node]".into());
-        }
-    }
-    out
 }
 
 fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
@@ -2345,6 +2234,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn bare_adapter_matches_legacy_for_cluster_when_disabled() {
+        for input in [
+            "cluster",
+            "cluster status",
+            "CLUSTER NODES",
+            "cluster spawn worker",
+            "cluster kill 1 2",
+            "cluster migrate 1 2 3",
+        ] {
+            assert_readonly_parity(input, &[], true);
+        }
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_cluster_status_when_enabled() {
+        let registry = MemoryRegistry::new();
+        let transport: Arc<dyn ClusterTransport> = Arc::new(InMemoryClusterTransport::new(
+            "mem://parity",
+            registry.clone_arc(),
+        ));
+        let scheduler = DistributedScheduler::new(
+            test_node(1, "parity", "mem://parity"),
+            transport,
+            PlacementStrategy::LeastLoaded,
+        );
+        let mut app = aios_parity_app(&[], true);
+        app.state.lock().unwrap().cluster = Some(Arc::new(Mutex::new(scheduler)));
+        shell_execute_legacy(&mut app, "cluster status");
+        let legacy_out = app.shell_output.clone();
+        app.shell_output.clear();
+        shell_execute(&mut app, "cluster status");
+        assert_eq!(app.shell_output, legacy_out);
+    }
+
     fn test_node(id: u64, name: &str, addr: &str) -> NodeInfo {
         NodeInfo {
             id,
@@ -2358,7 +2282,7 @@ mod tests {
 
     #[test]
     fn cluster_disabled_prints_hint() {
-        let out = cluster_run(None, &["cluster", "status"]);
+        let out = aios_console::legacy_host::aios_cluster_text(None, &["cluster", "status"]);
         assert!(out[0].contains("clustering disabled"), "got {out:?}");
     }
 
@@ -2418,7 +2342,7 @@ mod tests {
         assert_eq!(schedulers[0].lock().unwrap().nodes().len(), 2);
 
         // Spawn through the shell handler onto node 2.
-        let out = cluster_run(
+        let out = aios_console::legacy_host::aios_cluster_text(
             Some(schedulers[0].clone()),
             &["cluster", "spawn", "svc", "256", "2", "2"],
         );
@@ -2429,14 +2353,17 @@ mod tests {
         let rid = schedulers[0].lock().unwrap().processes()[0].id;
         assert_eq!(rid.node, 2);
 
-        let out = cluster_run(Some(schedulers[0].clone()), &["cluster", "status"]);
+        let out = aios_console::legacy_host::aios_cluster_text(
+            Some(schedulers[0].clone()),
+            &["cluster", "status"],
+        );
         assert!(
             out.iter().any(|l| l.contains("remote processes (1)")),
             "status output: {out:?}"
         );
 
         // Migrate to node 3 through the shell handler.
-        let out = cluster_run(
+        let out = aios_console::legacy_host::aios_cluster_text(
             Some(schedulers[0].clone()),
             &[
                 "cluster",
@@ -2454,7 +2381,7 @@ mod tests {
         assert_eq!(new_rid.node, 3);
 
         // Kill through the shell handler.
-        let out = cluster_run(
+        let out = aios_console::legacy_host::aios_cluster_text(
             Some(schedulers[0].clone()),
             &[
                 "cluster",

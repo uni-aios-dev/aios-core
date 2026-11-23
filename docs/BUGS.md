@@ -101,10 +101,14 @@ else. Bare `clear`/`cls` go through `console_execute` and emit no lines with onl
 inputs are also recorded in unified console history. Bare `restart` keeps its
 hardware re-probe in the frontend and its fixed output/log lines in
 `aios-console`; it is distinct from canonical `wd reset` and safe-mode `recover`.
-The remaining bare commands with arguments — `spawn <path>`, valid
-`store search`/`store install`, `net get`/`net set` and `cluster` — still use the
-legacy dispatcher because they depend on TUI-bound seams (block loading, async
-store tasks and the net IPC router). `aios-shell` exposes the new backend
+Bare `cluster` commands now call the host-only
+`aios_console::legacy_host::aios_cluster_text` adapter over the same
+`DistributedScheduler` handle, so the formatter and all subcommands live in
+`aios-console` without affecting its `no_std` kernel build. The remaining bare
+commands with arguments — `spawn <path>`, valid `store search`/`store install`
+and `net get`/`net set` — still use the legacy dispatcher because they depend on
+TUI-bound seams (block loading, async store tasks and the net IPC router).
+`aios-shell` exposes the new backend
 through the `console <...>` prefix, while
 `aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls`,
 `status`/`info`, `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`,

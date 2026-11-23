@@ -8,6 +8,7 @@ description = "Single text-only command console for AIOS: registry, parser, capa
 default = ["std"]
 std = [
     "dep:aios-core",
+    "dep:aios-cluster",
     "dep:aios-context",
     "dep:aios-autohal",
     "dep:aios-hal",
@@ -37,6 +38,7 @@ std = [
 
 [dependencies]
 aios-core = { path = "../aios-core", optional = true }
+aios-cluster = { path = "../aios-cluster", optional = true }
 aios-context = { path = "../aios-context", optional = true }
 aios-autohal = { path = "../aios-autohal", optional = true, default-features = false }
 aios-hal = { path = "../aios-hal", optional = true }
