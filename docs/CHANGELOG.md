@@ -24,6 +24,8 @@
   suspends every scheduler-tracked process instead of only writing to the log.
 - EN/RU `INTERFACE`, `ARCHITECTURE`, `CHANGELOG`, `BUGS` and `TODO` were aligned
   with the desktop shell.
+- The native window title now reads `AIOS Desktop v1.0.0` instead of the old
+  `AIOS Dashboard v1.0.0`.
 
 ### Fixed
 - Startup no longer seeds `ai_orchestrator`, `io_handler`, `health_monitor` and

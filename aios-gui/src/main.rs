@@ -22,7 +22,7 @@ fn main() -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("AIOS Dashboard v1.0.0")
+            .with_title("AIOS Desktop v1.0.0")
             .with_inner_size([1200.0, 800.0])
             .with_min_inner_size([900.0, 600.0])
             .with_resizable(true),
@@ -30,7 +30,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "AIOS Dashboard",
+        "AIOS Desktop",
         native_options,
         Box::new(move |cc| {
             let theme = theme::AiosTheme::default();

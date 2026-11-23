@@ -26,6 +26,8 @@
   только писать в журнал.
 - EN/RU-документы `INTERFACE`, `ARCHITECTURE`, `CHANGELOG`, `BUGS` и `TODO`
   синхронизированы с рабочим столом.
+- Заголовок нативного окна теперь `AIOS Desktop v1.0.0`, а не старый
+  `AIOS Dashboard v1.0.0`.
 
 ### Исправлено
 - При старте больше не создаются демо-процессы `ai_orchestrator`, `io_handler`,

@@ -725,7 +725,7 @@ With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks
 cargo run --bin aios-gui
 ```
 
-`aios-gui` is a **desktop shell**, not a tabbed dashboard. A dark desktop fills the window; built-in functions open as separate egui windows, and external programs are launched from the same catalog used by voice commands. When built `--no-default-features` (e.g. the live USB image) the **Native Browser** entry is absent from the Start menu and `F7` is inactive. The kernel TUI `W` key still opens the GUI in that configuration.
+`aios-gui` is a **desktop shell**, not a tabbed dashboard. A dark desktop fills the window; built-in functions open as separate egui windows, and external programs are launched from the same catalog used by voice commands. The native window title is `AIOS Desktop v1.0.0`. When built `--no-default-features` (e.g. the live USB image) the **Native Browser** entry is absent from the Start menu and `F7` is inactive. The kernel TUI `W` key still opens the GUI in that configuration.
 
 ### Layout
 
