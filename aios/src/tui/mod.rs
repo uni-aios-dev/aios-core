@@ -109,7 +109,9 @@ fn store_manager() -> StoreManager {
     StoreManager::new(blocks_dir())
 }
 
-fn dispatch_net_get(app: &mut TuiApp) -> Option<String> {
+fn dispatch_net_get(app: &mut TuiApp) -> aios_console::legacy::AiosNetResult {
+    use aios_console::legacy::AiosNetResult;
+
     let result = {
         let mut state = locked(&app.state);
         let packet = IpcPacket::new(
@@ -122,21 +124,25 @@ fn dispatch_net_get(app: &mut TuiApp) -> Option<String> {
     };
     match result {
         Ok(Some(resp)) => match resp.payload {
-            Payload::Text(text) => Some(text),
-            _ => Some("net settings block: OK".into()),
+            Payload::Text(text) => AiosNetResult::Text(text),
+            _ => AiosNetResult::Acknowledged,
         },
-        Ok(None) => Some("net: no response".into()),
-        Err(e) => Some(format!("net ERROR: {e}")),
+        Ok(None) => AiosNetResult::NoResponse,
+        Err(e) => AiosNetResult::Error(e.to_string()),
     }
 }
 
-fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> String {
+fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> aios_console::legacy::AiosNetResult {
+    use aios_console::legacy::AiosNetResult;
+
     let mut updates = serde_json::Map::new();
     for token in raw.split_whitespace() {
         let (k, v) = match token.split_once('=') {
             Some(kv) => kv,
             None => {
-                return format!("AIOS: net: bad token '{token}' (use key=value)");
+                return AiosNetResult::Text(format!(
+                    "AIOS: net: bad token '{token}' (use key=value)"
+                ));
             }
         };
         let value = serde_json::from_str::<serde_json::Value>(v)
@@ -144,7 +150,7 @@ fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> String {
         updates.insert(k.to_string(), value);
     }
     if updates.is_empty() {
-        return "AIOS: net: usage: key=value ...".into();
+        return AiosNetResult::Text("AIOS: net: usage: key=value ...".into());
     }
     let body = serde_json::Value::Object(updates).to_string();
     let result = {
@@ -159,11 +165,11 @@ fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> String {
     };
     match result {
         Ok(Some(resp)) => match resp.payload {
-            Payload::Text(text) => text,
-            _ => "net settings block: OK".to_string(),
+            Payload::Text(text) => AiosNetResult::Text(text),
+            _ => AiosNetResult::Acknowledged,
         },
-        Ok(None) => "AIOS: net: no response".into(),
-        Err(e) => format!("AIOS: net ERROR: {e}"),
+        Ok(None) => AiosNetResult::NoResponse,
+        Err(e) => AiosNetResult::Error(e.to_string()),
     }
 }
 
@@ -785,6 +791,52 @@ where
     });
 }
 
+fn aios_store_search_command(app: &mut TuiApp, parts: &[&str]) -> Vec<String> {
+    let query = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
+    if query.is_empty() {
+        return vec![aios_console::legacy::aios_usage_text("store search")
+            .expect("store search has a usage line")];
+    }
+    let out = vec![aios_console::legacy::aios_store_search_start(&query)];
+    store_spawn(app, format!("search '{query}'"), move || async move {
+        let manager = store_manager();
+        let results = manager
+            .search(&query, None)
+            .await
+            .map_err(|e| format!("  search failed: {e}"))?;
+        if results.is_empty() {
+            return Ok(vec!["  no matches".to_string()]);
+        }
+        let mut lines = vec![format!("  {} result(s):", results.len())];
+        for m in results {
+            lines.push(format!("  {} {} — {}", m.name, m.version, m.description));
+        }
+        Ok(lines)
+    });
+    out
+}
+
+fn aios_store_install_command(app: &mut TuiApp, parts: &[&str]) -> Vec<String> {
+    let name = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
+    if name.is_empty() {
+        return vec![aios_console::legacy::aios_usage_text("store install")
+            .expect("store install has a usage line")];
+    }
+    let out = vec![aios_console::legacy::aios_store_install_start(&name)];
+    store_spawn(app, format!("install '{name}'"), move || async move {
+        let mut manager = store_manager();
+        let b = manager
+            .install(None, &name, None)
+            .await
+            .map_err(|e| format!("  install failed: {e}"))?;
+        Ok(vec![format!(
+            "  installed {} {}",
+            b.manifest.name, b.manifest.version
+        )])
+    });
+    out
+}
+
 /// Take the finished store task result when it belongs to the current
 /// generation; stale results (from a superseded task) are dropped.
 fn take_store_result(out: &StoreOut, gen: u64) -> Option<Result<Vec<String>, String>> {
@@ -1190,8 +1242,8 @@ fn console_execute(app: &mut TuiApp, input: &str) {
 /// adapter; the legacy dispatcher then stays untouched for everything else.
 fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
     use aios_console::legacy::{
-        aios_log_text, aios_restart_log, aios_restart_text, aios_status_text, aios_unknown_text,
-        aios_usage_text, AIOS_HELP,
+        aios_log_text, aios_net_get_text, aios_net_set_text, aios_restart_log, aios_restart_text,
+        aios_status_text, aios_unknown_text, aios_usage_text, AIOS_HELP,
     };
 
     let lower = line.trim().to_lowercase();
@@ -1245,11 +1297,22 @@ fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
         "store" if parts.get(1) == Some(&"install") && parts.len() <= 2 => {
             vec![aios_usage_text("store install").expect("store install has a usage line")]
         }
+        "store" if parts.get(1) == Some(&"search") => aios_store_search_command(app, &parts),
+        "store" if parts.get(1) == Some(&"install") => aios_store_install_command(app, &parts),
         "store" if !matches!(parts.get(1).copied(), Some("list" | "search" | "install")) => {
             vec![aios_usage_text("store").expect("store has a usage line")]
         }
         "net" if !matches!(parts.get(1).copied(), Some("get" | "set")) => {
             vec![aios_usage_text("net").expect("net has a usage line")]
+        }
+        "net" if parts.get(1) == Some(&"get") => {
+            let text = aios_net_get_text(dispatch_net_get(app));
+            vec![format!("  {text}")]
+        }
+        "net" if parts.get(1) == Some(&"set") => {
+            let raw = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
+            let text = aios_net_set_text(dispatch_net_set(app, &raw));
+            vec![format!("  {text}")]
         }
         "cluster" => {
             let cluster = locked(&app.state).cluster.clone();
@@ -1394,51 +1457,8 @@ fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
                         }
                     }
                 }
-                "search" => {
-                    let query = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
-                    if query.is_empty() {
-                        out.push("Usage: store search <query>".into());
-                    } else {
-                        out.push(format!("  searching store for '{query}'..."));
-                        store_spawn(app, format!("search '{query}'"), move || async move {
-                            let manager = store_manager();
-                            let results = manager
-                                .search(&query, None)
-                                .await
-                                .map_err(|e| format!("  search failed: {e}"))?;
-                            if results.is_empty() {
-                                return Ok(vec!["  no matches".to_string()]);
-                            }
-                            let mut lines = vec![format!("  {} result(s):", results.len())];
-                            for m in results {
-                                lines.push(format!(
-                                    "  {} {} — {}",
-                                    m.name, m.version, m.description
-                                ));
-                            }
-                            Ok(lines)
-                        });
-                    }
-                }
-                "install" => {
-                    let name = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
-                    if name.is_empty() {
-                        out.push("Usage: store install <name>".into());
-                    } else {
-                        out.push(format!("  installing '{name}'..."));
-                        store_spawn(app, format!("install '{name}'"), move || async move {
-                            let mut manager = store_manager();
-                            let b = manager
-                                .install(None, &name, None)
-                                .await
-                                .map_err(|e| format!("  install failed: {e}"))?;
-                            Ok(vec![format!(
-                                "  installed {} {}",
-                                b.manifest.name, b.manifest.version
-                            )])
-                        });
-                    }
-                }
+                "search" => out.extend(aios_store_search_command(app, &parts)),
+                "install" => out.extend(aios_store_install_command(app, &parts)),
                 _ => out.push("Usage: store list | store search <q> | store install <name>".into()),
             }
         }
@@ -1452,14 +1472,14 @@ fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
             let sub = parts.get(1).copied().unwrap_or("");
             match sub {
                 "get" => {
-                    if let Some(json) = dispatch_net_get(app) {
-                        out.push(format!("  {json}"));
-                    }
+                    let text = aios_console::legacy::aios_net_get_text(dispatch_net_get(app));
+                    out.push(format!("  {text}"));
                 }
                 "set" => {
                     let rest = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
-                    let msg = dispatch_net_set(app, &rest);
-                    out.push(format!("  {msg}"));
+                    let text =
+                        aios_console::legacy::aios_net_set_text(dispatch_net_set(app, &rest));
+                    out.push(format!("  {text}"));
                 }
                 _ => out.push("Usage: net get | net set key=value ...".into()),
             }
@@ -1573,7 +1593,7 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
                 let input = app.net_input.clone();
                 app.net_mode = false;
                 app.net_input.clear();
-                let msg = dispatch_net_set(app, &input);
+                let msg = aios_console::legacy::aios_net_set_text(dispatch_net_set(app, &input));
                 push_log(&app.logs, format!("AIOS: net: {msg}"));
             }
             KeyCode::Char(c) => app.net_input.push(c),
@@ -1751,10 +1771,9 @@ fn handle_net_store_key(app: &mut TuiApp, key: event::KeyEvent) {
             store_refresh(app);
         }
         KeyCode::Char('g') => {
-            if let Some(json) = dispatch_net_get(app) {
-                app.net_status = json.clone();
-                push_log(&app.logs, format!("AIOS: net: {json}"));
-            }
+            let json = aios_console::legacy::aios_net_get_text(dispatch_net_get(app));
+            app.net_status = json.clone();
+            push_log(&app.logs, format!("AIOS: net: {json}"));
         }
         _ => {}
     }
@@ -2260,6 +2279,31 @@ mod tests {
                 .is_some_and(|line| line.starts_with("AIOS: blocks: read '")),
             "got {adapter_logs:?}"
         );
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_valid_store_commands() {
+        for input in [
+            "store search worker",
+            "STORE SEARCH worker cloud",
+            "store install worker",
+        ] {
+            assert_readonly_parity(input, &[], true);
+        }
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_net_get_and_set() {
+        for input in [
+            "net get",
+            "NET GET",
+            "net set",
+            "net set key=value",
+            "net set badtoken",
+            "net set a=1 b=two",
+        ] {
+            assert_readonly_parity(input, &[], true);
+        }
     }
 
     #[test]

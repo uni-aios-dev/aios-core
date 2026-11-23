@@ -106,10 +106,12 @@ Bare `cluster` commands now call the host-only
 `DistributedScheduler` handle, so the formatter and all subcommands live in
 `aios-console` without affecting its `no_std` kernel build. Bare `spawn <path>`
 calls `HostBackend::aios_spawn_path` over the shared block registry and returns
-the legacy log lines to the TUI log sink without printing shell output. The
-remaining bare commands with arguments — valid `store search`/`store install`
-and `net get`/`net set` — still use the legacy dispatcher because they depend on
-TUI-bound seams (async store tasks and the net IPC router).
+the legacy log lines to the TUI log sink without printing shell output. Valid
+`store search`/`store install` share `legacy.rs` start-line formatters with the
+existing async `store_spawn` seam, and `net get`/`net set` share `AiosNetResult`
+formatters with the frontend IPC router. All bare shell commands now go through
+exact-output adapters; `shell_execute_legacy` is kept only as the parity
+reference used by tests.
 `aios-shell` exposes the new backend
 through the `console <...>` prefix, while
 `aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls`,

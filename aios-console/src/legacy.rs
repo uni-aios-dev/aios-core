@@ -277,6 +277,48 @@ pub fn aios_log_text(entries: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Outcome of the legacy `aios` shell net IPC dispatch.
+pub enum AiosNetResult {
+    /// Text returned by the net settings block, or a local validation message.
+    Text(String),
+    /// The block acknowledged without a text payload.
+    Acknowledged,
+    /// The block did not answer.
+    NoResponse,
+    /// IPC dispatch failed.
+    Error(String),
+}
+
+/// Formats the exact legacy `aios` TUI shell `net get` output.
+pub fn aios_net_get_text(result: AiosNetResult) -> String {
+    match result {
+        AiosNetResult::Text(text) => text,
+        AiosNetResult::Acknowledged => String::from("net settings block: OK"),
+        AiosNetResult::NoResponse => String::from("net: no response"),
+        AiosNetResult::Error(error) => format!("net ERROR: {error}"),
+    }
+}
+
+/// Formats the exact legacy `aios` TUI shell `net set` output.
+pub fn aios_net_set_text(result: AiosNetResult) -> String {
+    match result {
+        AiosNetResult::Text(text) => text,
+        AiosNetResult::Acknowledged => String::from("net settings block: OK"),
+        AiosNetResult::NoResponse => String::from("AIOS: net: no response"),
+        AiosNetResult::Error(error) => format!("AIOS: net ERROR: {error}"),
+    }
+}
+
+/// Formats the exact legacy `aios` shell `store search` start line.
+pub fn aios_store_search_start(query: &str) -> String {
+    format!("  searching store for '{query}'...")
+}
+
+/// Formats the exact legacy `aios` shell `store install` start line.
+pub fn aios_store_install_start(name: &str) -> String {
+    format!("  installing '{name}'...")
+}
+
 /// Formats the exact legacy `aios` TUI shell `restart` output line.
 pub fn aios_restart_text() -> &'static str {
     "  hardware re-probed (hardware engine rescanned)"
@@ -382,12 +424,13 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        aios_kill_failed, aios_kill_success, aios_log_text, aios_restart_log, aios_restart_text,
-        aios_status_text, aios_unknown_text, aios_usage_text, block_list_text, exit_text,
+        aios_kill_failed, aios_kill_success, aios_log_text, aios_net_get_text, aios_net_set_text,
+        aios_restart_log, aios_restart_text, aios_status_text, aios_store_install_start,
+        aios_store_search_start, aios_unknown_text, aios_usage_text, block_list_text, exit_text,
         help_text, kill_success, load_success, log_text, mutation_failed, process_list_text,
         restart_limit_reached, restart_success, spawn_success, status_text, unknown_text,
-        unload_success, AIOS_HELP, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP,
-        PROCESS_HEADER, PROCESS_SEPARATOR,
+        unload_success, AiosNetResult, AIOS_HELP, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER,
+        LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -614,6 +657,47 @@ mod tests {
             "  hardware re-probed (hardware engine rescanned)"
         );
         assert_eq!(aios_restart_log(), "AIOS: restart requested via shell");
+    }
+
+    #[test]
+    fn maps_aios_net_results_exactly() {
+        assert_eq!(aios_net_get_text(AiosNetResult::Text("cfg".into())), "cfg");
+        assert_eq!(
+            aios_net_get_text(AiosNetResult::Acknowledged),
+            "net settings block: OK"
+        );
+        assert_eq!(
+            aios_net_get_text(AiosNetResult::NoResponse),
+            "net: no response"
+        );
+        assert_eq!(
+            aios_net_get_text(AiosNetResult::Error("boom".into())),
+            "net ERROR: boom"
+        );
+        assert_eq!(
+            aios_net_set_text(AiosNetResult::Text("AIOS: net: usage".into())),
+            "AIOS: net: usage"
+        );
+        assert_eq!(
+            aios_net_set_text(AiosNetResult::NoResponse),
+            "AIOS: net: no response"
+        );
+        assert_eq!(
+            aios_net_set_text(AiosNetResult::Error("boom".into())),
+            "AIOS: net ERROR: boom"
+        );
+    }
+
+    #[test]
+    fn maps_aios_store_start_lines_exactly() {
+        assert_eq!(
+            aios_store_search_start("worker"),
+            "  searching store for 'worker'..."
+        );
+        assert_eq!(
+            aios_store_install_start("worker"),
+            "  installing 'worker'..."
+        );
     }
 
     #[test]

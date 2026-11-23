@@ -279,15 +279,17 @@
 - [x] Migrate bare `spawn <path>` in the `aios` shell to
   `HostBackend::aios_spawn_path`, keeping the shared block registry and the exact
   legacy log lines with no shell output. One binary parity test compares both.
+- [x] Move the final bare `aios` paths (`store search`/`store install` with
+  arguments and `net get`/`net set`) to console formatters; keep the frontend
+  async/router seams. Sixteen binary parity tests cover the whole bare shell.
 - [x] Port `store sign` and `store publish` into the unified `aios-console`:
   real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
   and the bridge `POST /api/v1/store/publish` call. They are registered
   subcommands again, with loopback HTTP and contract tests; EN/RU docs aligned.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
-- [ ] Finish replacing the five legacy dispatchers (`aios-tui` done, `aios`
-  mostly done — only argument-bound `store`/`net` remain, kernel
-  TUI, `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
+- [ ] Finish replacing the five legacy dispatchers (`aios-tui` and `aios` done,
+  kernel TUI, `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
   checks are green.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
