@@ -111,24 +111,28 @@ subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
 `fm jobs|cancel` (host adapters injected through the `control.rs` seams).
 `fm jobs|cancel` is real wherever `aios-tui` injects its live
 `FileManagerControl`; a bare `HostBackend` without the seam still returns
-`unavailable`. `state extract|restore` is real over the shared WASM executor: it
+`unavailable`. `jobs|fg|bg` are real wherever a live `JobControl` is injected:
+`aios-shell` shares its `JobTable` with the bare builtins, so canonical console
+commands list the same background processes and resume the requested id with a
+real `SIGCONT`. `state extract|restore` is real over the shared WASM executor: it
 uses the live linear memory of an executed block, so a snapshot only exists after
 `block run <block>` and a restore only after an extract in the same session. The
-remaining valid registry entries `jobs|fg|bg`, `acl grant|revoke`, `ping` and
-host `net recheck` still return `ERR unavailable` because no real host library
-API exists for them. `aios-console/src/unavailable.rs` now reports a concrete
-cause for each: missing OS job control, no path-scoped ACL API, no
-ICMP/reachability API or raw-socket privilege, and a host equivalent of the
-kernel-only `recheck()`. The kernel side of `net recheck` is now real:
-`KernelBackend` calls `crate::net::recheck()`. Keeping the host entries
-`unavailable` with an exact reason is deliberate — aliasing them to `caps` or
-TCP connect would discard their declared semantics.
+remaining valid registry entries `acl grant|revoke`, `ping` and host
+`net recheck` still return `ERR unavailable` because no real host library API
+exists for them. `aios-console/src/unavailable.rs` now reports a concrete cause
+for each: no path-scoped ACL API, no ICMP/reachability API or raw-socket
+privilege, and a host equivalent of the kernel-only `recheck()`. The kernel side
+of `net recheck` is now real: `KernelBackend` calls `crate::net::recheck()`.
+Keeping the remaining host entries `unavailable` with an exact reason is
+deliberate — aliasing them to `caps` or TCP connect would discard their declared
+semantics.
 
-The dependency cycle for watchdog/bridge/auth/file-manager commands is resolved:
-`aios-console` defines control traits; the `aios` binary injects watchdog/bridge/auth
-implementations over its own handles and `aios-tui` injects a live
-`FileManagerControl` over its file manager. Commands still report `unavailable`
-when no adapter is injected (for example in standalone tests). `bridge stop` sends a
+The dependency cycle for watchdog/bridge/auth/file-manager/job-control commands is
+resolved: `aios-console` defines control traits; the `aios` binary injects
+watchdog/bridge/auth implementations over its own handles, `aios-tui` injects a
+live `FileManagerControl` over its file manager and `aios-shell` injects its
+`JobTable` as `JobControl`. Commands still report `unavailable` when no adapter is
+injected (for example in standalone tests). `bridge stop` sends a
 graceful shutdown signal instead of dropping active connections. `block swap`
 records a swap and a rollback entry but does not replace live block code: the
 old state is recorded as empty because the registry does not expose live block

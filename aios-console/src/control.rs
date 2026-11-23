@@ -58,6 +58,30 @@ pub trait FileManagerControl: Send + Sync {
     fn cancel(&self, id: u64) -> Result<(), String>;
 }
 
+/// One background job reported by a host-owned shell job table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShellJobInfo {
+    /// Job identifier shown by `jobs`.
+    pub id: usize,
+    /// Command line of the job.
+    pub cmd: String,
+    /// Process id of the running job.
+    pub pid: u32,
+}
+
+/// Control surface for a shell job table owned by a host frontend.
+///
+/// The console never owns process groups or signals; the injected control
+/// performs the real `SIGCONT` and updates the table it shares with the shell.
+pub trait JobControl: Send + Sync {
+    /// Returns a snapshot of the live background jobs.
+    fn jobs(&self) -> Vec<ShellJobInfo>;
+    /// Brings job `id` to the foreground; returns an error for an unknown id.
+    fn fg(&self, id: usize) -> Result<ShellJobInfo, String>;
+    /// Resumes job `id` in the background; returns an error for an unknown id.
+    fn bg(&self, id: usize) -> Result<ShellJobInfo, String>;
+}
+
 /// Authentication surface for bridge users owned by the host orchestrator.
 pub trait AuthProvider: Send + Sync {
     /// Registers a user and returns a bearer token.

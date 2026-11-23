@@ -143,10 +143,13 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 тесты состояния проверяют побочные эффекты. Защита от рекурсии в `source`
 освобождает заём `RefCell` до выполнения строк, поэтому рекурсивный `source`
 сообщает об ошибке, а не вызывает панику, как старый диспетчер. Канонические
-`console jobs`/`fg`/`bg` остаются `unavailable` на `HostBackend`, у которого нет
-таблицы заданий шелла. В `run_command_legacy` остаются только по своей природе
-фронтендные строки: внешние программы, запуск GUI/TUI, `logs`/`hw`/`services`,
-`type`/`exec`/`which`, `aios-shell-reload` и `exit`.
+`console jobs`/`fg`/`bg` используют ту же `JobTable`: `main` внедряет её в
+`HostBackend` как адаптер `JobControl`, поэтому консоль видит живые фоновые задания
+шелла, а `fg <id>`/`bg <id>` отправляют настоящий `SIGCONT` через фронтенд-владельца.
+Обычный `HostBackend` без этого адаптера по-прежнему сообщает `unavailable`. В
+`run_command_legacy` остаются только по своей природе фронтендные строки: внешние
+программы, запуск GUI/TUI, `logs`/`hw`/`services`, `type`/`exec`/`which`,
+`aios-shell-reload` и `exit`.
 Отдельный бинарик `aios-tui` также владеет одним `HostBackend`, созданным в
 `main`. Его вкладка Shell распознаёт тот же префикс `console <...>` без учёта
 регистра до TUI-дополнений и отката на `SafeModeShell`. `execute_shell_cmd`
@@ -255,22 +258,29 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 снимок заданий движка в текст консоли, а `cancel()` вызывает реальный токен
 `Progress::cancel()`. `aios-tui` внедряет этот адаптер после запуска своего
 `FileManager`, поэтому `console fm jobs` и `console fm cancel <id>` наблюдают и
-отменяют реальные фоновые передачи. Без внедрённого адаптера эти команды
-по-прежнему возвращают `unavailable`.
+отменяют реальные фоновые передачи. Адаптер `JobControl` реализован таблицей
+заданий `aios-shell`: она общая с командами без префикса, `jobs()` возвращает живой
+снимок, а `fg`/`bg` находят нужный id и отправляют `SIGCONT`, обновляя таблицу или
+оставляя её без изменений. `aios-shell` внедряет этот адаптер в `HostBackend` в
+`main`, поэтому канонические `console jobs`/`fg <id>`/`bg <id>` реальны. Без
+внедрённого адаптера эти команды по-прежнему возвращают `unavailable`.
 
 `aios-console/src/unavailable.rs` хранит точную причину для каждой зарегистрированной
 команды без реального хостового API, поэтому `ERR unavailable` называет недостающую
 возможность, а не только сообщает "нет хостового бэкенда": `jobs|fg|bg` требуют
-OS-группы процессов, сигналы и foreground TTY, которых нет в `aios-process-mgr`;
+таблицу заданий, принадлежащую фронтенду, с OS-группами процессов, сигналами и
+foreground TTY, которых нет в `aios-process-mgr` (адаптер `JobControl` предоставляет
+её в `aios-shell`);
 у `acl grant|revoke` нет API ACL для путей, поскольку гранты `AclContext` —
 глобальные токены процесса, а токены `caps` привязаны к block ID; `ping` требует
 ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connect не является
 эхо-ответом; у хостового `net recheck` нет аналога, так как настоящий `recheck()`
 существует только в ядре (`no_std`), а `NetManager::status()` возвращает кэш.
-Эти хостовые команды остаются `unavailable`, пока не появятся указанные реальные
-API. `fm jobs|cancel` теперь реальны там, где внедрён живой `FileManagerControl`
-(`aios-tui`); обычный `HostBackend` без этого адаптера по-прежнему сообщает
-`unavailable`. `state extract|restore` теперь реальны:
+Хостовые команды без внедрённого адаптера остаются `unavailable`, пока не появятся
+указанные реальные API. `fm jobs|cancel` теперь реальны там, где внедрён живой
+`FileManagerControl` (`aios-tui`), а `jobs|fg|bg` — там, где внедрён живой
+`JobControl` (`aios-shell`); обычный `HostBackend` без этих адаптеров по-прежнему
+сообщает `unavailable`. `state extract|restore` теперь реальны:
 `BlockExecutor::extract_state` и `restore_state` снимают и восстанавливают снимок
 живой линейной памяти исполняемого WASM-блока (тот же механизм миграции, что
 использует `WasmLiveUpdateEngine`), а `HostBackend` хранит снимок в сессии, чтобы

@@ -141,11 +141,13 @@ effects: history/alias files, `$VAR` expansion, environment mutation,
 including the original 60-column ANSI help banner; stateful tests verify the side
 effects. The recursion guard in `source` releases its `RefCell` borrow before
 running sourced lines, so a recursive `source` reports an error instead of
-panicking as the legacy dispatcher did. Canonical `console jobs`/`fg`/`bg` stay
-`unavailable` on `HostBackend`, which owns no shell job table. Only inherently
-frontend-side lines remain in `run_command_legacy`: external programs, GUI/TUI
-launchers, `logs`/`hw`/`services`, `type`/`exec`/`which`, `aios-shell-reload` and
-`exit`.
+panicking as the legacy dispatcher did. Canonical `console jobs`/`fg`/`bg` use the
+same `JobTable`: `main` injects it into `HostBackend` as a `JobControl` seam, so
+the console lists the shell's live background jobs and `fg <id>`/`bg <id>` deliver
+a real `SIGCONT` through the owning frontend. A bare `HostBackend` without that
+seam still reports `unavailable`. Only inherently frontend-side lines remain in
+`run_command_legacy`: external programs, GUI/TUI launchers, `logs`/`hw`/`services`,
+`type`/`exec`/`which`, `aios-shell-reload` and `exit`.
 The standalone `aios-tui` binary likewise owns one `HostBackend` created in
 `main`. Its Shell tab recognises the same case-insensitive `console <...>` prefix
 before the TUI extras and the `SafeModeShell` fallback. `execute_shell_cmd`
@@ -246,21 +248,28 @@ The `FileManagerControl` seam is implemented in `aios-fm/src/console_control.rs`
 over a live `FileManager`: `jobs()` maps the engine's job snapshot into console
 text and `cancel()` calls the real `Progress::cancel()` token. `aios-tui`
 injects this control after starting its `FileManager`, so `console fm jobs` and
-`console fm cancel <id>` observe and cancel actual background transfers. Without
-an injected adapter these commands still return `unavailable`.
+`console fm cancel <id>` observe and cancel actual background transfers. The
+`JobControl` seam is implemented by `aios-shell`'s `JobTable`: it shares the
+process table with the bare builtins, `jobs()` returns a live snapshot, and
+`fg`/`bg` find the requested id and deliver `SIGCONT` before updating or keeping
+the table. `aios-shell` injects it into `HostBackend` in `main`, so canonical
+`console jobs`/`fg <id>`/`bg <id>` are real. Without an injected adapter these
+commands still return `unavailable`.
 
 `aios-console/src/unavailable.rs` holds the precise reason for each registered
 command with no real host API, so `ERR unavailable` names the missing capability
-instead of only saying "no host backend yet": `jobs|fg|bg` need OS process
-groups, signals and TTY foreground that `aios-process-mgr` does not model;
+instead of only saying "no host backend yet": `jobs|fg|bg` need a host-owned job
+table with OS process groups, signals and TTY foreground that `aios-process-mgr`
+does not model (the `JobControl` seam supplies it in `aios-shell`);
 `acl grant|revoke` has no path-scoped ACL API because `AclContext` grants are
 process-global tokens and `caps` tokens are keyed by block ID; `ping` needs an
 ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
 connect is not an echo reply; host `net recheck` has no equivalent because the
 real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached.
-These host commands stay `unavailable` until those real APIs exist.
-`fm jobs|cancel` is now real wherever a live `FileManagerControl` is injected
-(`aios-tui`); a bare `HostBackend` without that seam still reports
+Host commands without an injected seam stay `unavailable` until those real APIs
+exist. `fm jobs|cancel` is now real wherever a live `FileManagerControl` is injected
+(`aios-tui`), and `jobs|fg|bg` are real wherever a live `JobControl` is injected
+(`aios-shell`); a bare `HostBackend` without those seams still reports
 `unavailable`. `state extract|restore` is now real: `BlockExecutor::extract_state`
 and `restore_state` snapshot the live linear memory of a WASM block that has been
 executed (the same migration primitive `WasmLiveUpdateEngine` uses), and

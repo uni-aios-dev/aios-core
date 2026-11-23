@@ -3,6 +3,14 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `console jobs`/`fg <id>`/`bg <id>` are now real on the host through a new
+  `JobControl` injection seam in `aios-console/src/control.rs`. `aios-shell` keeps
+  one shared `JobTable` for the bare builtins and the canonical console commands;
+  `main` injects it into `HostBackend`, `jobs()` returns a live snapshot and
+  `fg`/`bg` locate the requested id and deliver a real `SIGCONT` on Unix. A bare
+  `HostBackend` without the seam still reports `unavailable` with the existing
+  precise reason. New contract tests cover jobs/fg/bg/unknown-id/usage/no-seam in
+  `aios-console` and the shared table in `aios-shell`; EN/RU docs were aligned.
 - `console state extract|restore <block>` is now real on the host. `BlockExecutor`
   gained `extract_state`/`restore_state` over the live linear memory of an
   executed WASM block (the same migration primitive used by
@@ -26,11 +34,12 @@
 - Bare `jobs`/`fg`/`bg` in `aios-shell` now use `execute_shell_adapter` with new
   exact formatters in `aios-console/src/legacy.rs`. The adapter keeps the real
   frontend side effects: pruning dead PIDs, listing the shell-owned job table,
-  sending `SIGCONT` and clearing/finishing jobs exactly as before. The canonical
-  `console jobs`/`fg`/`bg` commands remain honestly `unavailable` on
-  `HostBackend`, which owns no shell job table. A parity test covers empty and
-  populated job lists, `fg`/`bg` output and the non-Unix fallback, and a test lock
-  removes a cwd race between `pwd` and `cd` tests. EN/RU docs were aligned.
+  sending `SIGCONT` and clearing/finishing jobs exactly as before. Canonical
+  `console jobs`/`fg`/`bg` were initially `unavailable` on `HostBackend`, which
+  owns no shell job table; the `JobControl` seam above now shares this table with
+  the console. A parity test covers empty and populated job lists, `fg`/`bg`
+  output and the non-Unix fallback, and a test lock removes a cwd race between
+  `pwd` and `cd` tests. EN/RU docs were aligned.
 - `console net recheck` is now real on the kernel backend: `KernelBackend` calls
   `crate::net::recheck()`, which clears the cached ARP/ICMP/DNS reachability
   verdict and restarts the probe chain when an address is bound, then prints

@@ -12,7 +12,8 @@ use sha2::Digest;
 use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
 use aios_console::control::{
-    AuthProvider, BridgeControl, FileManagerControl, FmJobInfo, WatchdogControl,
+    AuthProvider, BridgeControl, FileManagerControl, FmJobInfo, JobControl, ShellJobInfo,
+    WatchdogControl,
 };
 use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::{ExitCode, OutputControl};
@@ -1647,6 +1648,60 @@ fn host_file_manager_control_seam_enables_fm_jobs_and_cancel() {
 
     assert_eq!(dispatch(&mut host, "fm cancel").code, ExitCode::Usage);
     assert_eq!(dispatch(&mut host, "fm cancel abc").code, ExitCode::Usage);
+}
+
+#[test]
+fn host_job_control_seam_enables_jobs_fg_and_bg() {
+    struct MockJobs;
+    impl JobControl for MockJobs {
+        fn jobs(&self) -> Vec<ShellJobInfo> {
+            vec![ShellJobInfo {
+                id: 1,
+                cmd: "sleep 10".to_string(),
+                pid: 4321,
+            }]
+        }
+        fn fg(&self, id: usize) -> Result<ShellJobInfo, String> {
+            if id == 1 {
+                Ok(ShellJobInfo {
+                    id,
+                    cmd: "sleep 10".to_string(),
+                    pid: 4321,
+                })
+            } else {
+                Err(format!("no job {id}"))
+            }
+        }
+        fn bg(&self, id: usize) -> Result<ShellJobInfo, String> {
+            self.fg(id)
+        }
+    }
+
+    let mut host = backend("job-seam");
+    assert_eq!(dispatch(&mut host, "jobs").code, ExitCode::Unavailable);
+    assert_eq!(dispatch(&mut host, "fg 1").code, ExitCode::Unavailable);
+    assert_eq!(dispatch(&mut host, "bg 1").code, ExitCode::Unavailable);
+
+    host.set_job_control(Arc::new(MockJobs));
+
+    let jobs = dispatch(&mut host, "jobs");
+    assert_ok("jobs with seam", &jobs);
+    assert_eq!(jobs.lines, ["[1]+ Running sleep 10 (pid 4321)"]);
+
+    let fg = dispatch(&mut host, "fg 1");
+    assert_ok("fg 1", &fg);
+    assert_eq!(fg.lines, ["[1]+ Running        sleep 10"]);
+
+    let bg = dispatch(&mut host, "bg 1");
+    assert_ok("bg 1", &bg);
+    assert_eq!(bg.lines, ["[1]+ Running        &sleep 10"]);
+
+    let missing = dispatch(&mut host, "fg 99");
+    assert_eq!(missing.code, ExitCode::BackendError);
+    assert_eq!(missing.lines, ["fg: no job 99"]);
+
+    assert_eq!(dispatch(&mut host, "fg").code, ExitCode::Usage);
+    assert_eq!(dispatch(&mut host, "bg abc").code, ExitCode::Usage);
 }
 
 const TEST_SIGNING_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";

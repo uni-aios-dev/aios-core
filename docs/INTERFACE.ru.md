@@ -195,13 +195,16 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 ограниченный счётчик перезапусков. `aios-tui` внедряет
 `FileManagerConsoleControl` (`aios-fm/src/console_control.rs`) поверх своего
 живого `FileManager`, поэтому `console fm jobs`/`fm cancel <id>` работают с
-реальными фоновыми передачами. Без внедрённого адаптера эти команды возвращают
-`unavailable`; остальные команды по-прежнему возвращают `ERR unavailable`, но с
-конкретной причиной из `aios-console/src/unavailable.rs`:
+реальными фоновыми передачами. `aios-shell` внедряет свою `JobTable` как адаптер
+`JobControl`, поэтому `console jobs`/`fg <id>`/`bg <id>` видят те же живые фоновые
+процессы, что и команды без префикса, и отправляют настоящий `SIGCONT`. Без
+внедрённого адаптера эти команды возвращают `unavailable`; остальные команды
+по-прежнему возвращают `ERR unavailable`, но с конкретной причиной из
+`aios-console/src/unavailable.rs`:
 
 | Команда | Причина недоступности |
 |---------|-----------------------|
-| `jobs`, `fg`, `bg` | в `aios-process-mgr` нет OS-групп процессов, сигналов и foreground TTY |
+| `jobs`, `fg`, `bg` | нет принадлежащей фронтенду таблицы заданий с OS-группами процессов, сигналами и foreground TTY в `aios-process-mgr` (`JobControl` обеспечивает её в `aios-shell`) |
 | `acl` | нет API ACL для путей; гранты `AclContext` глобальны, `caps` использует block ID |
 | `ping` | нет ICMP-API и привилегий raw-сокета; TCP connect не является эхо-ответом |
 | `net recheck` на хосте | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
@@ -210,11 +213,14 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `console fm cancel <id>` становятся реальными, как только внедрён живой
 `FileManagerControl`: `aios-tui` делает это после запуска своего `FileManager`,
 отображая реальный снимок заданий в текст консоли и отменяя настоящий токен
-`Progress`. `console state extract|restore <block>` реален на хосте: он снимает
-снимок живой линейной памяти исполняемого WASM-блока и восстанавливает его по
-запросу; для restore нужен предыдущий extract в той же сессии и живой экземпляр
-(сначала `block run <block>`). В ядерном бэкенде `console net recheck` реален: он
-вызывает `crate::net::recheck()` и печатает `network recheck requested`.
+`Progress`. Так же `console jobs`/`fg <id>`/`bg <id>` становятся реальными с живым
+`JobControl`: `aios-shell` делит свою таблицу процессов с командами без префикса,
+выводит живые задания и возобновляет нужный id. `console state extract|restore
+<block>` реален на хосте: он снимает снимок живой линейной памяти исполняемого
+WASM-блока и восстанавливает его по запросу; для restore нужен предыдущий extract
+в той же сессии и живой экземпляр (сначала `block run <block>`). В ядерном бэкенде
+`console net recheck` реален: он вызывает `crate::net::recheck()` и печатает
+`network recheck requested`.
 
 Универсальное сообщение `has no host backend yet` остаётся только для команд вне
 этого исследованного множества.
@@ -287,9 +293,10 @@ store и IPC-роутер; при обычной работе старый ди�
 раскрытие `$VAR`, изменение окружения, `OLDPWD` и текущей директории, выполнение
 строк из исходимого файла, очистку мёртвых PID, отправку `SIGCONT`, вывод заданий
 и вывод на экран. Рекурсивный `source` сообщает об ошибке вместо паники.
-Канонические `console jobs`/`fg`/`bg` остаются `unavailable` на `HostBackend`, у
-которого нет таблицы заданий шелла. На старом пути остаются только по своей
-природе фронтендные строки: внешние программы, запуск GUI/TUI,
+Канонические `console jobs`/`fg`/`bg` теперь пользуются той же таблицей заданий
+через внедрённый адаптер `JobControl`; обычный `HostBackend` без адаптера по-прежнему
+сообщает `unavailable`. На старом пути остаются только по своей природе
+фронтендные строки: внешние программы, запуск GUI/TUI,
 `logs`/`hw`/`services`, `type`/`exec`/`which`, `aios-shell-reload` и `exit`.
 
 Ядерный шелл использует тот же общий префикс `console <...>` без учёта регистра:

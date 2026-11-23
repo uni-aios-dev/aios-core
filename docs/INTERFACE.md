@@ -195,14 +195,16 @@ graceful shutdown and `bridge start` spawns the listener again. `wd reset` reset
 the shared watchdog through `WatchdogControl::reset` and only then increments the
 bounded restart counter. `aios-tui` injects a `FileManagerConsoleControl`
 (`aios-fm/src/console_control.rs`) over its live `FileManager`, so `console fm
-jobs`/`fm cancel <id>` operate on real background transfers. Without an injected
-adapter these commands report `unavailable`; the remaining commands still report
-`ERR unavailable`, but with a concrete reason from
+jobs`/`fm cancel <id>` operate on real background transfers. `aios-shell` injects
+its `JobTable` as a `JobControl` seam, so `console jobs`/`fg <id>`/`bg <id>` see the
+same live background processes as the bare builtins and deliver a real `SIGCONT`.
+Without an injected adapter these commands report `unavailable`; the remaining
+commands still report `ERR unavailable`, but with a concrete reason from
 `aios-console/src/unavailable.rs`:
 
 | Command | Why it is unavailable |
 |---------|-----------------------|
-| `jobs`, `fg`, `bg` | no OS process groups, signals or TTY foreground in `aios-process-mgr` |
+| `jobs`, `fg`, `bg` | no host-owned job table with OS process groups, signals or TTY foreground in `aios-process-mgr` (`JobControl` supplies it in `aios-shell`) |
 | `acl` | no path-scoped ACL API; `AclContext` grants are global tokens, `caps` uses block IDs |
 | `ping` | no ICMP API or raw-socket privilege; TCP connect is not an echo reply |
 | `net recheck` on host | real `recheck()` is kernel-only; host `NetManager` reports cached status |
@@ -211,11 +213,14 @@ The table is host-only and describes a `HostBackend` with no injected control
 seams. `console fm jobs` and `console fm cancel <id>` become real as soon as a
 live `FileManagerControl` is injected: `aios-tui` does this after starting its
 `FileManager`, mapping the real job snapshot to console text and cancelling the
-actual `Progress` token. `console state extract|restore <block>` is real on a
-host: it snapshots the live linear memory of an executed WASM block and restores
-it on request; restore requires a prior extract in the same session and a live
-instance (`block run <block>` first). On the kernel backend `console net recheck`
-is real: it calls `crate::net::recheck()` and prints `network recheck requested`.
+actual `Progress` token. Likewise, `console jobs`/`fg <id>`/`bg <id>` become real
+with a live `JobControl`: `aios-shell` shares its process table with the bare
+builtins, lists live jobs and resumes the requested id. `console
+state extract|restore <block>` is real on a host: it snapshots the live linear
+memory of an executed WASM block and restores it on request; restore requires a
+prior extract in the same session and a live instance (`block run <block>` first).
+On the kernel backend `console net recheck` is real: it calls
+`crate::net::recheck()` and prints `network recheck requested`.
 
 The generic `has no host backend yet` message is kept only for commands outside
 this investigated set.
@@ -284,8 +289,9 @@ The frontend still owns the real side effects: history/alias files, `$VAR`
 expansion, environment mutation, `OLDPWD`/current directory, sourced-file
 execution, PID pruning, `SIGCONT` delivery, job listing and screen I/O. A
 recursive `source` reports an error instead of panicking. Canonical
-`console jobs`/`fg`/`bg` remain `unavailable` on `HostBackend`, which has no
-shell job table. Only inherently frontend-side lines remain on the legacy path:
+`console jobs`/`fg`/`bg` now use that same job table through the injected
+`JobControl` seam; a bare `HostBackend` without the seam still reports
+`unavailable`. Only inherently frontend-side lines remain on the legacy path:
 external programs, GUI/TUI launchers, `logs`/`hw`/`services`,
 `type`/`exec`/`which`, `aios-shell-reload` and `exit`.
 

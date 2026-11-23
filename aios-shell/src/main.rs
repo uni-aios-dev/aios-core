@@ -6,11 +6,13 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use rustyline::error::ReadlineError;
 use rustyline::history::FileHistory;
 use rustyline::{Config, EditMode, Editor};
 
+use aios_console::control::{JobControl, ShellJobInfo};
 use aios_console::host::HostBackend;
 use aios_console::legacy::{
     shell_alias_set_text, shell_alias_text, shell_cd_error_text, shell_echo_text, shell_env_text,
@@ -27,6 +29,129 @@ struct Job {
     id: usize,
     cmd: String,
     pid: u32,
+}
+
+/// Shared job table owned by the shell and injected into `HostBackend`.
+///
+/// The same table serves the bare `jobs`/`fg`/`bg` builtins and the canonical
+/// `console jobs`/`fg <id>`/`bg <id>` commands, so both paths observe the same
+/// live background processes.
+#[derive(Clone, Default)]
+struct JobTable {
+    inner: Arc<Mutex<Vec<Job>>>,
+}
+
+impl JobTable {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn snapshot(&self) -> Vec<Job> {
+        self.inner.lock().unwrap().clone()
+    }
+
+    fn entries(&self) -> Vec<(usize, String, u32)> {
+        self.snapshot()
+            .into_iter()
+            .map(|job| (job.id, job.cmd, job.pid))
+            .collect()
+    }
+
+    fn push(&self, job: Job) {
+        self.inner.lock().unwrap().push(job);
+    }
+
+    #[cfg(unix)]
+    fn clear(&self) {
+        self.inner.lock().unwrap().clear();
+    }
+
+    #[cfg(unix)]
+    fn last(&self) -> Option<Job> {
+        self.inner.lock().unwrap().last().cloned()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner.lock().unwrap().is_empty()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
+
+    #[cfg(unix)]
+    fn retain(&self, predicate: impl FnMut(&Job) -> bool) {
+        self.inner.lock().unwrap().retain(predicate);
+    }
+
+    #[cfg(unix)]
+    fn remove(&self, id: usize) -> bool {
+        let mut jobs = self.inner.lock().unwrap();
+        match jobs.iter().position(|job| job.id == id) {
+            Some(index) => {
+                jobs.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+impl JobControl for JobTable {
+    fn jobs(&self) -> Vec<ShellJobInfo> {
+        self.snapshot()
+            .into_iter()
+            .map(|job| ShellJobInfo {
+                id: job.id,
+                cmd: job.cmd,
+                pid: job.pid,
+            })
+            .collect()
+    }
+
+    fn fg(&self, id: usize) -> Result<ShellJobInfo, String> {
+        #[cfg(unix)]
+        {
+            let job = self.snapshot().into_iter().find(|job| job.id == id);
+            let Some(job) = job else {
+                return Err(format!("no job {id}"));
+            };
+            let _ = unsafe { libc::kill(job.pid as i32, libc::SIGCONT) };
+            self.remove(id);
+            Ok(ShellJobInfo {
+                id: job.id,
+                cmd: job.cmd,
+                pid: job.pid,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = id;
+            Err("not supported on this platform".to_string())
+        }
+    }
+
+    fn bg(&self, id: usize) -> Result<ShellJobInfo, String> {
+        #[cfg(unix)]
+        {
+            let job = self.snapshot().into_iter().find(|job| job.id == id);
+            let Some(job) = job else {
+                return Err(format!("no job {id}"));
+            };
+            let _ = unsafe { libc::kill(job.pid as i32, libc::SIGCONT) };
+            Ok(ShellJobInfo {
+                id: job.id,
+                cmd: job.cmd,
+                pid: job.pid,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = id;
+            Err("not supported on this platform".to_string())
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -232,7 +357,7 @@ fn source_unmark(key: &str) {
     });
 }
 
-fn prune_jobs(jobs: &mut Vec<Job>) {
+fn prune_jobs(jobs: &JobTable) {
     #[cfg(unix)]
     jobs.retain(|job| unsafe { libc::kill(job.pid as i32, 0) == 0 });
     #[cfg(not(unix))]
@@ -385,7 +510,7 @@ fn legacy_source_missing_lines(path: &str) -> Vec<String> {
 fn execute_shell_adapter(
     expanded: &str,
     aliases: &mut HashMap<String, String>,
-    jobs: &mut Vec<Job>,
+    jobs: &JobTable,
     job_counter: &mut usize,
     console: &mut HostBackend,
 ) -> Option<ShellOutcome> {
@@ -507,16 +632,17 @@ fn execute_shell_adapter(
         }
         "jobs" => {
             prune_jobs(jobs);
-            let entries: Vec<_> = jobs
+            let snapshot = jobs.entries();
+            let entries: Vec<_> = snapshot
                 .iter()
-                .map(|job| (job.id, job.cmd.as_str(), job.pid))
+                .map(|(id, cmd, pid)| (*id, cmd.as_str(), *pid))
                 .collect();
             Some(ShellOutcome::Lines(shell_jobs_text(&entries)))
         }
         "fg" => {
             #[cfg(unix)]
             {
-                if let Some(job) = jobs.last().cloned() {
+                if let Some(job) = jobs.last() {
                     let _ = unsafe { libc::kill(job.pid as i32, libc::SIGCONT) };
                     jobs.clear();
                     Some(ShellOutcome::Lines(shell_fg_text(job.id, &job.cmd)))
@@ -538,7 +664,7 @@ fn execute_shell_adapter(
         "bg" => {
             #[cfg(unix)]
             {
-                if let Some(job) = jobs.last().cloned() {
+                if let Some(job) = jobs.last() {
                     let _ = unsafe { libc::kill(job.pid as i32, libc::SIGCONT) };
                     Some(ShellOutcome::Lines(shell_bg_text(job.id, &job.cmd)))
                 } else {
@@ -563,7 +689,7 @@ fn execute_shell_adapter(
 fn run_command(
     line: &str,
     aliases: &mut HashMap<String, String>,
-    jobs: &mut Vec<Job>,
+    jobs: &JobTable,
     job_counter: &mut usize,
     console: &mut HostBackend,
 ) {
@@ -587,7 +713,7 @@ fn run_command(
 fn run_command_legacy(
     line: &str,
     aliases: &mut HashMap<String, String>,
-    jobs: &mut Vec<Job>,
+    jobs: &JobTable,
     job_counter: &mut usize,
     console: &mut HostBackend,
 ) {
@@ -717,15 +843,15 @@ fn run_command_legacy(
             if jobs.is_empty() {
                 println!("No jobs");
             } else {
-                for j in jobs.iter() {
-                    println!("[{}]+ Running {} (pid {})", j.id, j.cmd, j.pid);
+                for j in jobs.entries() {
+                    println!("[{}]+ Running {} (pid {})", j.0, j.1, j.2);
                 }
             }
         }
         "fg" => {
             #[cfg(unix)]
             {
-                if let Some(j) = jobs.last().cloned() {
+                if let Some(j) = jobs.last() {
                     let _ = unsafe { libc::kill(j.pid as i32, libc::SIGCONT) };
                     println!("[{}]+ Running        {}", j.id, j.cmd);
                     jobs.clear();
@@ -741,7 +867,7 @@ fn run_command_legacy(
         "bg" => {
             #[cfg(unix)]
             {
-                if let Some(j) = jobs.last().cloned() {
+                if let Some(j) = jobs.last() {
                     let _ = unsafe { libc::kill(j.pid as i32, libc::SIGCONT) };
                     println!("[{}]+ Running        &{}", j.id, j.cmd);
                 } else {
@@ -796,7 +922,7 @@ fn run_command_legacy(
         }
         "aios-shell-reload" => {
             println!("Reloading shellrc...");
-            load_shellrc_simple(aliases, console);
+            load_shellrc_simple(aliases, jobs, console);
         }
         "logs" => {
             for f in [
@@ -1092,10 +1218,13 @@ fn run_command_legacy(
     }
 }
 
-fn load_shellrc_simple(aliases: &mut HashMap<String, String>, console: &mut HostBackend) {
+fn load_shellrc_simple(
+    aliases: &mut HashMap<String, String>,
+    jobs: &JobTable,
+    console: &mut HostBackend,
+) {
     if let Some(p) = config_path() {
         if let Ok(content) = fs::read_to_string(p) {
-            let mut jobs = vec![];
             let mut jc = 0;
             for line in content.lines() {
                 let l = line.trim();
@@ -1113,7 +1242,7 @@ fn load_shellrc_simple(aliases: &mut HashMap<String, String>, console: &mut Host
                 } else if l == "exit" || l == "quit" {
                     continue; // don't exit on shellrc load
                 } else {
-                    run_command(l, aliases, &mut jobs, &mut jc, console);
+                    run_command(l, aliases, jobs, &mut jc, console);
                 }
             }
             save_aliases(aliases);
@@ -1124,7 +1253,9 @@ fn load_shellrc_simple(aliases: &mut HashMap<String, String>, console: &mut Host
 fn main() {
     let mut aliases = load_aliases();
     let mut console = HostBackend::new();
-    load_shellrc_simple(&mut aliases, &mut console);
+    let jobs = JobTable::new();
+    console.set_job_control(Arc::new(jobs.clone()));
+    load_shellrc_simple(&mut aliases, &jobs, &mut console);
 
     println!("\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m");
     println!("\x1b[1;36mтХС                AIOS Shell v2.2                    тХС\x1b[0m");
@@ -1144,7 +1275,6 @@ fn main() {
         let _ = rl.load_history(&h);
     }
 
-    let mut jobs: Vec<Job> = vec![];
     let mut job_counter: usize = 0;
 
     loop {
@@ -1192,16 +1322,10 @@ fn main() {
                             if sub.is_empty() {
                                 continue;
                             }
-                            run_command(
-                                sub,
-                                &mut aliases,
-                                &mut jobs,
-                                &mut job_counter,
-                                &mut console,
-                            );
+                            run_command(sub, &mut aliases, &jobs, &mut job_counter, &mut console);
                         }
                     } else {
-                        run_command(cmd, &mut aliases, &mut jobs, &mut job_counter, &mut console);
+                        run_command(cmd, &mut aliases, &jobs, &mut job_counter, &mut console);
                     }
                 }
             }
@@ -1319,33 +1443,21 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
 
         assert_eq!(
-            execute_shell_adapter(
-                "help",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("help", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(legacy_help_lines()))
         );
         assert_eq!(
-            execute_shell_adapter("?", &mut aliases, &mut jobs, &mut job_counter, &mut console),
+            execute_shell_adapter("?", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(legacy_help_lines()))
         );
 
         let pwd = legacy_pwd_lines().unwrap();
         assert_eq!(
-            execute_shell_adapter(
-                "pwd",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("pwd", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(pwd))
         );
 
@@ -1353,36 +1465,18 @@ mod tests {
             let mut parts = line.split_whitespace();
             parts.next();
             assert_eq!(
-                execute_shell_adapter(
-                    line,
-                    &mut aliases,
-                    &mut jobs,
-                    &mut job_counter,
-                    &mut console
-                ),
+                execute_shell_adapter(line, &mut aliases, &jobs, &mut job_counter, &mut console),
                 Some(ShellOutcome::Lines(legacy_echo_lines(parts))),
                 "input: {line}"
             );
         }
 
         assert_eq!(
-            execute_shell_adapter(
-                "clear",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("clear", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Clear)
         );
         assert_eq!(
-            execute_shell_adapter(
-                "cls",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("cls", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Clear)
         );
     }
@@ -1392,18 +1486,12 @@ mod tests {
         let _guard = DataDirGuard::new();
         let mut console = HostBackend::new();
         let mut aliases = HashMap::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
         aliases.insert("gs".to_string(), "git status".to_string());
 
         assert_eq!(
-            execute_shell_adapter(
-                "alias",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("alias", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(legacy_alias_lines(&aliases)))
         );
 
@@ -1413,7 +1501,7 @@ mod tests {
             execute_shell_adapter(
                 "alias ll=ls g=git",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1428,7 +1516,7 @@ mod tests {
             execute_shell_adapter(
                 "unalias gs",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1442,7 +1530,7 @@ mod tests {
         let _guard = DataDirGuard::new();
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
         let history_file = history_path().unwrap();
         fs::write(&history_file, "first\n\nthird\n").unwrap();
@@ -1452,7 +1540,7 @@ mod tests {
             execute_shell_adapter(
                 "history",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1462,7 +1550,7 @@ mod tests {
             execute_shell_adapter(
                 "history",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1474,38 +1562,48 @@ mod tests {
     fn unmigrated_bare_shell_commands_fall_through() {
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
         for line in ["ls", "gui", "tui", "exit", "aios-shell-reload"] {
             assert!(
-                execute_shell_adapter(
-                    line,
-                    &mut aliases,
-                    &mut jobs,
-                    &mut job_counter,
-                    &mut console
-                )
-                .is_none(),
+                execute_shell_adapter(line, &mut aliases, &jobs, &mut job_counter, &mut console)
+                    .is_none(),
                 "input: {line}"
             );
         }
     }
 
     #[test]
+    fn canonical_console_jobs_share_the_shell_job_table() {
+        let mut console = HostBackend::new();
+        let jobs = JobTable::new();
+        console.set_job_control(Arc::new(jobs.clone()));
+
+        assert_eq!(console.execute_line("jobs").lines, ["No jobs"]);
+
+        let pid = std::process::id();
+        jobs.push(Job {
+            id: 7,
+            cmd: "sleep 2".to_string(),
+            pid,
+        });
+        assert_eq!(
+            console.execute_line("jobs").lines,
+            [format!("[7]+ Running sleep 2 (pid {pid})")]
+        );
+        assert!(console.execute_line("fg 99").lines[0].starts_with("fg:"));
+        assert!(console.execute_line("bg 99").lines[0].starts_with("bg:"));
+    }
+
+    #[test]
     fn bare_shell_job_adapters_match_legacy_text_and_effects() {
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
 
         assert_eq!(
-            execute_shell_adapter(
-                "jobs",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("jobs", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(vec!["No jobs".to_string()]))
         );
 
@@ -1516,13 +1614,7 @@ mod tests {
             pid,
         });
         assert_eq!(
-            execute_shell_adapter(
-                "jobs",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("jobs", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(vec![format!(
                 "[1]+ Running sleep 1 (pid {pid})"
             )]))
@@ -1531,13 +1623,7 @@ mod tests {
         #[cfg(unix)]
         {
             assert_eq!(
-                execute_shell_adapter(
-                    "fg",
-                    &mut aliases,
-                    &mut jobs,
-                    &mut job_counter,
-                    &mut console
-                ),
+                execute_shell_adapter("fg", &mut aliases, &jobs, &mut job_counter, &mut console),
                 Some(ShellOutcome::Lines(vec![
                     "[1]+ Running        sleep 1".to_string()
                 ]))
@@ -1550,13 +1636,7 @@ mod tests {
                 pid,
             });
             assert_eq!(
-                execute_shell_adapter(
-                    "bg",
-                    &mut aliases,
-                    &mut jobs,
-                    &mut job_counter,
-                    &mut console
-                ),
+                execute_shell_adapter("bg", &mut aliases, &jobs, &mut job_counter, &mut console),
                 Some(ShellOutcome::Lines(vec![
                     "[1]+ Running        &sleep 1".to_string()
                 ]))
@@ -1567,25 +1647,13 @@ mod tests {
         #[cfg(not(unix))]
         {
             assert_eq!(
-                execute_shell_adapter(
-                    "fg",
-                    &mut aliases,
-                    &mut jobs,
-                    &mut job_counter,
-                    &mut console
-                ),
+                execute_shell_adapter("fg", &mut aliases, &jobs, &mut job_counter, &mut console),
                 Some(ShellOutcome::Lines(vec![
                     "fg: not supported on this platform".to_string()
                 ]))
             );
             assert_eq!(
-                execute_shell_adapter(
-                    "bg",
-                    &mut aliases,
-                    &mut jobs,
-                    &mut job_counter,
-                    &mut console
-                ),
+                execute_shell_adapter("bg", &mut aliases, &jobs, &mut job_counter, &mut console),
                 Some(ShellOutcome::Lines(vec![
                     "bg: not supported on this platform".to_string()
                 ]))
@@ -1652,24 +1720,18 @@ mod tests {
 
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
 
         assert_eq!(
-            execute_shell_adapter(
-                "env",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("env", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(legacy_env_lines()))
         );
         assert_eq!(
             execute_shell_adapter(
                 "export AIOS_SHELL_PARITY_KEY",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1682,7 +1744,7 @@ mod tests {
             execute_shell_adapter(
                 "export AIOS_SHELL_PARITY_KEY=changed",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1696,7 +1758,7 @@ mod tests {
             execute_shell_adapter(
                 "export",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1706,7 +1768,7 @@ mod tests {
             execute_shell_adapter(
                 "unset AIOS_SHELL_PARITY_KEY",
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1724,7 +1786,7 @@ mod tests {
 
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
 
         let target = dir.display().to_string();
@@ -1732,7 +1794,7 @@ mod tests {
             execute_shell_adapter(
                 &format!("cd {target}"),
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1742,13 +1804,7 @@ mod tests {
         assert_eq!(env::var("OLDPWD").unwrap(), original.display().to_string());
 
         assert_eq!(
-            execute_shell_adapter(
-                "cd -",
-                &mut aliases,
-                &mut jobs,
-                &mut job_counter,
-                &mut console
-            ),
+            execute_shell_adapter("cd -", &mut aliases, &jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(Vec::new()))
         );
         assert_eq!(env::current_dir().unwrap(), original);
@@ -1759,7 +1815,7 @@ mod tests {
             execute_shell_adapter(
                 &format!("cd {}", missing.display()),
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1779,7 +1835,7 @@ mod tests {
 
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        let mut jobs = Vec::new();
+        let jobs = JobTable::new();
         let mut job_counter = 0;
 
         let missing = history_path().unwrap().with_file_name("no-such-shellrc");
@@ -1787,7 +1843,7 @@ mod tests {
             execute_shell_adapter(
                 &format!("source {}", missing.display()),
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1802,7 +1858,7 @@ mod tests {
             execute_shell_adapter(
                 &format!("source {}", rc.display()),
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),
@@ -1818,7 +1874,7 @@ mod tests {
             execute_shell_adapter(
                 &format!("source {}", recursive.display()),
                 &mut aliases,
-                &mut jobs,
+                &jobs,
                 &mut job_counter,
                 &mut console
             ),

@@ -228,15 +228,16 @@
   `auth register|login|me`. `bridge stop` uses `start_server_with_shutdown`.
 - [x] Document the exact blocker for the six host-unavailable `ERR unavailable`
   commands in `aios-console/src/unavailable.rs` and the EN/RU docs. Investigation
-  confirmed they are NOT missing adapters: `jobs|fg|bg` need OS process groups,
-  signals and TTY foreground; `acl` needs a path-scoped ACL API (existing
+  confirmed they are NOT missing adapters: `jobs|fg|bg` need a host-owned job
+  table with OS process groups, signals and TTY foreground; `acl` needs a path-scoped ACL API (existing
   `AclContext` grants are global and `caps` tokens are block-keyed); `ping` needs
   ICMP with raw-socket privileges; `net recheck` needs a host equivalent of the
   kernel-only `recheck()`; `state` needs live `StatefulBlock` handles in
   `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked. The
   kernel half of `net recheck` is now real and wired into `KernelBackend`,
-  `fm` is now real via an injected `FileManagerControl` seam, and `state` is now
-  real over the live WASM executor's linear memory (see below).
+  `fm` is now real via an injected `FileManagerControl` seam, `jobs|fg|bg` is now
+  real via an injected `JobControl` seam in `aios-shell`, and `state` is now real
+  over the live WASM executor's linear memory (see below).
 - [x] Add a `console <command> [args]` escape hatch to the standalone
   `aios-shell`: `main` owns one `HostBackend`, `console_prefix` detects the
   prefix case-insensitively before alias expansion, and bare `console` prints
@@ -338,9 +339,16 @@
   execution and recursion paths. EN/RU docs were aligned.
 - [x] Migrate bare `jobs`/`fg`/`bg` in `aios-shell` to `execute_shell_adapter`
   with exact formatters. Real PID pruning, job listing and `SIGCONT` delivery stay
-  in the frontend; canonical `console jobs`/`fg`/`bg` remain honestly
-  `unavailable` on `HostBackend`, which has no shell job table. EN/RU docs were
-  aligned.
+  in the frontend. Canonical `console jobs`/`fg`/`bg` were initially `unavailable`
+  on `HostBackend`, which has no shell job table; they are now real through the
+  `JobControl` seam below. EN/RU docs were aligned.
+- [x] Enable canonical `console jobs`/`fg <id>`/`bg <id>` through a new `JobControl`
+  seam. `aios-shell` owns one `JobTable` shared by the bare builtins and
+  `HostBackend`; `fg`/`bg` resolve the requested id and send a real `SIGCONT` on
+  Unix, while a bare backend without the seam keeps the exact `unavailable` reason.
+  Contract tests cover the seam, usage, unknown ids and no-seam behaviour;
+  `aios-shell` verifies that the console sees the shared table. EN/RU docs were
+  updated.
 - [ ] The remaining legacy branches are intentional, not unfinished migrations:
   external programs, GUI/TUI launchers, `logs`, `hw`, `services`,
   `type`/`exec`/`which` and `exit` are frontend-side operations with no pure text

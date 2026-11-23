@@ -56,7 +56,9 @@ use sha2::{Digest, Sha256};
 
 use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
-use crate::control::{AuthProvider, BridgeControl, FileManagerControl, WatchdogControl};
+use crate::control::{
+    AuthProvider, BridgeControl, FileManagerControl, JobControl, WatchdogControl,
+};
 use crate::output::{CommandOutput, ExitCode, OutputControl};
 use crate::registry::{help, Invocation};
 
@@ -176,6 +178,7 @@ pub struct HostBackend {
     bridge_control: Option<Arc<dyn BridgeControl>>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
     file_manager_control: Option<Arc<dyn FileManagerControl>>,
+    job_control: Option<Arc<dyn JobControl>>,
     event_log: Option<Arc<Mutex<Vec<String>>>>,
 }
 
@@ -253,6 +256,7 @@ impl HostBackend {
             bridge_control: None,
             auth_provider: None,
             file_manager_control: None,
+            job_control: None,
             event_log: None,
         }
     }
@@ -303,6 +307,14 @@ impl HostBackend {
     /// `unavailable`; the console never fabricates background jobs.
     pub fn set_file_manager_control(&mut self, control: Arc<dyn FileManagerControl>) {
         self.file_manager_control = Some(control);
+    }
+
+    /// Injects the host-owned shell job table for `jobs`/`fg`/`bg` commands.
+    ///
+    /// Without a live frontend control these commands report `unavailable`; the
+    /// console never fabricates process groups, signals or TTY foreground.
+    pub fn set_job_control(&mut self, control: Arc<dyn JobControl>) {
+        self.job_control = Some(control);
     }
 
     /// Shares the safe-mode event log so legacy `logs` output can be reproduced.
@@ -523,6 +535,9 @@ impl CommandBackend for HostBackend {
             ("auth", Some(subcommand)) => self.auth_command(invocation, subcommand),
             ("fm", Some("jobs")) => self.fm_jobs(),
             ("fm", Some("cancel")) => self.fm_cancel(invocation),
+            ("jobs", _) => self.shell_jobs(),
+            ("fg", _) => self.shell_job_command(invocation, "fg"),
+            ("bg", _) => self.shell_job_command(invocation, "bg"),
             ("state", Some("extract")) => self.state_extract(invocation),
             ("state", Some("restore")) => self.state_restore(invocation),
             ("source", _) => self.source(invocation),
@@ -2290,6 +2305,51 @@ impl HostBackend {
             Ok(()) => CommandOutput::ok(crate::legacy::fm_cancel_text(id)),
             Err(_) => CommandOutput {
                 lines: crate::legacy::fm_cancel_missing_text(id),
+                code: ExitCode::BackendError,
+                ..CommandOutput::default()
+            },
+        }
+    }
+
+    fn job_unavailable(&self, command: &str) -> CommandOutput {
+        let reason = crate::unavailable::host_unavailable_reason(command, None)
+            .unwrap_or("needs a live host shell job control seam");
+        CommandOutput::unavailable(&format!("'{command}' is unavailable: {reason}"))
+    }
+
+    fn shell_jobs(&self) -> CommandOutput {
+        let Some(control) = self.job_control.as_ref() else {
+            return self.job_unavailable("jobs");
+        };
+        CommandOutput::ok(crate::legacy::console_jobs_text(&control.jobs()))
+    }
+
+    fn shell_job_command(&self, invocation: &Invocation, command: &str) -> CommandOutput {
+        let Some(control) = self.job_control.as_ref() else {
+            return self.job_unavailable(command);
+        };
+        let Some(raw_id) = invocation.first_arg() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Ok(id) = raw_id.parse::<usize>() else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let result = if command == "fg" {
+            control.fg(id)
+        } else {
+            control.bg(id)
+        };
+        match result {
+            Ok(job) => {
+                let lines = if command == "fg" {
+                    crate::legacy::console_fg_text(&job)
+                } else {
+                    crate::legacy::console_bg_text(&job)
+                };
+                CommandOutput::ok(lines)
+            }
+            Err(message) => CommandOutput {
+                lines: crate::legacy::console_job_error_text(command, &message),
                 code: ExitCode::BackendError,
                 ..CommandOutput::default()
             },

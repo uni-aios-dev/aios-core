@@ -5,7 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::control::FmJobInfo;
+use crate::control::{FmJobInfo, ShellJobInfo};
 use crate::output::{CommandOutput, ExitCode, OutputControl};
 
 const PROCESS_HEADER: &str = "PID  NAME              PRIO  STATE     RAM";
@@ -509,6 +509,30 @@ pub fn shell_job_error_text(command: &str, message: &str) -> Vec<String> {
     vec![format!("{command}: {message}")]
 }
 
+/// Formats the canonical `console jobs` list from a shell job table snapshot.
+pub fn console_jobs_text(jobs: &[ShellJobInfo]) -> Vec<String> {
+    let entries: Vec<_> = jobs
+        .iter()
+        .map(|job| (job.id, job.cmd.as_str(), job.pid))
+        .collect();
+    shell_jobs_text(&entries)
+}
+
+/// Formats the canonical `console fg` success line.
+pub fn console_fg_text(job: &ShellJobInfo) -> Vec<String> {
+    shell_fg_text(job.id, &job.cmd)
+}
+
+/// Formats the canonical `console bg` success line.
+pub fn console_bg_text(job: &ShellJobInfo) -> Vec<String> {
+    shell_bg_text(job.id, &job.cmd)
+}
+
+/// Formats the canonical shell job-control error line.
+pub fn console_job_error_text(command: &str, message: &str) -> Vec<String> {
+    shell_job_error_text(command, message)
+}
+
 /// Formats the canonical text console file-manager job list.
 pub fn fm_jobs_text(jobs: &[FmJobInfo]) -> Vec<String> {
     if jobs.is_empty() {
@@ -693,7 +717,7 @@ mod tests {
         unload_success, AiosNetResult, AIOS_HELP, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER,
         LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
-    use crate::control::FmJobInfo;
+    use crate::control::{FmJobInfo, ShellJobInfo};
     use crate::output::CommandOutput;
 
     #[test]
@@ -1080,6 +1104,32 @@ mod tests {
         assert_eq!(
             super::shell_job_error_text("fg", "no current job"),
             ["fg: no current job"]
+        );
+    }
+
+    #[test]
+    fn maps_canonical_shell_job_text_exactly() {
+        assert_eq!(super::console_jobs_text(&[]), ["No jobs"]);
+        let job = ShellJobInfo {
+            id: 5,
+            cmd: "sleep 10".to_string(),
+            pid: 4321,
+        };
+        assert_eq!(
+            super::console_jobs_text(core::slice::from_ref(&job)),
+            ["[5]+ Running sleep 10 (pid 4321)"]
+        );
+        assert_eq!(
+            super::console_fg_text(&job),
+            ["[5]+ Running        sleep 10"]
+        );
+        assert_eq!(
+            super::console_bg_text(&job),
+            ["[5]+ Running        &sleep 10"]
+        );
+        assert_eq!(
+            super::console_job_error_text("fg", "no job 5"),
+            ["fg: no job 5"]
         );
     }
 
