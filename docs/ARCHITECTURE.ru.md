@@ -92,7 +92,21 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 строки `console <...>` в него. Голые `clear`/`cls` тоже идут через тот же путь
 `console_execute`: оба не выводят строк и возвращают только `OutputControl::Clear`,
 как и прежняя очистка буфера; при этом они добавляются в историю `HostBackend`.
-Все остальные команды без префикса по-прежнему используют старый диспетчер.
+Первая партия адаптеров для команд без префикса охватывает `help`/`?`, `ps`,
+`blocks`, корректный `kill`, `logs`, `status`, usage-строки для
+`kill`/`spawn`/`store`/`net` и откат на неизвестную команду.
+`execute_aios_adapter` возвращает флаг, а `shell_execute` прибегает к
+`shell_execute_legacy` для всего остального. Чистые форматтеры находятся в
+`aios-console/src/legacy.rs` (`AIOS_HELP`, `aios_unknown_text`,
+`aios_usage_text`, `aios_kill_success`, `aios_kill_failed`, `aios_log_text`,
+`aios_status_text`), а адаптеры данных — в `HostBackend`
+(`aios_process_list_text`, `aios_block_list_text`, `aios_kill`). Адаптер `kill`
+сохраняет особую формулировку `aios` (`  killed '<name>' (<pid>)` /
+`  kill failed: <error>`) вместо текста `LegacyMutation` безопасного режима и не
+записывает событие, поскольку старый диспетчер `aios` не журналирует kill.
+Оставшиеся команды без префикса `spawn`, `store`, `net`, `cluster` и `restart`
+пользуются старым диспетчером, пока их TUI-зависимые точки не получат адаптеры
+точного вывода.
 `aios-shell` также владеет одним `HostBackend`, созданным в `main`, и
 распознаёт префикс `console <...>` без учёта регистра до раскрытия алиасов, поэтому
 реестр никогда не видит сам префикс. Один `console` выводит генерируемую справку;
@@ -151,8 +165,12 @@ legacy-алиас безопасного режима. Остальные стр
 результаты разрешения команд. Поэтому `legacy_parity.rs` подтверждает разрешение,
 но не равенство вывода: `aios/src/tui/mod.rs` фиксирует точные старые строки для
 `help`/`?`, неизвестной команды, usage-сообщений `kill`/`store`/`net` и пустого
-`ps`, а `aios-console/tests/host_backend.rs` фиксирует канонический вывод хоста
-для `help`, `clear` и usage-ошибок. `aios-watchdog/src/safe_mode.rs` теперь также
+`ps`, а восемь бинарных тестов паритета сравнивают путь адаптера с
+`shell_execute_legacy` побайтово (команды только для чтения используют один
+экземпляр `TuiApp`, чтобы порядок итерации `HashMap` в
+`Scheduler::all_processes` совпадал для обоих путей); `aios-console/tests/host_backend.rs`
+фиксирует канонический вывод хоста для `help`, `clear` и usage-ошибок.
+`aios-watchdog/src/safe_mode.rs` теперь также
 фиксирует точные старые `ShellResponse.success` и `output` для каждой ветки:
 пустые и заполненные списки, успех и ошибки жизненного цикла процессов и блоков,
 `status`, пустые и нумерованные `logs`, успешный перезапуск и достижение лимита,

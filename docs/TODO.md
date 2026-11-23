@@ -262,15 +262,20 @@
   assertions in `aios-console/tests/host_backend.rs` pin canonical `help`,
   `clear` and usage output. Other bare commands keep the legacy dispatcher
   until output parity is proven.
+- [x] Extend the `aios` shell migration with exact-output adapters for `help`/`?`,
+  `ps`, `blocks`, valid `kill`, `logs`, `status`, the `kill`/`spawn`/`store`/`net`
+  usage lines and the unknown-command fallback. Eight binary parity tests compare
+  the adapter path with `shell_execute_legacy` byte-for-byte; `aios`-specific text
+  formatters live in `legacy.rs` and the data adapters in `HostBackend`.
 - [x] Port `store sign` and `store publish` into the unified `aios-console`:
   real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
   and the bridge `POST /api/v1/store/publish` call. They are registered
   subcommands again, with loopback HTTP and contract tests; EN/RU docs aligned.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
-- [ ] Replace the five legacy dispatchers (`aios-tui`, `aios`, kernel TUI,
-  `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
-  checks are green.
+- [ ] Finish replacing the five legacy dispatchers (`aios-tui` done, `aios`
+  partial, kernel TUI, `SafeModeShell`, `aios-shell`) only after the remaining
+  adapters and parity checks are green.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 

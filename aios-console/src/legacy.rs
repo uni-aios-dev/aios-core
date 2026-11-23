@@ -2,6 +2,7 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::output::{CommandOutput, ExitCode, OutputControl};
@@ -19,6 +20,8 @@ const STATUS_RESTARTS: &str = "restarts      ";
 const STATUS_LOG: &str = "log           ";
 const HELP_HEADER: &str = "AIOS text console commands";
 const LEGACY_HELP: &str = "Commands:\n  ps                         — list processes\n  blocks                     — list loaded blocks\n  spawn <name> [prio] [ram]  — spawn a process\n  kill <pid>                 — kill a process\n  load <name> [version]      — load a block\n  unload <id>                — unload a block\n  status                     — system status\n  logs                       — view safe mode logs\n  restart                    — restart orchestrator\n  help                       — show this help\n  exit                       — exit safe mode";
+/// Exact legacy help line of the `aios` TUI shell.
+pub const AIOS_HELP: &str = "Commands: console <command> [args] | ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | cluster status | cluster spawn <name> | cluster kill <node> <pid> | cluster migrate <node> <pid> [target] | status | logs | restart | clear";
 
 /// Converts canonical `ps` output into the exact legacy safe-mode process text.
 ///
@@ -227,6 +230,70 @@ pub fn unknown_text(cmd: &str) -> String {
     format!("Unknown command: '{cmd}'. Type 'help' for available commands.")
 }
 
+/// Formats the exact legacy `aios` TUI shell line for an unknown command.
+///
+/// The legacy dispatcher lowercases the first whitespace-delimited token and
+/// ignores any remaining arguments, so the adapter takes that token directly.
+pub fn aios_unknown_text(command: &str) -> String {
+    format!("  unknown command '{command}' — type help")
+}
+
+/// Returns the exact legacy `aios` TUI shell usage line for `command`.
+///
+/// `None` means the command has no fixed usage line, so its legacy path must
+/// stay in place (for example `cluster`, whose usage depends on the subcommand).
+pub fn aios_usage_text(command: &str) -> Option<String> {
+    match command {
+        "kill" => Some(String::from("Usage: kill <pid>")),
+        "spawn" => Some(String::from("Usage: spawn <wasm-path-or-file>")),
+        "store" => Some(String::from(
+            "Usage: store list | store search <q> | store install <name>",
+        )),
+        "net" => Some(String::from("Usage: net get | net set key=value ...")),
+        _ => None,
+    }
+}
+
+/// Formats the exact legacy `aios` TUI shell output of a successful `kill`.
+pub fn aios_kill_success(pid: u64, name: &str) -> String {
+    format!("  killed '{name}' ({pid})")
+}
+
+/// Formats the exact legacy `aios` TUI shell output of a failed `kill`.
+pub fn aios_kill_failed(error: &str) -> String {
+    format!("  kill failed: {error}")
+}
+
+/// Formats the exact legacy `aios` TUI shell `logs` output from shared entries.
+pub fn aios_log_text(entries: &[String]) -> Vec<String> {
+    entries
+        .iter()
+        .rev()
+        .take(20)
+        .rev()
+        .map(|line| format!("  {line}"))
+        .collect()
+}
+
+/// Formats the exact legacy `aios` TUI shell `status` output from system values.
+pub fn aios_status_text(
+    uptime_secs: u64,
+    bridge_online: bool,
+    tier: &str,
+    used_gb: f64,
+    total_gb: f64,
+    blocks: usize,
+) -> Vec<String> {
+    vec![
+        format!(
+            "  uptime={uptime_secs}s bridge={} tier={tier}",
+            if bridge_online { "online" } else { "starting" }
+        ),
+        format!("  RAM {used_gb:.1}GB used/{total_gb:.1}GB total"),
+        format!("  blocks={blocks}"),
+    ]
+}
+
 /// Formats the exact legacy output and event of `kill <pid>`.
 pub fn kill_success(pid: u64, name: &str) -> LegacyMutation {
     LegacyMutation::ok(
@@ -303,10 +370,11 @@ fn legacy_block_row(row: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_list_text, exit_text, help_text, kill_success, load_success, log_text,
-        mutation_failed, process_list_text, restart_limit_reached, restart_success, spawn_success,
-        status_text, unknown_text, unload_success, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER,
-        LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
+        aios_kill_failed, aios_kill_success, aios_log_text, aios_status_text, aios_unknown_text,
+        aios_usage_text, block_list_text, exit_text, help_text, kill_success, load_success,
+        log_text, mutation_failed, process_list_text, restart_limit_reached, restart_success,
+        spawn_success, status_text, unknown_text, unload_success, AIOS_HELP, BLOCK_HEADER,
+        BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -490,6 +558,58 @@ mod tests {
         assert_eq!(
             unknown_text("  WhAt Ever  "),
             "Unknown command: '  WhAt Ever  '. Type 'help' for available commands."
+        );
+    }
+
+    #[test]
+    fn maps_aios_legacy_text_exactly() {
+        assert_eq!(
+            AIOS_HELP,
+            "Commands: console <command> [args] | ps | blocks | kill <pid> | spawn <wasm> | store list | store search <q> | store install <name> | net get | net set k=v ... | cluster status | cluster spawn <name> | cluster kill <node> <pid> | cluster migrate <node> <pid> [target] | status | logs | restart | clear"
+        );
+        assert_eq!(
+            aios_unknown_text("frobnicate"),
+            "  unknown command 'frobnicate' — type help"
+        );
+        assert_eq!(
+            aios_usage_text("kill").as_deref(),
+            Some("Usage: kill <pid>")
+        );
+        assert_eq!(
+            aios_usage_text("spawn").as_deref(),
+            Some("Usage: spawn <wasm-path-or-file>")
+        );
+        assert_eq!(
+            aios_usage_text("store").as_deref(),
+            Some("Usage: store list | store search <q> | store install <name>")
+        );
+        assert_eq!(
+            aios_usage_text("net").as_deref(),
+            Some("Usage: net get | net set key=value ...")
+        );
+        assert_eq!(aios_usage_text("cluster"), None);
+    }
+
+    #[test]
+    fn maps_aios_command_output_exactly() {
+        assert_eq!(aios_kill_success(7, "worker"), "  killed 'worker' (7)");
+        assert_eq!(
+            aios_kill_failed("no such process"),
+            "  kill failed: no such process"
+        );
+        assert!(aios_log_text(&[]).is_empty());
+        assert_eq!(aios_log_text(&["a".into(), "b".into()]), ["  a", "  b"]);
+        assert_eq!(
+            aios_status_text(12, true, "basic", 1.2, 4.0, 3),
+            [
+                "  uptime=12s bridge=online tier=basic",
+                "  RAM 1.2GB used/4.0GB total",
+                "  blocks=3",
+            ]
+        );
+        assert_eq!(
+            aios_status_text(0, false, "basic", 0.0, 1.0, 0)[0],
+            "  uptime=0s bridge=starting tier=basic"
         );
     }
 

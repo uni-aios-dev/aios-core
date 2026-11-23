@@ -3,6 +3,7 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The main `aios` shell now routes a first batch of bare commands through exact-output `aios-console` adapters: `help`/`?`, `ps`, `blocks`, valid `kill`, `logs`, `status`, the usage lines for `kill`/`spawn`/`store`/`net` and the unknown-command fallback. `legacy.rs` gained `AIOS_HELP`, `aios_unknown_text`, `aios_usage_text`, `aios_kill_success`, `aios_kill_failed`, `aios_log_text` and `aios_status_text`; `HostBackend` gained `aios_process_list_text`, `aios_block_list_text` and `aios_kill`. `execute_aios_adapter` returns a flag and `shell_execute` keeps `shell_execute_legacy` for the remaining commands. The `kill` adapter preserves the distinct `aios` wording and records no event. Eight binary parity tests compare the adapter path with `shell_execute_legacy` byte-for-byte; read-only comparisons share one `TuiApp` so `HashMap` process ordering is identical. EN/RU docs were aligned.
 - The final `SafeModeShell` fallback in `aios-tui` is now adapter-backed:
   `aios-console/src/legacy.rs::unknown_text` produces the exact legacy
   `Unknown command: '<input>'. Type 'help' for available commands.` line (with

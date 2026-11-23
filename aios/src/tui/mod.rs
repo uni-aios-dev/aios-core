@@ -1188,6 +1188,85 @@ fn console_execute(app: &mut TuiApp, input: &str) {
     }
 }
 
+/// Returns true when a bare command is handled by an exact-output console
+/// adapter; the legacy dispatcher then stays untouched for everything else.
+fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
+    use aios_console::legacy::{
+        aios_log_text, aios_status_text, aios_unknown_text, aios_usage_text, AIOS_HELP,
+    };
+
+    let lower = line.trim().to_lowercase();
+    let parts: Vec<&str> = lower.split_whitespace().collect();
+    let Some(command) = parts.first().copied() else {
+        return true;
+    };
+    let out: Vec<String> = match command {
+        "help" | "?" => vec![AIOS_HELP.to_string()],
+        "ps" => app.console.aios_process_list_text(),
+        "blocks" => app.console.aios_block_list_text(),
+        "kill" => match parts.get(1).and_then(|pid| pid.parse::<u64>().ok()) {
+            Some(pid) => app.console.aios_kill(pid),
+            None => vec![aios_usage_text("kill").expect("kill has a usage line")],
+        },
+        "logs" => {
+            let entries = app
+                .logs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            aios_log_text(&entries)
+        }
+        "status" => {
+            let state = locked(&app.state);
+            let uptime_secs = state.start_time.elapsed().as_secs();
+            let bridge_online = state.bridge_running.load(Ordering::SeqCst);
+            let blocks = locked(&state.bridge.registry).count();
+            aios_status_text(
+                uptime_secs,
+                bridge_online,
+                &state.hw_profile.ai_tier,
+                state.hw_profile.memory.used_gb,
+                state.hw_profile.memory.total_gb,
+                blocks,
+            )
+        }
+        "spawn" if parts.get(1).is_none_or(|name| name.is_empty()) => {
+            vec![aios_usage_text("spawn").expect("spawn has a usage line")]
+        }
+        "store" if !matches!(parts.get(1).copied(), Some("list" | "search" | "install")) => {
+            vec![aios_usage_text("store").expect("store has a usage line")]
+        }
+        "net" if !matches!(parts.get(1).copied(), Some("get" | "set")) => {
+            vec![aios_usage_text("net").expect("net has a usage line")]
+        }
+        _ if !is_aios_legacy_command(command) => vec![aios_unknown_text(command)],
+        _ => return false,
+    };
+    for line in out {
+        app.shell_push(line);
+    }
+    true
+}
+
+fn is_aios_legacy_command(command: &str) -> bool {
+    matches!(
+        command,
+        "help"
+            | "?"
+            | "clear"
+            | "cls"
+            | "ps"
+            | "blocks"
+            | "kill"
+            | "spawn"
+            | "store"
+            | "net"
+            | "cluster"
+            | "status"
+            | "logs"
+            | "restart"
+    )
+}
+
 fn shell_execute(app: &mut TuiApp, line: &str) {
     if let Some(rest) = aios_console::frontend::console_prefix(line) {
         console_execute(app, if rest.is_empty() { "help" } else { rest });
@@ -1199,6 +1278,14 @@ fn shell_execute(app: &mut TuiApp, line: &str) {
         console_execute(app, head);
         return;
     }
+    if execute_aios_adapter(app, line) {
+        return;
+    }
+    shell_execute_legacy(app, line);
+}
+
+fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
+    let trimmed = line.trim();
     let lower = trimmed.to_lowercase();
     let parts: Vec<&str> = lower.split_whitespace().collect();
     let command = match parts.first().copied() {
@@ -1921,13 +2008,25 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn console_test_app() -> TuiApp {
+        aios_parity_app(&[], true)
+    }
+
+    fn aios_parity_app(process_names: &[&str], with_block: bool) -> TuiApp {
         let logs = Arc::new(Mutex::new(Vec::new()));
         let scheduler = Arc::new(Mutex::new(Scheduler::new(1024)));
+        {
+            let mut sched = scheduler.lock().unwrap();
+            for name in process_names {
+                let _ = sched.spawn_process(name, aios_process_mgr::task::Priority::Normal, 64);
+            }
+        }
         let mut registry = BlockRegistry::new();
-        let id = registry
-            .register_block("console_shared", "1.0.0", b"shared-block".to_vec())
-            .expect("register block");
-        let _ = registry.activate_block(id);
+        if with_block {
+            let id = registry
+                .register_block("console_shared", "1.0.0", b"shared-block".to_vec())
+                .expect("register block");
+            let _ = registry.activate_block(id);
+        }
         let bridge = Arc::new(BridgeContext::new(
             scheduler,
             registry,
@@ -2099,6 +2198,108 @@ mod tests {
         shell_execute(&mut app, "ps");
         let lines: Vec<&str> = app.shell_output.iter().map(String::as_str).collect();
         assert_eq!(lines, ["  total=0 running=0 ram=0MB/1024MB"]);
+    }
+
+    fn assert_bare_parity(input: &str, process_names: &[&str], with_block: bool) {
+        let mut adapter_app = aios_parity_app(process_names, with_block);
+        shell_execute(&mut adapter_app, input);
+        let adapter_out = adapter_app.shell_output.clone();
+
+        let mut legacy_app = aios_parity_app(process_names, with_block);
+        shell_execute_legacy(&mut legacy_app, input);
+        let legacy_out = legacy_app.shell_output.clone();
+
+        assert_eq!(adapter_out, legacy_out, "parity mismatch for {input:?}");
+    }
+
+    fn assert_readonly_parity(input: &str, process_names: &[&str], with_block: bool) {
+        let mut app = aios_parity_app(process_names, with_block);
+        shell_execute_legacy(&mut app, input);
+        let legacy_out = app.shell_output.clone();
+        app.shell_output.clear();
+        shell_execute(&mut app, input);
+        assert_eq!(
+            app.shell_output, legacy_out,
+            "parity mismatch for {input:?}"
+        );
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_help() {
+        for input in ["help", "HELP", "?"] {
+            assert_readonly_parity(input, &[], true);
+        }
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_ps() {
+        assert_readonly_parity("ps", &[], true);
+        assert_readonly_parity("PS", &["worker", "ai_orchestrator"], true);
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_blocks() {
+        assert_readonly_parity("blocks", &[], false);
+        assert_readonly_parity("BLOCKS", &[], true);
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_unknown_commands() {
+        for input in ["frobnicate", "WhAt Ever", "unknown arg1 arg2"] {
+            assert_readonly_parity(input, &[], true);
+        }
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_usage_lines() {
+        for input in [
+            "kill",
+            "kill abc",
+            "spawn",
+            "store",
+            "store bogus",
+            "net",
+            "net bogus",
+        ] {
+            assert_readonly_parity(input, &[], true);
+        }
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_valid_kill() {
+        assert_bare_parity("kill 1", &["victim"], true);
+        assert_bare_parity("KILL 1", &["victim"], true);
+        assert_bare_parity("kill 999", &[], true);
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_logs() {
+        fn with_logs() -> TuiApp {
+            let app = aios_parity_app(&[], true);
+            {
+                let mut logs = app.logs.lock().unwrap();
+                logs.push("AIOS: boot".into());
+                logs.push("AIOS: bridge online".into());
+                logs.push("AIOS: ready".into());
+            }
+            app
+        }
+
+        let mut adapter_app = with_logs();
+        shell_execute(&mut adapter_app, "logs");
+        let mut legacy_app = with_logs();
+        shell_execute_legacy(&mut legacy_app, "logs");
+        assert_eq!(adapter_app.shell_output, legacy_app.shell_output);
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_status() {
+        let mut app = aios_parity_app(&[], true);
+        shell_execute_legacy(&mut app, "status");
+        let legacy_out = app.shell_output.clone();
+        app.shell_output.clear();
+        shell_execute(&mut app, "status");
+        assert_eq!(app.shell_output, legacy_out);
     }
 
     fn test_node(id: u64, name: &str, addr: &str) -> NodeInfo {

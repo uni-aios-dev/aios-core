@@ -243,9 +243,12 @@ In the `aios` shell tab the new backend is available through the `console`
 prefix, for example `console process spawn worker --ram 64`. Bare `clear`/`cls`
 are routed through the same path (case-insensitively): they emit no lines and
 clear the shell buffer exactly as before, and are recorded in the unified
-console history. Every other bare line still uses the legacy dispatcher, so
-existing commands keep working unchanged. `console help` lists the canonical
-commands; `console clear` and `console exit` keep their existing behaviour.
+console history. Bare `help`, `?`, `ps`, `blocks`, valid `kill`, `logs`, `status`,
+the fixed `kill`/`spawn`/`store`/`net` usage lines and unknown commands also use
+exact-output console adapters, so their text is unchanged. Bare `spawn`, `store`,
+`net`, `cluster` and `restart` still use the legacy dispatcher. `console help`
+lists the canonical commands; `console clear` and `console exit` keep their
+existing behaviour.
 
 The standalone `aios-shell` accepts the same prefix, case-insensitively:
 `console ps`, `CONSOLE metrics --json` and bare `console` (help) all reach the

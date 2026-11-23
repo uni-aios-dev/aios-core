@@ -3,6 +3,7 @@
 ## Не выпущено — ядро единой текстовой консоли (`aios-console`)
 
 ### Добавлено
+- Основной шелл `aios` теперь направляет первую партию команд без префикса через адаптеры точного вывода `aios-console`: `help`/`?`, `ps`, `blocks`, корректный `kill`, `logs`, `status`, usage-строки для `kill`/`spawn`/`store`/`net` и откат на неизвестную команду. В `legacy.rs` добавлены `AIOS_HELP`, `aios_unknown_text`, `aios_usage_text`, `aios_kill_success`, `aios_kill_failed`, `aios_log_text` и `aios_status_text`; в `HostBackend` — `aios_process_list_text`, `aios_block_list_text` и `aios_kill`. `execute_aios_adapter` возвращает флаг, а `shell_execute` сохраняет `shell_execute_legacy` для остальных команд. Адаптер `kill` сохраняет особую формулировку `aios` и не записывает событие. Восемь бинарных тестов паритета сравнивают путь адаптера с `shell_execute_legacy` побайтово; сравнения для чтения используют один `TuiApp`, чтобы порядок процессов в `HashMap` совпадал. EN/RU документация синхронизирована.
 - Последний откат `SafeModeShell` в `aios-tui` теперь использует адаптер:
   `aios-console/src/legacy.rs::unknown_text` формирует точную старую строку
   `Unknown command: '<input>'. Type 'help' for available commands.` (с префиксом

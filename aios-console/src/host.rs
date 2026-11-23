@@ -1454,6 +1454,71 @@ impl HostBackend {
         mutation
     }
 
+    /// Runs `kill <pid>` against the shared scheduler with exact `aios` text.
+    ///
+    /// Uses the `aios` TUI shell wording (`  killed ...` / `  kill failed: ...`),
+    /// which differs from the safe-mode `LegacyMutation` wording, and records no
+    /// event because the `aios` dispatcher does not log kills.
+    pub fn aios_kill(&self, pid: u64) -> Vec<String> {
+        let result = {
+            let mut scheduler = guard(&self.scheduler);
+            scheduler.kill_process(ProcessId(pid))
+        };
+        match result {
+            Ok(process) => {
+                vec![crate::legacy::aios_kill_success(
+                    process.pid.0,
+                    &process.name,
+                )]
+            }
+            Err(error) => vec![crate::legacy::aios_kill_failed(&error.to_string())],
+        }
+    }
+
+    /// Produces the exact legacy `aios` TUI shell process list.
+    ///
+    /// Reads the shared scheduler directly because the canonical process list
+    /// omits the running count and RAM usage printed by that legacy dispatcher.
+    pub fn aios_process_list_text(&self) -> Vec<String> {
+        let scheduler = guard(&self.scheduler);
+        let mut out = Vec::new();
+        for proc in scheduler.all_processes() {
+            out.push(format!(
+                "  pid_{:<4} {} [{}]",
+                proc.pid.0, proc.name, proc.state
+            ));
+        }
+        let (used, total) = scheduler.ram_usage();
+        out.push(format!(
+            "  total={} running={} ram={}MB/{}MB",
+            scheduler.process_count(),
+            scheduler.running_count(),
+            used,
+            total
+        ));
+        out
+    }
+
+    /// Produces the exact legacy `aios` TUI shell block list.
+    ///
+    /// Reads the shared registry directly to preserve the legacy ID ordering
+    /// and `(state)` suffix, which the canonical table does not carry.
+    pub fn aios_block_list_text(&self) -> Vec<String> {
+        let registry = guard(&self.registry);
+        let mut ids = registry.all_ids();
+        ids.sort_by_key(|id| id.0);
+        let mut out = Vec::new();
+        for id in ids {
+            if let Ok(entry) = registry.get(id) {
+                out.push(format!(
+                    "  [{}] {} v{} ({:?})",
+                    id, entry.manifest.name, entry.manifest.version, entry.state
+                ));
+            }
+        }
+        out
+    }
+
     fn record_mutation(&self, mutation: &crate::legacy::LegacyMutation) {
         if let Some(event) = &mutation.event {
             if let Some(log) = self.event_log.as_ref() {

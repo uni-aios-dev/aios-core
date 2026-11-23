@@ -91,8 +91,20 @@ return `unavailable` rather than a fake success. `TuiApp` owns one `HostBackend`
 built from the orchestrator's handles, and the shell tab routes `console <...>`
 lines through it. Bare `clear`/`cls` now go through the same `console_execute`
 path: both emit no lines and only `OutputControl::Clear`, matching the legacy
-buffer clear; they are also recorded in `HostBackend` history. Every other bare
-command still uses the legacy dispatcher.
+buffer clear; they are also recorded in `HostBackend` history. The first batch of
+bare `aios` adapters also covers `help`/`?`, `ps`, `blocks`, valid `kill`, `logs`,
+`status`, the usage lines for `kill`/`spawn`/`store`/`net` and the unknown-command
+fallback. `execute_aios_adapter` returns a flag, and `shell_execute` falls back to
+`shell_execute_legacy` for everything else. Pure formatters live in
+`aios-console/src/legacy.rs` (`AIOS_HELP`, `aios_unknown_text`,
+`aios_usage_text`, `aios_kill_success`, `aios_kill_failed`, `aios_log_text`,
+`aios_status_text`) and the data adapters in `HostBackend`
+(`aios_process_list_text`, `aios_block_list_text`, `aios_kill`). The `kill`
+adapter keeps the distinct `aios` wording (`  killed '<name>' (<pid>)` /
+`  kill failed: <error>`) instead of the safe-mode `LegacyMutation` text and
+records no event, because the `aios` dispatcher does not log kills. The remaining
+bare `spawn`, `store`, `net`, `cluster` and `restart` commands keep the legacy
+dispatcher until their TUI-bound seams have exact-output adapters.
 `aios-shell` likewise owns one `HostBackend` created in `main` and recognises a
 case-insensitive `console <...>` prefix before alias expansion, so the registry
 never sees the prefix itself. `console` alone prints generated help;
@@ -146,7 +158,10 @@ unit tests against the pure seams `SafeModeShell::parse_command`,
 handlers stay out of these tests; the table asserts resolution results only.
 `legacy_parity.rs` therefore proves resolution but not output equality:
 `aios/src/tui/mod.rs` pins the exact legacy lines for `help`/`?`, unknown
-commands, `kill`/`store`/`net` usage strings and empty `ps`, while
+commands, `kill`/`store`/`net` usage strings and empty `ps`, and eight binary
+parity tests compare the adapter path with `shell_execute_legacy` byte-for-byte
+(read-only commands share one `TuiApp` instance so the `HashMap` iteration order
+in `Scheduler::all_processes` is identical for both paths), while
 `aios-console/tests/host_backend.rs` pins the canonical host wording for
 `help`, `clear` and usage errors. `aios-watchdog/src/safe_mode.rs` now also pins
 the exact legacy `ShellResponse.success` and `output` for every branch — empty

@@ -90,11 +90,18 @@ records a swap and a rollback entry but does not replace live block code: the
 old state is recorded as empty because the registry does not expose live block
 instances.
 
-The `aios` shell still keeps its legacy dispatcher as the default command
-surface, except bare `clear`/`cls`: they now go through `console_execute` and
-emit no lines with only `OutputControl::Clear`, so the shell buffer is cleared
-exactly as before; the inputs are also recorded in unified console history.
-`aios-shell` exposes the new backend through the `console <...>` prefix, while
+The `aios` shell now routes a first batch of bare commands through exact-output
+adapters: `help`/`?`, `ps`, `blocks`, valid `kill`, `logs`, `status`, the fixed
+usage lines for `kill`/`spawn`/`store`/`net` and the unknown-command fallback are
+produced by `aios-console` formatters and `HostBackend` data adapters, and
+`shell_execute` falls back to `shell_execute_legacy` for everything else. Bare
+`clear`/`cls` go through `console_execute` and emit no lines with only
+`OutputControl::Clear`, so the shell buffer is cleared exactly as before; the
+inputs are also recorded in unified console history. The remaining bare `spawn`,
+`store`, `net`, `cluster` and `restart` commands still use the legacy dispatcher
+because they depend on TUI-bound seams (block loading, async store tasks, the net
+IPC router and the hardware re-probe). `aios-shell` exposes the new backend
+through the `console <...>` prefix, while
 `aios-tui` also routes bare `ps`/`processes`/`list`, `blocks`/`ls`,
 `status`/`info`, `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`,
 `load`, `unload`, `restart` and `recover` plus the unknown-command fallback
