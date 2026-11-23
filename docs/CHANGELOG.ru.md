@@ -3,6 +3,18 @@
 ## Не выпущено — ядро единой текстовой консоли (`aios-console`)
 
 ### Добавлено
+- Отдельный `aios-tui` теперь направляет команды без префикса `restart` и
+  `recover` через `HostBackend::legacy_restart` и функции
+  `legacy.rs::restart_success` / `restart_limit_reached`. Адаптер использует
+  счётчик перезапусков хоста и `config.max_restarts` (не `WatchdogControl::reset`),
+  поэтому команды без префикса сохраняют точную старую семантику:
+  `Orchestrator restart initiated (n/max)` при успехе, событие
+  `Orchestrator restart attempt n/max` в общем журнале и ошибку лимита
+  `Max restarts (max) reached. Manual intervention required.` без префикса
+  `Failed:`. Юнит-тест ядра и тест бинарика сравнивают четыре последовательных
+  вызова (включая смешанный регистр и ошибку лимита) побайтово с
+  `SafeModeShell::new(3)`, включая общие записи журнала. EN/RU документация
+  синхронизирована.
 - Отдельный `aios-tui` теперь направляет команды без префикса `kill`, `spawn`,
   `load` и `unload` через `HostBackend::legacy_kill`, `legacy_spawn`, `legacy_load`
   и `legacy_unload` с форматтерами `legacy.rs::LegacyMutation`. Каждый адаптер

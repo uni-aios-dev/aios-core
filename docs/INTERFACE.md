@@ -144,7 +144,8 @@ commands, `kill`/`store`/`net` usage and empty `ps` in `aios/src/tui/mod.rs`,
 plus the canonical host wording for `help`, `clear` and usage errors in
 `aios-console/tests/host_backend.rs`. The standalone TUI additionally compares
 all migrated bare spellings, including `help`/`?`, `logs`/`log` and the mutation
-commands `kill`/`spawn`/`load`/`unload`, byte-for-byte with `SafeModeShell`.
+commands `kill`/`spawn`/`load`/`unload`/`restart`/`recover`, byte-for-byte with
+`SafeModeShell`.
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
@@ -411,12 +412,16 @@ through the normal shutdown path. `console ps` and `console block list` share th
 same `Arc<Mutex<...>>` `Scheduler` and `BlockRegistry` as the dashboard and
 `SafeModeShell`, so they observe the live TUI runtime. Bare `ps`, `processes`,
 `list`, `blocks`, `ls`, `status`, `info`, `exit`, `quit`, `q`, `help`, `?`, `logs`,
-`log`, `kill`, `spawn`, `load` and `unload` now use the unified `HostBackend`
-through exact-output adapters; their text is byte-for-byte identical to the
-legacy safe-mode shell. The mutation adapters run real scheduler/registry
-operations through the shared handles and append successful legacy events to the
-shared log, which `logs`/`log` then reads exactly as before; failures keep the
-legacy `Error: Failed: <error>` wording. The help adapter keeps the separate TUI
+`log`, `kill`, `spawn`, `load`, `unload`, `restart` and `recover` now use the
+unified `HostBackend` through exact-output adapters; their text is byte-for-byte
+identical to the legacy safe-mode shell. The mutation adapters run real
+scheduler/registry operations through the shared handles and append successful
+legacy events to the shared log, which `logs`/`log` then reads exactly as before;
+failures keep the legacy `Error: Failed: <error>` wording, except the restart
+limit (`Max restarts (<max>) reached. Manual intervention required.`, printed as
+`Error: Max restarts ...`). `restart`/`recover` use the host restart counter
+instead of `WatchdogControl::reset`, so only canonical `wd reset` calls the
+injected watchdog seam. The help adapter keeps the separate TUI
 extras block. Bare `exit`/`quit`/`q` still only print the legacy line — use
 `console exit` to close the TUI. Canonical `console info` stays ambiguous — only
 the bare legacy alias is adapter-backed. All other bare commands keep their

@@ -135,9 +135,9 @@
   `success` и строка `output`, включая формулировки ошибок и старую раскладку
   колонок. Отдельный TUI теперь разделяет свои дескрипторы состояния с консолью,
   а команды без префикса `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
-  `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load` и `unload`
-  используют хостовые адаптеры (`aios-console/src/legacy.rs`) с побайтовым
-  совпадением вывода с `SafeModeShell`;
+  `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load`, `unload`,
+  `restart` и `recover` используют хостовые адаптеры (`aios-console/src/legacy.rs`)
+  с побайтовым совпадением вывода с `SafeModeShell`;
   остальные команды без префикса остаются на старом диспетчере до появления своих
   адаптеров. Каноническое `console info` остаётся неоднозначным.
 - [x] Добавлен первый адаптер точного вывода (`aios-console/src/legacy.rs` и
@@ -188,6 +188,14 @@
   сравнивают все четыре команды побайтово с `SafeModeShell`, включая побочные
   эффекты и общие записи журнала, для успеха и неудачи. EN/RU документация
   синхронизирована.
+- [x] Добавлен адаптер точного вывода перезапуска (`HostBackend::legacy_restart` и
+  `legacy.rs::restart_success` / `restart_limit_reached`); команды без префикса
+  `restart`/`recover` в `aios-tui` идут через него. Он использует
+  `HostBackend::restarts` и `config.max_restarts` вместо `WatchdogControl::reset`,
+  записывает legacy-событие при успехе и сохраняет точную ошибку лимита без
+  префикса `Failed:`. Юнит-тесты ядра и тест бинарика сравнивают четыре
+  последовательных вызова (включая смешанный регистр и ошибку лимита) побайтово с
+  `SafeModeShell::new(3)`. EN/RU документация синхронизирована.
 - [x] Вторая партия хостовых адаптеров в `HostBackend` на реальных библиотечных
   крейтах: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

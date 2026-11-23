@@ -3,6 +3,17 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- The standalone `aios-tui` now routes bare `restart` and `recover` through
+  `HostBackend::legacy_restart` and `legacy.rs::restart_success` /
+  `restart_limit_reached`. The adapter uses the host-owned restart counter and
+  `config.max_restarts` (not `WatchdogControl::reset`), so bare commands keep
+  the exact legacy semantics: `Orchestrator restart initiated (n/max)` on
+  success, an `Orchestrator restart attempt n/max` event in the shared log, and
+  the limit failure `Max restarts (max) reached. Manual intervention required.`
+  with no `Failed:` prefix. A core unit test and a binary test compare four
+  sequential calls (including mixed case and the limit failure) byte-for-byte
+  with `SafeModeShell::new(3)`, including shared event-log entries. EN/RU docs
+  were aligned.
 - The standalone `aios-tui` now routes bare `kill`, `spawn`, `load` and `unload`
   through `HostBackend::legacy_kill`, `legacy_spawn`, `legacy_load` and
   `legacy_unload` with `legacy.rs::LegacyMutation` formatters. Each adapter parses

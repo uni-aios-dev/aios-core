@@ -447,6 +447,7 @@ fn execute_legacy_mutation_command(
         "spawn" => console.legacy_spawn(cmd),
         "load" => console.legacy_load(cmd),
         "unload" => console.legacy_unload(cmd),
+        "restart" | "recover" => Some(console.legacy_restart()),
         _ => return false,
     };
     let Some(mutation) = mutation else {
@@ -2843,6 +2844,63 @@ mod tests {
             let adapter = run_mutation_scenario(cmd, *ram, *setup, true);
             assert_eq!(adapter, legacy, "command: {cmd}");
         }
+    }
+
+    #[test]
+    fn test_bare_restart_commands_match_safe_mode_exactly() {
+        let commands = ["restart", "RECOVER", "restart", "recover"];
+        let mut results = Vec::new();
+        for adapter in [false, true] {
+            let (scheduler, registry) = make_shared_handles();
+            let event_log = make_shared_event_log(&[]);
+            let mut shell =
+                aios_watchdog::safe_mode::SafeModeShell::with_event_log(3, event_log.clone());
+            let mut console =
+                make_shared_console_with_log(&scheduler, &registry, event_log.clone());
+            let mut state = make_dashboard_state();
+            let mut steps = Vec::new();
+            for cmd in commands {
+                state.shell_state.output.clear();
+                if adapter {
+                    assert!(super::execute_legacy_mutation_command(
+                        &mut state,
+                        &mut console,
+                        cmd
+                    ));
+                } else {
+                    let mut sched = scheduler.lock().unwrap();
+                    let mut reg = registry.lock().unwrap();
+                    super::execute_shell_cmd_inner(
+                        &mut state,
+                        cmd,
+                        &mut sched,
+                        &mut reg,
+                        &mut shell,
+                        &mut console,
+                    );
+                }
+                steps.push(state.shell_state.output.clone());
+            }
+            results.push((steps, event_log.lock().unwrap().clone()));
+        }
+        assert_eq!(results[0], results[1]);
+        assert_eq!(
+            results[1].0,
+            vec![
+                vec!["Orchestrator restart initiated (1/3)"],
+                vec!["Orchestrator restart initiated (2/3)"],
+                vec!["Orchestrator restart initiated (3/3)"],
+                vec!["Error: Max restarts (3) reached. Manual intervention required."],
+            ]
+        );
+        assert_eq!(
+            results[1].1,
+            vec![
+                "Orchestrator restart attempt 1/3",
+                "Orchestrator restart attempt 2/3",
+                "Orchestrator restart attempt 3/3",
+            ]
+        );
     }
 
     #[test]

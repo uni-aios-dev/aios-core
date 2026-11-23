@@ -1440,6 +1440,20 @@ impl HostBackend {
         Some(mutation)
     }
 
+    /// Runs legacy `restart` / `recover` with exact legacy text.
+    ///
+    /// Uses the host restart counter and limit (not the watchdog control seam),
+    /// matching `SafeModeShell`. Records the legacy event on success.
+    pub fn legacy_restart(&mut self) -> crate::legacy::LegacyMutation {
+        if self.restarts >= self.config.max_restarts {
+            return crate::legacy::restart_limit_reached(self.config.max_restarts);
+        }
+        self.restarts += 1;
+        let mutation = crate::legacy::restart_success(self.restarts, self.config.max_restarts);
+        self.record_mutation(&mutation);
+        mutation
+    }
+
     fn record_mutation(&self, mutation: &crate::legacy::LegacyMutation) {
         if let Some(event) = &mutation.event {
             if let Some(log) = self.event_log.as_ref() {

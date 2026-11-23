@@ -143,9 +143,9 @@
   and `output` string is asserted verbatim, including failure wording and
   legacy column layout. The standalone TUI now shares its runtime handles with
   the console, and bare `ps`/`processes`/`list`, `blocks`/`ls`, `status`/`info`,
-  `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load` and `unload`
-  use host-side adapters (`aios-console/src/legacy.rs`) with byte-for-byte equality
-  to `SafeModeShell`;
+  `exit`/`quit`/`q`, `help`/`?`, `logs`/`log`, `kill`, `spawn`, `load`, `unload`,
+  `restart` and `recover` use host-side adapters (`aios-console/src/legacy.rs`)
+  with byte-for-byte equality to `SafeModeShell`;
   remaining bare commands stay on the legacy dispatcher until their adapters
   exist. Canonical `console info` remains ambiguous.
 - [x] Add the first exact-output adapter (`aios-console/src/legacy.rs` and
@@ -192,6 +192,14 @@
   success. Core unit tests and a binary test compare all four commands byte-for-byte
   with `SafeModeShell`, including side effects and shared log entries, for success
   and failure. EN/RU docs were aligned.
+- [x] Add the restart exact-output adapter (`HostBackend::legacy_restart` and
+  `legacy.rs::restart_success` / `restart_limit_reached`) and route bare
+  `restart`/`recover` in `aios-tui` through it. It uses `HostBackend::restarts`
+  and `config.max_restarts` instead of `WatchdogControl::reset`, records the
+  legacy event on success and keeps the exact limit failure without a `Failed:`
+  prefix. Core unit tests and a binary test compare four sequential calls
+  (including mixed case and the limit) byte-for-byte with `SafeModeShell::new(3)`.
+  EN/RU docs were aligned.
 - [x] Second host adapter batch in `HostBackend` delegating to real library
   crates: `sleep`, `alias`/`unalias`, `fault resolve`,
   `sched mode|quantum|aging|rt-deadline|rt-clear`,

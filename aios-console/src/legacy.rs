@@ -188,15 +188,34 @@ impl LegacyMutation {
             event: Some(event),
         }
     }
+
+    fn err(output: String) -> Self {
+        Self {
+            success: false,
+            output,
+            event: None,
+        }
+    }
 }
 
 /// Formats the exact legacy output of a failed mutation (`Failed: <error>`).
 pub fn mutation_failed(error: &str) -> LegacyMutation {
-    LegacyMutation {
-        success: false,
-        output: format!("Failed: {error}"),
-        event: None,
-    }
+    LegacyMutation::err(format!("Failed: {error}"))
+}
+
+/// Formats the exact legacy output and event of `restart` / `recover`.
+pub fn restart_success(attempt: u32, max: u32) -> LegacyMutation {
+    LegacyMutation::ok(
+        format!("Orchestrator restart initiated ({attempt}/{max})"),
+        format!("Orchestrator restart attempt {attempt}/{max}"),
+    )
+}
+
+/// Formats the exact legacy restart-limit failure (no `Failed:` prefix).
+pub fn restart_limit_reached(max: u32) -> LegacyMutation {
+    LegacyMutation::err(format!(
+        "Max restarts ({max}) reached. Manual intervention required."
+    ))
 }
 
 /// Formats the exact legacy output and event of `kill <pid>`.
@@ -276,8 +295,9 @@ fn legacy_block_row(row: &str) -> Option<String> {
 mod tests {
     use super::{
         block_list_text, exit_text, help_text, kill_success, load_success, log_text,
-        mutation_failed, process_list_text, spawn_success, status_text, unload_success,
-        BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP, PROCESS_HEADER, PROCESS_SEPARATOR,
+        mutation_failed, process_list_text, restart_limit_reached, restart_success, spawn_success,
+        status_text, unload_success, BLOCK_HEADER, BLOCK_SEPARATOR, HELP_HEADER, LEGACY_HELP,
+        PROCESS_HEADER, PROCESS_SEPARATOR,
     };
     use crate::output::CommandOutput;
 
@@ -435,6 +455,25 @@ mod tests {
         assert!(!failure.success);
         assert_eq!(failure.output, "Failed: Scheduler error: Insufficient RAM");
         assert_eq!(failure.event, None);
+    }
+
+    #[test]
+    fn maps_restart_success_and_limit_to_legacy_output() {
+        let restart = restart_success(2, 3);
+        assert!(restart.success);
+        assert_eq!(restart.output, "Orchestrator restart initiated (2/3)");
+        assert_eq!(
+            restart.event.as_deref(),
+            Some("Orchestrator restart attempt 2/3")
+        );
+
+        let limit = restart_limit_reached(3);
+        assert!(!limit.success);
+        assert_eq!(
+            limit.output,
+            "Max restarts (3) reached. Manual intervention required."
+        );
+        assert_eq!(limit.event, None);
     }
 
     #[test]
