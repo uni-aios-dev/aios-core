@@ -125,8 +125,17 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 `aios-shell` также владеет одним `HostBackend`, созданным в `main`, и
 распознаёт префикс `console <...>` без учёта регистра до раскрытия алиасов, поэтому
 реестр никогда не видит сам префикс. Один `console` выводит генерируемую справку;
-`OutputControl::Clear` очищает терминал, а `Exit(code)` завершает процесс. Все
-остальные строки идут по PATH POSIX-шелла (алиасы, задания, внешние программы).
+`OutputControl::Clear` очищает терминал, а `Exit(code)` завершает процесс.
+Статические команды без префикса (`help`/`?`, `clear`/`cls`, `pwd`, `echo`,
+`history`, `alias`, `unalias`) обрабатывает `execute_shell_adapter`, возвращающий
+`ShellOutcome` (`Lines` или `Clear`) и использующий точные форматтеры из
+`aios-console/src/legacy.rs` (`SHELL_HELP`, `shell_echo_text`, `shell_pwd_text`,
+`shell_alias_text`, `shell_alias_set_text`, `shell_history_text`). Фронтенд
+по-прежнему управляет файлами истории и алиасов, раскрытием `$VAR` и выводом на
+экран, поэтому раскрытие алиасов и фоновая комбинация `&` не изменились; тесты
+паритета сравнивают оба пути побайтово, включая исходный ANSI-баннер шириной
+60 столбцов. Остальные POSIX-строки (`cd`, `env`/`export`/`unset`, `source`,
+задания, внешние программы) по-прежнему переходят в `run_command_legacy`.
 Отдельный бинарик `aios-tui` также владеет одним `HostBackend`, созданным в
 `main`. Его вкладка Shell распознаёт тот же префикс `console <...>` без учёта
 регистра до TUI-дополнений и отката на `SafeModeShell`. `execute_shell_cmd`

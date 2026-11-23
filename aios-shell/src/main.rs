@@ -12,6 +12,10 @@ use rustyline::history::FileHistory;
 use rustyline::{Config, EditMode, Editor};
 
 use aios_console::host::HostBackend;
+use aios_console::legacy::{
+    shell_alias_set_text, shell_alias_text, shell_echo_text, shell_history_text, shell_pwd_text,
+    SHELL_HELP,
+};
 use aios_console::output::OutputControl;
 
 #[derive(Clone)]
@@ -19,6 +23,12 @@ struct Job {
     id: usize,
     cmd: String,
     pid: u32,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ShellOutcome {
+    Lines(Vec<String>),
+    Clear,
 }
 
 fn history_path() -> Option<PathBuf> {
@@ -182,6 +192,185 @@ fn run_console_command(console: &mut HostBackend, rest: &str) {
     }
 }
 
+fn emit_lines(lines: &[String]) {
+    for line in lines {
+        println!("{line}");
+    }
+}
+
+fn apply_clear() {
+    print!("\x1b[2J\x1b[H");
+    let _ = io::stdout().flush();
+}
+
+fn expand_posix_vars<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<String> {
+    parts
+        .map(|x| {
+            if let Some(value) = x.strip_prefix('$') {
+                if let Some((key, default)) = value.split_once('-') {
+                    env::var(key).unwrap_or_else(|_| default.to_string())
+                } else if let Some((key, default)) = value.split_once(':') {
+                    env::var(key).unwrap_or_else(|_| default.to_string())
+                } else {
+                    env::var(value).unwrap_or_default()
+                }
+            } else {
+                x.to_string()
+            }
+        })
+        .collect()
+}
+
+fn read_shell_history_lines() -> Vec<String> {
+    history_path()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|content| content.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn legacy_help_lines() -> Vec<String> {
+    vec![
+        "\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m".to_string(),
+        "\x1b[1;36mтХС                    AIOS Shell v2.2                        тХС\x1b[0m".to_string(),
+        "\x1b[1;36mтХЪтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЭ\x1b[0m".to_string(),
+        "\n\x1b[1;33m[BUILTIN]\x1b[0m exit,quit,clear,pwd,cd,env,export,unset,history,alias,unalias,source,type,echo,exec,jobs,fg,bg".to_string(),
+        "\x1b[1;33m[FILES]\x1b[0m ls,cat,head,tail,less,grep,find,wc,cp,mv,rm,mkdir,touch,chmod,chown,ln,stat,file".to_string(),
+        "\x1b[1;33m[SYSTEM]\x1b[0m ps,top,htop,free,df,du,uname,uptime,whoami,id,date,dmesg,kernel,lsmod,modinfo".to_string(),
+        "\x1b[1;33m[NET]\x1b[0m ping,curl,wget,nc,ss,netstat,ip,ifconfig,route,arp,nslookup,dig,traceroute".to_string(),
+        "\x1b[1;33m[DEBUG]\x1b[0m strace,lsof,lscpu,lsblk,lsusb,lspci,dmidecode,hdparm,iostat,vmstat".to_string(),
+        "\x1b[1;33m[DEV]\x1b[0m git,make,cmake,gcc,g++,rustc,cargo,python,python3,node,npm,pip".to_string(),
+        "\x1b[1;33m[ARCHIVE]\x1b[0m tar,gzip,gunzip,bzip2,xz,zip,unzip".to_string(),
+        "\x1b[1;33m[AIOS]\x1b[0m gui,tui,aios,logs,hw,services,aios-shell-reload".to_string(),
+        "\x1b[1;33m[CONSOLE]\x1b[0m console <command> (console help lists unified commands)".to_string(),
+        "\x1b[1;33m[EDITORS]\x1b[0m vi,vim,nano,emacs,micro".to_string(),
+        "\n\x1b[2mRun any program directly. Use & for background. TAB for completion.\x1b[0m".to_string(),
+    ]
+}
+
+#[cfg(test)]
+fn legacy_pwd_lines() -> Option<Vec<String>> {
+    env::current_dir()
+        .ok()
+        .map(|path| vec![path.display().to_string()])
+}
+
+#[cfg(test)]
+fn legacy_echo_lines<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let rest: Vec<String> = parts
+        .map(|x| {
+            if x.starts_with('$') {
+                let v = x.strip_prefix('$').unwrap_or(x);
+                if let Some((k, d)) = v.split_once('-') {
+                    env::var(k).unwrap_or_else(|_| d.to_string())
+                } else if let Some((k, d)) = v.split_once(':') {
+                    env::var(k).unwrap_or_else(|_| d.to_string())
+                } else {
+                    env::var(v).unwrap_or_default()
+                }
+            } else {
+                x.to_string()
+            }
+        })
+        .collect();
+    vec![rest.join(" ")]
+}
+
+#[cfg(test)]
+fn legacy_history_lines() -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(h) = history_path() {
+        if let Ok(c) = fs::read_to_string(&h) {
+            for (i, l) in c.lines().enumerate() {
+                if !l.is_empty() {
+                    lines.push(format!("{:5}: {}", i + 1, l));
+                }
+            }
+        }
+    }
+    lines
+}
+
+#[cfg(test)]
+fn legacy_alias_lines(aliases: &HashMap<String, String>) -> Vec<String> {
+    let mut keys: Vec<_> = aliases.keys().collect();
+    keys.sort();
+    keys.into_iter()
+        .map(|key| format!("alias {}='{}'", key, aliases.get(key).unwrap()))
+        .collect()
+}
+
+#[cfg(test)]
+fn legacy_alias_set_lines(rest: Vec<String>, aliases: &mut HashMap<String, String>) -> Vec<String> {
+    let mut lines = Vec::new();
+    for entry in rest {
+        if let Some((key, value)) = entry.split_once('=') {
+            let value = value.trim_matches('\'').trim_matches('"').to_string();
+            aliases.insert(key.to_string(), value.clone());
+            lines.push(format!("alias {}='{}'", key, value));
+        }
+    }
+    save_aliases(aliases);
+    lines
+}
+
+fn execute_shell_adapter(
+    expanded: &str,
+    aliases: &mut HashMap<String, String>,
+    console: &mut HostBackend,
+) -> Option<ShellOutcome> {
+    let mut parts = expanded.split_whitespace();
+    let cmd = parts.next()?.trim_end_matches('&');
+    match cmd {
+        "help" | "?" => Some(ShellOutcome::Lines(
+            SHELL_HELP.iter().map(|line| line.to_string()).collect(),
+        )),
+        "clear" | "cls" => {
+            let output = console.execute_line("clear");
+            debug_assert!(output.lines.is_empty());
+            Some(ShellOutcome::Clear)
+        }
+        "pwd" => env::current_dir()
+            .ok()
+            .map(|path| ShellOutcome::Lines(shell_pwd_text(&path.display().to_string()))),
+        "echo" => Some(ShellOutcome::Lines(shell_echo_text(&expand_posix_vars(
+            parts,
+        )))),
+        "history" => Some(ShellOutcome::Lines(shell_history_text(
+            &read_shell_history_lines(),
+        ))),
+        "alias" => {
+            let rest: Vec<String> = parts.map(|part| part.to_string()).collect();
+            if rest.is_empty() {
+                let entries: Vec<(&str, &str)> = aliases
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str()))
+                    .collect();
+                Some(ShellOutcome::Lines(shell_alias_text(&entries)))
+            } else {
+                let mut lines = Vec::new();
+                for entry in rest {
+                    if let Some((key, value)) = entry.split_once('=') {
+                        let value = value.trim_matches('\'').trim_matches('"').to_string();
+                        aliases.insert(key.to_string(), value.clone());
+                        lines.extend(shell_alias_set_text(key, &value));
+                    }
+                }
+                save_aliases(aliases);
+                Some(ShellOutcome::Lines(lines))
+            }
+        }
+        "unalias" => {
+            if let Some(key) = parts.next() {
+                aliases.remove(key);
+                save_aliases(aliases);
+            }
+            Some(ShellOutcome::Lines(Vec::new()))
+        }
+        _ => None,
+    }
+}
+
 fn run_command(
     line: &str,
     aliases: &mut HashMap<String, String>,
@@ -189,7 +378,6 @@ fn run_command(
     job_counter: &mut usize,
     console: &mut HostBackend,
 ) {
-    // Clean up completed jobs
     #[cfg(unix)]
     {
         jobs.retain(|j| unsafe { libc::kill(j.pid as i32, 0) == 0 });
@@ -198,6 +386,24 @@ fn run_command(
         run_console_command(console, rest);
         return;
     }
+    let expanded = expand_aliases(line, aliases);
+    if let Some(outcome) = execute_shell_adapter(&expanded, aliases, console) {
+        match outcome {
+            ShellOutcome::Lines(lines) => emit_lines(&lines),
+            ShellOutcome::Clear => apply_clear(),
+        }
+        return;
+    }
+    run_command_legacy(line, aliases, jobs, job_counter, console)
+}
+
+fn run_command_legacy(
+    line: &str,
+    aliases: &mut HashMap<String, String>,
+    jobs: &mut Vec<Job>,
+    job_counter: &mut usize,
+    console: &mut HostBackend,
+) {
     let expanded = expand_aliases(line, aliases);
     let mut parts = expanded.split_whitespace();
     let cmd = match parts.next() {
@@ -895,5 +1101,142 @@ mod tests {
 
         let help = console.execute_line("help");
         assert!(help.lines.iter().any(|line| line.contains("vfs")));
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static DATA_DIR_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    struct DataDirGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        dir: PathBuf,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl DataDirGuard {
+        fn new() -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let previous = env::var_os("AIOS_DATA_DIR");
+            let seq = DATA_DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir =
+                env::temp_dir().join(format!("aios-shell-parity-{}-{seq}", std::process::id()));
+            let _ = fs::create_dir_all(&dir);
+            env::set_var("AIOS_DATA_DIR", &dir);
+            Self {
+                _lock: lock,
+                dir,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for DataDirGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var("AIOS_DATA_DIR", value),
+                None => env::remove_var("AIOS_DATA_DIR"),
+            }
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn bare_shell_static_adapters_match_legacy_text() {
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+
+        assert_eq!(
+            execute_shell_adapter("help", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(legacy_help_lines()))
+        );
+        assert_eq!(
+            execute_shell_adapter("?", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(legacy_help_lines()))
+        );
+
+        let pwd = legacy_pwd_lines().unwrap();
+        assert_eq!(
+            execute_shell_adapter("pwd", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(pwd))
+        );
+
+        for line in ["echo", "echo hello", "echo MiXeD Case"] {
+            let mut parts = line.split_whitespace();
+            parts.next();
+            assert_eq!(
+                execute_shell_adapter(line, &mut aliases, &mut console),
+                Some(ShellOutcome::Lines(legacy_echo_lines(parts))),
+                "input: {line}"
+            );
+        }
+
+        assert_eq!(
+            execute_shell_adapter("clear", &mut aliases, &mut console),
+            Some(ShellOutcome::Clear)
+        );
+        assert_eq!(
+            execute_shell_adapter("cls", &mut aliases, &mut console),
+            Some(ShellOutcome::Clear)
+        );
+    }
+
+    #[test]
+    fn bare_shell_alias_adapters_match_legacy_text() {
+        let _guard = DataDirGuard::new();
+        let mut console = HostBackend::new();
+        let mut aliases = HashMap::new();
+        aliases.insert("gs".to_string(), "git status".to_string());
+
+        assert_eq!(
+            execute_shell_adapter("alias", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(legacy_alias_lines(&aliases)))
+        );
+
+        let mut expected = aliases.clone();
+        let set_args = vec!["ll=ls".to_string(), "g=git".to_string()];
+        assert_eq!(
+            execute_shell_adapter("alias ll=ls g=git", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(legacy_alias_set_lines(
+                set_args,
+                &mut expected
+            )))
+        );
+        assert_eq!(aliases, expected);
+
+        assert_eq!(
+            execute_shell_adapter("unalias gs", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(Vec::new()))
+        );
+        assert!(!aliases.contains_key("gs"));
+    }
+
+    #[test]
+    fn bare_shell_history_adapter_matches_legacy_text() {
+        let _guard = DataDirGuard::new();
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+        let history_file = history_path().unwrap();
+        fs::write(&history_file, "first\n\nthird\n").unwrap();
+
+        let expected = vec!["    1: first".to_string(), "    3: third".to_string()];
+        assert_eq!(
+            execute_shell_adapter("history", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(expected))
+        );
+        assert_eq!(
+            execute_shell_adapter("history", &mut aliases, &mut console),
+            Some(ShellOutcome::Lines(legacy_history_lines()))
+        );
+    }
+
+    #[test]
+    fn unmigrated_bare_shell_commands_fall_through() {
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+        for line in ["cd /tmp", "env", "export X=1", "unset X", "jobs", "ls"] {
+            assert!(
+                execute_shell_adapter(line, &mut aliases, &mut console).is_none(),
+                "input: {line}"
+            );
+        }
     }
 }

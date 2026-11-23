@@ -295,12 +295,20 @@
   subcommands again, with loopback HTTP and contract tests; EN/RU docs aligned.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
-- [ ] Finish replacing the remaining legacy paths (`aios-shell` POSIX commands
-  and kernel TUI `tabs`/`gui`/`tui`/`udp`/`http`/`socktest`) only after real
-  adapters and parity checks are green. The bare shell command sets of `aios`,
-  standalone `aios-tui` and the kernel TUI are adapter-backed;
-  `shell_execute_legacy`, `SafeModeShell` and `run_command_legacy` remain as
-  parity references.
+- [x] Migrate the static bare `aios-shell` builtins (`help`/`?`, `clear`/`cls`,
+  `pwd`, `echo`, `history`, `alias`, `unalias`) to exact text formatters in
+  `aios-console/src/legacy.rs` plus the `ShellOutcome` adapter in
+  `aios-shell/src/main.rs`. The frontend still owns history/alias files,
+  `$VAR` expansion and screen I/O. Four parity tests compare both paths
+  byte-for-byte, including the original 60-column ANSI help banner. EN/RU
+  docs were aligned.
+- [ ] Finish replacing the remaining legacy paths (the rest of the `aios-shell`
+  POSIX commands — `cd`, `env`/`export`/`unset`, `source`, jobs — and kernel TUI
+  `tabs`/`gui`/`tui`/`udp`/`http`/`socktest`) only after real adapters and parity
+  checks are green. The bare shell command sets of `aios`, standalone `aios-tui`,
+  the kernel TUI and the static `aios-shell` builtins are adapter-backed;
+  `shell_execute_legacy`, `SafeModeShell` and both `run_command_legacy` functions
+  remain as parity references.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 

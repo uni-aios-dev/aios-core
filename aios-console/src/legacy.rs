@@ -392,6 +392,59 @@ pub fn kernel_wifi_real_text() -> &'static str {
     "real radio mode (test radio off)"
 }
 
+/// Exact legacy `aios-shell` help lines, including ANSI colour codes.
+pub const SHELL_HELP: &[&str] = &[
+    "\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m",
+    "\x1b[1;36mтХС                    AIOS Shell v2.2                        тХС\x1b[0m",
+    "\x1b[1;36mтХЪтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЭ\x1b[0m",
+    "\n\x1b[1;33m[BUILTIN]\x1b[0m exit,quit,clear,pwd,cd,env,export,unset,history,alias,unalias,source,type,echo,exec,jobs,fg,bg",
+    "\x1b[1;33m[FILES]\x1b[0m ls,cat,head,tail,less,grep,find,wc,cp,mv,rm,mkdir,touch,chmod,chown,ln,stat,file",
+    "\x1b[1;33m[SYSTEM]\x1b[0m ps,top,htop,free,df,du,uname,uptime,whoami,id,date,dmesg,kernel,lsmod,modinfo",
+    "\x1b[1;33m[NET]\x1b[0m ping,curl,wget,nc,ss,netstat,ip,ifconfig,route,arp,nslookup,dig,traceroute",
+    "\x1b[1;33m[DEBUG]\x1b[0m strace,lsof,lscpu,lsblk,lsusb,lspci,dmidecode,hdparm,iostat,vmstat",
+    "\x1b[1;33m[DEV]\x1b[0m git,make,cmake,gcc,g++,rustc,cargo,python,python3,node,npm,pip",
+    "\x1b[1;33m[ARCHIVE]\x1b[0m tar,gzip,gunzip,bzip2,xz,zip,unzip",
+    "\x1b[1;33m[AIOS]\x1b[0m gui,tui,aios,logs,hw,services,aios-shell-reload",
+    "\x1b[1;33m[CONSOLE]\x1b[0m console <command> (console help lists unified commands)",
+    "\x1b[1;33m[EDITORS]\x1b[0m vi,vim,nano,emacs,micro",
+    "\n\x1b[2mRun any program directly. Use & for background. TAB for completion.\x1b[0m",
+];
+
+/// Formats the exact legacy `aios-shell` echo output.
+pub fn shell_echo_text(args: &[String]) -> Vec<String> {
+    vec![args.join(" ")]
+}
+
+/// Formats the exact legacy `aios-shell` `pwd` output.
+pub fn shell_pwd_text(path: &str) -> Vec<String> {
+    vec![path.to_string()]
+}
+
+/// Formats the exact legacy `aios-shell` alias listing.
+pub fn shell_alias_text(entries: &[(&str, &str)]) -> Vec<String> {
+    let mut entries = entries.to_vec();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    entries
+        .into_iter()
+        .map(|(name, target)| format!("alias {name}='{target}'"))
+        .collect()
+}
+
+/// Formats the exact legacy `aios-shell` alias definition line.
+pub fn shell_alias_set_text(name: &str, value: &str) -> Vec<String> {
+    vec![format!("alias {name}='{value}'")]
+}
+
+/// Formats the exact legacy `aios-shell` history output.
+pub fn shell_history_text(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !line.is_empty())
+        .map(|(index, line)| format!("{:5}: {}", index + 1, line))
+        .collect()
+}
+
 /// Outcome of the legacy `aios` shell net IPC dispatch.
 pub enum AiosNetResult {
     /// Text returned by the net settings block, or a local validation message.
@@ -855,6 +908,34 @@ mod tests {
         assert_eq!(
             super::kernel_wifi_real_text(),
             "real radio mode (test radio off)"
+        );
+    }
+
+    #[test]
+    fn maps_aios_shell_text_exactly() {
+        assert_eq!(super::SHELL_HELP.len(), 14);
+        assert!(super::SHELL_HELP[0].starts_with("\x1b[1;36m"));
+        assert_eq!(
+            super::SHELL_HELP[13],
+            "\n\x1b[2mRun any program directly. Use & for background. TAB for completion.\x1b[0m"
+        );
+        assert_eq!(
+            super::shell_echo_text(&["MiXeD".to_string(), "Case".to_string()]),
+            ["MiXeD Case"]
+        );
+        assert_eq!(super::shell_pwd_text("/tmp/aios"), ["/tmp/aios"]);
+        assert_eq!(
+            super::shell_alias_text(&[("ll", "ls -la"), ("gs", "git status")]),
+            ["alias gs='git status'", "alias ll='ls -la'"]
+        );
+        assert_eq!(
+            super::shell_alias_set_text("ll", "ls -la"),
+            ["alias ll='ls -la'"]
+        );
+        let history = vec!["first".to_string(), String::new(), "third".to_string()];
+        assert_eq!(
+            super::shell_history_text(&history),
+            ["    1: first", "    3: third"]
         );
     }
 

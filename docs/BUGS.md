@@ -1,5 +1,14 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (unified console): `aios-shell` help banner lost its width
+
+While migrating the bare `aios-shell` builtins to `aios-console` formatters,
+the newly added `SHELL_HELP` and test-only legacy copy shortened the original
+60-column ANSI box border to 16/18 columns. A byte-for-byte parity test caught
+the mismatch; both literals were restored from the untouched legacy dispatcher
+in `run_command_legacy`, so migrated `help`/`?` now prints exactly the original
+banner. EN/RU docs were aligned.
+
 ## FIXED (unified console): kernel bare `clear` did not clear scrollback
 
 The legacy kernel shell returned no lines for bare `clear` but never called
