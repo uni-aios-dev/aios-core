@@ -3,6 +3,12 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- Documented the concrete missing APIs behind the three remaining honest
+  `unavailable` commands. `acl grant|revoke` needs a path-aware ACL store plus
+  VFS enforcement; `ping` needs a host ICMP reachability API with RTT and socket
+  privileges; host `net recheck` needs fresh `NetManager` I/O that invalidates the
+  cached link verdict. A fresh audit confirmed no such APIs exist in the workspace,
+  so no fake backend was added. EN/RU `TODO` was aligned.
 - `console jobs`/`fg <id>`/`bg <id>` are now real on the host through a new
   `JobControl` injection seam in `aios-console/src/control.rs`. `aios-shell` keeps
   one shared `JobTable` for the bare builtins and the canonical console commands;

@@ -320,9 +320,27 @@
   `aios-wasm` tests cover the round trip and the failure modes; a host contract
   test covers usage, missing block/snapshot and extract/restore text. The
   `unavailable` reason table and EN/RU docs were updated.
-- [ ] Implement the remaining host-side APIs (`acl`, `ping`, host `net recheck`)
-  before re-enabling those commands; do not alias them to `caps`, TCP connect or
-  cached network status.
+- [ ] Implement the remaining host-side APIs before re-enabling those commands;
+  do not alias them to `caps`, TCP connect or cached network status. A fresh audit
+  found no real backing API in the workspace, so these commands stay honestly
+  `unavailable` until the concrete missing pieces exist:
+  - `acl grant|revoke <cap> <path>` needs a path-aware ACL store (principal,
+    normalized `PathScope`, right, grant/revoke/check/list) and an enforcement hook
+    in `aios-vfs` after path canonicalization. `AclContext` is a process-global
+    token set with no path dimension; `AccessControlLayer` tokens are keyed by
+    block ID; `aios-core::filesystem::FilePermissions` is an unused in-memory map
+    with no principal, no prefix matching and no effect on `HOST://` I/O.
+  - `ping <host>` needs a host ICMP reachability API: hostname resolution, echo
+    request construction, identifier/sequence correlation, timeout, `Instant`-based
+    RTT and a structured reply summary, plus raw-socket/ICMP privileges
+    (`CAP_NET_RAW` or unprivileged ICMP sockets). `aios-net` has only TCP/UDP;
+    TCP connect is not an echo reply. Delegating to an OS `ping` binary would need
+    a real adapter with privilege/error handling and output parsing, which does
+    not exist yet.
+  - host `net recheck` needs a `NetManager`/`SysControlHub` method that performs
+    fresh network I/O, invalidates the cached link verdict and reports the probe
+    result. `status()`, `link()` and `refresh_status()` only clone cached state;
+    the real `recheck()` (ARP -> ICMP -> DNS) is `no_std` and kernel-only.
 - [x] Migrate the static bare `aios-shell` builtins (`help`/`?`, `clear`/`cls`,
   `pwd`, `echo`, `history`, `alias`, `unalias`) to exact text formatters in
   `aios-console/src/legacy.rs` plus the `ShellOutcome` adapter in
