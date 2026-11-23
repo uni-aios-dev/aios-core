@@ -114,7 +114,7 @@ aios-webview/        — Native browser engine: wry/winit WebView window, persis
 aios-init/           — Standalone (NOT a workspace member) static-musl PID 1 `/init` for the initramfs: core VFS mounts, block supervisor, zombie reaping, rescue-shell fallback
 aios-tui/            — User interface: intent engine, ratatui dashboard
 aios-daemon/        — Headless server: aiosd binary for Docker/background
-aios-gui/           — Native GUI dashboard: egui/eframe, 6 tabs, dark theme
+aios-gui/           — Native GUI desktop shell: egui/eframe, Start menu, windows, taskbar, dark theme
 tests/              — Integration tests (28 tests covering full lifecycle)
 docs/               — All documentation
 ```

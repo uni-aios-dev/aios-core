@@ -926,7 +926,7 @@ Startup sequence:
 12. Event loop: poll key events, redraw dashboard, sync watchdog state
 13. Restore terminal on exit
 
-Keybindings: `q`/`Ctrl+C`=Quit, `1-7`/`Alt+1-7`=Tab (Alt works while typing in Shell/URL/AI/net input), `Tab`/`F1`/`?`=next tab/help, `W`=Launch GUI dashboard, `Space`=pause event log, Blocks: `r`=restart `k`=unload `l`=load, Web: `g`/`Enter`/`j`/`k`/`o`/`u`/`d`/`PageUp`/`PageDown`/`b`/`B`/`n`/`Esc`, Network: `n`=edit config `g`=show JSON `s`=refresh store, ↑/↓=Shell history
+Keybindings: `q`/`Ctrl+C`=Quit, `1-7`/`Alt+1-7`=Tab (Alt works while typing in Shell/URL/AI/net input), `Tab`/`F1`/`?`=next tab/help, `W`=Launch GUI desktop shell, `Space`=pause event log, Blocks: `r`=restart `k`=unload `l`=load, Web: `g`/`Enter`/`j`/`k`/`o`/`u`/`d`/`PageUp`/`PageDown`/`b`/`B`/`n`/`Esc`, Network: `n`=edit config `g`=show JSON `s`=refresh store, ↑/↓=Shell history
 
 ### Hybrid Block Loader (`aios/src/blocks.rs`)
 
@@ -1660,7 +1660,7 @@ The `aios` crate is a unified system binary that merges all 17+ workspace crates
 | 1-8 | Direct tab select |
 | Alt+1-8 | Direct tab select even while typing in the Shell / Web URL / AI query / net input line |
 | q / Ctrl+C | Quit |
-| W | Launch the AIOS GUI dashboard (`aios-gui`); found on `PATH` or next to the `aios` executable (exposed on live as `DISPLAY=:0` X/Xorg session) |
+| W | Launch the AIOS GUI desktop shell (`aios-gui`); found on `PATH` or next to the `aios` executable (exposed on live as `DISPLAY=:0` X/Xorg session) |
 | Space | Pause/resume log scroll |
 | r / k / l (Blocks) | Restart / unload / load selected block |
 | g / j / k / o / u / d / b / B / n (Web) | Omnibox / link nav / open / scroll / back / native viewer |
