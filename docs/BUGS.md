@@ -1,5 +1,16 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (unified console): recursive `source` panicked in `aios-shell`
+
+The legacy dispatcher held a `RefCell<HashSet<String>>` borrow while it iterated
+the lines of a sourced file. A file that sourced itself re-entered the same
+branch and tried to borrow the set mutably again, panicking with
+`already borrowed: BorrowMutError` before it could print
+`source: <path>: recursion detected`. The adapter now marks the path, releases
+the borrow and only then runs the sourced lines; a recursive call reports the
+error on stderr and unwinds normally. A regression test exercises the recursive
+file path. EN/RU docs were aligned.
+
 ## FIXED (unified console): `aios-shell` help banner lost its width
 
 While migrating the bare `aios-shell` builtins to `aios-console` formatters,

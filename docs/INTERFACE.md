@@ -145,10 +145,12 @@ plus the canonical host wording for `help`, `clear` and usage errors in
 `aios-console/tests/host_backend.rs`. The standalone TUI additionally compares
 all migrated bare spellings, including `help`/`?`, `logs`/`log` and the mutation
 commands `kill`/`spawn`/`load`/`unload`/`restart`/`recover`, byte-for-byte with
-`SafeModeShell`. The `aios-shell` unit tests compare the static bare builtins
-(`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`, `alias`, `unalias`) against
-their legacy text generators, with a guarded temporary `AIOS_DATA_DIR` for the
-history and alias files.
+`SafeModeShell`. The `aios-shell` unit tests compare all bare POSIX builtins
+(`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`, `alias`, `unalias`, `cd`,
+`env`/`export`/`unset`, `source`/`.`) against their legacy text generators,
+with a guarded temporary `AIOS_DATA_DIR` for the history and alias files and
+stateful checks for environment, `OLDPWD`, current directory and `source`
+recursion.
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
@@ -262,14 +264,17 @@ The standalone `aios-shell` accepts the same prefix, case-insensitively:
 `console ps`, `CONSOLE metrics --json` and bare `console` (help) all reach the
 same `HostBackend` through `execute_line()`. Aliases are not expanded on the
 `console` path, so a shell alias named `console` cannot shadow it. `console clear`
-clears the terminal and `console exit <code>` exits the shell. Among bare lines,
-`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`, `alias` and `unalias` now go
-through `aios-console` text formatters via `execute_shell_adapter`; the exact
-legacy text (including the 60-column ANSI help banner) is preserved by parity
-tests. The frontend still owns history/alias files, `$VAR` expansion and screen
-I/O, so alias expansion and background `&` behaviour are unchanged. The other
-bare commands (`cd`, `env`/`export`/`unset`, `source`, jobs, external programs)
-keep the legacy POSIX path.
+clears the terminal and `console exit <code>` exits the shell. All bare POSIX
+builtins (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`, `alias`, `unalias`,
+`cd`, `env`/`export`/`unset`, `source`/`.`) now go through
+`execute_shell_adapter` with `aios-console` text formatters; the exact legacy
+text (including the 60-column ANSI help banner) is preserved by parity tests.
+The frontend still owns the real side effects: history/alias files, `$VAR`
+expansion, environment mutation, `OLDPWD`/current directory, sourced-file
+execution and screen I/O. A recursive `source` reports an error instead of
+panicking. Only inherently frontend-side lines remain on the legacy path:
+`jobs`/`fg`/`bg`, external programs, GUI/TUI launchers, `logs`/`hw`/`services`,
+`type`/`exec`/`which`, `aios-shell-reload` and `exit`.
 
 The kernel shell uses the same shared, case-insensitive `console <...>` prefix:
 `CONSOLE VER` and `CoNsOlE echo MiXeD Case` reach the backend, while bare legacy

@@ -302,13 +302,22 @@
   `$VAR` expansion and screen I/O. Four parity tests compare both paths
   byte-for-byte, including the original 60-column ANSI help banner. EN/RU
   docs were aligned.
-- [ ] Finish replacing the remaining legacy paths (the rest of the `aios-shell`
-  POSIX commands — `cd`, `env`/`export`/`unset`, `source`, jobs — and kernel TUI
-  `tabs`/`gui`/`tui`/`udp`/`http`/`socktest`) only after real adapters and parity
-  checks are green. The bare shell command sets of `aios`, standalone `aios-tui`,
-  the kernel TUI and the static `aios-shell` builtins are adapter-backed;
-  `shell_execute_legacy`, `SafeModeShell` and both `run_command_legacy` functions
-  remain as parity references.
+- [x] Finish the `aios-shell` POSIX builtins: `cd`, `env`, `export`, `unset` and
+  `source`/`.` now go through `execute_shell_adapter` with real environment and
+  filesystem side effects kept in the frontend. `cd` preserves `OLDPWD` and
+  reports errors through `ShellOutcome::Stderr`; `source` keeps recursion
+  detection without the legacy `RefCell` double-borrow panic. Six more tests
+  cover env/export/unset text, `cd` side effects, and `source` missing-file,
+  execution and recursion paths. EN/RU docs were aligned.
+- [ ] The remaining legacy branches are intentional, not unfinished migrations:
+  `jobs`/`fg`/`bg` have real Unix process control but no console job-control API
+  (honestly `unavailable` in `aios-console`), and external programs, GUI/TUI
+  launchers, `logs`, `hw`, `services`, `type`/`exec`/`which` and `exit` are
+  frontend-side operations with no pure text equivalent. Kernel TUI `tabs`,
+  `gui` and `tui` stay deferred; `udp`, `http` and `socktest` already have real
+  canonical `console ...` backends while their bare spellings stay on the legacy
+  path. `shell_execute_legacy`, `SafeModeShell` and both `run_command_legacy`
+  functions remain as parity references.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 

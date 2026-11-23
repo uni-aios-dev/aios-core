@@ -445,6 +445,39 @@ pub fn shell_history_text(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Formats the exact legacy `aios-shell` `cd` error line.
+pub fn shell_cd_error_text(path: &str, error: &str) -> Vec<String> {
+    vec![format!("cd: {path}: {error}")]
+}
+
+/// Formats the exact legacy `aios-shell` environment listing.
+pub fn shell_env_text(entries: &[(String, String)]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect()
+}
+
+/// Formats the exact legacy `aios-shell` `export KEY=VALUE` line.
+pub fn shell_export_set_text(key: &str, value: &str) -> Vec<String> {
+    vec![format!("export {key}={value}")]
+}
+
+/// Formats the exact legacy `aios-shell` `export KEY` lookup line.
+pub fn shell_env_value_text(key: &str, value: &str) -> Vec<String> {
+    vec![format!("{key}={value}")]
+}
+
+/// Formats the exact legacy `aios-shell` `source` recursion error.
+pub fn shell_source_recursion_text(path: &str) -> Vec<String> {
+    vec![format!("source: {path}: recursion detected")]
+}
+
+/// Formats the exact legacy `aios-shell` `source` missing-file error.
+pub fn shell_source_missing_text(path: &str) -> Vec<String> {
+    vec![format!("source: {path}: No such file")]
+}
+
 /// Outcome of the legacy `aios` shell net IPC dispatch.
 pub enum AiosNetResult {
     /// Text returned by the net settings block, or a local validation message.
@@ -936,6 +969,35 @@ mod tests {
         assert_eq!(
             super::shell_history_text(&history),
             ["    1: first", "    3: third"]
+        );
+    }
+
+    #[test]
+    fn maps_aios_shell_state_text_exactly() {
+        assert_eq!(
+            super::shell_cd_error_text("/nope", "No such file or directory"),
+            ["cd: /nope: No such file or directory"]
+        );
+        let env = vec![
+            ("HOME".to_string(), "/home/user".to_string()),
+            ("PATH".to_string(), "/usr/bin".to_string()),
+        ];
+        assert_eq!(
+            super::shell_env_text(&env),
+            ["HOME=/home/user", "PATH=/usr/bin"]
+        );
+        assert_eq!(
+            super::shell_export_set_text("KEY", "value"),
+            ["export KEY=value"]
+        );
+        assert_eq!(super::shell_env_value_text("KEY", "value"), ["KEY=value"]);
+        assert_eq!(
+            super::shell_source_recursion_text("rc"),
+            ["source: rc: recursion detected"]
+        );
+        assert_eq!(
+            super::shell_source_missing_text("rc"),
+            ["source: rc: No such file"]
         );
     }
 

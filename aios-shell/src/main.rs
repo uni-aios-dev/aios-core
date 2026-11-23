@@ -13,8 +13,9 @@ use rustyline::{Config, EditMode, Editor};
 
 use aios_console::host::HostBackend;
 use aios_console::legacy::{
-    shell_alias_set_text, shell_alias_text, shell_echo_text, shell_history_text, shell_pwd_text,
-    SHELL_HELP,
+    shell_alias_set_text, shell_alias_text, shell_cd_error_text, shell_echo_text, shell_env_text,
+    shell_env_value_text, shell_export_set_text, shell_history_text, shell_pwd_text,
+    shell_source_missing_text, shell_source_recursion_text, SHELL_HELP,
 };
 use aios_console::output::OutputControl;
 
@@ -28,6 +29,7 @@ struct Job {
 #[derive(Debug, PartialEq, Eq)]
 enum ShellOutcome {
     Lines(Vec<String>),
+    Stderr(Vec<String>),
     Clear,
 }
 
@@ -203,6 +205,30 @@ fn apply_clear() {
     let _ = io::stdout().flush();
 }
 
+fn emit_stderr(lines: &[String]) {
+    for line in lines {
+        eprintln!("{line}");
+    }
+}
+
+fn collect_env() -> Vec<(String, String)> {
+    let mut envs: Vec<_> = env::vars().collect();
+    envs.sort_by(|a, b| a.0.cmp(&b.0));
+    envs
+}
+
+thread_local! { static SOURCING: RefCell<HashSet<String>> = RefCell::new(HashSet::new()); }
+
+fn source_mark(key: String) -> bool {
+    SOURCING.with(|s| !s.borrow_mut().insert(key))
+}
+
+fn source_unmark(key: &str) {
+    SOURCING.with(|s| {
+        s.borrow_mut().remove(key);
+    });
+}
+
 fn expand_posix_vars<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<String> {
     parts
         .map(|x| {
@@ -314,9 +340,43 @@ fn legacy_alias_set_lines(rest: Vec<String>, aliases: &mut HashMap<String, Strin
     lines
 }
 
+#[cfg(test)]
+fn legacy_env_lines() -> Vec<String> {
+    let mut envs: Vec<_> = env::vars().collect();
+    envs.sort_by(|a, b| a.0.cmp(&b.0));
+    envs.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
+}
+
+#[cfg(test)]
+fn legacy_cd_error_lines(path: &str, error: &str) -> Vec<String> {
+    vec![format!("cd: {path}: {error}")]
+}
+
+#[cfg(test)]
+fn legacy_export_set_lines(key: &str, value: &str) -> Vec<String> {
+    vec![format!("export {key}={value}")]
+}
+
+#[cfg(test)]
+fn legacy_env_value_lines(key: &str, value: &str) -> Vec<String> {
+    vec![format!("{key}={value}")]
+}
+
+#[cfg(test)]
+fn legacy_source_recursion_lines(path: &str) -> Vec<String> {
+    vec![format!("source: {path}: recursion detected")]
+}
+
+#[cfg(test)]
+fn legacy_source_missing_lines(path: &str) -> Vec<String> {
+    vec![format!("source: {path}: No such file")]
+}
+
 fn execute_shell_adapter(
     expanded: &str,
     aliases: &mut HashMap<String, String>,
+    jobs: &mut Vec<Job>,
+    job_counter: &mut usize,
     console: &mut HostBackend,
 ) -> Option<ShellOutcome> {
     let mut parts = expanded.split_whitespace();
@@ -367,6 +427,74 @@ fn execute_shell_adapter(
             }
             Some(ShellOutcome::Lines(Vec::new()))
         }
+        "cd" => {
+            let target = parts.next().unwrap_or("~");
+            let path = if target == "~" {
+                dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+            } else if target == "-" {
+                match env::var("OLDPWD") {
+                    Ok(old) => PathBuf::from(old),
+                    Err(_) => return Some(ShellOutcome::Lines(Vec::new())),
+                }
+            } else {
+                PathBuf::from(target)
+            };
+            if let Ok(cur) = env::current_dir() {
+                env::set_var("OLDPWD", cur);
+            }
+            match env::set_current_dir(&path) {
+                Ok(()) => Some(ShellOutcome::Lines(Vec::new())),
+                Err(e) => Some(ShellOutcome::Stderr(shell_cd_error_text(
+                    &path.display().to_string(),
+                    &e.to_string(),
+                ))),
+            }
+        }
+        "env" => Some(ShellOutcome::Lines(shell_env_text(&collect_env()))),
+        "export" => {
+            if let Some(arg) = parts.next() {
+                if let Some((key, value)) = arg.split_once('=') {
+                    env::set_var(key, value);
+                    Some(ShellOutcome::Lines(shell_export_set_text(key, value)))
+                } else {
+                    match env::var(arg) {
+                        Ok(value) => Some(ShellOutcome::Lines(shell_env_value_text(arg, &value))),
+                        Err(_) => Some(ShellOutcome::Lines(Vec::new())),
+                    }
+                }
+            } else {
+                Some(ShellOutcome::Lines(shell_env_text(&collect_env())))
+            }
+        }
+        "unset" => {
+            if let Some(key) = parts.next() {
+                env::remove_var(key);
+            }
+            Some(ShellOutcome::Lines(Vec::new()))
+        }
+        "source" | "." => {
+            let Some(file) = parts.next() else {
+                return Some(ShellOutcome::Lines(Vec::new()));
+            };
+            let key = file.to_string();
+            if source_mark(key.clone()) {
+                return Some(ShellOutcome::Stderr(shell_source_recursion_text(file)));
+            }
+            let outcome = if let Ok(content) = fs::read_to_string(file) {
+                for line in content.lines() {
+                    let l = line.trim();
+                    if l.is_empty() || l.starts_with('#') || l == "exit" || l == "quit" {
+                        continue;
+                    }
+                    run_command(l, aliases, jobs, job_counter, console);
+                }
+                Some(ShellOutcome::Lines(Vec::new()))
+            } else {
+                Some(ShellOutcome::Stderr(shell_source_missing_text(file)))
+            };
+            source_unmark(&key);
+            outcome
+        }
         _ => None,
     }
 }
@@ -387,9 +515,10 @@ fn run_command(
         return;
     }
     let expanded = expand_aliases(line, aliases);
-    if let Some(outcome) = execute_shell_adapter(&expanded, aliases, console) {
+    if let Some(outcome) = execute_shell_adapter(&expanded, aliases, jobs, job_counter, console) {
         match outcome {
             ShellOutcome::Lines(lines) => emit_lines(&lines),
+            ShellOutcome::Stderr(lines) => emit_stderr(&lines),
             ShellOutcome::Clear => apply_clear(),
         }
         return;
@@ -1143,19 +1272,33 @@ mod tests {
     fn bare_shell_static_adapters_match_legacy_text() {
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
 
         assert_eq!(
-            execute_shell_adapter("help", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "help",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(legacy_help_lines()))
         );
         assert_eq!(
-            execute_shell_adapter("?", &mut aliases, &mut console),
+            execute_shell_adapter("?", &mut aliases, &mut jobs, &mut job_counter, &mut console),
             Some(ShellOutcome::Lines(legacy_help_lines()))
         );
 
         let pwd = legacy_pwd_lines().unwrap();
         assert_eq!(
-            execute_shell_adapter("pwd", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "pwd",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(pwd))
         );
 
@@ -1163,18 +1306,36 @@ mod tests {
             let mut parts = line.split_whitespace();
             parts.next();
             assert_eq!(
-                execute_shell_adapter(line, &mut aliases, &mut console),
+                execute_shell_adapter(
+                    line,
+                    &mut aliases,
+                    &mut jobs,
+                    &mut job_counter,
+                    &mut console
+                ),
                 Some(ShellOutcome::Lines(legacy_echo_lines(parts))),
                 "input: {line}"
             );
         }
 
         assert_eq!(
-            execute_shell_adapter("clear", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "clear",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Clear)
         );
         assert_eq!(
-            execute_shell_adapter("cls", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "cls",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Clear)
         );
     }
@@ -1184,17 +1345,31 @@ mod tests {
         let _guard = DataDirGuard::new();
         let mut console = HostBackend::new();
         let mut aliases = HashMap::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
         aliases.insert("gs".to_string(), "git status".to_string());
 
         assert_eq!(
-            execute_shell_adapter("alias", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "alias",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(legacy_alias_lines(&aliases)))
         );
 
         let mut expected = aliases.clone();
         let set_args = vec!["ll=ls".to_string(), "g=git".to_string()];
         assert_eq!(
-            execute_shell_adapter("alias ll=ls g=git", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "alias ll=ls g=git",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(legacy_alias_set_lines(
                 set_args,
                 &mut expected
@@ -1203,7 +1378,13 @@ mod tests {
         assert_eq!(aliases, expected);
 
         assert_eq!(
-            execute_shell_adapter("unalias gs", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "unalias gs",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(Vec::new()))
         );
         assert!(!aliases.contains_key("gs"));
@@ -1214,16 +1395,30 @@ mod tests {
         let _guard = DataDirGuard::new();
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
         let history_file = history_path().unwrap();
         fs::write(&history_file, "first\n\nthird\n").unwrap();
 
         let expected = vec!["    1: first".to_string(), "    3: third".to_string()];
         assert_eq!(
-            execute_shell_adapter("history", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "history",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(expected))
         );
         assert_eq!(
-            execute_shell_adapter("history", &mut aliases, &mut console),
+            execute_shell_adapter(
+                "history",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
             Some(ShellOutcome::Lines(legacy_history_lines()))
         );
     }
@@ -1232,11 +1427,268 @@ mod tests {
     fn unmigrated_bare_shell_commands_fall_through() {
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
-        for line in ["cd /tmp", "env", "export X=1", "unset X", "jobs", "ls"] {
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
+        for line in [
+            "jobs",
+            "fg",
+            "bg",
+            "ls",
+            "gui",
+            "tui",
+            "exit",
+            "aios-shell-reload",
+        ] {
             assert!(
-                execute_shell_adapter(line, &mut aliases, &mut console).is_none(),
+                execute_shell_adapter(
+                    line,
+                    &mut aliases,
+                    &mut jobs,
+                    &mut job_counter,
+                    &mut console
+                )
+                .is_none(),
                 "input: {line}"
             );
         }
+    }
+
+    struct VarRestore {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl VarRestore {
+        fn new(key: &'static str) -> Self {
+            Self {
+                key,
+                previous: env::var_os(key),
+            }
+        }
+    }
+
+    impl Drop for VarRestore {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+
+    struct CwdGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        dir: PathBuf,
+        oldpwd: Option<std::ffi::OsString>,
+    }
+
+    impl CwdGuard {
+        fn new() -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            Self {
+                _lock: lock,
+                dir: env::current_dir().unwrap(),
+                oldpwd: env::var_os("OLDPWD"),
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.dir);
+            match &self.oldpwd {
+                Some(value) => env::set_var("OLDPWD", value),
+                None => env::remove_var("OLDPWD"),
+            }
+        }
+    }
+
+    #[test]
+    fn bare_shell_env_adapters_match_legacy_text() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _var = VarRestore::new("AIOS_SHELL_PARITY_KEY");
+        env::set_var("AIOS_SHELL_PARITY_KEY", "parity-value");
+
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
+
+        assert_eq!(
+            execute_shell_adapter(
+                "env",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(legacy_env_lines()))
+        );
+        assert_eq!(
+            execute_shell_adapter(
+                "export AIOS_SHELL_PARITY_KEY",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(legacy_env_value_lines(
+                "AIOS_SHELL_PARITY_KEY",
+                "parity-value"
+            )))
+        );
+        assert_eq!(
+            execute_shell_adapter(
+                "export AIOS_SHELL_PARITY_KEY=changed",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(legacy_export_set_lines(
+                "AIOS_SHELL_PARITY_KEY",
+                "changed"
+            )))
+        );
+        assert_eq!(env::var("AIOS_SHELL_PARITY_KEY").unwrap(), "changed");
+        assert_eq!(
+            execute_shell_adapter(
+                "export",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(legacy_env_lines()))
+        );
+        assert_eq!(
+            execute_shell_adapter(
+                "unset AIOS_SHELL_PARITY_KEY",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(Vec::new()))
+        );
+        assert!(env::var("AIOS_SHELL_PARITY_KEY").is_err());
+    }
+
+    #[test]
+    fn bare_shell_cd_adapter_matches_legacy_side_effects() {
+        let _guard = CwdGuard::new();
+        let dir = env::temp_dir().join(format!("aios-shell-cd-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let original = env::current_dir().unwrap();
+
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
+
+        let target = dir.display().to_string();
+        assert_eq!(
+            execute_shell_adapter(
+                &format!("cd {target}"),
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(Vec::new()))
+        );
+        assert_eq!(env::current_dir().unwrap(), dir);
+        assert_eq!(env::var("OLDPWD").unwrap(), original.display().to_string());
+
+        assert_eq!(
+            execute_shell_adapter(
+                "cd -",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(Vec::new()))
+        );
+        assert_eq!(env::current_dir().unwrap(), original);
+
+        let missing = dir.join("definitely-missing");
+        let error = env::set_current_dir(&missing).unwrap_err().to_string();
+        assert_eq!(
+            execute_shell_adapter(
+                &format!("cd {}", missing.display()),
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Stderr(legacy_cd_error_lines(
+                &missing.display().to_string(),
+                &error
+            )))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bare_shell_source_adapter_matches_legacy_text_and_side_effects() {
+        let _guard = DataDirGuard::new();
+        let _var = VarRestore::new("AIOS_SOURCE_TEST");
+        env::remove_var("AIOS_SOURCE_TEST");
+
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
+
+        let missing = history_path().unwrap().with_file_name("no-such-shellrc");
+        assert_eq!(
+            execute_shell_adapter(
+                &format!("source {}", missing.display()),
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Stderr(legacy_source_missing_lines(
+                &missing.display().to_string()
+            )))
+        );
+
+        let rc = history_path().unwrap().with_file_name("source-test.rc");
+        fs::write(&rc, "# comment\nexport AIOS_SOURCE_TEST=ok\n\nexit\n").unwrap();
+        assert_eq!(
+            execute_shell_adapter(
+                &format!("source {}", rc.display()),
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(Vec::new()))
+        );
+        assert_eq!(env::var("AIOS_SOURCE_TEST").unwrap(), "ok");
+
+        let recursive = history_path()
+            .unwrap()
+            .with_file_name("source-recursive.rc");
+        fs::write(&recursive, format!("source {}\n", recursive.display())).unwrap();
+        assert_eq!(
+            execute_shell_adapter(
+                &format!("source {}", recursive.display()),
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(Vec::new()))
+        );
+        assert_eq!(
+            legacy_source_recursion_lines(&recursive.display().to_string()),
+            [format!(
+                "source: {}: recursion detected",
+                recursive.display()
+            )]
+        );
     }
 }

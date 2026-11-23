@@ -125,16 +125,23 @@ the byte-for-byte parity reference in tests.
 case-insensitive `console <...>` prefix before alias expansion, so the registry
 never sees the prefix itself. `console` alone prints generated help;
 `OutputControl::Clear` clears the terminal and `Exit(code)` exits the process.
-Bare static builtins (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`,
-`alias`, `unalias`) are handled by `execute_shell_adapter`, which returns a
-`ShellOutcome` (`Lines` or `Clear`) and uses exact formatters from
-`aios-console/src/legacy.rs` (`SHELL_HELP`, `shell_echo_text`, `shell_pwd_text`,
-`shell_alias_text`, `shell_alias_set_text`, `shell_history_text`). The frontend
-still owns the history/alias files, `$VAR` expansion and screen I/O, so alias
-expansion and background `&` behaviour are unchanged; parity tests compare both
-paths byte-for-byte, including the original 60-column ANSI help banner. The
-remaining POSIX lines (`cd`, `env`/`export`/`unset`, `source`, jobs, external
-programs) still fall back to `run_command_legacy`.
+Bare POSIX builtins (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`,
+`alias`, `unalias`, `cd`, `env`/`export`/`unset`, `source`/`.`) are handled by
+`execute_shell_adapter`, which returns a `ShellOutcome` (`Lines`, `Stderr` or
+`Clear`) and uses exact formatters from `aios-console/src/legacy.rs`
+(`SHELL_HELP`, `shell_echo_text`, `shell_pwd_text`, `shell_alias_text`,
+`shell_alias_set_text`, `shell_history_text`, `shell_cd_error_text`,
+`shell_env_text`, `shell_export_set_text`, `shell_env_value_text`,
+`shell_source_recursion_text`, `shell_source_missing_text`). The frontend still
+owns real side effects: history/alias files, `$VAR` expansion, environment
+mutation, `OLDPWD`/current directory and sourced-file execution, as well as
+screen I/O. Parity tests compare text byte-for-byte, including the original
+60-column ANSI help banner; stateful tests verify the side effects. The
+recursion guard in `source` releases its `RefCell` borrow before running sourced
+lines, so a recursive `source` reports an error instead of panicking as the
+legacy dispatcher did. Only inherently frontend-side lines remain in
+`run_command_legacy`: `jobs`/`fg`/`bg`, external programs, GUI/TUI launchers,
+`logs`/`hw`/`services`, `type`/`exec`/`which`, `aios-shell-reload` and `exit`.
 The standalone `aios-tui` binary likewise owns one `HostBackend` created in
 `main`. Its Shell tab recognises the same case-insensitive `console <...>` prefix
 before the TUI extras and the `SafeModeShell` fallback. `execute_shell_cmd`

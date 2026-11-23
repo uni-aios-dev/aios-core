@@ -126,16 +126,24 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 распознаёт префикс `console <...>` без учёта регистра до раскрытия алиасов, поэтому
 реестр никогда не видит сам префикс. Один `console` выводит генерируемую справку;
 `OutputControl::Clear` очищает терминал, а `Exit(code)` завершает процесс.
-Статические команды без префикса (`help`/`?`, `clear`/`cls`, `pwd`, `echo`,
-`history`, `alias`, `unalias`) обрабатывает `execute_shell_adapter`, возвращающий
-`ShellOutcome` (`Lines` или `Clear`) и использующий точные форматтеры из
-`aios-console/src/legacy.rs` (`SHELL_HELP`, `shell_echo_text`, `shell_pwd_text`,
-`shell_alias_text`, `shell_alias_set_text`, `shell_history_text`). Фронтенд
-по-прежнему управляет файлами истории и алиасов, раскрытием `$VAR` и выводом на
-экран, поэтому раскрытие алиасов и фоновая комбинация `&` не изменились; тесты
-паритета сравнивают оба пути побайтово, включая исходный ANSI-баннер шириной
-60 столбцов. Остальные POSIX-строки (`cd`, `env`/`export`/`unset`, `source`,
-задания, внешние программы) по-прежнему переходят в `run_command_legacy`.
+Команды без префикса (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`,
+`alias`, `unalias`, `cd`, `env`/`export`/`unset`, `source`/`.`) обрабатывает
+`execute_shell_adapter`, возвращающий `ShellOutcome` (`Lines`, `Stderr` или
+`Clear`) и использующий точные форматтеры из `aios-console/src/legacy.rs`
+(`SHELL_HELP`, `shell_echo_text`, `shell_pwd_text`, `shell_alias_text`,
+`shell_alias_set_text`, `shell_history_text`, `shell_cd_error_text`,
+`shell_env_text`, `shell_export_set_text`, `shell_env_value_text`,
+`shell_source_recursion_text`, `shell_source_missing_text`). Фронтенд по-прежнему
+выполняет реальные побочные эффекты: файлы истории и алиасов, раскрытие `$VAR`,
+изменение окружения, `OLDPWD` и текущей директории, выполнение строк из
+исходимого файла, а также вывод на экран. Тесты паритета сравнивают текст
+побайтово, включая исходный ANSI-баннер шириной 60 столбцов, а тесты состояния
+проверяют побочные эффекты. Защита от рекурсии в `source` освобождает заём
+`RefCell` до выполнения строк, поэтому рекурсивный `source` сообщает об ошибке,
+а не вызывает панику, как старый диспетчер. В `run_command_legacy` остаются только
+по своей природе фронтендные строки: `jobs`/`fg`/`bg`, внешние программы, запуск
+GUI/TUI, `logs`/`hw`/`services`, `type`/`exec`/`which`, `aios-shell-reload`
+и `exit`.
 Отдельный бинарик `aios-tui` также владеет одним `HostBackend`, созданным в
 `main`. Его вкладка Shell распознаёт тот же префикс `console <...>` без учёта
 регистра до TUI-дополнений и отката на `SafeModeShell`. `execute_shell_cmd`
