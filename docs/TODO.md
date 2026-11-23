@@ -226,14 +226,15 @@
   `control.rs` injection seams and real `aios` adapters: `wd start|stop|
   force-safe-mode|escalate`, `bridge status|start|stop`,
   `auth register|login|me`. `bridge stop` uses `start_server_with_shutdown`.
-- [x] Document the exact blocker for the six remaining `ERR unavailable`
+- [x] Document the exact blocker for the six host-unavailable `ERR unavailable`
   commands in `aios-console/src/unavailable.rs` and the EN/RU docs. Investigation
   confirmed they are NOT missing adapters: `jobs|fg|bg` need OS process groups,
   signals and TTY foreground; `acl` needs a path-scoped ACL API (existing
   `AclContext` grants are global and `caps` tokens are block-keyed); `ping` needs
   ICMP with raw-socket privileges; `net recheck` needs a host equivalent of the
   kernel-only `recheck()`; `state` needs live `StatefulBlock` handles in
-  `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked.
+  `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked. The
+  kernel half of `net recheck` is now real and wired into `KernelBackend`.
 - [x] Add a `console <command> [args]` escape hatch to the standalone
   `aios-shell`: `main` owns one `HostBackend`, `console_prefix` detects the
   prefix case-insensitively before alias expansion, and bare `console` prints
@@ -293,8 +294,14 @@
   real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
   and the bridge `POST /api/v1/store/publish` call. They are registered
   subcommands again, with loopback HTTP and contract tests; EN/RU docs aligned.
-- [ ] Implement those real APIs before re-enabling the six commands; do not
-  alias them to `caps`, TCP connect or cached network status.
+- [x] Wire the real kernel-only `net::recheck()` into `KernelBackend` as
+  `console net recheck`: it clears the cached reachability verdict and restarts
+  the ARP -> ICMP -> DNS chain when an address is bound, then prints
+  `network recheck requested` from a new `no_std` formatter. The host command
+  remains honestly `unavailable` because `NetManager` is cached-only. EN/RU docs
+  were aligned.
+- [ ] Implement the remaining host-side APIs before re-enabling those commands;
+  do not alias them to `caps`, TCP connect or cached network status.
 - [x] Migrate the static bare `aios-shell` builtins (`help`/`?`, `clear`/`cls`,
   `pwd`, `echo`, `history`, `alias`, `unalias`) to exact text formatters in
   `aios-console/src/legacy.rs` plus the `ShellOutcome` adapter in

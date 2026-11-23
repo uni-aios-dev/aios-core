@@ -3,6 +3,12 @@
 ## Не выпущено — ядро единой текстовой консоли (`aios-console`)
 
 ### Добавлено
+- `console net recheck` теперь реален в ядерном бэкенде: `KernelBackend` вызывает
+  `crate::net::recheck()`, который сбрасывает кэшированный вердикт ARP/ICMP/DNS и
+  перезапускает цепочку проверки, если адрес привязан, затем печатает
+  `network recheck requested` из нового форматтера без `std` в
+  `aios-console/src/legacy.rs`. Хостовая команда остаётся честно `unavailable`,
+  потому что `NetManager` даёт только кэш. EN/RU документация синхронизирована.
 - Все POSIX-команды `aios-shell` без префикса теперь используют адаптеры:
   `cd`, `env`, `export`/`unset` и `source`/`.` проходят через
   `execute_shell_adapter` с точными форматтерами из `aios-console/src/legacy.rs`,

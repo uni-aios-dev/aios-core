@@ -247,18 +247,21 @@ groups, signals and TTY foreground that `aios-process-mgr` does not model;
 `acl grant|revoke` has no path-scoped ACL API because `AclContext` grants are
 process-global tokens and `caps` tokens are keyed by block ID; `ping` needs an
 ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
-connect is not an echo reply; `net recheck` has no host equivalent because the
+connect is not an echo reply; host `net recheck` has no equivalent because the
 real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached;
 `state extract|restore` cannot reach a live `StatefulBlock` because
 `BlockRegistry` stores no instances; `fm jobs|cancel` needs a `FileManager`
-instance in the host, which currently owns none. These commands stay
-`unavailable` until those real APIs exist.
+instance in the host, which currently owns none. These host commands stay
+`unavailable` until those real APIs exist. `KernelBackend` is an exception for
+`net recheck`: it calls the real `crate::net::recheck()` and prints
+`network recheck requested`.
 
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts
 the existing kernel entry points: generated `help`, `echo`, `version`,
 `kernel info|ver`, `faults stats|history|pending`, `fault resolve`,
-`wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`.
+`wifi status|sim|real|scan|connect|disconnect`, `net recheck`, `udp`, `http` and
+`socktest`.
 Everything else returns `unavailable`. The kernel `clear` bug is fixed here:
 the backend clears `SHELL.history` and emits an explicit `OutputControl::Clear`.
 The kernel shell exposes the backend as `console <...>` through the shared

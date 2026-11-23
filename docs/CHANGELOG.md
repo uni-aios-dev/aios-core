@@ -3,6 +3,12 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- `console net recheck` is now real on the kernel backend: `KernelBackend` calls
+  `crate::net::recheck()`, which clears the cached ARP/ICMP/DNS reachability
+  verdict and restarts the probe chain when an address is bound, then prints
+  `network recheck requested` from a new `no_std` formatter in
+  `aios-console/src/legacy.rs`. The host command stays honestly `unavailable`
+  because `NetManager` exposes only cached status. EN/RU docs were aligned.
 - The bare POSIX builtins in `aios-shell` are now fully adapter-backed:
   `cd`, `env`, `export`/`unset` and `source`/`.` go through
   `execute_shell_adapter` with exact formatters from `aios-console/src/legacy.rs`

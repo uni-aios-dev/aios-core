@@ -201,9 +201,12 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 | `jobs`, `fg`, `bg` | в `aios-process-mgr` нет OS-групп процессов, сигналов и foreground TTY |
 | `acl` | нет API ACL для путей; гранты `AclContext` глобальны, `caps` использует block ID |
 | `ping` | нет ICMP-API и привилегий raw-сокета; TCP connect не является эхо-ответом |
-| `net recheck` | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
+| `net recheck` на хосте | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
 | `state` | `BlockRegistry` не хранит живые экземпляры `StatefulBlock` |
 | `fm` | в хосте нет живого `FileManager`, который можно проверить или остановить |
+
+Таблица описывает только хост. В ядерном бэкенде `console net recheck` реален: он
+вызывает `crate::net::recheck()` и печатает `network recheck requested`.
 
 Универсальное сообщение `has no host backend yet` остаётся только для команд вне
 этого исследованного множества.

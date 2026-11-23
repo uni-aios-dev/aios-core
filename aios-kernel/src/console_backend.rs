@@ -6,6 +6,7 @@
 
 use aios_console::backend::{dispatch, CommandBackend};
 use aios_console::capability::{BackendKind, CapabilitySet};
+use aios_console::legacy::kernel_net_recheck_text;
 use aios_console::output::{CommandOutput, OutputControl};
 use aios_console::registry::{help, Invocation};
 use alloc::format;
@@ -117,6 +118,10 @@ impl CommandBackend for KernelBackend {
             ("udp", _) => CommandOutput::ok(crate::tui::cmd_udp(&invocation.args.join(" "))),
             ("http", _) => CommandOutput::ok(crate::tui::cmd_http(&invocation.args.join(" "))),
             ("socktest", _) => CommandOutput::ok(crate::tui::cmd_socktest()),
+            ("net", Some("recheck")) => {
+                crate::net::recheck();
+                CommandOutput::text(kernel_net_recheck_text())
+            }
             _ => CommandOutput::unavailable(&format!(
                 "'{}' has no kernel backend yet",
                 invocation.display_name()

@@ -100,15 +100,16 @@ subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
 `block swap|rollback` and `update history|pending|recover` (the real
 `PersistedLiveUpdateEngine` journal) and the `wd`/`bridge`/`auth` commands
 (host adapters injected through the `control.rs` seams). Valid registry entries
-such as `jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
+such as `jobs|fg|bg`, `acl grant|revoke`, `ping`, host `net recheck`,
 `state extract|restore` and `fm jobs|cancel` still return `ERR unavailable`
-because no real library API exists for them. `aios-console/src/unavailable.rs`
+because no real host library API exists for them. `aios-console/src/unavailable.rs`
 now reports a concrete cause for each: missing OS job control, no path-scoped
-ACL API, no ICMP/reachability API or raw-socket privilege, a kernel-only
-`recheck()`, no live `StatefulBlock` instances in the registry, and no live
-`FileManager` in the host. Keeping these entries `unavailable` with an exact
-reason is deliberate — aliasing them to `caps`, block state or TCP connect
-would discard their declared semantics.
+ACL API, no ICMP/reachability API or raw-socket privilege, a host equivalent of
+the kernel-only `recheck()`, no live `StatefulBlock` instances in the registry,
+and no live `FileManager` in the host. The kernel side of `net recheck` is now
+real: `KernelBackend` calls `crate::net::recheck()`. Keeping the host entries
+`unavailable` with an exact reason is deliberate — aliasing them to `caps`,
+block state or TCP connect would discard their declared semantics.
 
 The dependency cycle for watchdog/bridge/auth commands is resolved:
 `aios-console` defines control traits and the `aios` binary injects real

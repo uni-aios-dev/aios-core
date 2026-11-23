@@ -101,15 +101,17 @@ Ed25519/моста, что и старый TUI, а тест с локальны�
 как и `block swap|rollback`, `update history|pending|recover` (реальный журнал
 `PersistedLiveUpdateEngine`) и команды `wd`/`bridge`/`auth` (хостовые адаптеры
 через точки внедрения `control.rs`). Корректные записи реестра, такие как
-`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck`,
+`jobs|fg|bg`, `acl grant|revoke`, `ping`, `net recheck` на хосте,
 `state extract|restore` и `fm jobs|cancel`, по-прежнему возвращают
-`ERR unavailable`, поскольку для них нет реального библиотечного API.
+`ERR unavailable`, поскольку для них нет реального хостового API.
 `aios-console/src/unavailable.rs` теперь сообщает конкретную причину для каждой:
 отсутствие OS job control, нет API ACL для путей, нет ICMP-API или привилегий
-raw-сокета, `recheck()` только в ядре, в реестре нет живых экземпляров
-`StatefulBlock`, в хосте нет живого `FileManager`. Оставлять эти команды
-`unavailable` с точной причиной — осознанное решение: подмена через `caps`,
-состояние блоков или TCP connect отбросила бы их объявленную семантику.
+raw-сокета, нужен хостовый аналог `recheck()`, который есть только в ядре, в
+реестре нет живых экземпляров `StatefulBlock`, в хосте нет живого `FileManager`.
+Ядерная сторона `net recheck` теперь реальна: `KernelBackend` вызывает
+`crate::net::recheck()`. Оставлять хостовые команды `unavailable` с точной
+причиной — осознанное решение: подмена через `caps`, состояние блоков или TCP
+connect отбросила бы их объявленную семантику.
 
 Циклическая зависимость для команд watchdog/bridge/auth устранена:
 `aios-console` задаёт трейты управления, а бинарник `aios` внедряет реальные

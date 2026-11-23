@@ -202,9 +202,12 @@ concrete reason from `aios-console/src/unavailable.rs`:
 | `jobs`, `fg`, `bg` | no OS process groups, signals or TTY foreground in `aios-process-mgr` |
 | `acl` | no path-scoped ACL API; `AclContext` grants are global tokens, `caps` uses block IDs |
 | `ping` | no ICMP API or raw-socket privilege; TCP connect is not an echo reply |
-| `net recheck` | real `recheck()` is kernel-only; host `NetManager` reports cached status |
+| `net recheck` on host | real `recheck()` is kernel-only; host `NetManager` reports cached status |
 | `state` | `BlockRegistry` stores no live `StatefulBlock` instances |
 | `fm` | the host owns no live `FileManager` to inspect or cancel |
+
+The table is host-only. On the kernel backend `console net recheck` is real: it
+calls `crate::net::recheck()` and prints `network recheck requested`.
 
 The generic `has no host backend yet` message is kept only for commands outside
 this investigated set.

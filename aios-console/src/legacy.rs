@@ -392,6 +392,11 @@ pub fn kernel_wifi_real_text() -> &'static str {
     "real radio mode (test radio off)"
 }
 
+/// Text returned after the kernel's real reachability re-probe is requested.
+pub fn kernel_net_recheck_text() -> &'static str {
+    "network recheck requested"
+}
+
 /// Exact legacy `aios-shell` help lines, including ANSI colour codes.
 pub const SHELL_HELP: &[&str] = &[
     "\x1b[1;36mтХФтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХРтХЧ\x1b[0m",
@@ -941,6 +946,10 @@ mod tests {
         assert_eq!(
             super::kernel_wifi_real_text(),
             "real radio mode (test radio off)"
+        );
+        assert_eq!(
+            super::kernel_net_recheck_text(),
+            "network recheck requested"
         );
     }
 
