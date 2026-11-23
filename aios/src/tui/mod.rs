@@ -1231,6 +1231,13 @@ fn execute_aios_adapter(app: &mut TuiApp, line: &str) -> bool {
         "spawn" if parts.get(1).is_none_or(|name| name.is_empty()) => {
             vec![aios_usage_text("spawn").expect("spawn has a usage line")]
         }
+        "spawn" => {
+            let path = parts.get(1).copied().unwrap_or_default();
+            for line in app.console.aios_spawn_path(path) {
+                push_log(&app.logs, line);
+            }
+            Vec::new()
+        }
         "store" if parts.get(1) == Some(&"list") => app.console.aios_store_list_text(),
         "store" if parts.get(1) == Some(&"search") && parts.len() <= 2 => {
             vec![aios_usage_text("store search").expect("store search has a usage line")]
@@ -2231,6 +2238,27 @@ mod tests {
             logs.iter()
                 .any(|line| line == "AIOS: restart requested via shell"),
             "got {logs:?}"
+        );
+    }
+
+    #[test]
+    fn bare_adapter_matches_legacy_for_spawn_path() {
+        let mut app = aios_parity_app(&[], true);
+        let start = app.logs.lock().unwrap().len();
+        shell_execute_legacy(&mut app, "spawn does-not-exist.wasm");
+        let legacy_out = app.shell_output.clone();
+        let legacy_logs: Vec<String> = app.logs.lock().unwrap()[start..].to_vec();
+        app.shell_output.clear();
+        app.logs.lock().unwrap().truncate(start);
+        shell_execute(&mut app, "spawn does-not-exist.wasm");
+        assert_eq!(app.shell_output, legacy_out);
+        let adapter_logs: Vec<String> = app.logs.lock().unwrap()[start..].to_vec();
+        assert_eq!(adapter_logs, legacy_logs);
+        assert!(
+            adapter_logs
+                .first()
+                .is_some_and(|line| line.starts_with("AIOS: blocks: read '")),
+            "got {adapter_logs:?}"
         );
     }
 

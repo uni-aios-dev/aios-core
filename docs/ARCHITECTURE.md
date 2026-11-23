@@ -111,10 +111,12 @@ and safe-mode `recover`. Bare `cluster` commands use the host-only
 `aios-console/src/legacy_host.rs::aios_cluster_text` adapter over the same
 `DistributedScheduler` handle; the formatter and all mutating subcommands live in
 `aios-console`, while `aios-console` keeps its `no_std` kernel build because the
-new module is gated behind the `std` feature. The remaining bare `spawn` (with a
-path), valid `store search`/`store install` and `net` (with arguments) commands
-keep the legacy dispatcher until their TUI-bound seams have exact-output
-adapters.
+new module is gated behind the `std` feature. Bare `spawn <path>` now calls
+`HostBackend::aios_spawn_path`, which uses the shared block registry and returns
+the exact legacy log lines; the adapter records them in the TUI log sink and emits
+no shell lines, as the old dispatcher did. The remaining valid
+`store search`/`store install` and `net` (with arguments) commands keep the
+legacy dispatcher until their TUI-bound seams have exact-output adapters.
 `aios-shell` likewise owns one `HostBackend` created in `main` and recognises a
 case-insensitive `console <...>` prefix before alias expansion, so the registry
 never sees the prefix itself. `console` alone prints generated help;
@@ -168,7 +170,7 @@ unit tests against the pure seams `SafeModeShell::parse_command`,
 handlers stay out of these tests; the table asserts resolution results only.
 `legacy_parity.rs` therefore proves resolution but not output equality:
 `aios/src/tui/mod.rs` pins the exact legacy lines for `help`/`?`, unknown
-commands, `kill`/`store`/`net` usage strings and empty `ps`, and thirteen binary
+commands, `kill`/`store`/`net` usage strings and empty `ps`, and fourteen binary
 parity tests compare the adapter path with `shell_execute_legacy` byte-for-byte
 (read-only commands share one `TuiApp` instance so the `HashMap` iteration order
 in `Scheduler::all_processes` is identical for both paths), including `cluster`

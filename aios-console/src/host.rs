@@ -1534,6 +1534,43 @@ impl HostBackend {
             .collect()
     }
 
+    /// Loads a block from a path with the exact legacy `aios` shell spawn behavior.
+    ///
+    /// Returns the legacy log lines; the caller owns the TUI log sink.
+    pub fn aios_spawn_path(&self, path: &str) -> Vec<String> {
+        let path = path.trim();
+        if path.is_empty() {
+            return vec![String::from("AIOS: blocks: usage: load <path-to.wasm>")];
+        }
+        let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        match BlockLoader::load_from_directory(&mut registry, std::path::Path::new(path)) {
+            results if results.is_empty() => {
+                let bytes = match std::fs::read(path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        return vec![format!("AIOS: blocks: read '{path}' failed: {error}")];
+                    }
+                };
+                match BlockLoader::load_from_binary(&mut registry, "loaded_block", "1.0.0", bytes) {
+                    Ok(manifest) => vec![format!(
+                        "AIOS: blocks: loaded '{}' {}",
+                        manifest.name, manifest.id
+                    )],
+                    Err(error) => vec![format!("AIOS: blocks: load failed: {error}")],
+                }
+            }
+            results => results
+                .iter()
+                .map(|result| match result {
+                    Ok(manifest) => {
+                        format!("AIOS: blocks: loaded '{}' {}", manifest.name, manifest.id)
+                    }
+                    Err(error) => format!("AIOS: blocks: load failed: {error}"),
+                })
+                .collect(),
+        }
+    }
+
     fn record_mutation(&self, mutation: &crate::legacy::LegacyMutation) {
         if let Some(event) = &mutation.event {
             if let Some(log) = self.event_log.as_ref() {

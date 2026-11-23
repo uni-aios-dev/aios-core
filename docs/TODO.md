@@ -276,6 +276,9 @@
   `legacy_host.rs::aios_cluster_text` adapter over the shared `DistributedScheduler`.
   Two binary parity tests cover clustering disabled and a live scheduler; the
   `std`-gated `aios-cluster` dependency keeps the kernel `no_std` build intact.
+- [x] Migrate bare `spawn <path>` in the `aios` shell to
+  `HostBackend::aios_spawn_path`, keeping the shared block registry and the exact
+  legacy log lines with no shell output. One binary parity test compares both.
 - [x] Port `store sign` and `store publish` into the unified `aios-console`:
   real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
   and the bridge `POST /api/v1/store/publish` call. They are registered
@@ -283,7 +286,7 @@
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
 - [ ] Finish replacing the five legacy dispatchers (`aios-tui` done, `aios`
-  mostly done — only argument-bound `spawn`/`store`/`net` remain, kernel
+  mostly done — only argument-bound `store`/`net` remain, kernel
   TUI, `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
   checks are green.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster

@@ -248,9 +248,11 @@ mock-профиль (`modern`, `legacy`, `legacy-2012`, `nvidia`, `intel-meteor-
 корректный `kill`, `logs`, `status`, `restart`, `store list`, фиксированные
 usage-строки `kill`/`spawn`/`store`/`net` и неизвестные команды тоже используют
 адаптеры точного вывода, поэтому их текст не меняется; то же верно для команд
-`cluster` без префикса, работающих с общим `DistributedScheduler`. Голые `spawn`
-с путём, корректные `store search`/`store install` и `net get`/`net set`
-по-прежнему обрабатывает старый диспетчер. Команда `restart` без префикса
+`cluster` без префикса, работающих с общим `DistributedScheduler`, и команды
+`spawn <path>` без префикса (она записывает legacy-строки загрузки блока в журнал,
+но не выводит строк в шелл). Корректные `store search`/`store install` и
+`net get`/`net set` по-прежнему обрабатывает старый диспетчер. Команда `restart` без
+префикса
 по-прежнему повторно зондирует оборудование, но её строки вывода и журнала
 приходят из `aios-console`. `console help` выводит список канонических команд,
 `console clear` очищает буфер, а `console exit` закрывает TUI.

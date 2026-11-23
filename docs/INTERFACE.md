@@ -246,9 +246,10 @@ clear the shell buffer exactly as before, and are recorded in the unified
 console history. Bare `help`, `?`, `ps`, `blocks`, valid `kill`, `logs`, `status`,
 `restart`, `store list`, the fixed `kill`/`spawn`/`store`/`net` usage lines and
 unknown commands also use exact-output console adapters, so their text is
-unchanged, as do bare `cluster` commands over the shared `DistributedScheduler`.
-Bare `spawn` with a path, valid `store search`/`store install` and
-`net get`/`net set` still use the legacy dispatcher. Bare `restart` still
+unchanged, as do bare `cluster` commands over the shared `DistributedScheduler`
+and bare `spawn <path>` (which records legacy block-load log lines but prints no
+shell lines). Valid `store search`/`store install` and `net get`/`net set` still
+use the legacy dispatcher. Bare `restart` still
 re-probes hardware, but its output and log lines come from `aios-console`.
 `console help` lists the canonical commands; `console clear` and `console exit`
 keep their existing behaviour.
