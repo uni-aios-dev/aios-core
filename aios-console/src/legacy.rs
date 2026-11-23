@@ -483,6 +483,31 @@ pub fn shell_source_missing_text(path: &str) -> Vec<String> {
     vec![format!("source: {path}: No such file")]
 }
 
+/// Formats the exact legacy `aios-shell` background job list.
+pub fn shell_jobs_text(jobs: &[(usize, &str, u32)]) -> Vec<String> {
+    if jobs.is_empty() {
+        return vec!["No jobs".to_string()];
+    }
+    jobs.iter()
+        .map(|(id, cmd, pid)| format!("[{id}]+ Running {cmd} (pid {pid})"))
+        .collect()
+}
+
+/// Formats the exact legacy `aios-shell` `fg` success line.
+pub fn shell_fg_text(id: usize, cmd: &str) -> Vec<String> {
+    vec![format!("[{id}]+ Running        {cmd}")]
+}
+
+/// Formats the exact legacy `aios-shell` `bg` success line.
+pub fn shell_bg_text(id: usize, cmd: &str) -> Vec<String> {
+    vec![format!("[{id}]+ Running        &{cmd}")]
+}
+
+/// Formats an exact legacy `aios-shell` job-control error line.
+pub fn shell_job_error_text(command: &str, message: &str) -> Vec<String> {
+    vec![format!("{command}: {message}")]
+}
+
 /// Outcome of the legacy `aios` shell net IPC dispatch.
 pub enum AiosNetResult {
     /// Text returned by the net settings block, or a local validation message.
@@ -1007,6 +1032,23 @@ mod tests {
         assert_eq!(
             super::shell_source_missing_text("rc"),
             ["source: rc: No such file"]
+        );
+        assert_eq!(super::shell_jobs_text(&[]), ["No jobs"]);
+        assert_eq!(
+            super::shell_jobs_text(&[(7, "sleep 1", 4242)]),
+            ["[7]+ Running sleep 1 (pid 4242)"]
+        );
+        assert_eq!(
+            super::shell_fg_text(7, "sleep 1"),
+            ["[7]+ Running        sleep 1"]
+        );
+        assert_eq!(
+            super::shell_bg_text(7, "sleep 1"),
+            ["[7]+ Running        &sleep 1"]
+        );
+        assert_eq!(
+            super::shell_job_error_text("fg", "no current job"),
+            ["fg: no current job"]
         );
     }
 

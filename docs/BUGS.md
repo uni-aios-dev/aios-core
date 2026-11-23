@@ -1,5 +1,14 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (tests): `aios-shell` `pwd` test raced with `cd` test
+
+The new job-control test raised the unit-test count enough for the `cd` stateful
+test to run in parallel with `bare_shell_static_adapters_match_legacy_text`.
+`cd` changes the process-wide current directory, so the `pwd` assertion sometimes
+compared the temporary directory with the original shell directory. Both tests
+now take the shared `ENV_LOCK` used by the other environment-sensitive tests.
+EN/RU docs were aligned.
+
 ## FIXED (unified console): recursive `source` panicked in `aios-shell`
 
 The legacy dispatcher held a `RefCell<HashSet<String>>` borrow while it iterated

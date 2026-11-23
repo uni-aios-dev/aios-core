@@ -3,6 +3,14 @@
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added
+- Bare `jobs`/`fg`/`bg` in `aios-shell` now use `execute_shell_adapter` with new
+  exact formatters in `aios-console/src/legacy.rs`. The adapter keeps the real
+  frontend side effects: pruning dead PIDs, listing the shell-owned job table,
+  sending `SIGCONT` and clearing/finishing jobs exactly as before. The canonical
+  `console jobs`/`fg`/`bg` commands remain honestly `unavailable` on
+  `HostBackend`, which owns no shell job table. A parity test covers empty and
+  populated job lists, `fg`/`bg` output and the non-Unix fallback, and a test lock
+  removes a cwd race between `pwd` and `cd` tests. EN/RU docs were aligned.
 - `console net recheck` is now real on the kernel backend: `KernelBackend` calls
   `crate::net::recheck()`, which clears the cached ARP/ICMP/DNS reachability
   verdict and restarts the probe chain when an address is bound, then prints

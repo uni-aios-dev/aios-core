@@ -147,10 +147,10 @@ all migrated bare spellings, including `help`/`?`, `logs`/`log` and the mutation
 commands `kill`/`spawn`/`load`/`unload`/`restart`/`recover`, byte-for-byte with
 `SafeModeShell`. The `aios-shell` unit tests compare all bare POSIX builtins
 (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`, `alias`, `unalias`, `cd`,
-`env`/`export`/`unset`, `source`/`.`) against their legacy text generators,
-with a guarded temporary `AIOS_DATA_DIR` for the history and alias files and
-stateful checks for environment, `OLDPWD`, current directory and `source`
-recursion.
+`env`/`export`/`unset`, `source`/`.`, `jobs`/`fg`/`bg`) against their legacy
+text generators, with a guarded temporary `AIOS_DATA_DIR` for the history and
+alias files and stateful checks for environment, `OLDPWD`, current directory,
+`source` recursion and job-control effects.
 
 Ambiguous legacy names are not silently expanded: the console prints the list
 of canonical alternatives. GUI, WebView, web browsing, LLM intents, cluster
@@ -269,14 +269,16 @@ same `HostBackend` through `execute_line()`. Aliases are not expanded on the
 `console` path, so a shell alias named `console` cannot shadow it. `console clear`
 clears the terminal and `console exit <code>` exits the shell. All bare POSIX
 builtins (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`, `alias`, `unalias`,
-`cd`, `env`/`export`/`unset`, `source`/`.`) now go through
+`cd`, `env`/`export`/`unset`, `source`/`.`, `jobs`/`fg`/`bg`) now go through
 `execute_shell_adapter` with `aios-console` text formatters; the exact legacy
 text (including the 60-column ANSI help banner) is preserved by parity tests.
 The frontend still owns the real side effects: history/alias files, `$VAR`
 expansion, environment mutation, `OLDPWD`/current directory, sourced-file
-execution and screen I/O. A recursive `source` reports an error instead of
-panicking. Only inherently frontend-side lines remain on the legacy path:
-`jobs`/`fg`/`bg`, external programs, GUI/TUI launchers, `logs`/`hw`/`services`,
+execution, PID pruning, `SIGCONT` delivery, job listing and screen I/O. A
+recursive `source` reports an error instead of panicking. Canonical
+`console jobs`/`fg`/`bg` remain `unavailable` on `HostBackend`, which has no
+shell job table. Only inherently frontend-side lines remain on the legacy path:
+external programs, GUI/TUI launchers, `logs`/`hw`/`services`,
 `type`/`exec`/`which`, `aios-shell-reload` and `exit`.
 
 The kernel shell uses the same shared, case-insensitive `console <...>` prefix:

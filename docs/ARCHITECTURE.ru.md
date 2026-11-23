@@ -127,23 +127,26 @@ mock-профиль; `hw fingerprints` запускает `aios_autohal::extract
 реестр никогда не видит сам префикс. Один `console` выводит генерируемую справку;
 `OutputControl::Clear` очищает терминал, а `Exit(code)` завершает процесс.
 Команды без префикса (`help`/`?`, `clear`/`cls`, `pwd`, `echo`, `history`,
-`alias`, `unalias`, `cd`, `env`/`export`/`unset`, `source`/`.`) обрабатывает
-`execute_shell_adapter`, возвращающий `ShellOutcome` (`Lines`, `Stderr` или
-`Clear`) и использующий точные форматтеры из `aios-console/src/legacy.rs`
-(`SHELL_HELP`, `shell_echo_text`, `shell_pwd_text`, `shell_alias_text`,
-`shell_alias_set_text`, `shell_history_text`, `shell_cd_error_text`,
-`shell_env_text`, `shell_export_set_text`, `shell_env_value_text`,
-`shell_source_recursion_text`, `shell_source_missing_text`). Фронтенд по-прежнему
-выполняет реальные побочные эффекты: файлы истории и алиасов, раскрытие `$VAR`,
-изменение окружения, `OLDPWD` и текущей директории, выполнение строк из
-исходимого файла, а также вывод на экран. Тесты паритета сравнивают текст
-побайтово, включая исходный ANSI-баннер шириной 60 столбцов, а тесты состояния
-проверяют побочные эффекты. Защита от рекурсии в `source` освобождает заём
-`RefCell` до выполнения строк, поэтому рекурсивный `source` сообщает об ошибке,
-а не вызывает панику, как старый диспетчер. В `run_command_legacy` остаются только
-по своей природе фронтендные строки: `jobs`/`fg`/`bg`, внешние программы, запуск
-GUI/TUI, `logs`/`hw`/`services`, `type`/`exec`/`which`, `aios-shell-reload`
-и `exit`.
+`alias`, `unalias`, `cd`, `env`/`export`/`unset`, `source`/`.`,
+`jobs`/`fg`/`bg`) обрабатывает `execute_shell_adapter`, возвращающий
+`ShellOutcome` (`Lines`, `Stderr` или `Clear`) и использующий точные форматтеры
+из `aios-console/src/legacy.rs` (`SHELL_HELP`, `shell_echo_text`,
+`shell_pwd_text`, `shell_alias_text`, `shell_alias_set_text`,
+`shell_history_text`, `shell_cd_error_text`, `shell_env_text`,
+`shell_export_set_text`, `shell_env_value_text`, `shell_source_recursion_text`,
+`shell_source_missing_text`, `shell_jobs_text`, `shell_fg_text`,
+`shell_bg_text`, `shell_job_error_text`). Фронтенд по-прежнему выполняет реальные
+побочные эффекты: файлы истории и алиасов, раскрытие `$VAR`, изменение окружения,
+`OLDPWD` и текущей директории, выполнение строк из исходимого файла, очистку
+мёртвых PID, вывод заданий, отправку `SIGCONT` и вывод на экран. Тесты паритета
+сравнивают текст побайтово, включая исходный ANSI-баннер шириной 60 столбцов, а
+тесты состояния проверяют побочные эффекты. Защита от рекурсии в `source`
+освобождает заём `RefCell` до выполнения строк, поэтому рекурсивный `source`
+сообщает об ошибке, а не вызывает панику, как старый диспетчер. Канонические
+`console jobs`/`fg`/`bg` остаются `unavailable` на `HostBackend`, у которого нет
+таблицы заданий шелла. В `run_command_legacy` остаются только по своей природе
+фронтендные строки: внешние программы, запуск GUI/TUI, `logs`/`hw`/`services`,
+`type`/`exec`/`which`, `aios-shell-reload` и `exit`.
 Отдельный бинарик `aios-tui` также владеет одним `HostBackend`, созданным в
 `main`. Его вкладка Shell распознаёт тот же префикс `console <...>` без учёта
 регистра до TUI-дополнений и отката на `SafeModeShell`. `execute_shell_cmd`

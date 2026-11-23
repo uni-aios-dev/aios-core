@@ -14,9 +14,12 @@ use rustyline::{Config, EditMode, Editor};
 use aios_console::host::HostBackend;
 use aios_console::legacy::{
     shell_alias_set_text, shell_alias_text, shell_cd_error_text, shell_echo_text, shell_env_text,
-    shell_env_value_text, shell_export_set_text, shell_history_text, shell_pwd_text,
-    shell_source_missing_text, shell_source_recursion_text, SHELL_HELP,
+    shell_env_value_text, shell_export_set_text, shell_history_text, shell_job_error_text,
+    shell_jobs_text, shell_pwd_text, shell_source_missing_text, shell_source_recursion_text,
+    SHELL_HELP,
 };
+#[cfg(unix)]
+use aios_console::legacy::{shell_bg_text, shell_fg_text};
 use aios_console::output::OutputControl;
 
 #[derive(Clone)]
@@ -227,6 +230,13 @@ fn source_unmark(key: &str) {
     SOURCING.with(|s| {
         s.borrow_mut().remove(key);
     });
+}
+
+fn prune_jobs(jobs: &mut Vec<Job>) {
+    #[cfg(unix)]
+    jobs.retain(|job| unsafe { libc::kill(job.pid as i32, 0) == 0 });
+    #[cfg(not(unix))]
+    let _ = jobs;
 }
 
 fn expand_posix_vars<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<String> {
@@ -495,6 +505,57 @@ fn execute_shell_adapter(
             source_unmark(&key);
             outcome
         }
+        "jobs" => {
+            prune_jobs(jobs);
+            let entries: Vec<_> = jobs
+                .iter()
+                .map(|job| (job.id, job.cmd.as_str(), job.pid))
+                .collect();
+            Some(ShellOutcome::Lines(shell_jobs_text(&entries)))
+        }
+        "fg" => {
+            #[cfg(unix)]
+            {
+                if let Some(job) = jobs.last().cloned() {
+                    let _ = unsafe { libc::kill(job.pid as i32, libc::SIGCONT) };
+                    jobs.clear();
+                    Some(ShellOutcome::Lines(shell_fg_text(job.id, &job.cmd)))
+                } else {
+                    Some(ShellOutcome::Lines(shell_job_error_text(
+                        "fg",
+                        "no current job",
+                    )))
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                Some(ShellOutcome::Lines(shell_job_error_text(
+                    "fg",
+                    "not supported on this platform",
+                )))
+            }
+        }
+        "bg" => {
+            #[cfg(unix)]
+            {
+                if let Some(job) = jobs.last().cloned() {
+                    let _ = unsafe { libc::kill(job.pid as i32, libc::SIGCONT) };
+                    Some(ShellOutcome::Lines(shell_bg_text(job.id, &job.cmd)))
+                } else {
+                    Some(ShellOutcome::Lines(shell_job_error_text(
+                        "bg",
+                        "no current job",
+                    )))
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                Some(ShellOutcome::Lines(shell_job_error_text(
+                    "bg",
+                    "not supported on this platform",
+                )))
+            }
+        }
         _ => None,
     }
 }
@@ -506,10 +567,7 @@ fn run_command(
     job_counter: &mut usize,
     console: &mut HostBackend,
 ) {
-    #[cfg(unix)]
-    {
-        jobs.retain(|j| unsafe { libc::kill(j.pid as i32, 0) == 0 });
-    }
+    prune_jobs(jobs);
     if let Some(rest) = aios_console::frontend::console_prefix(line) {
         run_console_command(console, rest);
         return;
@@ -655,19 +713,7 @@ fn run_command_legacy(
             }
         }
         "jobs" => {
-            // Clean up completed jobs
-            jobs.retain(|j| {
-                #[cfg(unix)]
-                {
-                    let res = unsafe { libc::kill(j.pid as i32, 0) };
-                    res == 0
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = j;
-                    true
-                }
-            });
+            prune_jobs(jobs);
             if jobs.is_empty() {
                 println!("No jobs");
             } else {
@@ -1270,6 +1316,7 @@ mod tests {
 
     #[test]
     fn bare_shell_static_adapters_match_legacy_text() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut aliases = HashMap::new();
         let mut console = HostBackend::new();
         let mut jobs = Vec::new();
@@ -1429,16 +1476,7 @@ mod tests {
         let mut console = HostBackend::new();
         let mut jobs = Vec::new();
         let mut job_counter = 0;
-        for line in [
-            "jobs",
-            "fg",
-            "bg",
-            "ls",
-            "gui",
-            "tui",
-            "exit",
-            "aios-shell-reload",
-        ] {
+        for line in ["ls", "gui", "tui", "exit", "aios-shell-reload"] {
             assert!(
                 execute_shell_adapter(
                     line,
@@ -1450,6 +1488,109 @@ mod tests {
                 .is_none(),
                 "input: {line}"
             );
+        }
+    }
+
+    #[test]
+    fn bare_shell_job_adapters_match_legacy_text_and_effects() {
+        let mut aliases = HashMap::new();
+        let mut console = HostBackend::new();
+        let mut jobs = Vec::new();
+        let mut job_counter = 0;
+
+        assert_eq!(
+            execute_shell_adapter(
+                "jobs",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(vec!["No jobs".to_string()]))
+        );
+
+        let pid = std::process::id();
+        jobs.push(Job {
+            id: 1,
+            cmd: "sleep 1".to_string(),
+            pid,
+        });
+        assert_eq!(
+            execute_shell_adapter(
+                "jobs",
+                &mut aliases,
+                &mut jobs,
+                &mut job_counter,
+                &mut console
+            ),
+            Some(ShellOutcome::Lines(vec![format!(
+                "[1]+ Running sleep 1 (pid {pid})"
+            )]))
+        );
+
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                execute_shell_adapter(
+                    "fg",
+                    &mut aliases,
+                    &mut jobs,
+                    &mut job_counter,
+                    &mut console
+                ),
+                Some(ShellOutcome::Lines(vec![
+                    "[1]+ Running        sleep 1".to_string()
+                ]))
+            );
+            assert!(jobs.is_empty());
+
+            jobs.push(Job {
+                id: 1,
+                cmd: "sleep 1".to_string(),
+                pid,
+            });
+            assert_eq!(
+                execute_shell_adapter(
+                    "bg",
+                    &mut aliases,
+                    &mut jobs,
+                    &mut job_counter,
+                    &mut console
+                ),
+                Some(ShellOutcome::Lines(vec![
+                    "[1]+ Running        &sleep 1".to_string()
+                ]))
+            );
+            assert_eq!(jobs.len(), 1);
+        }
+
+        #[cfg(not(unix))]
+        {
+            assert_eq!(
+                execute_shell_adapter(
+                    "fg",
+                    &mut aliases,
+                    &mut jobs,
+                    &mut job_counter,
+                    &mut console
+                ),
+                Some(ShellOutcome::Lines(vec![
+                    "fg: not supported on this platform".to_string()
+                ]))
+            );
+            assert_eq!(
+                execute_shell_adapter(
+                    "bg",
+                    &mut aliases,
+                    &mut jobs,
+                    &mut job_counter,
+                    &mut console
+                ),
+                Some(ShellOutcome::Lines(vec![
+                    "bg: not supported on this platform".to_string()
+                ]))
+            );
+            assert_eq!(jobs.len(), 1);
         }
     }
 

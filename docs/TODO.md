@@ -316,15 +316,18 @@
   detection without the legacy `RefCell` double-borrow panic. Three more tests
   cover env/export/unset text, `cd` side effects, and `source` missing-file,
   execution and recursion paths. EN/RU docs were aligned.
+- [x] Migrate bare `jobs`/`fg`/`bg` in `aios-shell` to `execute_shell_adapter`
+  with exact formatters. Real PID pruning, job listing and `SIGCONT` delivery stay
+  in the frontend; canonical `console jobs`/`fg`/`bg` remain honestly
+  `unavailable` on `HostBackend`, which has no shell job table. EN/RU docs were
+  aligned.
 - [ ] The remaining legacy branches are intentional, not unfinished migrations:
-  `jobs`/`fg`/`bg` have real Unix process control but no console job-control API
-  (honestly `unavailable` in `aios-console`), and external programs, GUI/TUI
-  launchers, `logs`, `hw`, `services`, `type`/`exec`/`which` and `exit` are
-  frontend-side operations with no pure text equivalent. Kernel TUI `tabs`,
-  `gui` and `tui` stay deferred; `udp`, `http` and `socktest` already have real
-  canonical `console ...` backends while their bare spellings stay on the legacy
-  path. `shell_execute_legacy`, `SafeModeShell` and both `run_command_legacy`
-  functions remain as parity references.
+  external programs, GUI/TUI launchers, `logs`, `hw`, `services`,
+  `type`/`exec`/`which` and `exit` are frontend-side operations with no pure text
+  equivalent. Kernel TUI `tabs`, `gui` and `tui` stay deferred; `udp`, `http` and
+  `socktest` already have real canonical `console ...` backends while their bare
+  spellings stay on the legacy path. `shell_execute_legacy`, `SafeModeShell` and
+  both `run_command_legacy` functions remain as parity references.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 
