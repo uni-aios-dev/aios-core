@@ -260,6 +260,19 @@ ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connec
 под `x86_64-unknown-none` и не может линковать `std`, `ratatui`, `tokio` или
 `reqwest`.
 
+Команды без префикса в TUI ядра тоже переведены на адаптеры.
+`aios-kernel/src/tui.rs::execute_kernel_adapter` вызывает работающие без `std`
+форматтеры из `aios-console/src/legacy.rs` для `help`, `ver`, `info`, `faults`,
+`wifi` (`sim`/`real`), `echo`, `clear` и отката на неизвестную команду.
+`KERNEL_HELP`, `KERNEL_UNKNOWN`, `KernelFaultLine` и `KernelFaultStats`
+закрепляют точный старый текст; `KernelFaultStats` объединяет счётчики ошибок,
+чтобы форматтер не превышал лимит аргументов clippy без подавления предупреждения.
+`run_command_legacy` остаётся только эталоном паритета, а тесты сравнивают оба
+пути побайтово. Команда `clear` без префикса теперь очищает историю шелла так же,
+как `console clear`. `tabs`, `gui`, `tui`, `udp`, `http` и `socktest` остаются на
+старом пути до появления реальных адаптеров; каноническое `console info` по-прежнему
+неоднозначно.
+
 ---
 
 ## Слой 1: Фундамент (`aios-core`)

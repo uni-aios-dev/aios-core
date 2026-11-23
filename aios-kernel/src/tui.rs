@@ -181,11 +181,89 @@ fn shell_exec() {
     }
 }
 
+fn execute_kernel_adapter(cmd: &str) -> Option<Vec<String>> {
+    use aios_console::legacy::{
+        kernel_faults_text, kernel_info_text, kernel_version_text, kernel_wifi_real_text,
+        kernel_wifi_sim_text, kernel_wifi_text, KernelFaultLine, KernelFaultStats, KERNEL_HELP,
+        KERNEL_UNKNOWN,
+    };
+
+    let project = |records: &[crate::fault::FaultRecord]| -> Vec<KernelFaultLine> {
+        records
+            .iter()
+            .map(|record| KernelFaultLine {
+                pid: record.snapshot.pid,
+                kind: record.kind.name(),
+                count: record.count,
+                rip: record.snapshot.rip,
+                state_hash: record.snapshot.state_hash,
+            })
+            .collect()
+    };
+
+    match cmd {
+        "help" => Some(KERNEL_HELP.iter().map(|line| line.to_string()).collect()),
+        "tabs" | "gui" | "tui" => None,
+        "ver" => Some(kernel_version_text(VERSION)),
+        "clear" => {
+            shell_clear();
+            Some(Vec::new())
+        }
+        "echo" => Some(vec![String::new()]),
+        "info" => {
+            let (sent, recv) = syscalls::stats();
+            Some(kernel_info_text(
+                sched::current_pid(),
+                sched::switch_count(),
+                sent,
+                recv,
+            ))
+        }
+        "faults" => Some(kernel_faults_text(
+            &KernelFaultStats {
+                total: crate::fault::fault_total(),
+                resume: crate::fault::resolution_count(crate::fault::Recovery::Resume),
+                terminate: crate::fault::resolution_count(crate::fault::Recovery::Terminate),
+                rollback: crate::fault::resolution_count(crate::fault::Recovery::Rollback),
+                queued: crate::fault::queued(),
+                events: crate::fault::events_queued(),
+                dialog_pending: crate::fault::pending(),
+            },
+            &project(&crate::fault::history_records()),
+            &project(&crate::fault::pending_records()),
+        )),
+        "wifi" => {
+            let mut buffer = [0u8; 32];
+            let len = crate::wifi::card_desc(&mut buffer);
+            let card = String::from_utf8_lossy(&buffer[..len]).into_owned();
+            Some(kernel_wifi_text(crate::wifi::sim(), &card))
+        }
+        "wifi sim" => {
+            crate::wifi::set_sim(true);
+            Some(vec![kernel_wifi_sim_text().to_string()])
+        }
+        "wifi real" => {
+            crate::wifi::set_sim(false);
+            Some(vec![kernel_wifi_real_text().to_string()])
+        }
+        _ if cmd.starts_with("echo ") => Some(vec![cmd[5..].to_string()]),
+        _ if cmd.starts_with("udp ") || cmd.starts_with("http ") || cmd == "socktest" => None,
+        _ => Some(vec![KERNEL_UNKNOWN.to_string()]),
+    }
+}
+
 pub(crate) fn run_command(cmd: &str) -> Vec<String> {
     if let Some(rest) = aios_console::frontend::console_prefix(cmd) {
         let target = if rest.is_empty() { "help" } else { rest };
         return crate::console_backend::dispatch_line(target);
     }
+    if let Some(output) = execute_kernel_adapter(cmd) {
+        return output;
+    }
+    run_command_legacy(cmd)
+}
+
+fn run_command_legacy(cmd: &str) -> Vec<String> {
     match cmd {
         "help" => vec![
             "commands:".to_string(),
@@ -1404,4 +1482,43 @@ fn render_about(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         TEXT_DIM,
         max_px,
     );
+}
+
+#[cfg(test)]
+mod adapter_tests {
+    use super::{run_command, run_command_legacy};
+
+    fn assert_parity(cmd: &str) {
+        assert_eq!(run_command(cmd), run_command_legacy(cmd), "input: {cmd}");
+    }
+
+    #[test]
+    fn bare_kernel_adapters_match_legacy_text() {
+        for cmd in [
+            "help",
+            "ver",
+            "info",
+            "faults",
+            "wifi",
+            "echo",
+            "echo hello kernel",
+            "frobnicate",
+        ] {
+            assert_parity(cmd);
+        }
+    }
+
+    #[test]
+    fn deferred_kernel_commands_stay_on_legacy_path() {
+        for cmd in [
+            "tabs",
+            "gui",
+            "tui",
+            "udp 1.2.3.4 7 hi",
+            "http 1.2.3.4 80",
+            "socktest",
+        ] {
+            assert!(super::execute_kernel_adapter(cmd).is_none(), "input: {cmd}");
+        }
+    }
 }

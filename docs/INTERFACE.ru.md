@@ -271,8 +271,16 @@ store и IPC-роутер; при обычной работе старый ди�
 только из пробелов выводит генерируемую справку. Его бэкенд реализует
 `help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` и `socktest`;
-остальные команды возвращают `ERR unavailable`. В отличие от старого ядерного
-`clear`, команда `console clear` очищает и историю шелла.
+остальные команды возвращают `ERR unavailable`. И `console clear`, и `clear` без
+префикса очищают историю шелла.
+
+Команды TUI ядра без префикса используют тот же текст через
+`aios-kernel/src/tui.rs::execute_kernel_adapter` и форматтеры без `std` в
+`aios-console/src/legacy.rs`: `help`, `ver`, `info`, `faults`, `wifi` с
+`sim`/`real`, `echo`, `clear` и неизвестные команды сохраняют точный старый текст,
+проверенный побайтово против `run_command_legacy`. `tabs`, `gui`, `tui`, `udp`,
+`http` и `socktest` по-прежнему идут через старый путь; в каноническом реестре они
+отложены.
 
 ---
 

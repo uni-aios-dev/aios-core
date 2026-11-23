@@ -1,7 +1,7 @@
 //! Adapters that keep exact legacy shell text while using canonical console data.
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -275,6 +275,121 @@ pub fn aios_log_text(entries: &[String]) -> Vec<String> {
         .rev()
         .map(|line| format!("  {line}"))
         .collect()
+}
+
+/// Exact legacy kernel shell help lines.
+pub const KERNEL_HELP: &[&str] = &[
+    "commands:",
+    "  console <command> [args]  unified text console (help, net, wifi, ...)",
+    "  help       this list",
+    "  tabs       tab overview",
+    "  info       kernel telemetry",
+    "  ver        version banner",
+    "  clear      clear log",
+    "  echo TEXT  echo text",
+    "  gui        enter windowed GUI mode",
+    "  tui        leave GUI, return to this console",
+    "  faults     fault history + recovery statistics",
+    "  wifi       radio mode + Wi-Fi card status",
+    "  wifi sim   enable the test radio (3 sim APs)",
+    "  wifi real  real radio only (card, no sim)",
+    "  udp A.B.C.D PORT TEXT  send a UDP datagram, show the reply",
+    "  http A.B.C.D PORT [HOST]  TCP GET / and print the response",
+    "  socktest  loopback UDP+TCP self-test over the bound IP",
+];
+
+/// Exact legacy kernel shell unknown-command line.
+pub const KERNEL_UNKNOWN: &str = "unknown command, type help";
+
+/// Formats the exact legacy kernel shell `ver` output.
+pub fn kernel_version_text(version: &str) -> Vec<String> {
+    vec![version.to_string()]
+}
+
+/// Formats the exact legacy kernel shell `info` output.
+pub fn kernel_info_text(pid: u32, switches: u64, sent: u64, recv: u64) -> Vec<String> {
+    vec![
+        "ticks/switches/ipc are live on the System, Sched and IPC tabs".to_string(),
+        format!("pid={pid} switches={switches} ipc-sent={sent} ipc-recv={recv}"),
+    ]
+}
+
+/// One fault record projected into the exact legacy kernel shell text.
+pub struct KernelFaultLine {
+    /// Faulted task slot.
+    pub pid: u32,
+    /// Stable fault code name.
+    pub kind: &'static str,
+    /// Fault counter for this task.
+    pub count: u8,
+    /// Instruction pointer at the fault.
+    pub rip: u64,
+    /// Snapshot state hash.
+    pub state_hash: u64,
+}
+
+/// Counters behind the exact legacy kernel shell `faults` summary.
+pub struct KernelFaultStats {
+    /// Total number of faults observed by the kernel.
+    pub total: u64,
+    /// Number of faults resolved by resuming the task.
+    pub resume: u64,
+    /// Number of faults resolved by terminating the task.
+    pub terminate: u64,
+    /// Number of faults resolved by rolling the task back.
+    pub rollback: u64,
+    /// Number of fault records awaiting a decision.
+    pub queued: usize,
+    /// Number of queued fault events.
+    pub events: usize,
+    /// Whether the recovery dialog is currently pending.
+    pub dialog_pending: bool,
+}
+
+/// Formats the exact legacy kernel shell `faults` output.
+pub fn kernel_faults_text(
+    stats: &KernelFaultStats,
+    history: &[KernelFaultLine],
+    pending: &[KernelFaultLine],
+) -> Vec<String> {
+    let mut lines = vec![format!(
+        "faults total={} resume={} terminate={} rollback={} queued={} events={}",
+        stats.total, stats.resume, stats.terminate, stats.rollback, stats.queued, stats.events
+    )];
+    for record in history {
+        lines.push(format!(
+            "  pid {} {} (crash #{}) rip={:#x} hash={:#x}",
+            record.pid, record.kind, record.count, record.rip, record.state_hash
+        ));
+    }
+    for record in pending {
+        lines.push(format!(
+            "  queued: pid {} {} (crash #{}) rip={:#x}",
+            record.pid, record.kind, record.count, record.rip
+        ));
+    }
+    if stats.dialog_pending {
+        lines.push("  (dialog pending: a task awaits a recovery decision)".to_string());
+    }
+    lines
+}
+
+/// Formats the exact legacy kernel shell `wifi` status output.
+pub fn kernel_wifi_text(sim: bool, card: &str) -> Vec<String> {
+    vec![
+        format!("mode: {}", if sim { "test radio (sim)" } else { "real" }),
+        format!("card: {card}"),
+    ]
+}
+
+/// Exact legacy kernel shell `wifi sim` output line.
+pub fn kernel_wifi_sim_text() -> &'static str {
+    "test radio enabled (sim, 3 APs)"
+}
+
+/// Exact legacy kernel shell `wifi real` output line.
+pub fn kernel_wifi_real_text() -> &'static str {
+    "real radio mode (test radio off)"
 }
 
 /// Outcome of the legacy `aios` shell net IPC dispatch.
@@ -685,6 +800,61 @@ mod tests {
         assert_eq!(
             aios_net_set_text(AiosNetResult::Error("boom".into())),
             "AIOS: net ERROR: boom"
+        );
+    }
+
+    #[test]
+    fn maps_kernel_shell_text_exactly() {
+        assert_eq!(super::KERNEL_HELP[0], "commands:");
+        assert_eq!(super::KERNEL_UNKNOWN, "unknown command, type help");
+        assert_eq!(
+            super::kernel_version_text("AIOS kernel v1"),
+            ["AIOS kernel v1"]
+        );
+        assert_eq!(
+            super::kernel_info_text(3, 7, 11, 13),
+            [
+                "ticks/switches/ipc are live on the System, Sched and IPC tabs",
+                "pid=3 switches=7 ipc-sent=11 ipc-recv=13"
+            ]
+        );
+        let history = [super::KernelFaultLine {
+            pid: 4,
+            kind: "GeneralProtectionFault",
+            count: 2,
+            rip: 0x1234,
+            state_hash: 0xabcd,
+        }];
+        let stats = super::KernelFaultStats {
+            total: 5,
+            resume: 1,
+            terminate: 2,
+            rollback: 3,
+            queued: 4,
+            events: 6,
+            dialog_pending: true,
+        };
+        let faults = super::kernel_faults_text(&stats, &history, &history);
+        assert_eq!(
+            faults,
+            [
+                "faults total=5 resume=1 terminate=2 rollback=3 queued=4 events=6",
+                "  pid 4 GeneralProtectionFault (crash #2) rip=0x1234 hash=0xabcd",
+                "  queued: pid 4 GeneralProtectionFault (crash #2) rip=0x1234",
+                "  (dialog pending: a task awaits a recovery decision)"
+            ]
+        );
+        assert_eq!(
+            super::kernel_wifi_text(true, "sim card"),
+            ["mode: test radio (sim)", "card: sim card"]
+        );
+        assert_eq!(
+            super::kernel_wifi_sim_text(),
+            "test radio enabled (sim, 3 APs)"
+        );
+        assert_eq!(
+            super::kernel_wifi_real_text(),
+            "real radio mode (test radio off)"
         );
     }
 

@@ -252,6 +252,18 @@ case-sensitive bare spellings. This is a separate implementation
 because `aios-kernel` is `x86_64-unknown-none` and cannot link `std`, `ratatui`,
 `tokio` or `reqwest`.
 
+The kernel TUI's bare shell commands are now adapter-backed as well.
+`aios-kernel/src/tui.rs::execute_kernel_adapter` calls `no_std` formatters in
+`aios-console/src/legacy.rs` for `help`, `ver`, `info`, `faults`, `wifi` (`sim`/
+`real`), `echo`, `clear` and the unknown-command fallback. `KERNEL_HELP`,
+`KERNEL_UNKNOWN`, `KernelFaultLine` and `KernelFaultStats` pin the exact legacy
+text; `KernelFaultStats` groups the fault counters so the formatter stays below
+the clippy argument limit without suppressing the lint. `run_command_legacy` is
+kept only as a parity reference, and parity tests compare both paths
+byte-for-byte. Bare `clear` now clears the shell scrollback like `console clear`.
+`tabs`, `gui`, `tui`, `udp`, `http` and `socktest` stay on the legacy path until
+real adapters exist; canonical `console info` remains ambiguous.
+
 ---
 
 ## Layer 1: Foundation (`aios-core`)

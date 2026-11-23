@@ -268,8 +268,16 @@ commands keep their old case-sensitive spelling. Bare or whitespace-only
 `console` prints generated help. Its backend implements
 `help`, `echo`, `version`, `kernel info|ver`, `faults`, `fault resolve`,
 `wifi status|sim|real|scan|connect|disconnect`, `udp`, `http` and `socktest`;
-other commands return `ERR unavailable`. Unlike the legacy kernel `clear`,
-`console clear` also clears the shell scrollback.
+other commands return `ERR unavailable`. Both `console clear` and bare `clear`
+clear the shell scrollback.
+
+Bare kernel TUI commands use the same text through
+`aios-kernel/src/tui.rs::execute_kernel_adapter` and the `no_std` formatters in
+`aios-console/src/legacy.rs`: `help`, `ver`, `info`, `faults`, `wifi` with
+`sim`/`real`, `echo`, `clear` and unknown commands keep their exact legacy text,
+verified byte-for-byte against `run_command_legacy`. `tabs`, `gui`, `tui`, `udp`,
+`http` and `socktest` still use the legacy path; they are deferred in the
+canonical registry.
 
 ---
 

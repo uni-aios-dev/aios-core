@@ -1,5 +1,14 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (unified console): kernel bare `clear` did not clear scrollback
+
+The legacy kernel shell returned no lines for bare `clear` but never called
+`shell_clear`, so the `> clear` echo stayed in the shell history; only
+`console clear` cleared it. Bare `clear` now goes through
+`aios-kernel/src/tui.rs::execute_kernel_adapter`, which calls `shell_clear` and
+returns no lines, matching the canonical path. `run_command_legacy` keeps the old
+behaviour only as a parity reference for the remaining deferred commands.
+
 ## FIXED (build): Cargo warning for binary-only `aios-shell` dependency
 
 The root `aios-integration-tests` package declared binary-only `aios-shell` as a
@@ -58,7 +67,7 @@ switched over.
 | `load` creates a synthetic `block_{name}_{version}` in safe mode but loads real wasm in the host TUI | `safe_mode.rs:79-83`, `aios/src/tui/mod.rs:1118-1160` | `block mock` versus `block load` |
 | `restart` means orchestrator restart, hardware refresh, or does not exist | `safe_mode.rs:200-222`, `aios/src/tui/mod.rs:1355-1359` | `wd reset`, `hw rescan`, `block rollback` |
 | `status`/`info` mix runtime status, hardware inventory and kernel telemetry | `safe_mode.rs:91`, `aios-kernel/src/tui.rs:202-214` | `status`, `sys info`, `kernel info` |
-| Kernel `clear` clears output but leaves the `> clear` echo in scrollback | `aios-kernel/src/tui.rs:165-176`, `:216` | `OutputControl::Clear` requires the frontend to reset scrollback |
+| Kernel `clear` cleared output but left the `> clear` echo in scrollback (fixed on the bare path) | `aios-kernel/src/tui.rs` (`run_command_legacy`, parity only) | `OutputControl::Clear`; bare `clear` now calls `shell_clear` through the adapter |
 | Whole command lines are lowercased, corrupting URLs, file names and keys | `aios-tui/src/main.rs:393`, `aios/src/tui/mod.rs:1173` | Parser lowercases only the command head |
 | Invalid `kill` PID becomes `0` in one shell but a usage error in another | `safe_mode.rs:59-65`, `aios/src/tui/mod.rs:1223-1233` | `process kill <pid>` with a single usage error |
 | `net reset` exists in the block but is unreachable from the host TUI | `aios-net-config/src/block.rs:63,79-82` | `net reset` is a registered subcommand |
@@ -135,10 +144,12 @@ without a `Failed:` prefix. `console ps`
 and `console block list` observe the same runtime as safe-mode commands while
 legacy output stays unchanged. `KernelBackend` has
 the same limitation: only the commands backed by real kernel APIs are
-implemented, and the legacy kernel `clear` bug persists on the old dispatcher
-path (the new backend clears the shell history explicitly). `tabs`, `gui` and
-`tui` are deferred in the registry; canonical `console info` remains ambiguous,
-although the legacy safe-mode `info` alias is adapter-backed in `aios-tui`.
+implemented. The bare kernel shell command set is now adapter-backed too, and
+bare `clear` clears the shell history; `run_command_legacy` keeps the old clear
+behaviour only as a parity reference for deferred commands. `tabs`, `gui`, `tui`,
+`udp`, `http` and `socktest` remain on the legacy path; canonical `console info`
+remains ambiguous, although legacy `info` aliases are adapter-backed in
+`aios-tui` and the kernel shell.
 
 ## FIXED (unified console): `wd reset` no longer fakes a restart
 

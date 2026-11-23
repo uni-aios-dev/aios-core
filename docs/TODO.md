@@ -282,15 +282,25 @@
 - [x] Move the final bare `aios` paths (`store search`/`store install` with
   arguments and `net get`/`net set`) to console formatters; keep the frontend
   async/router seams. Sixteen binary parity tests cover the whole bare shell.
+- [x] Migrate the bare kernel TUI shell commands (`help`, `ver`, `info`, `faults`,
+  `wifi` with `sim`/`real`, `echo`, `clear` and the unknown-command fallback) to
+  `no_std` formatters in `aios-console/src/legacy.rs` plus
+  `aios-kernel/src/tui.rs::execute_kernel_adapter`. Parity tests compare both
+  paths byte-for-byte with `run_command_legacy`; `KernelFaultStats` groups the
+  fault counters without suppressing clippy. `tabs`, `gui`, `tui`, `udp`, `http`
+  and `socktest` stay on the legacy path. EN/RU docs were aligned.
 - [x] Port `store sign` and `store publish` into the unified `aios-console`:
   real Ed25519 signing, SHA-256/base64 publish payload, sanitized sidecar paths
   and the bridge `POST /api/v1/store/publish` call. They are registered
   subcommands again, with loopback HTTP and contract tests; EN/RU docs aligned.
 - [ ] Implement those real APIs before re-enabling the six commands; do not
   alias them to `caps`, TCP connect or cached network status.
-- [ ] Finish replacing the five legacy dispatchers (`aios-tui` and `aios` done,
-  kernel TUI, `SafeModeShell`, `aios-shell`) only after the remaining adapters and parity
-  checks are green.
+- [ ] Finish replacing the remaining legacy paths (`aios-shell` POSIX commands
+  and kernel TUI `tabs`/`gui`/`tui`/`udp`/`http`/`socktest`) only after real
+  adapters and parity checks are green. The bare shell command sets of `aios`,
+  standalone `aios-tui` and the kernel TUI are adapter-backed;
+  `shell_execute_legacy`, `SafeModeShell` and `run_command_legacy` remain as
+  parity references.
 - [ ] Phase 2 syntax (pipes, redirection, background) and any GUI/LLM/cluster
   surface stay in `deferred.rs` until a real text backend exists.
 
