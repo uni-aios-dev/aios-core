@@ -306,7 +306,7 @@
   `source`/`.` now go through `execute_shell_adapter` with real environment and
   filesystem side effects kept in the frontend. `cd` preserves `OLDPWD` and
   reports errors through `ShellOutcome::Stderr`; `source` keeps recursion
-  detection without the legacy `RefCell` double-borrow panic. Six more tests
+  detection without the legacy `RefCell` double-borrow panic. Three more tests
   cover env/export/unset text, `cd` side effects, and `source` missing-file,
   execution and recursion paths. EN/RU docs were aligned.
 - [ ] The remaining legacy branches are intentional, not unfinished migrations:
