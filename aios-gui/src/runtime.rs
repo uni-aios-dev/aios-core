@@ -1,20 +1,17 @@
-//! Live kernel runtime backing the GUI dashboard.
+//! Live kernel runtime backing the GUI desktop.
 //!
 //! Creates the real scheduler, block registry, watchdog, shared IPC bus and
-//! live-update engine; when [`GuiRuntime::start`] is called it additionally
-//! launches a scheduling tick thread, a watchdog heartbeat generator and a
-//! handful of real OS-thread "kernel" processes that keep the IPC bus busy,
-//! so the dashboard shows genuine metrics instead of placeholder data.
+//! live-update engine. [`GuiRuntime::start`] launches only system threads: a
+//! scheduling tick and a watchdog heartbeat. User processes are never seeded;
+//! they appear in the scheduler only when started explicitly.
 
 use aios_block_mgr::hot_reload::HotReloader;
 use aios_block_mgr::loader::BlockLoader;
 use aios_block_mgr::marketplace::BlockMarketplace;
 use aios_block_mgr::registry::BlockRegistry;
-use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 use aios_ipc::bus::IpcBus;
 use aios_live_update::engine::LiveUpdateEngine;
-use aios_process_mgr::scheduler::{Scheduler, SuspendFlag, TerminateFlag};
-use aios_process_mgr::task::Priority;
+use aios_process_mgr::scheduler::Scheduler;
 use aios_store::installer::BlockInstaller;
 use aios_watchdog::heartbeat::Heartbeat;
 use aios_watchdog::watchdog::{Watchdog, WatchdogConfig};
@@ -221,28 +218,15 @@ impl GuiRuntime {
         self.started
     }
 
-    /// Spawn the background threads (scheduler tick, watchdog heartbeats,
-    /// real IPC-generating kernel processes). Idempotent.
+    /// Start the system threads only: the scheduler tick and watchdog
+    /// heartbeat. No demo or user processes are spawned by the desktop shell;
+    /// processes appear here only when the user starts them explicitly.
+    /// Idempotent.
     pub fn start(&mut self) {
         if self.started {
             return;
         }
         self.started = true;
-
-        {
-            let mut scheduler = self.scheduler.lock().unwrap();
-            for (name, priority, ram, target, interval) in [
-                ("ai_orchestrator", Priority::High, 512u64, 42u32, 25u64),
-                ("io_handler", Priority::Normal, 128, 42, 60),
-                ("health_monitor", Priority::Low, 64, 42, 120),
-                ("telemetry_agg", Priority::Normal, 96, 42, 40),
-            ] {
-                let bus = self.ipc_bus.clone();
-                let _ = scheduler.spawn_real_process(name, priority, ram, move |term, susp| {
-                    ipc_generator(bus, target, interval, term, susp);
-                });
-            }
-        }
 
         let tick = self.scheduler.clone();
         let scheduler_stop = self.scheduler_stop.clone();
@@ -355,39 +339,11 @@ impl Drop for GuiRuntime {
     }
 }
 
-/// Body of a real OS-thread "kernel" process: pushes a telemetry packet onto
-/// the shared IPC bus on every tick until suspended or terminated.
-fn ipc_generator(
-    bus: Arc<Mutex<IpcBus>>,
-    target: u32,
-    interval_ms: u64,
-    term: TerminateFlag,
-    susp: SuspendFlag,
-) {
-    loop {
-        if term.should_stop() {
-            break;
-        }
-        if susp.is_suspended() {
-            std::thread::park();
-            continue;
-        }
-        let packet = IpcPacket::new(
-            0,
-            target,
-            CommandId::Custom,
-            Payload::Text("telemetry".into()),
-        );
-        if let Ok(mut b) = bus.lock() {
-            let _ = b.send(packet);
-        }
-        std::thread::sleep(Duration::from_millis(interval_ms));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
+    use aios_process_mgr::task::ProcessId;
 
     #[test]
     fn test_runtime_creation_does_not_start_threads() {
@@ -403,35 +359,63 @@ mod tests {
         rt.start();
         rt.start();
         assert!(rt.is_started());
+        assert!(rt.scheduler_thread.is_some());
+        assert!(rt.heartbeat_thread.is_some());
         let (ram_used, ram_total) = rt.scheduler.lock().unwrap().ram_usage();
         assert_eq!(ram_total, 4096);
-        assert!(ram_used > 0, "seeded kernel processes must consume RAM");
-        assert!(rt.scheduler.lock().unwrap().process_count() >= 4);
+        assert_eq!(ram_used, 0, "the desktop shell must not seed processes");
+        assert_eq!(rt.scheduler.lock().unwrap().process_count(), 0);
     }
 
     #[test]
-    fn test_runtime_start_and_kill_process() {
+    fn test_runtime_does_not_spawn_demo_processes() {
         let mut rt = GuiRuntime::new(4096);
         rt.start();
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(120));
+        let scheduler = rt.scheduler.lock().unwrap();
+        assert_eq!(scheduler.process_count(), 0);
+        assert!(scheduler.all_processes().is_empty());
+    }
+
+    #[test]
+    fn test_runtime_start_and_kill_explicit_process() {
+        let mut rt = GuiRuntime::new(4096);
+        rt.start();
         let pid = {
-            let s = rt.scheduler.lock().unwrap();
-            s.all_processes()[0].pid
+            let mut s = rt.scheduler.lock().unwrap();
+            s.spawn_real_process(
+                "explicit_task",
+                aios_process_mgr::task::Priority::Normal,
+                64,
+                |term, _| {
+                    while !term.should_stop() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                },
+            )
+            .expect("explicit process must spawn")
+            .0
         };
-        let killed = rt.scheduler.lock().unwrap().kill_process(pid);
-        assert!(
-            killed.is_ok(),
-            "killing a real kernel process must join its thread"
-        );
+        assert_eq!(rt.scheduler.lock().unwrap().process_count(), 1);
+        assert!(rt
+            .scheduler
+            .lock()
+            .unwrap()
+            .kill_process(ProcessId(pid))
+            .is_ok());
     }
 
     #[test]
     fn test_drain_ipc_accumulates() {
         let mut rt = GuiRuntime::new(4096);
         rt.start();
-        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(rt.drain_ipc(), 0, "no background generators should run");
+
+        let packet = IpcPacket::new(0, 42, CommandId::Custom, Payload::Text("manual".into()));
+        rt.ipc_bus.lock().unwrap().send(packet).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
         let drained = rt.drain_ipc();
-        assert!(drained > 0, "live kernel processes should populate the bus");
+        assert_eq!(drained, 1);
         assert_eq!(rt.ipc_drained_total(), drained);
     }
 

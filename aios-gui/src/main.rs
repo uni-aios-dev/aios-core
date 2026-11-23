@@ -1,5 +1,6 @@
 mod app;
 mod crash_dialog;
+mod desktop;
 mod runtime;
 mod tabs;
 mod theme;

@@ -23,7 +23,8 @@
 - [x] Phase 12: Docker + CI/CD infrastructure
 - [x] Phase 13: Persistent DB (redb), CLI Shell, storage detection, RT scheduler, stress tests
 - [x] Phase 14: Multi-Binary Compatibility (`aios-exec-compat`) — POSIX/Win32 translation, dependency healing, sandbox compat
-- [x] GUI Dashboard (`aios-gui`) — egui/eframe native window, 6 tabs, dark theme, keyboard navigation
+- [x] GUI Desktop Shell (`aios-gui`) — egui/eframe native window, Start menu, function windows, taskbar, dark theme, keyboard navigation
+- [x] GUI Start menu & shared program catalog — `src/desktop.rs` (`DesktopApp`, `StartAction`, `StartEntry`, `DesktopState`/`DesktopWindow`) and `src/voice.rs` (`Program`, `ProgramAction`, `PROGRAMS`, `programs()`, `run_program()`); sorted, searchable entries, real `Обновить всё` / `Приостановить всё` actions, 33 passing tests
 - [x] Interface Documentation (`docs/INTERFACE.md`) — full GUI/TUI usage guide, bilingual
 - [x] Scheduler Real OS Threads — `RealThread`, `TerminateFlag`, `SuspendFlag`, cooperative kill/suspend
 - [x] BlockExecutor — WASM block execution bridge between `BlockRegistry` + `WasmSandbox`
@@ -809,10 +810,10 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [x] Persistent profile via `WebContext` (`AIOS_DATA_DIR`/`aios/webview`) so cookies/storage survive restarts
   - [x] `resolve_target()` omnibox rule shared with the TUI (URL / bare host / DuckDuckGo query)
   - [x] `launcher` module — locate and spawn the `aios-gui` binary (sibling of exe, then PATH)
-  - [x] GUI Browser tab (F7) in `aios-gui` — omnibox, Back/Forward, Open/Close, status line
-  - [x] TUI hotkey `W` (both `aios-tui` and kernel `aios`) launches the GUI dashboard
-  - [ ] Future: embed the webview as an in-window child of the egui tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
-  - [ ] Future: native browser in the Live ISO — add WebKitGTK to the Alpine rootfs and build `aios`/`aios-gui` with the `webview` feature enabled so the `B`/`n` keys and the GUI Browser tab work on the live USB too (v2.32.0 ships the image without it)
+  - [x] Native Browser window (F7) in `aios-gui` — omnibox, Back/Forward, Open/Close, status line
+  - [x] TUI hotkey `W` (both `aios-tui` and kernel `aios`) launches the GUI desktop shell
+  - [ ] Future: embed the webview as an in-window child of the egui desktop window via `build_as_child` (Windows/macOS/X11), replacing the companion window
+  - [ ] Future: native browser in the Live ISO — add WebKitGTK to the Alpine rootfs and build `aios`/`aios-gui` with the `webview` feature enabled so the `B`/`n` keys and the Native Browser window work on the live USB too (v2.32.0 ships the image without it)
 
 - [x] **Phase 35: WHATWG HTML Rendering & Web Tab Navigation in TUI — COMPLETE**
   - [x] `HtmlParser` rebuilt on `scraper`/html5ever — structured text (headings `#`, lists `•`/`1.`, tables `|`, `pre`, `hr`, images `[alt]`), WHATWG-compliant
@@ -846,7 +847,7 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [x] `n` opens the currently selected link in the native browser
   - [x] Browser handle in a module-level `OnceLock<Mutex<Option<WebBrowser>>>` — kernel untouched
   - [x] `http_client()`: desktop User-Agent + `Accept: text/html` + 15s timeout for text fetches (fewer bot-blocks, no hangs)
-  - [ ] Future: embed the webview as an in-window child of the GUI Browser tab via `build_as_child` (Windows/macOS/X11), replacing the companion window
+  - [ ] Future: embed the webview as an in-window child of the Native Browser window via `build_as_child` (Windows/macOS/X11), replacing the companion window
   - [x] Future: headless render-to-text fallback for JS-heavy sites — `aios-browser::headless` dumps the DOM in a headless Chromium-class browser (`msedge`/`chromium`/`google-chrome`, override via `AIOS_HEADLESS_BROWSER`, `--no-sandbox` via `AIOS_HEADLESS_NO_SANDBOX`) when the plain fetch yields no readable text; adopted only when the rendered text is substantially richer (v2.17.0)
 
 - [x] **Phase 25c: Embedded JS Engine & Stateful Browser Session — COMPLETE (v2.39.0)**

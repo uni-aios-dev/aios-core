@@ -91,7 +91,7 @@ AIOS provides three interfaces for system management:
 |-----------|------|---------------|----------|
 | **Web** | Browser SPA (HTML/CSS/JS) | `aios-studio/` served at `http://<host>:<port>/` | Remote management, visual dashboard, any device |
 | **TUI** | Terminal (ratatui) | `aios-tui` | SSH, interactive, keyboard-driven |
-| **GUI** | Native window (egui/eframe) | `aios-gui` | Desktop, visual dashboard, mouse + keyboard |
+| **GUI** | Native window (egui/eframe) | `aios-gui` | Desktop shell with Start menu, windows and taskbar, mouse + keyboard |
 | **Daemon** | Headless server | `aiosd` | Docker, background, CI/CD, no terminal required |
 
 Both interfaces display the same data and expose the same operations. The GUI is a graphical equivalent of the TUI.
@@ -355,7 +355,7 @@ Far Manager / Midnight Commander style: top status bar, dual 50/50 panels (tab c
 | `r` | Refresh data |
 | `s` | Show telemetry |
 | `x` | Show status |
-| `W` | Launch the AIOS GUI dashboard (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
+| `W` | Launch the AIOS GUI desktop shell (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
 | `q` | Quit (all tabs except the Shell tab, where `q` is typed into the command line) |
 | `F10` / `Alt`+`q` | Quit from **any** tab (including Shell and Files) |
 | `F1` or `?` | Toggle help overlay |
@@ -579,13 +579,13 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `Tab` / `F1` / `?` | Next tab / help overlay |
 | `1`-`7` | Direct tab select |
 | `Alt`+`1`-`7` | Direct tab select even while typing in the Shell / Web URL / AI input / net line |
-| `W` | Launch the AIOS GUI dashboard (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
+| `W` | Launch the AIOS GUI desktop shell (`aios-gui`), found on `PATH` or next to the `aios` executable (on the live USB it opens in the booted X session, `DISPLAY=:0` — no WebKitGTK required) |
 | `Space` | Pause/resume event log |
 | `L` | Toggle EN/RU input layout (the sys status line shows the active pair) |
 | `F10` | Re-probe the hardware (System & HW tab refresh) |
 | `q` / `Ctrl+C` | Quit |
 
-The bottom **event log** now lives as the right-hand panel of the dual layout (45% width). It carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `Space` to pause the log, or `L` to switch layouts from any tab; the same snapshot is rendered in the GUI top bar and exposed over REST (`/api/v1/sys/status`).
+The bottom **event log** now lives as the right-hand panel of the dual layout (45% width). It carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `Space` to pause the log, or `L` to switch layouts from any tab; the same snapshot is rendered in the GUI taskbar tray and exposed over REST (`/api/v1/sys/status`).
 ### Blocks Tab (2)
 
 | Key | Action |
@@ -725,49 +725,49 @@ With `--safe-mode` AIOS boots with a minimal shell only: third-party disk blocks
 cargo run --bin aios-gui
 ```
 
-When built `--no-default-features` (e.g. the live USB image) the dashboard has **no Native Browser tab** — the sidebar shows System, WASM, AI Studio, App Store, Network, Deps, Files only. The kernel TUI `W` key still opens the GUI in that configuration.
+`aios-gui` is a **desktop shell**, not a tabbed dashboard. A dark desktop fills the window; built-in functions open as separate egui windows, and external programs are launched from the same catalog used by voice commands. When built `--no-default-features` (e.g. the live USB image) the **Native Browser** entry is absent from the Start menu and `F7` is inactive. The kernel TUI `W` key still opens the GUI in that configuration.
 
 ### Layout
 
 ```
-┌──────────┬───────────────────────────────────────────┐
-│          │  AIOS v2.9.1 | HW Tier | IPC: 0 pkts      │  ← Top bar
-│ System   │───────────────────────────────────────────│
-│ WASM     │                                           │
-│ AI Studio│          Central panel                    │
-│ App Store│     (changes per selected tab)            │
-│ Network  │                                           │
-│ Deps     │                                           │
-│ Browser  │                                           │
-│ Files    │                                           │
-│ Hardware │                                           │
-│ ──────── │───────────────────────────────────────────│
-│ Quick    │  F1-F9 tabs | AIOS Dashboard | Status...  │  ← Bottom bar
-│ Actions  │
-└──────────┴───────────────────────────────────────────┘
-  Sidebar          Main area
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│                      AIOS Desktop                            │
+│           (functions open as separate windows)               │
+│                                                              │
+│   ┌─────────────────┐   ┌──────────────────────┐             │
+│   │ WASM Blocks F2  │   │ System Dashboard F1  │             │
+│   └─────────────────┘   └──────────────────────┘             │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ ☰ Пуск │ ■ System Dashboard │ □ WASM Blocks │ … │ 🎤 …     │  ← Taskbar
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `F1`-`F9` | Switch tab |
+| `F1`-`F9` | Open the matching desktop window (focus an already-open window) |
+| `j` | Move selection down in the focused Blocks / App Store window |
+| `k` | Move selection up in the focused Blocks / App Store window |
+| `Escape` | Close the Start menu |
 
-The top bar appends system-control segments after the RAM separator: Wi-Fi state/SSID, the active input-layout pair, battery/CPU temperature and the effective LLM backend (`local`/`cloud`), refreshed every 2 s; the same data feeds the TUI `sys:` log line and `/api/v1/sys/status`.| `j` | Move selection down |
-| `k` | Move selection up |
+The taskbar tray shows the effective AI tier, RAM and IPC counters, Wi-Fi state/SSID, the active input-layout pair, battery/CPU temperature and the effective LLM backend (`local`/`cloud`), refreshed every 2 s; the same data feeds the TUI `sys:` log line and `/api/v1/sys/status`.
 
 ### Mouse
 
-- Click tab names in sidebar to switch
-- Click rows in tables to select
-- Click buttons for actions (Kill, Suspend, Load, etc.)
-- Type in search boxes (Marketplace)
+- Click `☰ Пуск` at the left of the taskbar to open the Start menu; type in its search field to filter
+- Click a Start entry to open a built-in window or launch a program
+- Click a taskbar button to focus or minimize its window
+- Click a window title to focus it; use its close button to close it
+- Click rows in tables to select, buttons for actions (Kill, Suspend, Load, etc.), and type in search boxes (App Store)
 
 ### Voice control
 
-The bottom bar has a `🎤 Голос` button (it turns into `🎙 Слушаю...` while the
-microphone is open) and a command text field.
+The right-hand side of the taskbar (system tray) has a `🎤 Голос` button (it
+turns into `🎙 Слушаю...` while the microphone is open) and a command text field.
+The same catalog powers the external-program entries in the Start menu.
 
 - **Recording**: the first click opens the default input device via `cpal`; the
   second click stops it. Audio is downmixed to mono, resampled to 16 kHz and
@@ -796,10 +796,10 @@ microphone is open) and a command text field.
 | `обои` / `wallpaper` | rotates an image from `/usr/share/backgrounds`, `/usr/share/wallpapers`, `/usr/share/pixmaps` or `AIOS_WALLPAPERS` via `feh`/`xwallpaper`/`hsetroot`/`nitrogen` |
 | `перезагрузка` / `выключение` | not executed automatically — the GUI points to the system menu (root required) |
 
-The result (what was launched or why it failed) is shown next to the button and
+The result (what was launched or why it failed) is shown in the taskbar tray and
 appended to the activity log.
 
-### Tabs
+### Desktop Windows
 
 #### System Dashboard (F1)
 - **Stat cards**: RAM (used/total), Blocks count, Processes count, Watchdog status
@@ -843,7 +843,7 @@ appended to the activity log.
 - **Omnibox**: type a full URL (`https://...`), a bare host (`example.com`), or a plain search query (`rust scheduler`) — Enter resolves and loads it
 - **Navigation buttons**: Back, Forward; **Open Browser** / **Close** toggle
 - **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript and history support; the first navigation opens the window automatically
-- **Non-blocking open**: the WebView is spawned on a background thread, so the dashboard stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
+- **Non-blocking open**: the WebView is spawned on a background thread, so the desktop stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
 - **Status line**: shows the resolved target or the last action/error
 
 #### Files (F8)
@@ -863,17 +863,18 @@ appended to the activity log.
 
 #### Live kernel runtime (v2.31.2)
 
-Since v2.31.2 the dashboard panels display **real** kernel state instead of placeholder data:
+Since v2.31.2 the desktop windows display **real** kernel state instead of placeholder data:
 
-- **Refresh is automatic**: process list, memory usage, IPC packet count and the watchdog indicator are polled from the `GuiRuntime` every 250 ms; manual Refresh buttons re-trigger the same snapshot.
+- **Refresh is automatic**: process list, memory usage, IPC packet count and the watchdog indicator are polled from the `GuiRuntime` every 250 ms; the Start menu entry `Обновить всё` re-triggers every data source at once.
+- **Processes are explicit**: no demo processes are seeded at startup. The scheduler starts empty; processes appear only when spawned explicitly, and `Приостановить всё` suspends every process currently tracked by the scheduler.
 - **Process actions are real**: Kill / Suspend / Resume operate on live scheduler threads (cooperative `TerminateFlag` / `SuspendFlag` on real OS threads).
-- **Hot-Swap is real**: the WASM Blocks tab reads the installed store copy (path shown in the dialog), performs a SHA-256 verified live-update swap + registry `swap_binary`, and appends an entry to the **Swap history** collapsible panel (old/new version + signature + timestamp + result).
+- **Hot-Swap is real**: the WASM Blocks window reads the installed store copy (path shown in the dialog), performs a SHA-256 verified live-update swap + registry `swap_binary`, and appends an entry to the **Swap history** collapsible panel (old/new version + signature + timestamp + result).
 - **App Store is real**: Install / Update / Uninstall write and delete real `<name>_<version>.wasm` files and registry entries in the local `official` marketplace; Status badges switch `Available → Indexed → Installed`.
 - **Watchdog indicator**: `WD:` shows the real watchdog state (countdown, `Monitoring/Suspended/Recovering`, safe-mode).
 
-### Status Bar
+### Taskbar and Tray
 
-The bottom bar shows `HW Tier | IPC: N pkts | F6=Deps F7=Browser F8=Files F9=Hardware`, where N is the live IPC packet counter, plus the last operation result.
+The bottom taskbar has `☰ Пуск` on the left, a button for each open function window (click to focus or minimize it), and a right-hand tray with the voice mic button, the manual command field, the AI tier, `RAM used/total`, the live IPC packet counter and the system status line (Wi-Fi, layouts, battery/CPU temperature, LLM backend).
 
 ### Theming
 
@@ -881,7 +882,7 @@ Dark theme with customizable colors in `aios-gui/src/theme.rs`:
 
 | Color | Usage |
 |-------|-------|
-| `accent` (#00C8DC) | Headers, active tabs, highlights |
+| `accent` (#00C8DC) | Headers, focused window, highlights |
 | `success` (#32C850) | Running blocks, OK status, positive values |
 | `warning` (#F0B41E) | Suspended, High priority, warnings |
 | `danger` (#E63C3C) | Crashed, Critical, errors |

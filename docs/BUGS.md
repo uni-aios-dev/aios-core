@@ -1,5 +1,31 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (GUI): startup seeded demo processes and fake IPC traffic
+
+`GuiRuntime::start()` spawned four real OS-thread processes (`ai_orchestrator`,
+`io_handler`, `health_monitor`, `telemetry_agg`) whose `ipc_generator` body
+pushed synthetic telemetry packets onto the shared `IpcBus`. The process table,
+RAM graph and IPC counter therefore showed activity the user never requested.
+Startup now starts only the scheduler tick and watchdog heartbeat; the process
+table and IPC bus start empty, and packets/processes appear only from explicit
+actions. EN/RU docs were aligned.
+
+## FIXED (GUI): Refresh All / Suspend All were log-only stubs
+
+The two Quick Actions buttons in the old sidebar wrote `Full refresh` /
+`Suspend all processes` to the activity log without touching kernel state. They
+are now real Start-menu entries: `Обновить всё` re-polls system info, processes,
+blocks, hardware and network settings, and `Приостановить всё` suspends every
+scheduler-tracked process. EN/RU docs were aligned.
+
+## FIXED (GUI): stale tabbed-dashboard layout
+
+The left tab sidebar, top bar and bottom status strip kept describing/rendering
+the old dashboard even though the shell had moved on. `aios-gui` now renders a
+dark desktop with a bottom taskbar (`☰ Пуск`, window buttons, system tray);
+built-in functions open as separate windows and `F1`-`F9` open/focus them
+instead of switching tabs. EN/RU docs were aligned.
+
 ## FIXED (tests): `aios-shell` `pwd` test raced with `cd` test
 
 The new job-control test raised the unit-test count enough for the `cd` stateful

@@ -1,8 +1,9 @@
 use crate::crash_dialog::CrashDialogState;
+use crate::desktop::{self, DesktopApp, StartAction};
 use crate::runtime::GuiRuntime;
 use crate::tabs;
 use crate::theme::AiosTheme;
-use crate::voice::VoiceControl;
+use crate::voice::{self, VoiceControl};
 
 use aios_block_mgr::loader::BlockLoader;
 use aios_core::block::BlockId;
@@ -33,6 +34,27 @@ pub struct AiMessage {
 
 /// Number of RAM samples kept for the dashboard sparkline.
 const RAM_HISTORY_LEN: usize = 60;
+
+/// Preferred size of a desktop function window.
+fn window_size(app: DesktopApp) -> egui::Vec2 {
+    match app {
+        DesktopApp::Dashboard => egui::vec2(720.0, 520.0),
+        DesktopApp::Blocks => egui::vec2(660.0, 500.0),
+        DesktopApp::AiStudio => egui::vec2(640.0, 560.0),
+        DesktopApp::Store => egui::vec2(780.0, 540.0),
+        DesktopApp::Network => egui::vec2(560.0, 460.0),
+        DesktopApp::Deps => egui::vec2(720.0, 520.0),
+        DesktopApp::Browser => egui::vec2(860.0, 620.0),
+        DesktopApp::Files => egui::vec2(920.0, 600.0),
+        DesktopApp::Hardware => egui::vec2(820.0, 600.0),
+    }
+}
+
+/// Stagger initial window positions so several open windows do not overlap exactly.
+fn window_pos(id: u64) -> egui::Pos2 {
+    let offset = ((id % 6) * 28) as f32;
+    egui::pos2(48.0 + offset, 36.0 + offset)
+}
 
 /// Default data directory used when `AIOS_DATA_DIR` is not set.
 fn data_dir() -> PathBuf {
@@ -133,7 +155,8 @@ pub struct AiosApp {
     pub watchdog_state: u8,
     pub log_messages: Vec<String>,
 
-    pub selected_tab: usize,
+    /// Desktop shell state: the Start menu and open function windows.
+    pub desktop: desktop::DesktopState,
     pub selected_process_idx: Option<usize>,
     pub selected_block_idx: Option<usize>,
     pub selected_marketplace_idx: Option<usize>,
@@ -278,7 +301,7 @@ impl AiosApp {
                     runtime.ipc_drained_total()
                 ),
             ],
-            selected_tab: 0,
+            desktop: desktop::DesktopState::default(),
             selected_process_idx: None,
             selected_block_idx: None,
             selected_marketplace_idx: None,
@@ -345,9 +368,8 @@ impl AiosApp {
         }
     }
 
-    /// Start the live kernel runtime threads (scheduler tick, watchdog
-    /// heartbeats, IPC-generating kernel processes). Called only from `main`
-    /// so GUI tests never spawn background threads.
+    /// Start the system threads only (scheduler tick and watchdog
+    /// heartbeat). Called only from `main` so GUI tests never spawn threads.
     pub fn start_runtime(&mut self) {
         self.runtime.start();
         if self.runtime.is_started() {
@@ -1695,13 +1717,11 @@ impl AiosApp {
     }
 
     fn move_selection_up(&mut self) {
-        match self.selected_tab {
-            1 => {
-                if self.selected_block_idx.is_some_and(|i| i > 0) {
-                    self.selected_block_idx = self.selected_block_idx.map(|i| i - 1);
-                }
+        match self.desktop.focused_app() {
+            Some(DesktopApp::Blocks) if self.selected_block_idx.is_some_and(|i| i > 0) => {
+                self.selected_block_idx = self.selected_block_idx.map(|i| i - 1);
             }
-            3 if self.selected_marketplace_idx.is_some_and(|i| i > 0) => {
+            Some(DesktopApp::Store) if self.selected_marketplace_idx.is_some_and(|i| i > 0) => {
                 self.selected_marketplace_idx = self.selected_marketplace_idx.map(|i| i - 1);
             }
             _ => {}
@@ -1709,14 +1729,14 @@ impl AiosApp {
     }
 
     fn move_selection_down(&mut self) {
-        match self.selected_tab {
-            1 => {
+        match self.desktop.focused_app() {
+            Some(DesktopApp::Blocks) => {
                 let max = self.blocks.len();
                 if max > 0 && self.selected_block_idx.is_none_or(|i| i < max - 1) {
                     self.selected_block_idx = Some(self.selected_block_idx.map_or(0, |i| i + 1));
                 }
             }
-            3 => {
+            Some(DesktopApp::Store) => {
                 let max = self.marketplace_entries.len();
                 if max > 0 && self.selected_marketplace_idx.is_none_or(|i| i < max - 1) {
                     self.selected_marketplace_idx =
@@ -1725,6 +1745,51 @@ impl AiosApp {
             }
             _ => {}
         }
+    }
+
+    /// Open a built-in function as a desktop window, or focus it if already open.
+    pub fn open_app(&mut self, app: DesktopApp) {
+        if !DesktopApp::all().contains(&app) {
+            self.add_log(format!("{} is unavailable in this build", app.title()));
+            return;
+        }
+        self.desktop.open(app);
+        self.add_log(format!("Opened {}", app.title()));
+    }
+
+    /// Execute a Start-menu action.
+    pub fn activate_start_action(&mut self, action: StartAction) {
+        match action {
+            StartAction::Open(app) => self.open_app(app),
+            StartAction::RunProgram(title) => {
+                let result = voice::run_program(title);
+                self.voice.last_command = result.description.clone();
+                self.voice.last_response = result.response.clone();
+                self.add_log(result.description);
+                self.add_log(result.response);
+            }
+            StartAction::RefreshAll => self.refresh_all(),
+            StartAction::SuspendAll => self.suspend_all(),
+        }
+    }
+
+    /// Re-read every live data source exposed by the desktop windows.
+    pub fn refresh_all(&mut self) {
+        self.sys_poll();
+        self.refresh_processes();
+        self.refresh_blocks();
+        self.hw_refresh();
+        self.net_load_persisted();
+        self.add_log("All system data refreshed".into());
+    }
+
+    /// Suspend every process currently tracked by the scheduler.
+    pub fn suspend_all(&mut self) {
+        let pids: Vec<u64> = self.processes.iter().map(|p| p.pid).collect();
+        for pid in pids {
+            self.suspend_process(pid);
+        }
+        self.add_log("All processes suspended".into());
     }
 }
 
@@ -1746,8 +1811,9 @@ impl eframe::App for AiosApp {
         self.poll_ai();
         self.poll_fm_acks();
         self.hw_poll_hotplug();
+        self.sys_poll();
 
-        if self.selected_tab == 8 {
+        if self.desktop.focused_app() == Some(DesktopApp::Hardware) {
             self.hw_refresh();
         }
 
@@ -1769,252 +1835,315 @@ impl eframe::App for AiosApp {
         self.poll_runtime();
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
 
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("AIOS v1.0.0")
-                        .color(theme.accent)
-                        .size(16.0)
-                        .strong(),
-                );
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("{}", self.ai_tier))
-                        .color(theme.success)
-                        .size(13.0),
-                );
-                ui.separator();
-                let wd_text = match self.watchdog_state {
-                    0 => "WD: OK",
-                    1 => "WD: SUSPENDED",
-                    2 => "WD: RECOVERING",
-                    _ => "WD: SAFE MODE",
-                };
-                let wd_color = if self.watchdog_state == 0 {
-                    theme.success
-                } else {
-                    theme.danger
-                };
-                ui.label(egui::RichText::new(wd_text).color(wd_color).size(12.0));
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("RAM: {}/{} MB", self.ram_used, self.ram_total))
-                        .color(theme.text)
-                        .size(12.0),
-                );
-                ui.separator();
-                self.sys_poll();
-                let sys_connected = self.sys_snap.wifi.as_ref().is_some_and(|l| {
-                    matches!(l.state, aios_sys_control::net_manager::LinkState::Connected)
-                });
-                let sys_color = if self.sys_snap.throttled {
-                    theme.danger
-                } else if sys_connected {
-                    theme.success
-                } else {
-                    theme.text_dim
-                };
-                ui.label(
-                    egui::RichText::new(self.sys_snap.status_line())
-                        .color(sys_color)
-                        .size(12.0),
-                );
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("Blocks: {}", self.blocks.len()))
-                        .color(theme.success)
-                        .size(12.0),
-                );
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("Proc: {}", self.processes.len()))
-                        .color(theme.success)
-                        .size(12.0),
-                );
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("Up: {}s", self.uptime_secs))
-                        .color(theme.text_dim)
-                        .size(12.0),
-                );
-            });
-        });
-
-        egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "HW Tier: {} | IPC: {} pkts | F6=Deps {}F8=Files F9=Hardware",
-                        self.ai_tier,
-                        self.ipc_traffic,
-                        if cfg!(feature = "webview") {
-                            "F7=Browser "
-                        } else {
-                            ""
-                        },
-                    ))
-                    .color(theme.text_dim)
-                    .size(11.0),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new("AIOS Dashboard")
-                            .color(theme.muted)
-                            .size(11.0),
-                    );
-                    ui.separator();
-                    let label = if self.voice.listening {
-                        "\u{1f399} Слушаю..."
-                    } else {
-                        "\u{1f3a4} Голос"
-                    };
-                    if ui
-                        .button(egui::RichText::new(label).size(11.0))
-                        .on_hover_text("Голосовая команда: «открой калькулятор», «смени обои»...")
-                        .clicked()
-                    {
-                        self.voice.toggle_listen();
-                        if self.voice.listening {
-                            self.add_log("Голос: слушаю...".into());
-                        }
-                    }
-                    let hint = if self.voice.stt.is_some() {
-                        "Команда..."
-                    } else {
-                        "STT нет — введите команду"
-                    };
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.voice.manual_input)
-                            .hint_text(hint)
-                            .desired_width(150.0),
-                    );
-                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.voice.submit_manual();
-                    }
-                    if !self.voice.last_response.is_empty() {
-                        ui.label(
-                            egui::RichText::new(&self.voice.last_response)
-                                .color(theme.accent)
-                                .size(11.0),
-                        );
-                    }
-                });
-            });
-        });
-
-        egui::SidePanel::left("tabs")
-            .exact_width(160.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(theme.surface)
-                    .inner_margin(egui::Margin::symmetric(0, 8))
-                    .stroke(egui::Stroke::new(1.0_f32, theme.border)),
-            )
-            .show(ctx, |ui| {
-                ui.add_space(4.0);
-                let mut tabs: Vec<(&str, usize)> = vec![
-                    ("\u{2302} System Dashboard", 0),
-                    ("\u{2b23} WASM Blocks", 1),
-                    ("\u{2728} AI Studio", 2),
-                    ("\u{1f4e6} App Store", 3),
-                    ("\u{1f4e1} Network Settings", 4),
-                    ("\u{2913} Deps", 5),
-                ];
-                #[cfg(feature = "webview")]
-                tabs.push(("\u{1f310} Native Browser", 6));
-                tabs.extend([("\u{1f4c1} Files", 7), ("\u{1f527} Hardware", 8)]);
-
-                for (label, idx) in tabs {
-                    let is_active = self.selected_tab == idx;
-                    let text_color = if is_active { theme.accent } else { theme.text };
-
-                    let resp = ui.add(
-                        egui::Button::new(egui::RichText::new(label).color(text_color).size(13.0))
-                            .fill(if is_active {
-                                theme.accent.linear_multiply(0.12)
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            })
-                            .stroke(egui::Stroke::NONE)
-                            .corner_radius(6.0)
-                            .min_size(egui::vec2(140.0, 32.0)),
-                    );
-                    if resp.clicked() {
-                        self.selected_tab = idx;
-                    }
-                    ui.add_space(2.0);
-                }
-
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                ui.label(
-                    egui::RichText::new("Quick Actions")
-                        .color(theme.muted)
-                        .size(10.0),
-                );
-                ui.add_space(4.0);
-
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("\u{21bb} Refresh All")
-                                .color(theme.info)
-                                .size(11.0),
-                        )
-                        .fill(theme.button_bg)
-                        .corner_radius(4.0)
-                        .min_size(egui::vec2(130.0, 24.0)),
-                    )
-                    .clicked()
-                {
-                    self.add_log("Full refresh".into());
-                }
-
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("\u{23f8} Suspend All")
-                                .color(theme.warning)
-                                .size(11.0),
-                        )
-                        .fill(theme.button_bg)
-                        .corner_radius(4.0)
-                        .min_size(egui::vec2(130.0, 24.0)),
-                    )
-                    .clicked()
-                {
-                    self.add_log("Suspend all processes".into());
-                }
-            });
-
+        let screen_width = ctx.screen_rect().width();
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(theme.surface)
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
+                    .fill(egui::Color32::from_rgb(12, 14, 24))
+                    .inner_margin(egui::Margin {
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        bottom: 48,
+                    }),
             )
-            .show(ctx, |ui| match self.selected_tab {
-                0 => tabs::overview::show(ui, self, &theme),
-                1 => tabs::blocks::show(ui, self, &theme),
-                2 => tabs::ai_studio::show(ui, self, &theme),
-                3 => tabs::marketplace::show(ui, self, &theme),
-                4 => tabs::network::show(ui, self, &theme),
-                5 => tabs::deps::show(ui, self, &theme),
-                #[cfg(feature = "webview")]
-                6 => tabs::web::show(ui, self, &theme),
-                #[cfg(not(feature = "webview"))]
-                6 => tabs::overview::show(ui, self, &theme),
-                7 => tabs::files::show(ui, self, &theme),
-                8 => tabs::hardware::show(ui, self, &theme),
-                _ => tabs::overview::show(ui, self, &theme),
+            .show(ctx, |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(48.0);
+                        ui.label(
+                            egui::RichText::new("AIOS Desktop")
+                                .color(theme.accent)
+                                .size(28.0)
+                                .strong(),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("Рабочий стол AIOS")
+                                .color(theme.text)
+                                .size(15.0),
+                        );
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "Нажмите «Пуск» слева внизу, чтобы открыть функцию или программу",
+                            )
+                            .color(theme.text_dim)
+                            .size(12.0),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("F1-F9 быстро открывают соответствующие окна")
+                                .color(theme.muted)
+                                .size(11.0),
+                        );
+                    });
+                });
             });
+
+        let windows: Vec<(u64, DesktopApp, bool)> = self
+            .desktop
+            .windows
+            .iter()
+            .map(|w| (w.id, w.app, w.minimized))
+            .collect();
+
+        for (id, app, minimized) in windows {
+            if minimized {
+                continue;
+            }
+            let mut open = true;
+            let title = format!("{}  ·  {}", app.title(), app.shortcut());
+            let response = egui::Window::new(title)
+                .id(egui::Id::new(("aios_desktop_window", id)))
+                .open(&mut open)
+                .default_pos(window_pos(id))
+                .default_size(window_size(app))
+                .min_size(egui::vec2(360.0, 260.0))
+                .resizable(true)
+                .collapsible(false)
+                .show(ctx, |ui| match app {
+                    DesktopApp::Dashboard => tabs::overview::show(ui, self, &theme),
+                    DesktopApp::Blocks => tabs::blocks::show(ui, self, &theme),
+                    DesktopApp::AiStudio => tabs::ai_studio::show(ui, self, &theme),
+                    DesktopApp::Store => tabs::marketplace::show(ui, self, &theme),
+                    DesktopApp::Network => tabs::network::show(ui, self, &theme),
+                    DesktopApp::Deps => tabs::deps::show(ui, self, &theme),
+                    #[cfg(feature = "webview")]
+                    DesktopApp::Browser => tabs::web::show(ui, self, &theme),
+                    #[cfg(not(feature = "webview"))]
+                    DesktopApp::Browser => tabs::overview::show(ui, self, &theme),
+                    DesktopApp::Files => tabs::files::show(ui, self, &theme),
+                    DesktopApp::Hardware => tabs::hardware::show(ui, self, &theme),
+                });
+
+            if let Some(response) = response {
+                if response.response.clicked() {
+                    self.desktop.focus(id);
+                }
+            }
+            if !open {
+                self.desktop.close(id);
+            }
+        }
+
+        let entries = desktop::start_entries();
+        let query = self.desktop.start_query.to_lowercase();
+        let mut start_open = self.desktop.start_open;
+        let mut selected_actions = Vec::new();
+
+        egui::Window::new("Пуск")
+            .id(egui::Id::new("aios_start_menu"))
+            .open(&mut start_open)
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, -54.0))
+            .default_size(egui::vec2(360.0, 460.0))
+            .min_size(egui::vec2(300.0, 320.0))
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("\u{1f5a5} AIOS")
+                            .color(theme.accent)
+                            .size(16.0)
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new("Пуск").color(theme.text_dim).size(11.0));
+                    });
+                });
+                ui.separator();
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.desktop.start_query)
+                        .hint_text("Поиск программ...")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(4.0);
+                ui.separator();
+
+                let mut visible = 0;
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        for entry in entries.iter().filter(|entry| {
+                            query.is_empty()
+                                || entry.title.to_lowercase().contains(&query)
+                                || entry.subtitle.to_lowercase().contains(&query)
+                        }) {
+                            visible += 1;
+                            ui.vertical(|ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(&entry.title).size(13.0),
+                                        )
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::NONE)
+                                        .min_size(egui::vec2(320.0, 22.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    selected_actions.push(entry.action);
+                                }
+                                ui.label(
+                                    egui::RichText::new(&entry.subtitle)
+                                        .color(theme.text_dim)
+                                        .size(10.0),
+                                );
+                            });
+                        }
+                    });
+                if visible == 0 {
+                    ui.label(
+                        egui::RichText::new("Ничего не найдено")
+                            .color(theme.text_dim)
+                            .size(11.0),
+                    );
+                }
+            });
+
+        self.desktop.start_open = start_open;
+        if !selected_actions.is_empty() {
+            self.desktop.start_open = false;
+            for action in selected_actions {
+                self.activate_start_action(action);
+            }
+        }
 
         self.crash.show(ctx);
         self.apply_crash_outcome();
 
-        let fm_active = self.selected_tab == 7 && self.fm_input.is_none();
+        let taskbar_windows: Vec<(u64, DesktopApp, bool)> = self
+            .desktop
+            .windows
+            .iter()
+            .map(|w| (w.id, w.app, w.minimized))
+            .collect();
+        let focused = self.desktop.focused;
+
+        egui::Area::new(egui::Id::new("aios_taskbar"))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, 0.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.set_width(screen_width);
+                ui.set_min_width(screen_width);
+                egui::Frame::new()
+                    .fill(theme.surface)
+                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .stroke(egui::Stroke::new(1.0_f32, theme.border))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let start_label = if self.desktop.start_open {
+                                "\u{2630} Пуск ▾"
+                            } else {
+                                "\u{2630} Пуск"
+                            };
+                            if ui
+                                .button(
+                                    egui::RichText::new(start_label)
+                                        .color(theme.accent)
+                                        .size(13.0)
+                                        .strong(),
+                                )
+                                .clicked()
+                            {
+                                self.desktop.toggle_start();
+                            }
+                            ui.separator();
+
+                            for (id, app, minimized) in &taskbar_windows {
+                                let active = focused == Some(*id) && !minimized;
+                                let icon = if *minimized { "\u{25a1}" } else { "\u{25a0}" };
+                                let label = format!("{icon} {}", app.title());
+                                let color = if active { theme.accent } else { theme.text };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(label).color(color).size(12.0),
+                                        )
+                                        .fill(if active {
+                                            theme.accent.linear_multiply(0.12)
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        })
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(5.0)
+                                        .min_size(egui::vec2(120.0, 28.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.desktop.toggle_minimize(*id);
+                                }
+                            }
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if !self.voice.last_response.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(&self.voice.last_response)
+                                                .color(theme.accent)
+                                                .size(10.0),
+                                        );
+                                    }
+                                    let hint = if self.voice.stt.is_some() {
+                                        "Команда..."
+                                    } else {
+                                        "STT нет — введите команду"
+                                    };
+                                    let resp = ui.add(
+                                        egui::TextEdit::singleline(&mut self.voice.manual_input)
+                                            .hint_text(hint)
+                                            .desired_width(150.0),
+                                    );
+                                    if resp.lost_focus()
+                                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                    {
+                                        self.voice.submit_manual();
+                                    }
+                                    let voice_label = if self.voice.listening {
+                                        "\u{1f399} Слушаю..."
+                                    } else {
+                                        "\u{1f3a4} Голос"
+                                    };
+                                    if ui
+                                        .button(egui::RichText::new(voice_label).size(11.0))
+                                        .on_hover_text(
+                                            "«открой калькулятор», «запусти браузер», «смени обои»",
+                                        )
+                                        .clicked()
+                                    {
+                                        self.voice.toggle_listen();
+                                    }
+                                    ui.separator();
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "AI {} · RAM {}/{} MB · IPC {}",
+                                            self.ai_tier,
+                                            self.ram_used,
+                                            self.ram_total,
+                                            self.ipc_traffic
+                                        ))
+                                        .color(theme.text_dim)
+                                        .size(10.0),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(self.sys_snap.status_line())
+                                            .color(if self.sys_snap.throttled {
+                                                theme.danger
+                                            } else {
+                                                theme.text_dim
+                                            })
+                                            .size(10.0),
+                                    );
+                                },
+                            );
+                        });
+                    });
+            });
+
+        let fm_active =
+            self.desktop.focused_app() == Some(DesktopApp::Files) && self.fm_input.is_none();
         let fm_side = self.fm.as_ref().map(|fm| fm.active_side());
         ctx.input(|i| {
             for event in &i.events {
@@ -2033,18 +2162,18 @@ impl eframe::App for AiosApp {
                         }
                     }
                     match k {
-                        egui::Key::F1 => self.selected_tab = 0,
-                        egui::Key::F2 => self.selected_tab = 1,
-                        egui::Key::F3 => self.selected_tab = 2,
-                        egui::Key::F4 => self.selected_tab = 3,
-                        egui::Key::F5 => self.selected_tab = 4,
-                        egui::Key::F6 => self.selected_tab = 5,
-                        egui::Key::F7 => self.selected_tab = 6,
-                        egui::Key::F8 => self.selected_tab = 7,
-                        egui::Key::F9 => self.selected_tab = 8,
-                        egui::Key::J => self.move_selection_down(),
-                        egui::Key::K => self.move_selection_up(),
-                        _ => {}
+                        egui::Key::Escape => self.desktop.start_open = false,
+                        _ => {
+                            if let Some(app) = DesktopApp::from_key(*k) {
+                                self.open_app(app);
+                            } else {
+                                match k {
+                                    egui::Key::J => self.move_selection_down(),
+                                    egui::Key::K => self.move_selection_up(),
+                                    _ => {}
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2069,7 +2198,8 @@ mod tests {
         );
         assert_eq!(app.dep_blocks.len(), 2);
         assert_eq!(app.ram_total, 65536);
-        assert_eq!(app.selected_tab, 0);
+        assert!(app.desktop.windows.is_empty());
+        assert!(!app.desktop.start_open);
     }
 
     #[test]
@@ -2105,7 +2235,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_navigation() {
+    fn test_desktop_window_navigation() {
         let mut app = AiosApp::new(
             AiTier::Tier1,
             HardwareProfile::mock_modern(),
@@ -2115,8 +2245,19 @@ mod tests {
             0,
             4096,
         );
-        app.selected_tab = 1;
-        assert_eq!(app.selected_tab, 1);
+        app.activate_start_action(StartAction::Open(DesktopApp::Blocks));
+        assert_eq!(app.desktop.focused_app(), Some(DesktopApp::Blocks));
+        assert_eq!(app.desktop.windows.len(), 1);
+
+        app.activate_start_action(StartAction::Open(DesktopApp::Files));
+        assert_eq!(app.desktop.focused_app(), Some(DesktopApp::Files));
+        assert_eq!(app.desktop.windows.len(), 2);
+
+        let files_id = app.desktop.windows[1].id;
+        app.desktop.toggle_minimize(files_id);
+        assert_eq!(app.desktop.focused_app(), None);
+        app.desktop.toggle_minimize(files_id);
+        assert_eq!(app.desktop.focused_app(), Some(DesktopApp::Files));
     }
 
     #[test]

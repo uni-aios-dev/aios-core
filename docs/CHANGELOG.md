@@ -1,5 +1,40 @@
 # AIOS Development Log
 
+## v2.80.0 - Desktop shell in aios-gui (2026-11-23)
+
+### Added
+- `aios-gui` is now a desktop shell instead of a tabbed dashboard: a dark
+  desktop, a bottom taskbar with `☰ Пуск`, a button per open function window and
+  a system tray with voice input, AI tier, RAM/IPC counters and system status.
+  Built-in functions open as separate egui windows; the Start menu is searchable
+  and sorted alphabetically case-insensitively, and lists built-in functions,
+  external programs and the system actions `Обновить всё` / `Приостановить всё`.
+  `F1`-`F9` open or focus the matching window, `J`/`K` navigate the focused
+  Blocks/App Store list and `Escape` closes Start. The old left sidebar, top bar
+  and tab strip are gone.
+- `aios-gui/src/desktop.rs` models the shell with `DesktopApp`, `StartAction`,
+  `StartEntry`, `DesktopWindow` and `DesktopState` (open/focus/minimize/close).
+
+### Changed
+- The shared program catalog moved to `aios-gui/src/voice.rs` as `Program`,
+  `ProgramAction`, `PROGRAMS`, `programs()` and `run_program()`;
+  `desktop::start_entries()` reuses it, so voice commands and Start menu entries
+  share one source of truth.
+- `Обновить всё` re-reads every live data source and `Приостановить всё`
+  suspends every scheduler-tracked process instead of only writing to the log.
+- EN/RU `INTERFACE`, `ARCHITECTURE`, `CHANGELOG`, `BUGS` and `TODO` were aligned
+  with the desktop shell.
+
+### Fixed
+- Startup no longer seeds `ai_orchestrator`, `io_handler`, `health_monitor` and
+  `telemetry_agg` demo processes or the `ipc_generator` packet flow: the process
+  table and IPC counter start empty and fill only from explicit actions.
+
+### Verified
+- `cargo test -p aios-gui`: 33 passed. Coverage includes sorted/unique/complete
+  Start entries, desktop window focus/minimize, no demo processes, explicit
+  process kill, manual IPC packets and desktop window navigation.
+
 ## Unreleased — unified text console core (`aios-console`)
 
 ### Added

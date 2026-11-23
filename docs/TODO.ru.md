@@ -22,7 +22,8 @@
 - [x] Фаза 12: Docker + CI/CD инфраструктура
 - [x] Фаза 13: Persistent DB (redb), CLI Shell, определение хранилища, RT-планировщик, стресс-тесты
 - [x] Фаза 14: Мультибинарная совместимость (`aios-exec-compat`) — POSIX/Win32 трансляция, исцеление зависимостей, совместимость песочницы
-- [x] GUI Дашборд (`aios-gui`) — нативное окно egui/eframe, 6 вкладок, тёмная тема, навигация клавиатурой
+- [x] Рабочий стол GUI (`aios-gui`) — нативное окно egui/eframe, меню «Пуск», окна функций, панель задач, тёмная тема, навигация клавиатурой
+- [x] Меню «Пуск» GUI и общий каталог программ — `src/desktop.rs` (`DesktopApp`, `StartAction`, `StartEntry`, `DesktopState`/`DesktopWindow`) и `src/voice.rs` (`Program`, `ProgramAction`, `PROGRAMS`, `programs()`, `run_program()`); отсортированные пункты с поиском, настоящие действия `Обновить всё` / `Приостановить всё`, 33 проходящих теста
 - [x] Документация интерфейса (`docs/INTERFACE.md`) — полное руководство по GUI/TUI, двуязычное
 - [x] Реальные ОС-потоки планировщика — `RealThread`, `TerminateFlag`, `SuspendFlag`, кооперативное завершение/приостановка
 - [x] BlockExecutor — мост выполнения WASM-блоков между `BlockRegistry` + `WasmSandbox`
@@ -706,9 +707,9 @@
   - [x] Персистентный профиль через `WebContext` (`AIOS_DATA_DIR`/`aios/webview`) — куки и хранилище переживают перезапуск
   - [x] `resolve_target()` — правило омнибокса, общее с TUI (URL / голый хост / запрос DuckDuckGo)
   - [x] Модуль `launcher` — поиск и запуск бинарника `aios-gui` (рядом с exe, затем PATH)
-  - [x] Вкладка GUI Browser (F7) в `aios-gui` — омнибокс, Back/Forward, Open/Close, строка статуса
-  - [x] Горячая клавиша `W` в TUI (и `aios-tui`, и ядро `aios`) запускает дашборд GUI
-  - [ ] Будущее: встроить webview как дочернее окно внутри вкладки egui через `build_as_child` (Windows/macOS/X11), заменив окно-компаньон
+  - [x] Окно Native Browser (F7) в `aios-gui` — омнибокс, Back/Forward, Open/Close, строка статуса
+  - [x] Горячая клавиша `W` в TUI (и `aios-tui`, и ядро `aios`) запускает рабочий стол GUI
+  - [ ] Будущее: встроить webview как дочернее окно внутри окна egui через `build_as_child` (Windows/macOS/X11), заменив окно-компаньон
 
 - [x] **Фаза 35: WHATWG-рендеринг HTML и навигация вкладки Web в TUI — ЗАВЕРШЕНА**
   - [x] `HtmlParser` перестроен на `scraper`/html5ever — структурированный текст (заголовки `#`, списки `•`/`1.`, таблицы `|`, `pre`, `hr`, изображения `[alt]`), WHATWG-совместимый
@@ -742,8 +743,8 @@
   - [x] `n` открывает выбранную ссылку в нативном браузере
   - [x] Handle браузера в модульном `OnceLock<Mutex<Option<WebBrowser>>>` — ядро не тронуто
   - [x] `http_client()`: десктопный User-Agent + `Accept: text/html` + таймаут 15с для текстовых загрузок (меньше бот-блокировок, нет зависаний)
-  - [ ] Будущее: встроить webview как дочернее окно вкладки Browser в GUI через `build_as_child` (Windows/macOS/X11), заменив companion window
-  - [ ] Будущее: нативный браузер в Live ISO — добавить WebKitGTK в Alpine rootfs и собирать `aios`/`aios-gui` с включённой фичей `webview`, чтобы клавиши `B`/`n` и вкладка GUI Browser работали и на live USB (в v2.32.0 образ поставляется без неё)
+  - [ ] Будущее: встроить webview как дочернее окно окна Native Browser через `build_as_child` (Windows/macOS/X11), заменив companion window
+  - [ ] Будущее: нативный браузер в Live ISO — добавить WebKitGTK в Alpine rootfs и собирать `aios`/`aios-gui` с включённой фичей `webview`, чтобы клавиши `B`/`n` и окно Native Browser работали и на live USB (в v2.32.0 образ поставляется без неё)
   - [x] Будущее: headless render-to-text fallback для JS-тяжёлых сайтов — `aios-browser::headless` дампит DOM в headless-браузере класса Chromium (`msedge`/`chromium`/`google-chrome`, переопределение через `AIOS_HEADLESS_BROWSER`, `--no-sandbox` через `AIOS_HEADLESS_NO_SANDBOX`), когда обычная загрузка не даёт читаемого текста; принимается только если отрендеренный текст заметно богаче (v2.17.0)
 
 - [x] **Фаза 25c: Встроенный JS-движок и состоятельная браузерная сессия — ЗАВЕРШЕНА (v2.39.0)**

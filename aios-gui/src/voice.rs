@@ -164,80 +164,197 @@ impl VoiceControl {
     }
 }
 
-struct Action {
-    description: String,
-    response: String,
+/// How a Start-menu program entry is executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramAction {
+    /// Spawn the first available binary from the program's candidate list.
+    Launch,
+    /// Rotate the desktop wallpaper.
+    Wallpaper,
+    /// Show an informational response without executing anything.
+    Notice,
 }
 
-/// Map a normalized transcript to a desktop action.
-fn dispatch(t: &str) -> Action {
-    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+/// One launchable desktop program shared by the Start menu and voice control.
+#[derive(Debug, Clone, Copy)]
+pub struct Program {
+    /// Name shown in the Start menu.
+    pub title: &'static str,
+    /// RU/EN voice keywords mapped to this program.
+    pub aliases: &'static [&'static str],
+    /// Binaries tried in order when the program is launched.
+    pub binaries: &'static [&'static str],
+    /// Execution mode.
+    pub action: ProgramAction,
+    /// Response shown for informational entries.
+    pub notice: &'static str,
+}
 
-    if has(&["калькулятор", "кальк", "calculator", "calc"]) {
-        let ok = launch(&["galculator", "gnome-calculator", "kcalc", "xcalc", "calc"]);
-        return done("Запуск калькулятора", ok, "Калькулятор");
-    }
-    if has(&["настройк", "settings", "настройки системы"]) {
-        let ok = launch(&[
+/// Programs exposed in the Start menu and understood by voice commands.
+static PROGRAMS: &[Program] = &[
+    Program {
+        title: "Калькулятор",
+        aliases: &["калькулятор", "кальк", "calculator", "calc"],
+        binaries: &["galculator", "gnome-calculator", "kcalc", "xcalc", "calc"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Настройки",
+        aliases: &["настройк", "settings", "настройки системы"],
+        binaries: &[
             "gnome-control-center",
             "systemsettings",
             "xfce4-settings-manager",
-        ]);
-        return done("Открыть настройки", ok, "Настройки");
+        ],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Браузер",
+        aliases: &["браузер", "browser", "интернет", "firefox", "chrome"],
+        binaries: &["firefox", "chromium", "google-chrome", "epiphany"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Терминал",
+        aliases: &["терминал", "консол", "terminal", "console"],
+        binaries: &["xterm", "gnome-terminal", "konsole", "alacritty", "foot"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Файловый менеджер",
+        aliases: &["файл", "проводник", "files", "file manager"],
+        binaries: &["thunar", "pcmanfm", "nautilus", "nemo", "dolphin"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Настройки звука",
+        aliases: &["звук", "громк", "volume", "sound", "audio"],
+        binaries: &["pavucontrol", "alsamixer"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Сменить обои",
+        aliases: &["обои", "фон", "wallpaper", "background"],
+        binaries: &[],
+        action: ProgramAction::Wallpaper,
+        notice: "",
+    },
+    Program {
+        title: "Настройки сети",
+        aliases: &["сеть", "network", "wifi", "вайфай"],
+        binaries: &["nm-connection-editor", "gnome-control-center"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Текстовый редактор",
+        aliases: &["редактор", "editor", "текст"],
+        binaries: &["gedit", "mousepad", "leafpad", "kate"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Скриншот",
+        aliases: &["скриншот", "screenshot"],
+        binaries: &["gnome-screenshot", "spectacle", "scrot"],
+        action: ProgramAction::Launch,
+        notice: "",
+    },
+    Program {
+        title: "Перезагрузка",
+        aliases: &["перезагруз", "reboot", "restart"],
+        binaries: &[],
+        action: ProgramAction::Notice,
+        notice: "Для перезагрузки используйте меню системы (нужны права root)",
+    },
+    Program {
+        title: "Выключение",
+        aliases: &["выключ", "заверш", "shutdown", "poweroff"],
+        binaries: &[],
+        action: ProgramAction::Notice,
+        notice: "Для выключения используйте меню системы (нужны права root)",
+    },
+];
+
+/// Return the shared program catalog used by the Start menu and voice control.
+pub fn programs() -> &'static [Program] {
+    PROGRAMS
+}
+
+/// Keep the historical voice-command descriptions for each catalog entry.
+fn program_description(title: &str) -> &'static str {
+    match title {
+        "Калькулятор" => "Запуск калькулятора",
+        "Настройки" => "Открыть настройки",
+        "Браузер" => "Запуск браузера",
+        "Терминал" => "Запуск терминала",
+        "Файловый менеджер" => "Открыть файловый менеджер",
+        "Настройки звука" => "Настройка звука",
+        "Настройки сети" => "Настройка сети",
+        "Текстовый редактор" => "Запуск редактора",
+        "Скриншот" => "Скриншот",
+        "Перезагрузка" => "Перезагрузка",
+        "Выключение" => "Завершение работы",
+        _ => "Сменить обои",
     }
-    if has(&["браузер", "browser", "интернет", "firefox", "chrome"]) {
-        let ok = launch(&["firefox", "chromium", "google-chrome", "epiphany"]);
-        return done("Запуск браузера", ok, "Браузер");
-    }
-    if has(&["терминал", "консол", "terminal", "console"]) {
-        let ok = launch(&["xterm", "gnome-terminal", "konsole", "alacritty", "foot"]);
-        return done("Запуск терминала", ok, "Терминал");
-    }
-    if has(&["файл", "проводник", "files", "file manager"]) {
-        let ok = launch(&["thunar", "pcmanfm", "nautilus", "nemo", "dolphin"]);
-        return done("Открыть файловый менеджер", ok, "Файловый менеджер");
-    }
-    if has(&["звук", "громк", "volume", "sound", "audio"]) {
-        let ok = launch(&["pavucontrol", "alsamixer"]);
-        return done("Настройка звука", ok, "Настройки звука");
-    }
-    if has(&["обои", "фон", "wallpaper", "background"]) {
-        return change_wallpaper();
-    }
-    if has(&["сеть", "network", "wifi", "вайфай"]) {
-        let ok = launch(&["nm-connection-editor", "gnome-control-center"]);
-        return done("Настройка сети", ok, "Настройки сети");
-    }
-    if has(&["редактор", "editor", "текст"]) {
-        let ok = launch(&["gedit", "mousepad", "leafpad", "kate"]);
-        return done("Запуск редактора", ok, "Текстовый редактор");
-    }
-    if has(&["скриншот", "screenshot"]) {
-        let ok = launch(&["gnome-screenshot", "spectacle", "scrot"]);
-        return done("Скриншот", ok, "Скриншот");
-    }
-    if has(&["перезагруз", "reboot", "restart"]) {
-        return Action {
-            description: "Перезагрузка".to_string(),
-            response: "Для перезагрузки используйте меню системы (нужны права root)".to_string(),
+}
+
+/// Result of a launch attempt, shown in the GUI status line.
+#[derive(Debug, Clone)]
+pub struct LaunchResult {
+    /// Short description of the executed action.
+    pub description: String,
+    /// Human-readable result or error.
+    pub response: String,
+}
+
+/// Execute a program by its Start-menu title.
+pub fn run_program(title: &str) -> LaunchResult {
+    let Some(program) = programs().iter().find(|p| p.title == title) else {
+        return LaunchResult {
+            description: format!("Неизвестная программа: {title}"),
+            response: "Программа не найдена в Пуске".to_string(),
         };
+    };
+    match program.action {
+        ProgramAction::Launch => done(
+            program_description(program.title),
+            launch(program.binaries),
+            program.title,
+        ),
+        ProgramAction::Wallpaper => change_wallpaper(),
+        ProgramAction::Notice => LaunchResult {
+            description: program_description(program.title).to_string(),
+            response: program.notice.to_string(),
+        },
     }
-    if has(&["выключ", "заверш", "shutdown", "poweroff"]) {
-        return Action {
-            description: "Завершение работы".to_string(),
-            response: "Для выключения используйте меню системы (нужны права root)".to_string(),
-        };
+}
+
+/// Map a normalized transcript to a desktop action.
+fn dispatch(t: &str) -> LaunchResult {
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+
+    for program in programs() {
+        if has(program.aliases) {
+            return run_program(program.title);
+        }
     }
 
-    Action {
+    LaunchResult {
         description: format!("Не распознано: {}", t),
         response: "Не понял. Примеры: «открой калькулятор», «запусти браузер», «смени обои»"
             .to_string(),
     }
 }
 
-fn done(desc: &str, ok: bool, what: &str) -> Action {
-    Action {
+fn done(desc: &str, ok: bool, what: &str) -> LaunchResult {
+    LaunchResult {
         description: desc.to_string(),
         response: if ok {
             format!("{what} запущен")
@@ -259,7 +376,7 @@ fn launch(candidates: &[&str]) -> bool {
     })
 }
 
-fn change_wallpaper() -> Action {
+fn change_wallpaper() -> LaunchResult {
     let mut images: Vec<PathBuf> = Vec::new();
     for dir in [
         "/usr/share/backgrounds",
@@ -272,7 +389,7 @@ fn change_wallpaper() -> Action {
         collect_images(Path::new(&extra), &mut images, 0);
     }
     if images.is_empty() {
-        return Action {
+        return LaunchResult {
             description: "Сменить обои".to_string(),
             response: "Не найдено изображений (положите их в AIOS_WALLPAPERS)".to_string(),
         };
@@ -300,7 +417,7 @@ fn change_wallpaper() -> Action {
                 .spawn()
                 .is_ok()
         });
-    Action {
+    LaunchResult {
         description: "Сменить обои".to_string(),
         response: if ok {
             format!("Обои: {}", img.display())
