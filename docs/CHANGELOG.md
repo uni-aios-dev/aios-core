@@ -52,6 +52,29 @@
   Legacy-BIOS-only because the new kernel overwrites the old UEFI stage at
   LBA 32; the native UEFI-only GPT/ESP image is still built by `aios-image`.
 
+### Dual-kernel boot menu (2026-11-24)
+- Added a second Limine entry to the physical stick image:
+  `aios-kernel-usb-limine-dual.img` (4,683,776 bytes, SHA-256
+  `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`). The
+  202-byte `limine.conf` uses `timeout: 3` and offers
+  `/AIOS Desktop v2.81 (native kernel)` as the default entry and
+  `/AIOS Legacy v2.79 (old GUI)` as the second entry.
+- The old v2.79 ELF (1,121,104 bytes, SHA-256
+  `8CF8A46F76135F4545A05ED5F773824B7872666F0D3EECD986D3417AF9CD2044`) was
+  copied from `aios-kernel-usb-limine-current.img` into ISO sector 600 and
+  exposed through a new `/boot` record `AIOS_KER2;1` (Rock Ridge `aios-ker2`).
+  The new desktop kernel stays at ISO sector 32. QEMU Legacy BIOS boots the
+  default entry into the new desktop; a temporary config with the entries
+  swapped boots the old kernel and matches the LAPIC tick RIP of the reference
+  `current.img` boot, so both ELFs are loadable.
+- After explicit confirmation `\\.\PhysicalDrive3` was rewritten with the dual
+  image. Full read-back SHA-256 matched, MBR `EB 3C 90 LIMIT` / `55 AA` was
+  intact, ELF magic was present at bytes 65536 and 1228800, and both menu
+  entries were read back from the disk. Logs:
+  `boot/out/flash-dual-disk3.log`, `boot/out/verify-dual-disk3.log`. The image
+  remains Legacy-BIOS-only; the UEFI stage was already overwritten by the
+  earlier single-kernel patch.
+
 ## v2.80.0 - Desktop shell in aios-gui (2026-11-23)
 
 ### Added

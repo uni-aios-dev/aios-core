@@ -2404,6 +2404,24 @@ match on the bound local port and require the reply to come from the connected p
 - Flash to a real USB stick: run `scripts\flash-usb.ps1` as Administrator (it writes the image to `\\.\PhysicalDriveN`, verifies SHA-256 and the MBR `55 AA` signature). A bare-metal AIOS stick boots on both legacy BIOS and UEFI laptops. For the native UEFI-only GPT image use `aios-install` instead: it validates the GPT/ESP layout before writing (see the Native UEFI Boot Chain section above).
 - Verify: `cargo run --release` in `aios-kernel-run` — serial shows `aios-kernel: Limine handoff`, HHDM offset, RSDP, `framebuffer = WxH pitch=… bpp=… usable=true`, `framebuffer self-check OK (readback 0x…)`, `usable memory regions = N`, `paging selftest OK.`, `heap: …`, `interrupts online.`, `[sched] ready`, `five ring-3 tasks armed`. A QEMU `screendump` confirms the console draws (foreground/background pixel histogram).
 
+### Dual-kernel Limine image on the physical stick (v2.81.0)
+- The reflashed Kingston stick uses a byte-patched copy of the known-good hybrid
+  ISO rather than a full `xorriso` rebuild (those host binaries are unavailable).
+  Its `/boot` directory has two kernel records: `AIOS_KER.;1` (Rock Ridge
+  `aios-kernel`, extent 32) for the new desktop ELF and `AIOS_KER2;1` (Rock Ridge
+  `aios-ker2`, extent 600) for the old v2.79 ELF. The 202-byte `limine.conf` at
+  ISO sector 1780 sets `timeout: 3` and lists the desktop entry first, so it is
+  the default; ↓ + Enter selects `AIOS Legacy v2.79 (old GUI)`.
+- The old ELF is read from `aios-kernel-usb-limine-current.img` and written to
+  ISO sector 600, inside the already-overwritten `LIMINE_U.BIN` span but clear of
+  the boot catalog (1569) and BIOS stages (1570+). Because the UEFI stage at
+  LBA 32 was destroyed by the earlier single-kernel patch, this image remains
+  Legacy-BIOS-only; a clean hybrid rebuild is still needed for UEFI + BIOS parity.
+- Verified in QEMU Legacy BIOS: the default entry reaches `Limine handoff` and
+  the native desktop; swapping the config entries boots the old kernel with the
+  same LAPIC tick RIP as the reference `current.img` boot. The flashed disk was
+  read back in full (SHA-256 `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`) with ELF magic at both kernel offsets.
+
 ## Bootable AIOS Installer (Live ISO → disk, v2.33.0)
 
 The bootable ISO is built from `iso/stage` (Limine BIOS/UEFI CD images, `limine.conf`,

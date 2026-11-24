@@ -1,5 +1,19 @@
 # AIOS Interface — Usage Guide
 
+## Legacy BIOS USB boot menu (v2.81.0)
+
+The Kingston DataTraveler stick is a patched hybrid Limine image. On a
+Legacy-BIOS laptop it shows a menu for 3 seconds (`timeout: 3`):
+
+1. `/AIOS Desktop v2.81 (native kernel)` — the default entry; boots the native
+   framebuffer desktop directly in `aios-kernel`.
+2. `/AIOS Legacy v2.79 (old GUI)` — the previous kernel, kept as a fallback.
+
+Use ↑/↓ and Enter to choose; if no key is pressed, the first entry boots. The
+stick does not boot on UEFI firmware because the old UEFI stage was overwritten
+when the kernel was patched into ISO LBA 32. To boot the native UEFI-only image
+instead, use the GPT/ESP image described below on a UEFI-capable machine.
+
 ## Native UEFI image (host tools)
 
 The UEFI-only image built by `aios-image` (`boot/out/aios-esp.img`) is written

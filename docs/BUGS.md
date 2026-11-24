@@ -416,6 +416,10 @@ EN/RU docs were aligned.
   stick was reflashed; full read-back SHA-256, MBR signature and ELF magic were
   checked. See CHANGELOG v2.81.0 "Physical deployment" and
   `boot/out/flash-native-desktop-disk3.log`.
+- The physical image now carries both kernels: the new desktop at ISO sector 32
+  and v2.79 at ISO sector 600, selected by a two-entry Limine menu with a 3 s
+  timeout. Both entries were booted in QEMU Legacy BIOS and read back from the
+  reflashed stick (`boot/out/verify-dual-disk3.log`).
 - **Status:** closed. The remaining Legacy-BIOS-only limitation of the patched
   hybrid image is unchanged and documented below.
 
@@ -429,6 +433,10 @@ EN/RU docs were aligned.
   search to the partition holding the config file, so Limine cannot find a
   kernel outside that partition (confirmed in QEMU). Restoring the full
   hybrid image needs the external Limine binaries and `xorriso` either way.
+- The dual-kernel image keeps this layout: the second ELF is placed at ISO
+  sector 600 inside the old, already-overwritten `LIMINE_U.BIN` span, so UEFI
+  boot stays unavailable. A clean hybrid rebuild is still required to restore
+  both BIOS and UEFI booting with the two-entry menu.
 
 ## FIXED (v2.78.0): the Limine/legacy BIOS kernel could not be rebuilt from source
 

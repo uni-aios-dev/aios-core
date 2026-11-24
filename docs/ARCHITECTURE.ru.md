@@ -2425,6 +2425,25 @@ AIOS грузится на голом железе без Linux, Windows и ст
 - Запись на реальную USB-флешку: `scripts\flash-usb.ps1` от имени Администратора (записывает образ на `\\.\PhysicalDriveN`, проверяет SHA-256 и сигнатуру MBR `55 AA`). Флешка AIOS bare-metal загружается и на legacy BIOS, и на UEFI ноутбуках. Для нативного образа UEFI-only (GPT) используйте вместо него `aios-install`: он проверяет структуру GPT/ESP до записи (см. раздел «Собственная цепочка загрузки UEFI» выше).
 - Проверка: `cargo run --release` в `aios-kernel-run` — в serial выводятся `aios-kernel: Limine handoff`, смещение HHDM, RSDP, `framebuffer = WxH pitch=… bpp=… usable=true`, `framebuffer self-check OK (readback 0x…)`, `usable memory regions = N`, `paging selftest OK.`, `heap: …`, `interrupts online.`, `[sched] ready`, `five ring-3 tasks armed`. QEMU `screendump` подтверждает, что консоль действительно рисуется (гистограмма пикселей текста/фона).
 
+### Двухядерный Limine-образ на физической флешке (v2.81.0)
+- Перепрошитая флешка Kingston использует байтовую правку проверенного гибридного
+  ISO, а не полную пересборку через `xorriso` (хостовые бинарники недоступны).
+  В каталоге `/boot` две записи ядра: `AIOS_KER.;1` (Rock Ridge `aios-kernel`,
+  экстент 32) для нового ELF desktop и `AIOS_KER2;1` (Rock Ridge `aios-ker2`,
+  экстент 600) для старого ELF v2.79. Конфиг `limine.conf` размером 202 байта
+  в ISO-секторе 1780 задаёт `timeout: 3` и ставит запись desktop первой, поэтому
+  она выбирается по умолчанию; ↓ + Enter выбирает `AIOS Legacy v2.79 (old GUI)`.
+- Старый ELF берётся из `aios-kernel-usb-limine-current.img` и записывается в
+  ISO-сектор 600 — внутри уже перезаписанной области `LIMINE_U.BIN`, но до
+  boot-каталога (1569) и BIOS-стадий (1570+). Поскольку UEFI-стадия в LBA 32 была
+  уничтожена предыдущим патчем с одним ядром, образ остаётся совместимым только
+  с Legacy BIOS; для паритета UEFI + BIOS нужна чистая пересборка гибридного образа.
+- Проверено в QEMU Legacy BIOS: запись по умолчанию доходит до `Limine handoff`
+  и нативного desktop; при перемене записей конфигом местами грузится старое ядро
+  с тем же RIP в тике LAPIC, что и эталонная загрузка `current.img`. Флешка
+  прочитана целиком (SHA-256 `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`),
+  ELF-магия присутствует по обоим смещениям ядер.
+
 ## Загрузочный установщик AIOS (Live ISO → диск, v2.33.0)
 
 Загрузочный ISO собирается из `iso/stage` (BIOS/UEFI CD-образы Limine, `limine.conf`,
