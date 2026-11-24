@@ -1,5 +1,51 @@
 # AIOS Development Log
 
+## v2.82.0 - Low-overhead ring-3 demos and calmer desktop cadence (2026-11-24)
+
+### Added
+- New `ring3-demo` Cargo feature for `aios-kernel` auto-starts the five ring-3
+  demo tasks at boot for headless proof runs. The normal desktop build leaves
+  them dormant until the user selects `Пуск → Ring-3 демо`; the entry disappears
+  once the tasks are running, and `start_demos()` is idempotent so the Start
+  action cannot duplicate them in the scheduler table.
+- `AIOS_KERNEL_FEATURES` environment override in `aios-kernel-run` (always keeps
+  `limine`) lets `scripts/qemu-smoke.ps1` request `limine,ring3-demo` for the
+  proof lines without changing the shipped desktop image.
+
+### Changed
+- The A/B IPC demos now yield with `SYS_SLEEP` (200 ms) plus a `SYS_PING`
+  heartbeat instead of a 64-million-iteration busy-spin; the ring-3 GUI client
+  presents every 250 ms (was 60 ms). `gui::render()` runs at 60 Hz (was 250 Hz)
+  and the kernel TUI at 30 Hz (was 100 Hz); lid/thermal probes stay on a 20 Hz
+  gate. Idle frames still repaint nothing.
+- `SYS_SLEEP` proof lines are emitted once per task (`note_sleep`), and the
+  `SYS_SEND`/`SYS_RECV` proof lines are sampled every 64th value (was 8th), so
+  COM1 no longer floods at the higher pacing.
+
+### Fixed
+- Idle desktop builds no longer schedule five spinning ring-3 tasks: QEMU boots
+  straight to `[sched] idle`; the demos are opt-in from the Start menu.
+
+### Documentation
+- EN/RU `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` and `INTERFACE` describe the
+  on-demand demos, the `ring3-demo` feature and the new render cadence.
+
+### Verification
+- `cargo fmt --all`, `cargo build --workspace`, `cargo test --workspace`,
+  `cargo clippy --workspace`, standalone kernel build and clippy for the default
+  and `limine,ring3-demo` feature sets are all clean. QEMU Legacy BIOS:
+  `aios-kernel-usb-limine-optimized-default.img` (4,683,776 bytes, SHA-256
+  `B9C89D47B4360E62E41431ADB8089C40CBE5F84571D092BCA7032CDD58C69F48`) launches
+  no ring-3 tasks and reaches `[sched] idle`; `aios-kernel-usb-limine-optimized-demo.img`
+  (4,683,776 bytes, SHA-256
+  `42FE016B50B64F3CEF6194A5358698161719DEC1428882A840EBB78E4D1EFD3E`) shows all
+  five tasks, `u1`/`u2`, `[usleep] up`, the registered ring-3 GUI client and
+  `sock-e ok`. Clean kernel hashes: default
+  `1B8BC1D80260C0C5A93CBBD92C5205CDEF9945C7A3FEEA370ACFF926B99814F9`, demo
+  `A6A131C8649080DC176DA3D7D3511E1AC9123D3A9A09B992C9574091DE9115C1`.
+- The physical stick still carries the previously flashed dual-kernel image; it
+  was NOT rewritten for this optimization (no new flash confirmation was given).
+
 ## v2.81.0 - One native GUI: AIOS Desktop in aios-kernel (2026-11-24)
 
 ### Added

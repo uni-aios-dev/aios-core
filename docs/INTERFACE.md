@@ -774,7 +774,9 @@ and the desktop. Running `cargo run --bin aios-gui` is **not** part of this path
 shows a title and a hint (`F1 · Система`, `ring-3 · клиент`, `Система · задачи`,
 `Программа · calculator`). The catalog joins built-in windows, the nine `F1`-`F9`
 functions, live ring-3 clients, external programs and the system actions
-`Обновить всё` / `Консоль ядра`. Search matches title and hint case-insensitively
+`Ring-3 демо` / `Обновить всё` / `Консоль ядра`. The `Ring-3 демо` entry starts
+the five dormant ring-3 tasks once (it disappears while they run); the normal
+desktop boots with them off. Search matches title and hint case-insensitively
 in Latin **and** Cyrillic (`систем`, `net`, `F5`). The panel shows ten rows at a
 time and scrolls with ↑/↓ or the mouse wheel.
 
@@ -1270,12 +1272,13 @@ focused) returns to the console/TUI.
 - **Double buffer + 60 FPS (v2.38.24)**: all drawing paints into a RAM
   backbuffer (`[serial] gui backbuffer NNNN KiB` on entry); each frame only the
   dirty rectangle is published to the panel, one row copy at a time — the LCD
-  sees only complete frames, so there is no tearing and no mouse trail. The GUI
-  repaints at 250 Hz (every 4th tick of the 1000 Hz timer since v2.79.0,
-  up from 100 Hz in v2.78.2) instead of the old 20 Hz
-  gate, which makes the live telemetry smooth while the static desktop stays
-  byte-identical. If the backbuffer cannot be mapped the GUI degrades to the
-  v2.38.23 direct-VRAM renderer automatically.
+  sees only complete frames, so there is no tearing and no mouse trail. Since
+  v2.82.0 the GUI repaints at 60 Hz (was 250 Hz in v2.79.0 and 100 Hz in v2.78.2)
+  and the kernel TUI at 30 Hz (was 100 Hz), while lid/thermal probes stay on a
+  ~20 Hz gate — all above what the eye needs, so an idle desktop no longer burns
+  CPU on invisible frames while the static picture stays byte-identical. If the
+  backbuffer cannot be mapped the GUI degrades to the v2.38.23 direct-VRAM
+  renderer automatically.
 - **Ring-3 client windows (v2.38.25)**: the desktop can host windows owned by
   ring-3 tasks. The client calls `SYS_GUI` CREATE once (16-byte request: width,
   height and user addresses of its pixel buffer and NUL-terminated title — every

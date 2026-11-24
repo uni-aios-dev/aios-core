@@ -2,6 +2,10 @@
 
 ## Completed
 
+- [x] Low-overhead ring-3 demos (v2.82.0) — five demo tasks dormant by default,
+      started once from `Пуск → Ring-3 демо` or by the `ring3-demo` feature;
+      A/B sleep+pacing instead of busy-spin, 250 ms GUI client, 60/30 Hz render,
+      sampled proof lines, `AIOS_KERNEL_FEATURES` override
 - [x] Native kernel desktop (`aios-kernel/src/gui.rs`) — the single user-facing
       GUI entered from `idle_loop()` at boot: dark desktop, bottom taskbar with
       `☰ Пуск`, sorted/searchable Start, taskbar buttons for open windows,

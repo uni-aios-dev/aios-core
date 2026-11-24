@@ -10,7 +10,7 @@
 //!   then alternates a 200 ms `SYS_SLEEP` with a `*` echo forever;
 //! - program D (slot 5): the ring-3 GUI client — paints a 96x64 pixel buffer
 //!   with a rotating solid colour and presents it to the kernel window server
-//!   via `SYS_GUI` every 60 ms; each cycle it also drains one input event
+//!   via `SYS_GUI` every 250 ms; each cycle it also drains one input event
 //!   (`SYS_GUI` GET_EVENT) — a key turns the fill red, a body click turns it
 //!   green, echoed back through `SYS_WRITE` (visible only while the GUI
 //!   desktop owns the screen);
@@ -27,22 +27,25 @@
 //! `SYS_SEND` target ids are *scheduler slot ids* (slots 2/3/4 — the kernel
 //! worker owns slot 1); `SLOT_*` constants document the mapping. A and B form
 //! a ping-pong over the per-pid mailboxes whose sampled `[ipc] send/recv`
-//! proof lines appear every 8th transferred value.
+//! proof lines appear every 64th transferred value.
 //!
-//! Every program starts by calling `SYS_SLEEP` (200 ms) so the whole
-//! userspace is briefly asleep at boot — the scheduler must fall back to the
-//! idle context (`[sched] idle`) and wake the five as their deadlines pass,
-//! proving sleep, wake and idle fallback in one QEMU run.
+//! The demos are off by default in the normal desktop build: [`start_demos`]
+//! spawns them once, either from the `ring3-demo` Cargo feature at boot or on
+//! demand from the Start menu. Every program starts by calling `SYS_SLEEP`
+//! (200 ms) so the whole userspace is briefly asleep at startup — the
+//! scheduler must fall back to the idle context (`[sched] idle`) and wake the
+//! five as their deadlines pass, proving sleep, wake and idle fallback.
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::interrupts::TIMER_HZ;
 use crate::memory;
 use crate::sched;
 use crate::syscalls::{
-    SYS_GETPID, SYS_GUI, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_SOCKET, SYS_SOCK_ACCEPT, SYS_SOCK_ADDR,
-    SYS_SOCK_BIND, SYS_SOCK_CLOSE, SYS_SOCK_CONNECT, SYS_SOCK_LISTEN, SYS_SOCK_RECV, SYS_SOCK_SEND,
-    SYS_WRITE,
+    SYS_GETPID, SYS_GUI, SYS_PING, SYS_RECV, SYS_SEND, SYS_SLEEP, SYS_SOCKET, SYS_SOCK_ACCEPT,
+    SYS_SOCK_ADDR, SYS_SOCK_BIND, SYS_SOCK_CLOSE, SYS_SOCK_CONNECT, SYS_SOCK_LISTEN, SYS_SOCK_RECV,
+    SYS_SOCK_SEND, SYS_WRITE,
 };
 use crate::{kprintln, vprintln};
 
@@ -73,11 +76,14 @@ const SLEEPER_SLEEP_TICKS: u64 = TIMER_HZ / 5;
 /// Number of sleep/wake rounds the pid 3 sleeper performs.
 const SLEEPER_ROUNDS: u64 = 8;
 /// Ring-3 GUI client (pid 4) window: a 96x64 test surface, repainted with a
-/// solid colour that rotates every 60 ms.
+/// solid colour that rotates every 250 ms.
 const GUI_W: u64 = 96;
 const GUI_H: u64 = 64;
 const GUI_PIXELS: u64 = GUI_W * GUI_H;
-const GUI_SLEEP_TICKS: u64 = TIMER_HZ * 6 / 100;
+const GUI_SLEEP_TICKS: u64 = TIMER_HZ / 4;
+/// Pacing for the A/B IPC ping-pong: sleeping 200 ms replaces the former
+/// 4,194,304-iteration busy loop and lets the scheduler halt the CPU.
+const IPC_PACE_TICKS: u64 = TIMER_HZ / 5;
 /// Colour added to the client's fill each present round.
 const GUI_COLOR_STEP: u64 = 0x00_11_2a_44;
 /// Fill colour the demo switches to on a key event (red-ish).
@@ -401,12 +407,12 @@ impl Asm {
 
 fn build_pid1() -> Vec<u8> {
     let mut a = Asm::new();
-    let start = 0usize;
 
     a.mov_eax(SYS_SLEEP);
     a.mov_edi(BOOT_SLEEP_TICKS);
     a.int80();
 
+    let start = a.buf.len();
     a.mov_eax(SYS_SEND);
     a.mov_edi(SLOT_B as u64);
     a.inc_ecx();
@@ -420,10 +426,11 @@ fn build_pid1() -> Vec<u8> {
     a.mov_eax(SYS_WRITE);
     a.int80();
 
-    a.mov_r8d(0x0040_0000);
-    let pacing = a.buf.len();
-    a.dec_r8d();
-    a.jnz_back(pacing);
+    a.mov_eax(SYS_PING);
+    a.int80();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(IPC_PACE_TICKS);
+    a.int80();
     a.jmp_back(start);
 
     a.string(b"u1");
@@ -432,12 +439,12 @@ fn build_pid1() -> Vec<u8> {
 
 fn build_pid2() -> Vec<u8> {
     let mut a = Asm::new();
-    let start = 0usize;
 
     a.mov_eax(SYS_SLEEP);
     a.mov_edi(BOOT_SLEEP_TICKS);
     a.int80();
 
+    let start = a.buf.len();
     a.mov_eax(SYS_RECV);
     a.xor_edi();
     a.int80();
@@ -451,10 +458,11 @@ fn build_pid2() -> Vec<u8> {
     a.mov_eax(SYS_WRITE);
     a.int80();
 
-    a.mov_r8d(0x0040_0000);
-    let pacing = a.buf.len();
-    a.dec_r8d();
-    a.jnz_back(pacing);
+    a.mov_eax(SYS_PING);
+    a.int80();
+    a.mov_eax(SYS_SLEEP);
+    a.mov_edi(IPC_PACE_TICKS);
+    a.int80();
     a.jmp_back(start);
 
     a.string(b"u2");
@@ -492,7 +500,7 @@ fn build_pid3() -> Vec<u8> {
 }
 
 /// Ring-3 GUI client: fills its 96x64 pixel buffer with a solid colour and
-/// presents it to the kernel window server every 60 ms, rotating the colour
+/// presents it to the kernel window server every 250 ms, rotating the colour
 /// each round and draining one input event per cycle (`SYS_GUI` GET_EVENT: a
 /// key recolours the fill red, a body click green, each echoed through
 /// `SYS_WRITE`). CREATE runs once after the boot sleep; everything else is a
@@ -936,13 +944,26 @@ fn spawn_one(pid: u32) -> Result<(), &'static str> {
     }
 }
 
-/// Map + register the demo tasks.
+/// Whether [`start_demos`] has already spawned the five demo tasks.
+static DEMOS_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Returns `true` once the ring-3 demos have been spawned (used by the Start
+/// menu to offer the action only while they are not running).
+pub fn demos_started() -> bool {
+    DEMOS_STARTED.load(Ordering::Acquire)
+}
+
+/// Map + register the demo tasks, once. Repeated calls from the Start menu are
+/// no-ops so the five tasks cannot be duplicated in the scheduler table.
 ///
 /// Spawn order fixes the scheduler slot assignment (worker owns slot 1):
 /// A = slot 2, B = slot 3, C = slot 4, D (the GUI client) = slot 5,
 /// E (the socket client) = slot 6. The `SLOT_*` SEND/RCV targets above depend
 /// on this exact order, so it must not change.
-pub fn init() -> Result<(), &'static str> {
+pub fn start_demos() -> Result<(), &'static str> {
+    if DEMOS_STARTED.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
     spawn_one(PID_A)?;
     spawn_one(PID_B)?;
     spawn_one(PID_C)?;

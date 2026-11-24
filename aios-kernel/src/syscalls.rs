@@ -102,7 +102,7 @@ const MAILBOX_DEPTH: usize = 16;
 /// `SYS_SEND`/`SYS_RECV` console+serial lines are emitted every
 /// `IPC_LOG_EVERY`-th transferred value so the live ping-pong between the
 /// ring-3 demo tasks is visible on hardware without flooding the console.
-const IPC_LOG_EVERY: u64 = 8;
+const IPC_LOG_EVERY: u64 = 64;
 
 /// Wire header mirrored from `aios_core::ipc_protocol` (fixed layout so the
 /// concept survives into the freestanding kernel). The kernel-side mailbox
@@ -281,8 +281,7 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         }
         SYS_SLEEP => {
             let ticks = frame.rdi;
-            vprintln!("[sched] pid {} sleep {} ticks", pid, ticks);
-            kprintln!("[serial] [sched] pid {} sleep {}", pid, ticks);
+            note_sleep(pid, ticks);
             frame.rax = 0;
             crate::sched::sleep_current(frame, ticks);
         }
@@ -485,6 +484,25 @@ fn note_getpid(pid: u32) {
             seen[idx] = true;
             vprintln!("[sysc] pid {} getpid -> {}", pid, pid);
             kprintln!("[serial] [sysc] pid {} getpid -> {}", pid, pid);
+        }
+    }
+}
+
+static mut SLEEP_SEEN: [bool; MAX_PID] = [false; MAX_PID];
+
+/// Logs the first `SYS_SLEEP` of each task only: the demos sleep continuously,
+/// so a line per call would flood COM1 and cost more than the sleep itself.
+fn note_sleep(pid: u32, ticks: u64) {
+    let idx = pid as usize;
+    if idx == 0 || idx >= MAX_PID {
+        return;
+    }
+    unsafe {
+        let seen = &mut *core::ptr::addr_of_mut!(SLEEP_SEEN);
+        if !seen[idx] {
+            seen[idx] = true;
+            vprintln!("[sched] pid {} sleep {} ticks", pid, ticks);
+            kprintln!("[serial] [sched] pid {} sleep {}", pid, ticks);
         }
     }
 }

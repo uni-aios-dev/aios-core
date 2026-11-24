@@ -17,6 +17,9 @@ default = []
 # Limine-protocol boot path for the hybrid BIOS+UEFI ISO/USB image. The
 # default build keeps the aios-boot UEFI hand-off unchanged.
 limine = ["dep:limine"]
+# Auto-start the five ring-3 demo programs at boot. Off by default: the desktop
+# starts them on demand from Start, so an idle kernel does not burn CPU on demos.
+ring3-demo = []
 
 [dependencies]
 aios-bootinfo = { path = "../boot/aios-bootinfo" }

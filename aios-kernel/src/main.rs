@@ -816,7 +816,11 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
         }
     }
 
-    match user::init() {
+    // The ring-3 demos are dormant by default: they are started on demand
+    // from the Start menu. The `ring3-demo` feature restores the old boot
+    // behaviour for headless QEMU proof runs.
+    #[cfg(feature = "ring3-demo")]
+    match user::start_demos() {
         Ok(()) => {}
         Err(e) => {
             vprintln!("[user] FAILED: {}", e);
@@ -826,7 +830,7 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
     print_step(13, "user init done");
 
     print_step(14, "scheduler armed");
-    vprintln!("Preemptive round-robin scheduler + ring 3 armed");
+    vprintln!("Preemptive round-robin scheduler armed; ring 3 on demand");
     vprintln!("Kernel IPC mailboxes behind the int 0x80 gate");
     vprintln!("User syscalls (write/getpid/sleep) + idle fallback");
     kprintln!("[serial] scheduler online, IPC + user syscalls armed.");
@@ -1161,10 +1165,11 @@ pub fn idle_loop() -> ! {
             last_tick_print = ticks;
         }
         stage_check("tickprint", &mut stage_mark);
-        // Monitor: the windowed GUI repaints at 250 Hz and the TUI (which
-        // redraws straight to VRAM) at 100 Hz, so the higher 1000 Hz tick rate
-        // actually buys smoother frames instead of only more interrupts. Lid
-        // and thermal probes stay on a 20 Hz cadence — their I/O is expensive.
+        // Monitor: the windowed GUI repaints at 60 Hz and the TUI (which
+        // redraws straight to VRAM) at 30 Hz — both are already faster than
+        // the eye needs, so the desktop no longer burns CPU on invisible
+        // frames. Lid and thermal probes stay on a 20 Hz cadence — their I/O
+        // is expensive.
         // Mouse motion additionally triggers an immediate render in the report
         // bands below, so pointer feedback never waits for a gate.
         if ticks >= interrupts::TIMER_HZ {
@@ -1176,13 +1181,13 @@ pub fn idle_loop() -> ! {
             }
             if gui::active() {
                 gui::poll_crash();
-                let gate = (interrupts::TIMER_HZ / 250).max(1);
+                let gate = (interrupts::TIMER_HZ / 60).max(1);
                 if ticks - last_gui_render >= gate {
                     gui::render();
                     last_gui_render = ticks;
                 }
             } else {
-                let gate = (interrupts::TIMER_HZ / 100).max(1);
+                let gate = (interrupts::TIMER_HZ / 30).max(1);
                 if ticks - last_tui_render >= gate {
                     tui::render();
                     last_tui_render = ticks;
@@ -1248,10 +1253,8 @@ pub fn idle_loop() -> ! {
                     // Left Win toggles Start; arrows navigate it and extended
                     // Enter activates the selected row. The GUI ignores these
                     // codes when Start is closed, so no other key path shifts.
-                    0x5B | 0x48 | 0x50 | 0x1C => {
-                        if gui::active() {
-                            gui::handle_ext_scancode(sc);
-                        }
+                    0x5B | 0x48 | 0x50 | 0x1C if gui::active() => {
+                        gui::handle_ext_scancode(sc);
                     }
                     _ => {}
                 }

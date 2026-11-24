@@ -232,12 +232,18 @@ static APPS: &[AppInfo] = &[
     AppInfo {
         title: "Dependencies",
         subtitle: "F6 · Зависимости",
-        body: &["Block dependencies are tracked by aios-block-mgr.", "No graph view exists in the native kernel yet."],
+        body: &[
+            "Block dependencies are tracked by aios-block-mgr.",
+            "No graph view exists in the native kernel yet.",
+        ],
     },
     AppInfo {
         title: "Native Browser",
         subtitle: "F7 · Браузер",
-        body: &["WebView needs a host windowing stack.", "The kernel desktop renders pixels only."],
+        body: &[
+            "WebView needs a host windowing stack.",
+            "The kernel desktop renders pixels only.",
+        ],
     },
     AppInfo {
         title: "Files",
@@ -255,62 +261,98 @@ static APPS: &[AppInfo] = &[
     AppInfo {
         title: "Калькулятор",
         subtitle: "Программа · calculator",
-        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "No host process launcher exists in the native kernel.",
+        ],
     },
     AppInfo {
         title: "Настройки",
         subtitle: "Программа · settings",
-        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "No host process launcher exists in the native kernel.",
+        ],
     },
     AppInfo {
         title: "Браузер",
         subtitle: "Программа · browser",
-        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "No host process launcher exists in the native kernel.",
+        ],
     },
     AppInfo {
         title: "Терминал",
         subtitle: "Программа · terminal",
-        body: &["External program from the shared AIOS catalog.", "Use the kernel console via Esc for a shell."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "Use the kernel console via Esc for a shell.",
+        ],
     },
     AppInfo {
         title: "Файловый менеджер",
         subtitle: "Программа · files",
-        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "No host process launcher exists in the native kernel.",
+        ],
     },
     AppInfo {
         title: "Настройки звука",
         subtitle: "Программа · sound",
-        body: &["External program from the shared AIOS catalog.", "The kernel has no audio stack."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "The kernel has no audio stack.",
+        ],
     },
     AppInfo {
         title: "Сменить обои",
         subtitle: "Программа · wallpaper",
-        body: &["External program from the shared AIOS catalog.", "The kernel desktop uses a fixed dark gradient."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "The kernel desktop uses a fixed dark gradient.",
+        ],
     },
     AppInfo {
         title: "Настройки сети",
         subtitle: "Программа · network",
-        body: &["External program from the shared AIOS catalog.", "Open Network Settings (F5) for the kernel stack."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "Open Network Settings (F5) for the kernel stack.",
+        ],
     },
     AppInfo {
         title: "Текстовый редактор",
         subtitle: "Программа · editor",
-        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "No host process launcher exists in the native kernel.",
+        ],
     },
     AppInfo {
         title: "Скриншот",
         subtitle: "Программа · screenshot",
-        body: &["External program from the shared AIOS catalog.", "No host process launcher exists in the native kernel."],
+        body: &[
+            "External program from the shared AIOS catalog.",
+            "No host process launcher exists in the native kernel.",
+        ],
     },
     AppInfo {
         title: "Перезагрузка",
         subtitle: "Программа · reboot",
-        body: &["Use the machine power button or the boot loader menu.", "The kernel desktop does not reset hardware."],
+        body: &[
+            "Use the machine power button or the boot loader menu.",
+            "The kernel desktop does not reset hardware.",
+        ],
     },
     AppInfo {
         title: "Выключение",
         subtitle: "Программа · shutdown",
-        body: &["Use the machine power button or the boot loader menu.", "The kernel desktop does not power off hardware."],
+        body: &[
+            "Use the machine power button or the boot loader menu.",
+            "The kernel desktop does not power off hardware.",
+        ],
     },
 ];
 
@@ -331,6 +373,8 @@ enum StartAction {
     App(u8),
     /// Repaint every live desktop surface.
     Refresh,
+    /// Spawn the five dormant ring-3 demo tasks once.
+    Ring3Demo,
     /// Leave the desktop for the kernel console/TUI.
     Console,
 }
@@ -1517,9 +1561,7 @@ fn taskbar_slots() -> [usize; MAX_WINS] {
 /// naturally without an allocation or a locale table.
 fn sort_key(c: char) -> u32 {
     let cp = c as u32;
-    if c.is_ascii_uppercase() {
-        cp + 32
-    } else if (0x0410..=0x042f).contains(&cp) {
+    if c.is_ascii_uppercase() || (0x0410..=0x042f).contains(&cp) {
         cp + 0x20
     } else if cp == 0x0401 {
         0x0451
@@ -1597,6 +1639,17 @@ fn start_entries() -> [Option<StartEntry>; START_CAP] {
                 },
             );
         }
+    }
+    if !crate::user::demos_started() {
+        start_push(
+            &mut out,
+            &mut n,
+            StartEntry {
+                title: "Ring-3 демо",
+                subtitle: "Система · запустить задачи A/B/C/D/E",
+                action: StartAction::Ring3Demo,
+            },
+        );
     }
     start_push(
         &mut out,
@@ -1738,9 +1791,7 @@ fn start_key(sc: u8) -> bool {
             return true;
         }
         0x48 => unsafe {
-            if START_SEL > 0 {
-                START_SEL -= 1;
-            }
+            START_SEL = START_SEL.saturating_sub(1);
             clamp_start_sel();
             dirty_all();
             return true;
@@ -1813,6 +1864,13 @@ fn activate_start(entry: StartEntry) {
             dirty_all();
             crate::kprintln!("[gui] start: refresh all");
         }
+        StartAction::Ring3Demo => {
+            match crate::user::start_demos() {
+                Ok(()) => crate::kprintln!("[gui] start: ring-3 demos launched"),
+                Err(e) => crate::kprintln!("[gui] start: ring-3 demos failed: {}", e),
+            }
+            dirty_all();
+        }
         StartAction::Console => leave(),
     }
 }
@@ -1856,7 +1914,16 @@ fn draw_start(fb: &Framebuffer) {
             95,
             0x00_00_03_07,
         );
-        vector::fill_round(fb, x as i32, y as i32, w as i32, h as i32, WIN_R, vector::ALL, WIN_BG);
+        vector::fill_round(
+            fb,
+            x as i32,
+            y as i32,
+            w as i32,
+            h as i32,
+            WIN_R,
+            vector::ALL,
+            WIN_BG,
+        );
         vector::stroke_round(
             fb,
             x as i32,
@@ -1879,7 +1946,15 @@ fn draw_start(fb: &Framebuffer) {
         );
     }
     tui::draw_text(fb, x + 8, y + 3, "Пуск", TEXT, WIN_BG, x + w - 8);
-    tui::draw_text(fb, x + 144, y + 3, "^v Enter Esc", TEXT_DIM, WIN_BG, x + w - 6);
+    tui::draw_text(
+        fb,
+        x + 144,
+        y + 3,
+        "^v Enter Esc",
+        TEXT_DIM,
+        WIN_BG,
+        x + w - 6,
+    );
     let mut query = String::from(start_query());
     query.push('_');
     tui::draw_text(fb, x + 10, y + 22, &query, TEXT, BAR_MIN, x + w - 10);

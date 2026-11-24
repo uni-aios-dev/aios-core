@@ -17,6 +17,8 @@
 //!   AIOS_XORRISO      path to `xorriso`
 //!   AIOS_QEMU         path to `qemu-system-x86_64`
 //!   AIOS_KERNEL_TARGET_DIR, AIOS_ISO_OUT, AIOS_SKIP_QEMU, AIOS_QEMU_UEFI
+//!   AIOS_KERNEL_FEATURES  comma-separated extra kernel Cargo features
+//!                         (e.g. `limine,ring3-demo` for smoke proofs)
 //!   AIOS_QEMU_USB     boot the USB-stick image (`aios-kernel-usb.img`) as USB
 //!                     mass storage instead of the ISO as a CD-ROM
 
@@ -84,12 +86,20 @@ fn qemu_dir() -> PathBuf {
 
 fn build_kernel(target_dir: &Path) -> PathBuf {
     let manifest = kernel_manifest_dir().join("Cargo.toml");
+    let mut features = env::var("AIOS_KERNEL_FEATURES").unwrap_or_default();
+    if !features.split(',').any(|f| f.trim() == "limine") {
+        if features.is_empty() {
+            features.push_str("limine");
+        } else {
+            features.push_str(",limine");
+        }
+    }
     let status = Command::new("cargo")
         .current_dir(kernel_manifest_dir())
         .args(["build", "--manifest-path"])
         .arg(&manifest)
         .args(["--target", "x86_64-unknown-none", "--release"])
-        .args(["--features", "limine"])
+        .args(["--features", &features])
         .env("CARGO_TARGET_DIR", target_dir)
         .status()
         .expect("failed to spawn cargo for the kernel build");

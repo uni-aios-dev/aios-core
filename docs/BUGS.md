@@ -1,5 +1,26 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (kernel GUI): idle desktop spun five ring-3 demos
+
+The normal desktop build spawned all five ring-3 demo programs at boot. Their
+A/B pair busy-spun through a 64-million-iteration delay, the GUI client presented
+every 60 ms, and each `SYS_SLEEP`/IPC call printed a COM1 line, so an otherwise
+idle desktop kept the scheduler busy and flooded the serial log. Since v2.82.0
+the demos are dormant until `Пуск → Ring-3 демо` starts them once; A/B yield with
+`SYS_SLEEP` + `SYS_PING`, the GUI client presents at 250 ms, `gui::render()` runs
+at 60 Hz (TUI 30 Hz), and proof lines are sampled. QEMU now reaches `[sched] idle`.
+A `ring3-demo` Cargo feature restores boot auto-start for headless proofs.
+
+## KNOWN LIMITATION (QEMU harness): Win key injection cannot open Start reliably
+
+QMP `input-send-event` and HMP `sendkey` deliver ordinary USB scancodes to the
+kernel, but the meta/Win code (`0x5B`) and USB mouse/tablet devices were not
+delivered reliably in the smoke harness, so the `Win → Start → Ring-3 демо`
+gesture was not reproduced end-to-end in QEMU. The Start action itself was
+verified by code review and by the `ring3-demo` feature proving the same
+`user::start_demos()` path with all five tasks. On real hardware the Win key is
+mapped in `xhci.rs` and Start navigation works with PS/2/USB arrows.
+
 ## FIXED (kernel GUI): the desktop needed a second host process
 
 The old `W` hotkey in both host TUIs spawned `aios-gui` as a separate egui/eframe

@@ -23,11 +23,14 @@ $root = Split-Path -Parent $PSScriptRoot
 
 # --- 1. Build kernel + BIOS image without launching QEMU -------------------
 $env:AIOS_SKIP_QEMU = "1"
+# The default desktop leaves ring-3 demos dormant; smoke proofs need them at boot.
+$env:AIOS_KERNEL_FEATURES = "limine,ring3-demo"
 Push-Location "$root\aios-kernel-run"
 cargo run
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "kernel image build failed" }
 Pop-Location
 Remove-Item Env:AIOS_SKIP_QEMU
+Remove-Item Env:AIOS_KERNEL_FEATURES
 
 $bios = Join-Path $root "aios-kernel-run\bios.img"
 
