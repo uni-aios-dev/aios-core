@@ -34,6 +34,24 @@
 - EN/RU `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` and `INTERFACE` now describe
   the native kernel desktop, its hotkeys and its honest host-program limits.
 
+### Physical deployment (2026-11-24)
+- Rebuilt `aios-kernel` with `--features limine` (1,140,440 bytes, SHA-256
+  `776ACE38F96E9BFFAB5A5882915B8EA8C0DB9AC7500C5A0E665CF34CCBECEFD4`) and
+  patched it into the known-good hybrid Limine image at ISO LBA 32, updating the
+  `AIOS_KER.;1` directory record. The resulting
+  `aios-kernel-usb-limine-native-desktop.img` is 4,683,776 bytes with SHA-256
+  `F0270E3F2665F8EEE9C5557406F77D26B8AA09A3B4F040BF442FAF940977AADA`.
+- QEMU Legacy BIOS boot from that image reached `Limine handoff`, a valid
+  `1280x800` GOP framebuffer, `gui backbuffer`, the registered ring-3 GUI client
+  and scheduler ticks through 8s without a panic.
+- After explicit confirmation, `\\.\PhysicalDrive3` (Kingston DataTraveler 3.0,
+  serial `EE05DB505AE9`) was cleaned with `diskpart` and written with the raw
+  `CreateFileW` path. Full read-back SHA-256 matched the image; the MBR was
+  `EB 3C 90 LIMIT` / `55 AA` and the kernel ELF magic was present at byte 65536.
+  Log: `boot/out/flash-native-desktop-disk3.log`. The stick remains
+  Legacy-BIOS-only because the new kernel overwrites the old UEFI stage at
+  LBA 32; the native UEFI-only GPT/ESP image is still built by `aios-image`.
+
 ## v2.80.0 - Desktop shell in aios-gui (2026-11-23)
 
 ### Added

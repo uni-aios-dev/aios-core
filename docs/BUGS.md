@@ -402,6 +402,23 @@ EN/RU docs were aligned.
   is involved. See the Native UEFI Boot Chain section in
   `docs/ARCHITECTURE.md`.
 
+## FIXED (v2.81.0): the physical stick booted the old GUI
+
+- **Symptom:** booting the Kingston stick still showed the pre-v2.81.0 kernel
+  screen even though the new native desktop was in the sources and had passed a
+  UEFI QEMU smoke test.
+- **Cause:** the last physical flash was from 2026-11-23 15:04, before the
+  desktop commits (`82c0296`, `524216b`, `3162afb`). A fresh kernel had never
+  been written to the stick.
+- **Fix:** built `aios-kernel --features limine`, patched the new ELF into ISO
+  LBA 32 of the known-good hybrid image, updated the `AIOS_KER.;1` record and
+  verified the result in Legacy BIOS QEMU. After explicit confirmation the
+  stick was reflashed; full read-back SHA-256, MBR signature and ELF magic were
+  checked. See CHANGELOG v2.81.0 "Physical deployment" and
+  `boot/out/flash-native-desktop-disk3.log`.
+- **Status:** closed. The remaining Legacy-BIOS-only limitation of the patched
+  hybrid image is unchanged and documented below.
+
 ## LIMITS (v2.78.1): the reflashed stick is Legacy-BIOS-only
 
 - The v2.78.1 stick carries the new kernel in the boot partition of the old
