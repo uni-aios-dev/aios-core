@@ -40,8 +40,18 @@
   proved `store launch`, `calculator launch`, `calc result 9`, `editor launch`
   and `files launch` over COM1. The kernel SHA-256 is
   `1BCF9FA7C8AC3FCE17A7D06411A8B0C94E686640B54194CEB28A15460F3BAE87`.
-  Physical Disk 3 was **not** reflashed: it still holds the verified dual image
-  SHA-256 `F16C54FADE37AF89132B7BE16B76BD7A068BEB052CACF3966D97652913B38879`.
+  After explicit confirmation, Physical Disk 3 (Kingston DataTraveler 3.0,
+  serial `EE05DB505AE9`) was reflashed with that QEMU-proven image: raw-write
+  verification matched SHA-256 `D5BE46C70628CA664D4C3CAA7B6E3DE9D57A01555198BF157DFB64A150844ECD`,
+  the new kernel at ISO sector 32 kept SHA-256
+  `1BCF9FA7C8AC3FCE17A7D06411A8B0C94E686640B54194CEB28A15460F3BAE87`, and the
+  legacy v2.79 kernel at sector 600 stayed unchanged with SHA-256
+  `8CF8A46F76135F4545A05ED5F773824B7872666F0D3EECD986D3417AF9CD2044`. The dual
+  Limine menu still boots the optimized desktop first and v2.79 second; the
+  previous image (`F16C54FADE37AF89132B7BE16B76BD7A068BEB052CACF3966D97652913B38879`)
+  remains in `aios-kernel-run/out` as a rollback copy. The first menu label stays
+  `AIOS Desktop v2.82 (native kernel)` because the QEMU-proven image was flashed
+  byte-for-byte; its payload is the v2.83.0 kernel.
 
 ## v2.82.0 - Low-overhead ring-3 demos and calmer desktop cadence (2026-11-24)
 
