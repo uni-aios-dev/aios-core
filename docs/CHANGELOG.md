@@ -43,8 +43,26 @@
   `sock-e ok`. Clean kernel hashes: default
   `1B8BC1D80260C0C5A93CBBD92C5205CDEF9945C7A3FEEA370ACFF926B99814F9`, demo
   `A6A131C8649080DC176DA3D7D3511E1AC9123D3A9A09B992C9574091DE9115C1`.
-- The physical stick still carries the previously flashed dual-kernel image; it
-  was NOT rewritten for this optimization (no new flash confirmation was given).
+### Physical deployment: optimized dual image (2026-11-24)
+- Built `aios-kernel-usb-limine-dual-optimized.img` (4,683,776 bytes, SHA-256
+  `F16C54FADE37AF89132B7BE16B76BD7A068BEB052CACF3966D97652913B38879`) from the
+  optimized default image: the new desktop kernel stays at ISO sector 32 (SHA-256
+  `1B8BC1D80260C0C5A93CBBD92C5205CDEF9945C7A3FEEA370ACFF926B99814F9`) and the
+  unchanged v2.79 ELF remains at ISO sector 600 (SHA-256
+  `8CF8A46F76135F4545A05ED5F773824B7872666F0D3EECD986D3417AF9CD2044`). The
+  202-byte `limine.conf` keeps `timeout: 3` and offers
+  `/AIOS Desktop v2.82 (native kernel)` first, `/AIOS Legacy v2.79 (old GUI)`
+  second.
+- QEMU Legacy BIOS boots the default entry into the new desktop with no ring-3
+  tasks armed (`ring3` lines 0, five `[sched] idle` lines); a temporary config
+  with the entries swapped boots the old kernel (`five ring-3 tasks armed`).
+- After explicit confirmation, `\\.\PhysicalDrive3` (Kingston DataTraveler 3.0,
+  serial `EE05DB505AE9`) was cleaned and rewritten through the raw `CreateFileW`
+  path. Full read-back SHA-256 matched the image, MBR was `EB 3C 90` / `55 AA`,
+  both kernel hashes matched at bytes 65536 and 1228800, and both menu entries
+  were read back from the disk. Logs: `boot/out/flash-dual-optimized-disk3.log`,
+  `boot/out/verify-flash-dual-optimized.log`. The stick stays Legacy-BIOS-only;
+  no further reflash is planned without new explicit confirmation.
 
 ## v2.81.0 - One native GUI: AIOS Desktop in aios-kernel (2026-11-24)
 

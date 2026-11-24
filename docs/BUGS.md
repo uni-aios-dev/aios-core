@@ -408,7 +408,10 @@ EN/RU docs were aligned.
   `EB 3C 90 LIMIT` / `55 AA` and the kernel ELF (`7F 45 4C 46`) sits at LBA 32.
   Note for the verification tooling: `ReadFile` on a raw physical disk requires
   a sector-aligned 512-byte buffer; a 16-byte read fails with error 87, which
-  produced a false `kernel magic: 00 00 00 00` in the earlier flash log.
+  produced a false `kernel magic: 00 00 00 00` in the earlier flash log. The same
+  constraint makes the flash helper's 4-byte ELF-magic read fail with error 87
+  even after a good write: trust the full-image SHA-256 and verify the kernels
+  with sector-aligned reads (see `boot/out/verify-flash-dual-optimized.log`).
 
 ## RETIRED (v2.77.0): Linux Live USB path removed
 
