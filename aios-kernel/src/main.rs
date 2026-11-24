@@ -1137,7 +1137,6 @@ pub fn idle_loop() -> ! {
     }
     let mut last_tick_print = 0u64;
     let mut last_stats_print = 0u64;
-    let mut last_sc_ext = false;
     let mut last_usb_seq = 0u64;
     let mut last_mouse_seq = 0u64;
     let mut last_mouse_buttons = 0u8;
@@ -1238,28 +1237,9 @@ pub fn idle_loop() -> ! {
             last_stats_print = ticks;
         }
         while let Some(sc) = interrupts::key_pop() {
-            // Extended scan codes come as 0xE0/0xE1 followed by the real code;
-            // drop the prefix and swallow the next byte so Win/arrow/Fn keys
-            // can never reach the TUI/GUI character tables.
-            if sc == 0xE0 || sc == 0xE1 {
-                last_sc_ext = true;
-                continue;
-            }
-            if last_sc_ext {
-                last_sc_ext = false;
-                match sc {
-                    0x1D => interrupts::CTRL_DOWN.store(true, Ordering::Relaxed),
-                    0x9D => interrupts::CTRL_DOWN.store(false, Ordering::Relaxed),
-                    // Left Win toggles Start; arrows navigate it and extended
-                    // Enter activates the selected row. The GUI ignores these
-                    // codes when Start is closed, so no other key path shifts.
-                    0x5B | 0x48 | 0x50 | 0x1C if gui::active() => {
-                        gui::handle_ext_scancode(sc);
-                    }
-                    _ => {}
-                }
-                continue;
-            }
+            // PS/2 already swallows the 0xE0/0xE1 prefix and queues only the
+            // following make code, so Win/arrows take the same GUI route as
+            // their USB-HID Set-1 equivalents.
             if sc == 0x2A || sc == 0x36 {
                 interrupts::SHIFT_DOWN.store(true, Ordering::Relaxed);
                 interrupts::SHIFTED.store(true, Ordering::Relaxed);

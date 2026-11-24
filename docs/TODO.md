@@ -2,6 +2,10 @@
 
 ## Completed
 
+- [x] In-kernel desktop apps (v2.83.0) — App Store (`F4`), Calculator, Files
+      viewer, Text Editor plus Terminal/Network launchers run on bare metal;
+      `STORE_IDS` catalog, mouse/keyboard controls, serial proofs, and PS/2/xHCI
+      arrow fixes
 - [x] Low-overhead ring-3 demos (v2.82.0) — five demo tasks dormant by default,
       started once from `Пуск → Ring-3 демо` or by the `ring3-demo` feature;
       A/B sleep+pacing instead of busy-spin, 250 ms GUI client, 60/30 Hz render,

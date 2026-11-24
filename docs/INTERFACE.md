@@ -773,30 +773,43 @@ and the desktop. Running `cargo run --bin aios-gui` is **not** part of this path
 `☰ Пуск` at the bottom left opens a sorted panel with a search field. A row
 shows a title and a hint (`F1 · Система`, `ring-3 · клиент`, `Система · задачи`,
 `Программа · calculator`). The catalog joins built-in windows, the nine `F1`-`F9`
-functions, live ring-3 clients, external programs and the system actions
+functions, real in-kernel apps, live ring-3 clients and the system actions
 `Ring-3 демо` / `Обновить всё` / `Консоль ядра`. The `Ring-3 демо` entry starts
 the five dormant ring-3 tasks once (it disappears while they run); the normal
 desktop boots with them off. Search matches title and hint case-insensitively
 in Latin **and** Cyrillic (`систем`, `net`, `F5`). The panel shows ten rows at a
 time and scrolls with ↑/↓ or the mouse wheel.
 
+### In-kernel apps
+
+`Пуск → App Store` (`F4`) opens a six-program catalog: ↑/↓ selects a row, Enter
+or the `Run` button launches it. The Calculator accepts the same keys on the
+keyboard or by clicking its 4×4 grid: digits, `+ - * /` (`x` also multiplies),
+`C`, Backspace and `=`/Enter; `12-3=9` is the serial-proven result. Files lists
+six live `system/...` rows selectable with ↑/↓ or a click, and the Text Editor
+edits six ASCII lines (Enter moves to the next line, ↑/↓ or a click selects a
+line). Terminal opens the kernel console, and `Настройки сети` opens the same
+Network window as `F5`. Only browser/WebView/AI Studio/voice entries remain
+honest host-only notices.
+
 ### Keyboard shortcuts
 
 | Key | Action |
 |-----|--------|
 | `Win` / `☰ Пуск` | Toggle the Start panel |
-| `↑` / `↓` | Move the Start selection |
-| `Enter` | Open the selected Start entry |
+| `↑` / `↓` | Move the Start, App Store, Files or Editor selection |
+| `Enter` | Open a Start entry, run an App Store row, compute in Calculator, or move to the next Editor line |
 | `Esc` | Close Start; with no focused window, leave to the kernel TUI |
 | `F1`-`F9` | Open/focus System Dashboard, WASM Blocks, AI Studio, App Store, Network Settings, Dependencies, Native Browser, Files, Hardware & Drivers |
 | `F10` / `F11` / `F12` | Maximize/restore, close, minimize the focused window |
 | `Tab` | Cycle focus between open windows |
-| Printable keys | Type into Start search or the focused window |
+| Printable keys | Type into Start search, Calculator, Editor or the focused window |
 
-Win and arrow navigation work on both PS/2 and USB keyboards: xHCI maps the HID
-usages to extended Set-1 codes and `idle_loop` forwards `0x5B`/`0x48`/`0x50`/
-`0x1C` to `gui::handle_ext_scancode()`. Crash and modal dialogs own the keyboard
-first, so those codes can never open Start over a blocking dialog.
+Win and arrow navigation work on both PS/2 and USB keyboards: PS/2 queues the
+make byte after `0xE0`/`0xE1` into the same FIFO as USB, xHCI maps HID usages
+`0x49..=0x52` to Set-1 codes, and `gui::handle_scancode()` routes them to Start
+or the focused app. Crash and modal dialogs still own the keyboard first, so
+those codes can never open Start over a blocking dialog.
 
 ### Mouse
 
@@ -807,6 +820,8 @@ first, so those codes can never open Start over a blocking dialog.
   right-anchored minimize / maximize / close plates or `F10`-`F12`.
 - Click widget plates and text fields inside windows (Network, Task Manager,
   Widget Lab); the kernel-internal clipboard works with `Ctrl+C`/`Ctrl+X`/`Ctrl+V`.
+- In in-kernel apps, click Calculator buttons, the App Store `Run` button, or a
+  Files/Text Editor row to move the selection.
 
 ### Rendering and limits
 
@@ -817,10 +832,11 @@ backbuffer and only dirty rectangles are blitted to the scanout buffer, so there
 is no flicker or tearing.
 
 The kernel is bare metal: there is no process launcher, WebView, audio stack,
-voice recognition or LLM backend. Host-only Start entries are honest notice
-windows — they do not fake a launch. WebView, voice control and remote AI Studio
-remain host-side capabilities. The palette is fixed in `aios-kernel/src/gui.rs`;
-`aios-gui/src/theme.rs` applies only to the legacy host tree.
+voice recognition or LLM backend. Calculator, App Store, Files, Text Editor and
+the Terminal/Network launchers are native `no_std` windows; browser, WebView,
+voice control and remote AI Studio entries remain honest notice windows. The
+palette is fixed in `aios-kernel/src/gui.rs`; `aios-gui/src/theme.rs` applies
+only to the legacy host tree.
 
 ---
 

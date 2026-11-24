@@ -36,14 +36,23 @@ now use the shared Unicode `sort_key()` / `draw_char()` path. Extended scancodes
 also bypassed the modal and crash gates: Win could open Start over a blocking
 dialog. The order is now crash → modal → Start → Win. EN/RU docs aligned.
 
-## KNOWN LIMITATION (kernel GUI): host-only programs are notice windows
+## FIXED (kernel GUI): extended keys and USB arrows did not reach apps
 
-Start lists external programs (calculator, browser, editor, file manager, etc.)
-because it shares the historical catalog, but `aios-kernel` is `no_std` and has
-no process launcher, WebView, audio stack or LLM backend. Selecting one opens an
-honest window explaining that the function is host-only; it does not fake a
-launch. WebView, audio, voice control and remote AI Studio remain host-side
-capabilities. EN/RU docs aligned.
+PS/2 `feed_key()` consumed the byte after `0xE0`/`0xE1`, and `idle_loop()` kept a
+second extended-state latch, so Win/arrows worked only in narrow paths. USB HID
+navigation usages were mapped to the wrong Set-1 codes. Extended make codes now
+reach `gui::handle_scancode()` through the shared keyboard FIFO, xHCI maps
+`0x49..=0x52` correctly, and QEMU proves App Store selection plus Calculator,
+Files and Editor launches. EN/RU docs aligned.
+
+## FIXED (kernel GUI): in-kernel programs replace most host-only notices
+
+Calculator, Text Editor, Files viewer, Terminal, the Network alias and the App
+Store launcher now run inside `aios-kernel` as `no_std` windows instead of
+opening host-only notices. There is still no process launcher, WebView, audio
+stack or LLM backend, so genuinely host-only entries (browser, AI Studio, voice
+control) continue to explain their limits instead of faking a launch.
+EN/RU docs aligned.
 
 ## FIXED (GUI): startup seeded demo processes and fake IPC traffic
 

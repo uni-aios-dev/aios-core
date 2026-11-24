@@ -691,12 +691,18 @@ fn usage_to_scancode(usage: u8) -> Option<u8> {
         0x44 => Some(0x57),
         0x45 => Some(0x58),
         0x47 => Some(0x46),
-        // Arrow keys use the extended Set-1 codes so Start navigation works
-        // on USB keyboards as well as PS/2 (where they arrive after 0xE0).
-        0x4A => Some(0x4D),
-        0x4B => Some(0x4B),
-        0x4C => Some(0x50),
-        0x4D => Some(0x48),
+        // HID navigation/arrow usages map to extended Set-1 codes so Start
+        // and in-kernel app lists work on USB keyboards as well as PS/2.
+        0x49 => Some(0x52),
+        0x4A => Some(0x47),
+        0x4B => Some(0x49),
+        0x4C => Some(0x53),
+        0x4D => Some(0x4F),
+        0x4E => Some(0x51),
+        0x4F => Some(0x4D),
+        0x50 => Some(0x4B),
+        0x51 => Some(0x50),
+        0x52 => Some(0x48),
         // Left Win toggles the native Start panel.
         0xE3 => Some(0x5B),
         0x53 => Some(0x45),

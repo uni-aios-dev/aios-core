@@ -195,8 +195,9 @@ struct AppInfo {
 }
 
 /// Start catalog in `F1`-`F9` order, followed by the shared external program
-/// list. Index 0 (Dashboard) and 4 (Network) are backed by real kernel windows;
-/// the rest open an [`WinKind::App`] window with an honest capability note.
+/// list. Dashboard, Network Settings, App Store, Files, Calculator, Terminal,
+/// Network Settings (program) and Text Editor are real in-kernel apps; entries
+/// whose runtime cannot exist without a host still open a capability note.
 static APPS: &[AppInfo] = &[
     AppInfo {
         title: "System Dashboard",
@@ -222,7 +223,10 @@ static APPS: &[AppInfo] = &[
     AppInfo {
         title: "App Store",
         subtitle: "F4 · Магазин",
-        body: &["The kernel has no package marketplace or network updater."],
+        body: &[
+            "Built-in catalog of kernel applications.",
+            "Enter or Run launches the selected program.",
+        ],
     },
     AppInfo {
         title: "Network Settings",
@@ -248,7 +252,10 @@ static APPS: &[AppInfo] = &[
     AppInfo {
         title: "Files",
         subtitle: "F8 · Файлы",
-        body: &["A kernel file manager is not available in this build."],
+        body: &[
+            "Kernel information viewer: ↑/↓ selects a file.",
+            "The preview below shows live kernel data.",
+        ],
     },
     AppInfo {
         title: "Hardware & Drivers",
@@ -262,8 +269,8 @@ static APPS: &[AppInfo] = &[
         title: "Калькулятор",
         subtitle: "Программа · calculator",
         body: &[
-            "External program from the shared AIOS catalog.",
-            "No host process launcher exists in the native kernel.",
+            "Integer calculator: type digits, + - * /, Enter or =.",
+            "Buttons accept mouse clicks; C clears, Backspace deletes.",
         ],
     },
     AppInfo {
@@ -285,17 +292,14 @@ static APPS: &[AppInfo] = &[
     AppInfo {
         title: "Терминал",
         subtitle: "Программа · terminal",
-        body: &[
-            "External program from the shared AIOS catalog.",
-            "Use the kernel console via Esc for a shell.",
-        ],
+        body: &["Opens the kernel console; Esc from there returns to the desktop."],
     },
     AppInfo {
         title: "Файловый менеджер",
         subtitle: "Программа · files",
         body: &[
-            "External program from the shared AIOS catalog.",
-            "No host process launcher exists in the native kernel.",
+            "Kernel information viewer: ↑/↓ selects a file.",
+            "The preview below shows live kernel data.",
         ],
     },
     AppInfo {
@@ -317,17 +321,14 @@ static APPS: &[AppInfo] = &[
     AppInfo {
         title: "Настройки сети",
         subtitle: "Программа · network",
-        body: &[
-            "External program from the shared AIOS catalog.",
-            "Open Network Settings (F5) for the kernel stack.",
-        ],
+        body: &["Opens the kernel Network window (the same app as F5)."],
     },
     AppInfo {
         title: "Текстовый редактор",
         subtitle: "Программа · editor",
         body: &[
-            "External program from the shared AIOS catalog.",
-            "No host process launcher exists in the native kernel.",
+            "Six-line kernel editor: type, Enter for a new line,",
+            "Backspace deletes, ↑/↓ or a click selects a line.",
         ],
     },
     AppInfo {
@@ -355,6 +356,103 @@ static APPS: &[AppInfo] = &[
         ],
     },
 ];
+
+/// `APPS` index of the in-kernel App Store window.
+const APP_STORE: u8 = 3;
+/// `APPS` index of the in-kernel Files window.
+const APP_FILES: u8 = 7;
+/// `APPS` index of the in-kernel Calculator window.
+const APP_CALC: u8 = 9;
+/// `APPS` index of the kernel console launcher.
+const APP_TERMINAL: u8 = 12;
+/// `APPS` index of the Russian-named Files entry.
+const APP_FILES_ALT: u8 = 13;
+/// `APPS` index of the Russian-named Network Settings entry.
+const APP_NETWORK_ALT: u8 = 16;
+/// `APPS` index of the in-kernel Text Editor window.
+const APP_EDITOR: u8 = 17;
+
+/// Applications offered by the App Store window, as indexes into [`APPS`].
+const STORE_IDS: [u8; 6] = [0, APP_STORE, APP_FILES, APP_CALC, APP_TERMINAL, APP_EDITOR];
+
+/// Names of the live information pseudo-files shown by the Files viewer.
+const FILE_ROWS: [&str; 6] = [
+    "system/version",
+    "system/uptime",
+    "system/timer",
+    "system/memory",
+    "system/gui",
+    "system/input",
+];
+
+/// Calculator display capacity in bytes (ASCII).
+const CALC_CAP: usize = 20;
+/// Number of calculator button columns.
+const CALC_COLS: usize = 4;
+/// Calculator buttons in row-major order; each char feeds [`calc_input`].
+const CALC_KEYS: [char; 16] = [
+    '7', '8', '9', '/', '4', '5', '6', '*', '1', '2', '3', '-', '0', 'c', '=', '+',
+];
+/// Width of one calculator button in pixels.
+const CALC_BTN_W: usize = 56;
+/// Height of one calculator button in pixels.
+const CALC_BTN_H: usize = 22;
+/// Horizontal step between calculator buttons.
+const CALC_BTN_STEP_X: usize = 62;
+/// Vertical step between calculator button rows.
+const CALC_BTN_STEP_Y: usize = 26;
+/// Window-local x of the calculator button grid.
+const CALC_GRID_X: usize = 8;
+/// Window-local y of the calculator button grid.
+const CALC_GRID_Y: usize = 50;
+
+/// Bytes per line of the kernel text editor.
+const EDITOR_COL_CAP: usize = 40;
+/// Number of lines in the kernel text editor.
+const EDITOR_ROWS: usize = 6;
+/// Window-local y of the first App Store / Files / Editor row.
+const APP_ROW_Y: usize = 26;
+/// Height of one selectable row in an in-kernel app window.
+const APP_ROW_H: usize = 16;
+/// Window-local geometry `(x, y, w, h)` of the App Store Run button.
+const STORE_BTN: (usize, usize, usize, usize) = (8, 138, 120, 20);
+
+/// Live state of the in-kernel integer calculator.
+#[derive(Clone, Copy)]
+struct CalcState {
+    /// ASCII display text without a terminator.
+    text: [u8; CALC_CAP],
+    /// Used length of [`CalcState::text`].
+    len: u8,
+    /// Accumulated left operand of the pending operation.
+    acc: i64,
+    /// Pending operator byte (`+`, `-`, `*` or `/`), zero when none.
+    op: u8,
+    /// Whether the next digit replaces the display instead of appending.
+    fresh: bool,
+    /// Whether the display currently shows an error.
+    error: bool,
+}
+
+/// Calculator state, owned by the single-threaded GUI.
+static mut CALC: CalcState = CalcState {
+    text: [0; CALC_CAP],
+    len: 0,
+    acc: 0,
+    op: 0,
+    fresh: true,
+    error: false,
+};
+/// Selected row of the App Store window.
+static mut STORE_SEL: u8 = 0;
+/// Selected row of the Files viewer.
+static mut FILES_SEL: u8 = 0;
+/// Text buffers of the kernel editor lines.
+static mut EDITOR_LINES: [[u8; EDITOR_COL_CAP]; EDITOR_ROWS] = [[0; EDITOR_COL_CAP]; EDITOR_ROWS];
+/// Used byte lengths of [`EDITOR_LINES`].
+static mut EDITOR_LENS: [u8; EDITOR_ROWS] = [0; EDITOR_ROWS];
+/// Line currently being edited.
+static mut EDITOR_ROW: u8 = 0;
 
 /// Compact label for a ring-3 window in Start (titles there are dynamic).
 static CLIENT_LABELS: [&str; MAX_CLIENTS] = [
@@ -1786,7 +1884,7 @@ fn close_start() {
 /// Handles one key while the Start panel owns the keyboard.
 fn start_key(sc: u8) -> bool {
     match sc {
-        0x01 => {
+        0x01 | 0x5B => {
             close_start();
             return true;
         }
@@ -1875,14 +1973,370 @@ fn activate_start(entry: StartEntry) {
     }
 }
 
-/// Opens (or focuses) one of the nine desktop functions; Dashboard and
-/// Network Settings are backed by real kernel windows.
+/// Opens (or focuses) one Start-catalog program. Dashboard and Network Settings
+/// reuse their native windows; Terminal and the network program alias dispatch
+/// to the same kernel surfaces, and the rest open in-kernel application windows.
 fn open_app(id: u8) {
     match id {
         0 => open_or_focus(WinKind::System),
-        4 => open_or_focus(WinKind::Network),
-        _ if (id as usize) < APPS.len() => open_or_focus(WinKind::App(id)),
+        4 | APP_NETWORK_ALT => open_or_focus(WinKind::Network),
+        APP_TERMINAL => leave(),
+        _ if (id as usize) < APPS.len() => {
+            if find_kind(WinKind::App(id)).is_none() {
+                app_load(id);
+            }
+            open_or_focus(WinKind::App(id));
+        }
         _ => {}
+    }
+}
+
+/// Prepares the state of an in-kernel app when its window first opens.
+fn app_load(id: u8) {
+    match id {
+        APP_CALC => unsafe {
+            CALC = CalcState {
+                text: [0; CALC_CAP],
+                len: 0,
+                acc: 0,
+                op: 0,
+                fresh: true,
+                error: false,
+            };
+        },
+        APP_STORE => unsafe { STORE_SEL = 0 },
+        APP_FILES | APP_FILES_ALT => unsafe { FILES_SEL = 0 },
+        _ => {}
+    }
+    let title = APPS.get(id as usize).map(|a| a.title).unwrap_or("app");
+    crate::kprintln!("[gui] app launch {} id={}", title, id);
+}
+
+/// Writes `v` as decimal ASCII into the calculator display.
+fn calc_set_number(v: i64) {
+    let s = format!("{}", v);
+    let b = s.as_bytes();
+    let n = b.len().min(CALC_CAP);
+    let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+    st.text[..n].copy_from_slice(&b[..n]);
+    st.len = n as u8;
+    st.error = false;
+}
+
+/// Parses the calculator display as an integer, or `None` on error/empty.
+fn calc_value() -> Option<i64> {
+    let st = unsafe { &*core::ptr::addr_of!(CALC) };
+    if st.error || st.len == 0 {
+        return None;
+    }
+    core::str::from_utf8(&st.text[..st.len as usize])
+        .ok()?
+        .parse::<i64>()
+        .ok()
+}
+
+/// Puts the calculator into its error state.
+fn calc_error() {
+    let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+    st.text[..3].copy_from_slice(b"ERR");
+    st.len = 3;
+    st.error = true;
+    st.fresh = true;
+    st.op = 0;
+}
+
+/// Folds the pending operator into the display, if one is pending.
+fn calc_apply() {
+    let (op, acc) = {
+        let st = unsafe { &*core::ptr::addr_of!(CALC) };
+        (st.op, st.acc)
+    };
+    if op == 0 {
+        return;
+    }
+    let Some(rhs) = calc_value() else {
+        return;
+    };
+    let result = match op {
+        b'+' => acc.saturating_add(rhs),
+        b'-' => acc.saturating_sub(rhs),
+        b'*' => acc.saturating_mul(rhs),
+        b'/' if rhs != 0 => acc.checked_div(rhs).unwrap_or(0),
+        b'/' => {
+            calc_error();
+            return;
+        }
+        _ => return,
+    };
+    calc_set_number(result);
+    let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+    st.acc = result;
+    st.op = 0;
+    st.fresh = true;
+    crate::kprintln!("[gui] calc result {}", result);
+}
+
+/// Feeds one character into the calculator. Returns `true` when consumed.
+fn calc_input(c: char) -> bool {
+    if c.is_ascii_digit() {
+        let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+        if st.fresh || st.error {
+            st.len = 0;
+            st.error = false;
+            st.fresh = false;
+        }
+        if (st.len as usize) < CALC_CAP {
+            st.text[st.len as usize] = c as u8;
+            st.len += 1;
+        }
+        return true;
+    }
+    if matches!(c, 'c' | 'C') {
+        let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+        st.len = 0;
+        st.acc = 0;
+        st.op = 0;
+        st.fresh = true;
+        st.error = false;
+        return true;
+    }
+    if matches!(c, '+' | '-' | '*' | '/' | 'x' | 'X') {
+        calc_apply();
+        let op = if matches!(c, 'x' | 'X') {
+            b'*'
+        } else {
+            c as u8
+        };
+        let value = calc_value().unwrap_or(0);
+        let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+        st.acc = value;
+        st.op = op;
+        st.fresh = true;
+        return true;
+    }
+    if c == '=' {
+        calc_apply();
+        return true;
+    }
+    false
+}
+
+/// Deletes the last calculator display character.
+fn calc_backspace() {
+    let st = unsafe { &mut *core::ptr::addr_of_mut!(CALC) };
+    if st.len > 0 {
+        st.len -= 1;
+        st.fresh = false;
+        st.error = false;
+    }
+}
+
+/// Current calculator display text.
+fn calc_text() -> &'static str {
+    let st = unsafe { &*core::ptr::addr_of!(CALC) };
+    core::str::from_utf8(&st.text[..st.len as usize]).unwrap_or("ERR")
+}
+
+/// Moves the App Store selection by `delta` rows, clamped to the catalog.
+fn store_move(delta: i8) {
+    let n = STORE_IDS.len() as i8 - 1;
+    let sel = unsafe { STORE_SEL as i8 };
+    let next = (sel + delta).clamp(0, n) as u8;
+    unsafe { STORE_SEL = next };
+    let title = STORE_IDS
+        .get(next as usize)
+        .and_then(|&id| APPS.get(id as usize))
+        .map(|app| app.title)
+        .unwrap_or("app");
+    crate::kprintln!("[gui] store select {}", title);
+}
+
+/// Launches the App Store's selected program.
+fn store_launch() {
+    let Some(&id) = STORE_IDS.get(unsafe { STORE_SEL as usize }) else {
+        return;
+    };
+    let title = APPS.get(id as usize).map(|app| app.title).unwrap_or("app");
+    crate::kprintln!("[gui] store launch {} id={}", title, id);
+    open_app(id);
+}
+
+/// Moves the Files viewer selection by `delta` rows, clamped to the file list.
+fn files_move(delta: i8) {
+    let n = FILE_ROWS.len() as i8 - 1;
+    let sel = unsafe { FILES_SEL as i8 };
+    unsafe { FILES_SEL = (sel + delta).clamp(0, n) as u8 };
+}
+
+/// One line of the editor as ASCII text.
+fn editor_line(row: usize) -> &'static str {
+    let len = unsafe { EDITOR_LENS[row] as usize };
+    unsafe { core::str::from_utf8_unchecked(&EDITOR_LINES[row][..len]) }
+}
+
+/// Types one ASCII character into the current editor line.
+fn editor_type(c: char) {
+    let row = unsafe { EDITOR_ROW as usize };
+    let len = unsafe { EDITOR_LENS[row] as usize };
+    if !c.is_ascii() || c.is_control() || len + 1 >= EDITOR_COL_CAP {
+        return;
+    }
+    unsafe {
+        EDITOR_LINES[row][len] = c as u8;
+        EDITOR_LENS[row] = (len + 1) as u8;
+    }
+}
+
+/// Deletes the last character of the current editor line.
+fn editor_backspace() {
+    let row = unsafe { EDITOR_ROW as usize };
+    let len = unsafe { EDITOR_LENS[row] as usize };
+    if len > 0 {
+        unsafe {
+            EDITOR_LINES[row][len - 1] = 0;
+            EDITOR_LENS[row] = (len - 1) as u8;
+        }
+    }
+}
+
+/// Moves the editor cursor to the next line, if any.
+fn editor_newline() {
+    let row = unsafe { EDITOR_ROW as usize };
+    if row + 1 < EDITOR_ROWS {
+        unsafe { EDITOR_ROW = (row + 1) as u8 };
+    }
+}
+
+/// Routes a key to the focused in-kernel app. Returns `true` when consumed.
+fn app_key(sc: u8) -> bool {
+    let Some(WinKind::App(id)) = focused_kind() else {
+        return false;
+    };
+    let handled = match id {
+        APP_CALC => {
+            if sc == 0x0E {
+                calc_backspace();
+                true
+            } else if let Some(c) = crate::interrupts::scancode_to_char(sc) {
+                calc_input(c)
+            } else {
+                false
+            }
+        }
+        APP_STORE => match sc {
+            0x48 => {
+                store_move(-1);
+                true
+            }
+            0x50 => {
+                store_move(1);
+                true
+            }
+            0x1C => {
+                store_launch();
+                true
+            }
+            _ => false,
+        },
+        APP_FILES | APP_FILES_ALT => match sc {
+            0x48 => {
+                files_move(-1);
+                true
+            }
+            0x50 => {
+                files_move(1);
+                true
+            }
+            _ => false,
+        },
+        APP_EDITOR => {
+            if sc == 0x0E {
+                editor_backspace();
+                true
+            } else if sc == 0x1C {
+                editor_newline();
+                true
+            } else if sc == 0x48 {
+                unsafe { EDITOR_ROW = EDITOR_ROW.saturating_sub(1) };
+                true
+            } else if sc == 0x50 {
+                unsafe { EDITOR_ROW = (EDITOR_ROW as usize + 1).min(EDITOR_ROWS - 1) as u8 };
+                true
+            } else if let Some(c) = crate::interrupts::scancode_to_char(sc) {
+                editor_type(c);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    if handled {
+        dirty_kind(WinKind::App(id));
+    }
+    handled
+}
+
+/// Row selected by a window-local `y` inside a list of `count` rows.
+fn app_row_at(y: usize, count: usize) -> Option<usize> {
+    if y < APP_ROW_Y || y >= APP_ROW_Y + count * APP_ROW_H {
+        return None;
+    }
+    Some((y - APP_ROW_Y) / APP_ROW_H)
+}
+
+/// Routes a body click inside an in-kernel app window to its controls.
+fn app_click(win: &Window, x: usize, y: usize) {
+    let WinKind::App(id) = win.kind else {
+        return;
+    };
+    let (lx, ly) = (x.saturating_sub(win.x), y.saturating_sub(win.y));
+    let handled = match id {
+        APP_CALC => {
+            let mut hit = false;
+            for (i, key) in CALC_KEYS.iter().enumerate() {
+                let bx = CALC_GRID_X + (i % CALC_COLS) * CALC_BTN_STEP_X;
+                let by = CALC_GRID_Y + (i / CALC_COLS) * CALC_BTN_STEP_Y;
+                if lx >= bx && lx < bx + CALC_BTN_W && ly >= by && ly < by + CALC_BTN_H {
+                    calc_input(*key);
+                    hit = true;
+                    break;
+                }
+            }
+            hit
+        }
+        APP_STORE => {
+            let (bx, by, bw, bh) = STORE_BTN;
+            if lx >= bx && lx < bx + bw && ly >= by && ly < by + bh {
+                store_launch();
+                true
+            } else if let Some(row) = app_row_at(ly, STORE_IDS.len()) {
+                unsafe { STORE_SEL = row as u8 };
+                true
+            } else {
+                false
+            }
+        }
+        APP_FILES | APP_FILES_ALT => {
+            if let Some(row) = app_row_at(ly, FILE_ROWS.len()) {
+                unsafe { FILES_SEL = row as u8 };
+                true
+            } else {
+                false
+            }
+        }
+        APP_EDITOR => {
+            if let Some(row) = app_row_at(ly, EDITOR_ROWS) {
+                unsafe { EDITOR_ROW = row as u8 };
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    if handled {
+        dirty_kind(win.kind);
     }
 }
 
@@ -2008,22 +2462,6 @@ fn start_click(fb: &Framebuffer, _x: usize, y: usize) {
         close_start();
         activate_start(entry);
     }
-}
-
-/// Forwards the extended make codes the idle loop normally swallows: `Win`
-/// toggles Start, arrows move the selection and extended Enter activates it.
-pub fn handle_ext_scancode(sc: u8) -> bool {
-    if !active() || crate::fault::pending() || modal_active() {
-        return false;
-    }
-    if sc == 0x5B {
-        toggle_start();
-        return true;
-    }
-    if start_open() {
-        return start_key(sc);
-    }
-    false
 }
 
 /// Enters GUI mode. The idle loop calls this once at boot, so the desktop is
@@ -2440,6 +2878,12 @@ pub fn handle_scancode(sc: u8) -> bool {
     // The focused Network window edits its draft form first (v2.38.34):
     // Tab/Backspace move the field focus, Enter applies, printable keys type.
     if net_key(sc) {
+        return true;
+    }
+    // Real in-kernel apps own their keys before the generic widget form: the
+    // calculator, store, viewer and editor each consume digits, arrows and
+    // editing keys instead of feeding a hidden demo form.
+    if app_key(sc) {
         return true;
     }
     // The focused Widget Lab window routes keys into its focused widget
@@ -4429,6 +4873,9 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                     hit_any = true;
                     break;
                 }
+                // In-kernel apps hit-test their own buttons and list rows
+                // before the generic Task Manager row logic.
+                app_click(win, x, y);
                 // Task Manager rows select on click (v2.38.35); the button
                 // plates above already swallowed their own clicks.
                 if win.kind == WinKind::Tasks {
@@ -4825,7 +5272,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
         WinKind::Tasks => draw_tasks(fb, win, max_px),
         WinKind::Widgets => draw_lab(fb, win, max_px),
         WinKind::Client(_) => draw_client(fb, win),
-        WinKind::App(id) => draw_app(fb, win.x + 8, &mut y, max_px, id),
+        WinKind::App(id) => draw_app(fb, win, &mut y, max_px, id),
     }
     draw_widgets(fb, win);
 }
@@ -5242,18 +5689,227 @@ fn draw_about(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
     );
 }
 
-/// Body of a Start-catalog application window: the application name plus the
-/// honest capability lines from [`APPS`]. Dashboard and Network Settings use
-/// their real kernel windows, so only placeholder functions land here.
-fn draw_app(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize, id: u8) {
-    let Some(app) = APPS.get(id as usize) else {
-        return;
-    };
-    text_line(fb, x, y, app.title, colors::OK, WIN_BG, max_px);
-    *y += 4;
-    for line in app.body {
-        text_line(fb, x, y, line, TEXT, WIN_BG, max_px);
+/// Body of a Start-catalog application window. Implemented programs render
+/// live interactive content; entries whose runtime needs a host keep the
+/// honest capability note from [`APPS`].
+fn draw_app(fb: &Framebuffer, win: &Window, y: &mut usize, max_px: usize, id: u8) {
+    match id {
+        APP_CALC => draw_calc(fb, win, max_px),
+        APP_STORE => draw_store(fb, win, max_px),
+        APP_FILES | APP_FILES_ALT => draw_files(fb, win, max_px),
+        APP_EDITOR => draw_editor(fb, win, max_px),
+        _ => {
+            let x = win.x + 8;
+            let Some(app) = APPS.get(id as usize) else {
+                return;
+            };
+            text_line(fb, x, y, app.title, colors::OK, WIN_BG, max_px);
+            *y += 4;
+            for line in app.body {
+                text_line(fb, x, y, line, TEXT, WIN_BG, max_px);
+            }
+        }
     }
+}
+
+/// Paints the calculator display and its clickable button grid.
+fn draw_calc(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let x = win.x + 8;
+    let y = win.y + TITLE_H + 8;
+    let w = win.w.saturating_sub(16);
+    unsafe {
+        vector::fill_round(
+            fb,
+            x as i32,
+            y as i32,
+            w as i32,
+            20,
+            3,
+            vector::ALL,
+            NET_BOX_BG,
+        );
+    }
+    let value = calc_text();
+    let tw = tui::text_width(value).min(w.saturating_sub(8));
+    tui::draw_text(
+        fb,
+        x + w.saturating_sub(tw + 4),
+        y + 6,
+        value,
+        colors::OK,
+        NET_BOX_BG,
+        x + w,
+    );
+    for (i, key) in CALC_KEYS.iter().enumerate() {
+        let bx = win.x + CALC_GRID_X + (i % CALC_COLS) * CALC_BTN_STEP_X;
+        let by = win.y + CALC_GRID_Y + (i / CALC_COLS) * CALC_BTN_STEP_Y;
+        unsafe {
+            vector::fill_round(
+                fb,
+                bx as i32,
+                by as i32,
+                CALC_BTN_W as i32,
+                CALC_BTN_H as i32,
+                3,
+                vector::ALL,
+                BTN_BG,
+            );
+        }
+        let mut buf = [0u8; 4];
+        let label = key.encode_utf8(&mut buf);
+        let lw = tui::text_width(label);
+        tui::draw_text(
+            fb,
+            bx + CALC_BTN_W.saturating_sub(lw) / 2,
+            by + 6,
+            label,
+            TEXT,
+            BTN_BG,
+            bx + CALC_BTN_W,
+        );
+    }
+    tui::draw_text(
+        fb,
+        x,
+        win.y + 154,
+        "C = clear  Backspace = delete  integer math",
+        TEXT_DIM,
+        WIN_BG,
+        max_px,
+    );
+}
+
+/// Paints the App Store catalog with the selected row and Run button.
+fn draw_store(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let sel = unsafe { STORE_SEL as usize };
+    for (i, &id) in STORE_IDS.iter().enumerate() {
+        let row_y = win.y + APP_ROW_Y + i * APP_ROW_H;
+        let (bg, fg) = if i == sel {
+            (BAR_ON, TEXT)
+        } else {
+            (WIN_BG, TEXT_DIM)
+        };
+        unsafe {
+            fb.fill_rect(win.x + 4, row_y, win.w.saturating_sub(8), APP_ROW_H - 1, bg);
+        }
+        let title = APPS.get(id as usize).map(|a| a.title).unwrap_or("app");
+        tui::draw_text(fb, win.x + 10, row_y + 3, title, fg, bg, max_px);
+    }
+    let (bx, by, bw, bh) = STORE_BTN;
+    unsafe {
+        vector::fill_round(
+            fb,
+            (win.x + bx) as i32,
+            (win.y + by) as i32,
+            bw as i32,
+            bh as i32,
+            3,
+            vector::ALL,
+            BTN_BG,
+        );
+    }
+    tui::draw_text(
+        fb,
+        win.x + bx + 10,
+        win.y + by + 6,
+        "Запуск (Enter)",
+        TEXT,
+        BTN_BG,
+        win.x + bx + bw,
+    );
+    tui::draw_text(
+        fb,
+        win.x + 8,
+        win.y + 162,
+        "↑/↓ выбор · Enter запуск",
+        TEXT_DIM,
+        WIN_BG,
+        max_px,
+    );
+}
+
+/// Content of one Files pseudo-file, generated from live kernel state.
+fn files_preview(row: usize) -> String {
+    match row {
+        0 => String::from(tui::VERSION),
+        1 => uptime_hms(),
+        2 => format!("ticks {} at {} Hz", TICKS.load(Ordering::Relaxed), TIMER_HZ),
+        3 => format!("frames {}", crate::memory::frames_allocated()),
+        4 => {
+            let clients = (0..MAX_CLIENTS as u8)
+                .filter(|&id| client_slot(id).is_some())
+                .count();
+            format!("windows {} clients {}", window_count(), clients)
+        }
+        5 => format!(
+            "ps2 {} usb {}",
+            crate::ps2::key_seq(),
+            crate::xhci::KEY_SEQ.load(Ordering::Relaxed)
+        ),
+        _ => String::new(),
+    }
+}
+
+/// Paints the Files list and the live preview of the selected pseudo-file.
+fn draw_files(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let sel = unsafe { FILES_SEL as usize };
+    for (i, name) in FILE_ROWS.iter().enumerate() {
+        let row_y = win.y + APP_ROW_Y + i * APP_ROW_H;
+        let (bg, fg) = if i == sel {
+            (BAR_ON, TEXT)
+        } else {
+            (WIN_BG, TEXT_DIM)
+        };
+        unsafe {
+            fb.fill_rect(win.x + 4, row_y, win.w.saturating_sub(8), APP_ROW_H - 1, bg);
+        }
+        tui::draw_text(fb, win.x + 10, row_y + 3, name, fg, bg, max_px);
+    }
+    tui::draw_text(
+        fb,
+        win.x + 8,
+        win.y + 130,
+        "--- preview ---",
+        TEXT_DIM,
+        WIN_BG,
+        max_px,
+    );
+    tui::draw_text(
+        fb,
+        win.x + 8,
+        win.y + 146,
+        &files_preview(sel),
+        colors::OK,
+        WIN_BG,
+        max_px,
+    );
+}
+
+/// Paints the six editable editor lines with a cursor on the active line.
+fn draw_editor(fb: &Framebuffer, win: &Window, max_px: usize) {
+    let active = unsafe { EDITOR_ROW as usize };
+    for row in 0..EDITOR_ROWS {
+        let row_y = win.y + APP_ROW_Y + row * APP_ROW_H;
+        let bg = if row == active { BAR_ON } else { WIN_BG };
+        unsafe {
+            fb.fill_rect(win.x + 4, row_y, win.w.saturating_sub(8), APP_ROW_H - 1, bg);
+        }
+        let line = editor_line(row);
+        tui::draw_text(fb, win.x + 8, row_y + 3, line, TEXT, bg, max_px);
+        if row == active {
+            let cx = win.x + 8 + tui::text_width(line);
+            tui::draw_text(fb, cx, row_y + 3, "_", colors::OK, bg, max_px);
+        }
+    }
+    tui::draw_text(
+        fb,
+        win.x + 8,
+        win.y + 134,
+        "↑/↓ строка · Enter новая · Backspace удалить",
+        TEXT_DIM,
+        WIN_BG,
+        max_px,
+    );
 }
 
 /// Background of the Network window's input boxes (darker than [`WIN_BG`]).

@@ -1,5 +1,48 @@
 # AIOS Development Log
 
+## v2.83.0 - Real in-kernel desktop apps and input fixes (2026-11-24)
+
+### Added
+- The native `aios-kernel` desktop now runs real `no_std` applications instead of
+  host-only notice windows: App Store (`F4`), Calculator, Files viewer and a
+  six-line Text Editor. The `STORE_IDS` catalog launches System, App Store,
+  Files, Calculator, Terminal and Editor with ↑/↓, Enter or the Run button.
+- Calculator has a 4×4 mouse/keyboard button grid, integer `+ - * /`, `C`,
+  Backspace and `=`/Enter; `12-3=9` is the QEMU proof.
+- Serial proof lines: `[gui] store select`, `[gui] store launch`,
+  `[gui] app launch` and `[gui] calc result`.
+
+### Changed
+- Terminal and the program alias for Network Settings now open the kernel console
+  and the real `WinKind::Network` window. `handle_scancode()` routes keys to the
+  focused in-kernel app before generic widget forms, and `app_click()` maps body
+  clicks to app controls. Truly host-only entries still explain their limits.
+
+### Fixed
+- PS/2 `feed_key()` dropped the make byte after `0xE0`/`0xE1`, so Win and arrows
+  never reached the GUI when Start was closed. The prefix is now swallowed and
+  the following make code is queued; `idle_loop()` no longer keeps a second
+  extended-state latch.
+- USB-HID navigation usages `0x49..=0x52` were mapped to the wrong Set-1 codes;
+  Up/Down/Left/Right and Home/End/Page keys now move Start and App Store rows on
+  USB keyboards as well as PS/2.
+
+### Documentation
+- EN/RU `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` and `INTERFACE` describe the
+  in-kernel program catalog and the PS/2/xHCI input fixes.
+
+### Verification
+- `cargo fmt --all`, `cargo build --workspace`, `cargo test --workspace`,
+  `cargo clippy --workspace`, plus standalone kernel build and clippy with
+  `--features limine`, are clean.
+- QEMU Legacy BIOS with `aios-kernel-usb-limine-apps.img` (4,683,776 bytes,
+  SHA-256 `D5BE46C70628CA664D4C3CAA7B6E3DE9D57A01555198BF157DFB64A150844ECD`)
+  proved `store launch`, `calculator launch`, `calc result 9`, `editor launch`
+  and `files launch` over COM1. The kernel SHA-256 is
+  `1BCF9FA7C8AC3FCE17A7D06411A8B0C94E686640B54194CEB28A15460F3BAE87`.
+  Physical Disk 3 was **not** reflashed: it still holds the verified dual image
+  SHA-256 `F16C54FADE37AF89132B7BE16B76BD7A068BEB052CACF3966D97652913B38879`.
+
 ## v2.82.0 - Low-overhead ring-3 demos and calmer desktop cadence (2026-11-24)
 
 ### Added

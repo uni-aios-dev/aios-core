@@ -225,19 +225,28 @@ pub fn drain() {
 }
 
 fn feed_key(byte: u8) {
-    // Extended keys (0xE0/0xE1 prefix + the byte that follows: Win/arrow/Fn
-    // scancodes) are dropped entirely — they must never reach the key consumer
-    // (TUI/GUI/LAST_SCANCODE), on hardware where the byte-follows rule is the
-    // only thing preventing an out-of-range entry.
+    // Extended keys arrive as 0xE0/0xE1 followed by a make/break byte. The
+    // prefix is swallowed here; the following byte is queued as a normal code
+    // so Win/arrow/Fn keys reach the GUI's Start and in-kernel app handlers.
     static mut EXT: bool = false;
     if unsafe { *core::ptr::addr_of!(EXT) } {
         unsafe {
             *core::ptr::addr_of_mut!(EXT) = false;
         }
         match byte {
-            0x1D => crate::interrupts::CTRL_DOWN.store(true, Ordering::Relaxed),
-            0x9D => crate::interrupts::CTRL_DOWN.store(false, Ordering::Relaxed),
+            0x1D => {
+                crate::interrupts::CTRL_DOWN.store(true, Ordering::Relaxed);
+                return;
+            }
+            0x9D => {
+                crate::interrupts::CTRL_DOWN.store(false, Ordering::Relaxed);
+                return;
+            }
             _ => {}
+        }
+        if byte & 0x80 == 0 {
+            KEY_SEQ.fetch_add(1, Ordering::Relaxed);
+            crate::interrupts::key_push(byte);
         }
         return;
     }
