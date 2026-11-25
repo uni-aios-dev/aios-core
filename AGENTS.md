@@ -10,8 +10,9 @@ When making ANY modification:
 3. Update `docs/BUGS.md` if the change fixes a bug or introduces a known issue.
 4. Update `docs/TODO.md` if the change adds new features or removes planned work.
 5. Update `docs/INTERFACE.md` if the change affects user-facing interfaces (TUI/GUI).
-6. Add inline `///` doc comments to all new public structs, enums, traits, and functions.
-7. Ensure all existing doc comments remain accurate after the change.
+6. Update `docs/SCHEME.md` if the change affects the crate/module/function map, boot or IPC flow, bridge endpoints, or test coverage map.
+7. Add inline `///` doc comments to all new public structs, enums, traits, and functions.
+8. Ensure all existing doc comments remain accurate after the change.
 
 ## Bilingual Documentation (MANDATORY)
 
@@ -23,9 +24,10 @@ When making ANY documentation change:
 3. Keep `docs/BUGS.md` (English) and `docs/BUGS.ru.md` (Russian) in sync.
 4. Keep `docs/TODO.md` (English) and `docs/TODO.ru.md` (Russian) in sync.
 5. Keep `docs/INTERFACE.md` (English) and `docs/INTERFACE.ru.md` (Russian) in sync.
-6. Every new section, entry, or fix in English docs MUST have a corresponding Russian translation.
-7. Code blocks, file paths, type names, and command examples remain in English in Russian docs.
-8. Table headers in Russian docs are translated; table content (type names, variants) stays in English.
+6. Keep `docs/SCHEME.md` (English) and `docs/SCHEME.ru.md` (Russian) in sync.
+7. Every new section, entry, or fix in English docs MUST have a corresponding Russian translation.
+8. Code blocks, file paths, type names, and command examples remain in English in Russian docs.
+9. Table headers in Russian docs are translated; table content (type names, variants) stays in English.
 
 ## Immediate Git Push Rule (MANDATORY)
 
@@ -134,4 +136,6 @@ docs/TODO.md           — Roadmap, backlog, supplementary specifications
 docs/TODO.ru.md        — Дорожная карта (русский)
 docs/INTERFACE.md      — GUI/TUI usage guide: keyboard, layout, theming
 docs/INTERFACE.ru.md   — Руководство по интерфейсу (русский)
+docs/SCHEME.md         — Call-level scheme: crate/module/function map, boot/IPC flows
+docs/SCHEME.ru.md      — Схема уровня вызовов: карта крейтов/функций (русский)
 ```

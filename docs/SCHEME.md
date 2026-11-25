@@ -2,6 +2,7 @@
 
 > Version: v2.29.0 - Date: 2026-08-23
 > Companion documents: `docs/AUDIT.md` (full audit), `docs/ARCHITECTURE.md` (deep architecture), `docs/INTERFACE.md` (UI guide).
+> Bilingual pair: `docs/SCHEME.ru.md` (Russian). Update both files together.
 > This document is the **call-level map**: every crate, its modules, and its key public functions.
 
 ## 1. System Scheme (Layer Map)

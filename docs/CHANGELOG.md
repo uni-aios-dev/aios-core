@@ -37,6 +37,10 @@
 - EN/RU `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` and `INTERFACE` describe
   the NIC classification, capability tokens, host/kernel network commands and
   the DHCP/config fixes.
+- `AGENTS.md` and `CONTRIBUTING.md` now list `docs/SCHEME.md` /
+  `docs/SCHEME.ru.md` in the mandatory documentation and bilingual-sync rules;
+  both scheme files carry an explicit pair notice so the call-level function
+  map stays translated and updated together.
 
 ### Verification
 - `cargo fmt --all`, `cargo build --workspace`, `cargo test --workspace` and

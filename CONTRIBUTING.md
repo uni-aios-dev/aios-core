@@ -149,7 +149,8 @@ Before submitting:
   - `docs/BUGS.md` — bug fix or new known issue
   - `docs/TODO.md` — new feature or removed planned work
   - `docs/INTERFACE.md` — user‑facing changes
-- [ ] Bilingual docs: if you changed an English doc, update the Russian version too
+  - `docs/SCHEME.md` — crate/module/function map or flow changes
+- [ ] Bilingual docs: if you changed an English doc, update the Russian version too (including `docs/SCHEME.md` ↔ `docs/SCHEME.ru.md`)
 
 ### Review Process
 
