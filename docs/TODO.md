@@ -511,6 +511,7 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
 - [x] Wire `aios-init` + `build_initramfs.sh` into `live/build.sh` step [4] as the initramfs `/init` by default (done in v2.14.0; legacy busybox path kept behind `USE_BUSYBOX_INIT=1`)
 - [x] Add a `rootfs` cleanup guard / `--keep-rootfs` flag to `build_initramfs.sh` — done (v2.13.0)
 - [x] Bootable two-entry ISO (Limine **AIOS Live** + **AIOS Installer**) with a fully automated installer — done (v2.33.0): `rdinit=/installer`, interactive or `aios.target=<dev>` / `aios.yes` boot, GPT (1 MiB BIOS boot + 512 MiB EFI + ext4 root), GRUB BIOS+UEFI, verified end-to-end in QEMU and written to a physical USB stick. Real-hardware black screen after the boot menu fully fixed in v2.33.3: serial-only console replaced by `console=ttyS0 console=tty0` (v2.33.2), then pre-init GPU module loader injected into initramfs `/init` to bring up fbcon early, plus `loglevel=7`. **Pending: user re-test of Live/Installer on the legacy-BIOS laptop, then an unattended install acceptance pass on real hardware.**
+- [ ] Repair `scripts/flash-usb.ps1` host compatibility (v2.84.0): open the raw disk with `FileMode.Open` / `FileShare.ReadWrite` instead of `FileMode.Write` / `None`, and capture the elevated relaunch output; restore a clean Limine + `xorriso` hybrid image so the patched stick can boot UEFI again. Workaround and `ERROR_NOT_READY` recovery are in `BUGS`.
 
 ## Planned follow-ups (from v2.30.0 review)
 

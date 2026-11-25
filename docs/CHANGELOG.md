@@ -45,6 +45,31 @@
   `x86_64-unknown-none` pass with default features and `--features limine`.
   No new real-hardware NIC bring-up is claimed.
 
+### Physical deployment (2026-11-25)
+- Built `aios-kernel` with `--features limine` (1,054,032 bytes, SHA-256
+  `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`) and
+  patched it into the known-good dual-kernel image at ISO LBA 32, updating the
+  `AIOS_KER.;1` directory record and the menu label to
+  `AIOS Desktop v2.84 (native kernel)`. The resulting
+  `aios-kernel-usb-limine-v284.img` is 4,683,776 bytes with SHA-256
+  `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`; the
+  v2.79 fallback kernel at LBA 600 is unchanged.
+- QEMU Legacy BIOS boot from that image reached `Limine handoff`, a valid
+  `1280x800` GOP framebuffer, the new NIC boot line
+  (`nic Intel PRO/1000 MT Desktop (e1000) ...`) and DHCP
+  discover/request/bound through `10.0.2.15` without a panic. Log:
+  `aios-kernel-run/out/serial-v284-legacy.log`.
+- After explicit confirmation `\\.\PhysicalDrive3` (Kingston DataTraveler 3.0,
+  serial `EE05DB505AE9`) was written with the v2.84 image. Full read-back
+  SHA-256 matched the image, the MBR was `EB 3C 90 LIMIT` / `55 AA`, the kernel
+  at LBA 32 matched the ELF hash, the directory record reported extent 32 /
+  size 1,054,032, and both menu entries were read back from the disk. The stick
+  remains Legacy-BIOS-only because the patched LBA 32 still overwrites the old
+  UEFI stage.
+- Early flash attempts hit a stale Windows USB device state (`ERROR_NOT_READY`
+  on `WriteFile`); disabling and re-enabling the active `USBSTOR` device
+  instance restored raw write access. The workaround is documented in `BUGS`.
+
 ## v2.83.0 - Real in-kernel desktop apps and input fixes (2026-11-24)
 
 ### Added

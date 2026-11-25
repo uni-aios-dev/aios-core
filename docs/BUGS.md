@@ -472,6 +472,23 @@ EN/RU docs were aligned.
   boot stays unavailable. A clean hybrid rebuild is still required to restore
   both BIOS and UEFI booting with the two-entry menu.
 
+## LIMITS (v2.84.0): raw flashing depends on a ready Windows USB device
+
+- `scripts/flash-usb.ps1` opens the target with `FileMode.Write` and
+  `FileShare.None`; on this host that fails even from an elevated process with
+  `UnauthorizedAccessException` when opening `\\.\PhysicalDriveN`. The v2.84
+  flash succeeded through an elevated PowerShell wrapper using `FileMode.Open`,
+  `FileAccess.Write` and `FileShare.ReadWrite` instead.
+- Repeated `diskpart` / `Clear-Disk` experiments left the Kingston stick
+  reported as `Online` but `WriteFile` returned `ERROR_NOT_READY` (21) while
+  reads still worked. `FSCTL_LOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`,
+  `mountvol /e` and `Reset-PhysicalDisk` did not clear the state;
+  `Disable-PnpDevice` followed by `Enable-PnpDevice` on the active
+  `USBSTOR\DISK&VEN_KINGSTON&PROD_DATATRAVELER_3.0&REV_PMAP\...` instance
+  restored raw writes. A physical replug is equivalent.
+- **Status:** workaround recorded; the v2.84 stick boots only in Legacy BIOS
+  because the patched kernel still occupies ISO LBA 32.
+
 ## FIXED (v2.78.0): the Limine/legacy BIOS kernel could not be rebuilt from source
 
 - **Symptom:** the working Legacy image on the laptop was dated 2026-10-06,

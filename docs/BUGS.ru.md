@@ -476,6 +476,23 @@ Ed25519/моста, что и старый TUI, а тест с локальны�
   через UEFI по-прежнему недоступна. Чтобы вернуть одновременную загрузку BIOS и
   UEFI с двухпунктовым меню, нужна чистая пересборка гибридного образа.
 
+## LIMITS (v2.84.0): прямая запись требует готового USB-устройства Windows
+
+- `scripts/flash-usb.ps1` открывает целевой диск с `FileMode.Write` и
+  `FileShare.None`; на этом хосте даже из процесса с повышенными правами это даёт
+  `UnauthorizedAccessException` при открытии `\\.\PhysicalDriveN`. Запись v2.84
+  выполнена через обёртку PowerShell с повышенными правами и `FileMode.Open`,
+  `FileAccess.Write` и `FileShare.ReadWrite`.
+- Повторные эксперименты с `diskpart` / `Clear-Disk` оставили флешку Kingston в
+  состоянии `Online`, но `WriteFile` возвращал `ERROR_NOT_READY` (21), хотя
+  чтение работало. `FSCTL_LOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`, `mountvol /e` и
+  `Reset-PhysicalDisk` состояние не сбросили; помогли `Disable-PnpDevice` и
+  последующий `Enable-PnpDevice` для активного экземпляра
+  `USBSTOR\DISK&VEN_KINGSTON&PROD_DATATRAVELER_3.0&REV_PMAP\...`.
+  Физическое переподключение даёт тот же эффект.
+- **Статус:** обходной путь задокументирован; флешка v2.84 загружается только
+  через Legacy BIOS, так как пропатченное ядро по-прежнему занимает ISO LBA 32.
+
 ## FIXED (v2.78.0): ядро Limine / Legacy BIOS нельзя было пересобрать из исходников
 
 - **Симптом:** рабочий Legacy-образ на ноуте датирован 06.10.2026, а свежий

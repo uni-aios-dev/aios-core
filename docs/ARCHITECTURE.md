@@ -2442,6 +2442,12 @@ match on the bound local port and require the reply to come from the connected p
   the native desktop; swapping the config entries boots the old kernel with the
   same LAPIC tick RIP as the reference `current.img` boot. The flashed disk was
   read back in full (SHA-256 `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`) with ELF magic at both kernel offsets.
+- The v2.84.0 refresh replaces only the default ELF in ISO LBA 32: 1,054,032
+  bytes (SHA-256 `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`),
+  image SHA-256 `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`.
+  The menu now reads `/AIOS Desktop v2.84 (native kernel)`; the v2.79 fallback
+  ELF and its hash are unchanged. QEMU Legacy BIOS confirmed the new NIC boot
+  line and a full DHCP discover/request/bound cycle before the physical write.
 
 ## Bootable AIOS Installer (Live ISO → disk, v2.33.0)
 
