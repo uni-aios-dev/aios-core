@@ -41,6 +41,18 @@
   `docs/SCHEME.ru.md` in the mandatory documentation and bilingual-sync rules;
   both scheme files carry an explicit pair notice so the call-level function
   map stays translated and updated together.
+- Full code + scheme audit: `cargo fmt --all -- --check`, `cargo clippy
+  --workspace --all-targets -- -D warnings` and `cargo test --workspace`
+  (1,824 passed in 100 suites) are clean. `docs/SCHEME.md` / `SCHEME.ru.md`
+  rewritten for v2.84.0: 41 workspace members + 13 standalone crates, new
+  `aios-console`/`aios-shell` maps, current bridge route table (auth/sys
+  endpoints), fault/recovery IPC, NIC/Limine/desktop milestones, corrected
+  boot/IPC flows and per-crate statistics.
+- Code audit findings recorded (no source fix in this change): hardcoded
+  issuer secrets, predictable bridge auth fallback, open self-registration and
+  SSRF/large-input limits, mutex `unwrap()`s in bridge handlers,
+  `Module::deserialize` on untrusted bytes, sparse `// SAFETY:` notes and
+  kernel/boot crates excluded from workspace CI.
 
 ### Verification
 - `cargo fmt --all`, `cargo build --workspace`, `cargo test --workspace` and
