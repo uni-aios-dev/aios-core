@@ -196,16 +196,17 @@ subcommands listed in `src/host.rs`. Earlier gaps such as `net validate`,
 commands list the same background processes and resume the requested id with a
 real `SIGCONT`. `state extract|restore` is real over the shared WASM executor: it
 uses the live linear memory of an executed block, so a snapshot only exists after
-`block run <block>` and a restore only after an extract in the same session. The
-remaining valid registry entries `acl grant|revoke`, `ping` and host
-`net recheck` still return `ERR unavailable` because no real host library API
-exists for them. `aios-console/src/unavailable.rs` now reports a concrete cause
-for each: no path-scoped ACL API, no ICMP/reachability API or raw-socket
-privilege, and a host equivalent of the kernel-only `recheck()`. The kernel side
-of `net recheck` is now real: `KernelBackend` calls `crate::net::recheck()`.
-Keeping the remaining host entries `unavailable` with an exact reason is
-deliberate — aliasing them to `caps` or TCP connect would discard their declared
-semantics.
+`block run <block>` and a restore only after an extract in the same session.
+At that time the remaining valid registry entries `acl grant|revoke`, `ping`
+and host `net recheck` still returned `ERR unavailable` because no real host
+library API existed for them. `aios-console/src/unavailable.rs` reported a
+concrete cause for each: no path-scoped ACL API, no ICMP/reachability API or
+raw-socket privilege, and no host equivalent of the kernel-only `recheck()`.
+The kernel side became real first (`KernelBackend` calls
+`crate::net::recheck()`); v2.84.0 adds the host side through
+`NetManager::recheck()`. `acl` and `ping` remain deliberately `unavailable`
+with exact reasons - aliasing them to `caps` or TCP connect would discard their
+declared semantics.
 
 The dependency cycle for watchdog/bridge/auth/file-manager/job-control commands is
 resolved: `aios-console` defines control traits; the `aios` binary injects
@@ -2752,3 +2753,34 @@ As of v2.13.0, all tests pass, clippy reports zero warnings, and the 18 bugs fou
   re-verify via RAW discriminator probe.
 - **Affected files:** ios-kernel/src/interrupts/idt.rs (gate install),
   ios-kernel-run/src/main.rs (probe).
+
+## FIXED (network config/DHCP): nested updates and DHCP transaction matching
+
+`NetworkConfig::apply_updates` mishandled nested `dns` values and whole
+`interfaces` arrays, so partial `net set` updates could be rejected or lose
+fields. It now accepts `dns` objects, address strings, search-domain arrays and
+`null`, validates `InterfaceConfig` arrays and keeps `version >= 2`.
+The DHCP client wrote/read the xid at `p[3..7]`, changed it between DISCOVER
+and REQUEST, and accepted replies from any transaction. The xid is now stable,
+correctly located at `p[4..8]`, and OFFER/ACK replies with a foreign xid are
+discarded.
+
+## FIXED (host network): `net recheck` was a cached-status stub
+
+Host `console net recheck` used to report `unavailable` because no host-side
+fresh link probe existed. `aios-sys-control::host_net` now parses `netsh` and
+`ip addr` output into `AdapterState`, `NetManager` provides `recheck()`,
+`adapters()` and `lease()`, and `HostBackend` exposes
+`net recheck|apply|adapters|lease`. `net apply` persists first and then
+rechecks; lease persistence preserves unrelated config fields.
+`net lease` reports `no DHCP lease acquired in this session` only before a
+lease exists, not after one is bound.
+
+## KNOWN LIMITATION (NIC provisioning): no new real-hardware proof
+
+AutoHAL now classifies PCI Ethernet/Wi-Fi hardware, offers exact and
+class-wide NIC builtins, retains signed capability tokens for live drivers,
+and `driver nics` reports their state. The kernel exposes a shared NIC
+inventory and real `net` text commands. These changes are covered by unit,
+integration and no_std build checks; no new RTL8169/PCnet/virtio-net
+real-hardware bring-up or QEMU runtime proof is claimed by this change.

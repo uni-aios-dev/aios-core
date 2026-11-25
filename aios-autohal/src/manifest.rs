@@ -42,9 +42,37 @@ pub struct SupportedHardware {
     pub vendor_id: Option<u16>,
     /// Optional device id (wildcard match when `None`).
     pub device_id: Option<u16>,
+    /// Optional PCI class/subclass word to match (`class << 16 | subclass << 8`).
+    #[serde(default)]
+    pub class_code: Option<u32>,
+    /// Bits of `class_code` that must match; defaults to the full word.
+    #[serde(default)]
+    pub class_mask: Option<u32>,
 }
 
 impl SupportedHardware {
+    /// Pattern for one exact vendor/device pair.
+    pub fn new(bus: &str, vendor_id: u16, device_id: u16) -> Self {
+        Self {
+            bus: bus.to_string(),
+            vendor_id: Some(vendor_id),
+            device_id: Some(device_id),
+            class_code: None,
+            class_mask: None,
+        }
+    }
+
+    /// Pattern for a PCI class (for example all Ethernet controllers).
+    pub fn for_class(class_code: u32, class_mask: u32) -> Self {
+        Self {
+            bus: "pci".to_string(),
+            vendor_id: None,
+            device_id: None,
+            class_code: Some(class_code),
+            class_mask: Some(class_mask),
+        }
+    }
+
     pub fn matches(&self, fp: &HardwareFingerprint) -> bool {
         if !self.bus.eq_ignore_ascii_case(fp.bus.tag()) {
             return false;
@@ -56,6 +84,12 @@ impl SupportedHardware {
         }
         if let Some(did) = self.device_id {
             if did != fp.device_id {
+                return false;
+            }
+        }
+        if let Some(class) = self.class_code {
+            let mask = self.class_mask.unwrap_or(0x00FF_FFFF);
+            if fp.class_code & mask != class & mask {
                 return false;
             }
         }
@@ -217,6 +251,8 @@ mod tests {
                 bus: "usb".into(),
                 vendor_id: Some(0x046D),
                 device_id: Some(0x0825),
+                class_code: None,
+                class_mask: None,
             }],
             required_capabilities: vec![Capability::HwAccess, Capability::MemAlloc],
             hash_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
@@ -269,6 +305,8 @@ mod tests {
                 bus: "usb".into(),
                 vendor_id: None,
                 device_id: None,
+                class_code: None,
+                class_mask: None,
             }],
             ..manifest()
         };
@@ -280,6 +318,27 @@ mod tests {
             serial_or_acpi: None,
         };
         assert!(m.can_serve(&fp));
+    }
+
+    #[test]
+    fn test_class_pattern_matches_only_the_requested_subclass() {
+        let m = DriverManifest {
+            supported_hardware: vec![SupportedHardware::for_class(0x028000, 0xFFFFFF00)],
+            ..manifest()
+        };
+        let wifi = HardwareFingerprint {
+            bus: BusType::PCI,
+            vendor_id: 0x8086,
+            device_id: 0x1234,
+            class_code: 0x028000,
+            serial_or_acpi: None,
+        };
+        let ethernet = HardwareFingerprint {
+            class_code: 0x020000,
+            ..wifi.clone()
+        };
+        assert!(m.can_serve(&wifi));
+        assert!(!m.can_serve(&ethernet));
     }
 
     #[test]

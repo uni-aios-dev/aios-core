@@ -18,6 +18,7 @@ pub mod fingerprint;
 pub mod hotplug;
 pub mod manifest;
 pub mod native;
+pub mod nic;
 pub mod registry;
 #[cfg(feature = "gui")]
 pub mod ui_gui;
@@ -25,7 +26,7 @@ pub mod ui_gui;
 pub mod ui_tui;
 
 pub use crate::adapter::{AdapterConfig, AdapterError, DriverLanguage, SourceAdapter};
-pub use crate::catalog::{BuiltinDriver, GENERIC_WAT};
+pub use crate::catalog::{BuiltinDriver, GENERIC_WAT, NIC_WAT};
 pub use crate::engine::{
     AutohalEngine, DeviceDriver, DeviceView, DriverState, EngineConfig, EngineError, Toast,
     ToastKind,
@@ -38,4 +39,5 @@ pub use crate::fingerprint::{extract_fingerprints, BusType, HardwareFingerprint}
 pub use crate::hotplug::{diff_fingerprints, HotplugConfig, HotplugEvent, HotplugMonitor};
 pub use crate::manifest::{cap_from_name, DriverManifest, DriverSource, SupportedHardware};
 pub use crate::native::{BusHint, NativeEvent, NativeHotplugMonitor};
+pub use crate::nic::{class_from_code, classify, is_nic, NicClass};
 pub use crate::registry::{DriverIndex, DriverStore};

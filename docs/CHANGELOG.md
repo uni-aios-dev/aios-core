@@ -1,5 +1,50 @@
 # AIOS Development Log
 
+## v2.84.0 - Network settings, host link checks and NIC provisioning (2026-11-25)
+
+### Added
+- `aios-autohal::nic` classifies PCI network hardware into `Ethernet` and
+  `Wifi`; `SupportedHardware::for_class` supports masked class matching, the
+  catalog ships `NIC_WAT` with exact and class-wide NIC drivers, and
+  `driver nics` reports detected cards with driver, state and token status.
+- `aios-console::net_text` provides shared `no_std`-compatible parsing and
+  formatting for kernel `net show|config|status|lease|set|apply|validate|reset|
+  adapters|recheck` commands.
+- `aios-sys-control::host_net` parses `netsh`/`ip addr` output into
+  `AdapterState`; `NetManager` gained `recheck()`, `adapters()` and `lease()`,
+  so host `net recheck|apply|adapters|lease` perform real I/O.
+
+### Changed
+- `ProvisioningEngine` retains signed `CapabilityToken`s and exposes them via
+  `tokens()`/`token()`; tokens are removed on rollback, removal or uninstall.
+- `aios-kernel::nic` exposes `Kind::name()`, `NicDeviceInfo`,
+  `SUPPORTED_DEVICES` and `describe()`; boot logs name both the driver kind and
+  the backend.
+- `NetworkConfig::apply_updates` accepts `dns` objects, address strings,
+  search-domain arrays or `null`, and validates/replaces `interfaces` arrays
+  while keeping `version >= 2`.
+
+### Fixed
+- DHCP wrote and read the transaction id at the wrong header offset, changed
+  the xid between DISCOVER and REQUEST, and accepted replies from any
+  transaction. The xid is now stable, read from `p[4..8]`, and stale replies
+  are ignored.
+- Host `net recheck` was an `unavailable` stub backed by cached status; it now
+  performs a fresh link check. `net apply` persists configuration before
+  rechecking, and lease persistence no longer overwrites unrelated config.
+
+### Documentation
+- EN/RU `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` and `INTERFACE` describe
+  the NIC classification, capability tokens, host/kernel network commands and
+  the DHCP/config fixes.
+
+### Verification
+- `cargo fmt --all`, `cargo build --workspace`, `cargo test --workspace` and
+  `cargo clippy --workspace` are clean.
+- Standalone `aios-kernel` `cargo check`/`clippy` for
+  `x86_64-unknown-none` pass with default features and `--features limine`.
+  No new real-hardware NIC bring-up is claimed.
+
 ## v2.83.0 - Real in-kernel desktop apps and input fixes (2026-11-24)
 
 ### Added

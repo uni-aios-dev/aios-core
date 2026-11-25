@@ -267,26 +267,30 @@ does not model (the `JobControl` seam supplies it in `aios-shell`);
 `acl grant|revoke` has no path-scoped ACL API because `AclContext` grants are
 process-global tokens and `caps` tokens are keyed by block ID; `ping` needs an
 ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
-connect is not an echo reply; host `net recheck` has no equivalent because the
-real `recheck()` is kernel-only (`no_std`) and `NetManager::status()` is cached.
-Host commands without an injected seam stay `unavailable` until those real APIs
-exist. `fm jobs|cancel` is now real wherever a live `FileManagerControl` is injected
+connect is not an echo reply. Host `net recheck`, `net apply` and `net adapters`
+are now real: `NetManager` queries the OS (`netsh` on Windows, `ip addr` on
+Linux), refreshes the cached link/lease state and reports actual adapter rows;
+`net apply` persists the config before triggering that recheck. Host commands
+without an injected seam stay `unavailable` until those real APIs exist.
+`fm jobs|cancel` is now real wherever a live `FileManagerControl` is injected
 (`aios-tui`), and `jobs|fg|bg` are real wherever a live `JobControl` is injected
 (`aios-shell`); a bare `HostBackend` without those seams still reports
 `unavailable`. `state extract|restore` is now real: `BlockExecutor::extract_state`
 and `restore_state` snapshot the live linear memory of a WASM block that has been
 executed (the same migration primitive `WasmLiveUpdateEngine` uses), and
 `HostBackend` keeps the snapshot in the session so `state restore <block>` writes
-it back into the live instance. `KernelBackend` is an exception for
-`net recheck`: it calls the real `crate::net::recheck()` and prints
-`network recheck requested`.
+it back into the live instance. `KernelBackend` uses the same `net` command
+names but reads and mutates the kernel's own settings through
+`aios-console::net_text`; its `net recheck` calls the real
+`crate::net::recheck()` instead of reporting a cached verdict.
 
 `aios-kernel/src/console_backend.rs` implements `KernelBackend` with
 `aios-console` as a `no_std` dependency (`default-features = false`). It adapts
 the existing kernel entry points: generated `help`, `echo`, `version`,
 `kernel info|ver`, `faults stats|history|pending`, `fault resolve`,
-`wifi status|sim|real|scan|connect|disconnect`, `net recheck`, `udp`, `http` and
-`socktest`.
+`wifi status|sim|real|scan|connect|disconnect`,
+`net show|config|status|lease|set|apply|validate|reset|adapters|recheck`,
+`udp`, `http` and `socktest`.
 Everything else returns `unavailable`. The kernel `clear` bug is fixed here:
 the backend clears `SHELL.history` and emits an explicit `OutputControl::Clear`.
 The kernel shell exposes the backend as `console <...>` through the shared
@@ -2563,3 +2567,45 @@ commands and share the same live WASM instances as boot-time blocks. This is
 why `block run calculator ans+1` works after `block run calculator 2+3*4`,
 unlike `wasm call`, which passes no payload and creates a fresh instance each
 time.
+
+## Network settings, host link APIs and NIC provisioning (v2.84.0)
+
+`aios-net-config::NetworkConfig::apply_updates` now accepts the full `dns`
+shape: an object with `primary`, `secondary` and `search_domains`, an address
+string, a search-domain array or `null`. It also validates and replaces
+`interfaces` as an array of typed `InterfaceConfig` objects, rejects malformed
+fields, and preserves the config version while raising it to at least `2`.
+The host DHCP client keeps one transaction id across DISCOVER and REQUEST,
+reads it from the correct DHCP header offset (`p[4..8]`) and ignores replies
+that belong to another transaction.
+
+`aios-sys-control::host_net` parses `netsh interface ipv4 show config` on
+Windows and `ip -4 addr show` plus sysfs on Linux into `AdapterState` rows;
+its parsers are pure and need no hardware. `NetManager` adds `recheck()`,
+`adapters()` and `lease()`: recheck performs fresh link I/O and refreshes the
+cached link/lease snapshot, adapters reports the observed OS interfaces, and
+lease persistence no longer overwrites unrelated config fields. `HostBackend`
+exposes these as `console net recheck|apply|adapters|lease`; `net apply`
+persists first and then rechecks, instead of claiming that a cached status is
+fresh.
+
+`aios-console::net_text` is a shared `no_std`-compatible module for strict
+dotted-quad parsing, `key=value` updates, validation and stable status/lease
+formatting. `KernelBackend` uses it for
+`net show|config|status|lease|set|apply|validate|reset|adapters|recheck`, so
+the kernel text path is exercised by workspace tests; `net lease` says
+`no DHCP lease acquired in this session` only while no lease exists.
+
+`aios-autohal::nic` classifies PCI network functions as `NicClass::Ethernet`
+(class `0x02`, subclasses `0x00`/`0x01`) or `NicClass::Wifi` (`0x02/0x80`).
+`SupportedHardware::for_class` adds masked class matching while exact
+vendor/device entries stay available; the catalog ships `NIC_WAT` plus exact
+and class-wide NIC builtins, and `driver nics` reports detected cards, their
+driver, state and token status. `ProvisioningEngine` now retains the signed
+`CapabilityToken` for each live instance, exposes it via `tokens()`/`token()`
+and removes it on rollback, removal or uninstall.
+
+`aios-kernel::nic` exposes `Kind::name()`, `NicDeviceInfo`,
+`SUPPORTED_DEVICES` and `describe()`, so the boot log names both the exact
+driver kind and the backend. These additions are statically verified; no new
+real-hardware NIC bring-up is claimed.

@@ -131,6 +131,37 @@ impl Default for NetworkConfig {
     }
 }
 
+fn parse_search_domains(v: &serde_json::Value) -> Result<Vec<String>, String> {
+    let domains = v
+        .as_array()
+        .ok_or_else(|| "dns.search_domains must be an array".to_string())?
+        .iter()
+        .map(|d| {
+            let domain = d
+                .as_str()
+                .ok_or_else(|| "search domain must be a string".to_string())?;
+            if domain.trim().is_empty() {
+                return Err("search domain must not be empty".to_string());
+            }
+            Ok(domain.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(domains)
+}
+
+fn parse_optional_ip(v: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let ip = v
+        .as_str()
+        .ok_or_else(|| format!("{field} must be a string"))?;
+    if !validate_ip(ip) {
+        return Err(format!("Invalid {field} address: {ip}"));
+    }
+    Ok(Some(ip.to_string()))
+}
+
 impl NetworkConfig {
     /// Serialize the whole configuration to a JSON string.
     pub fn to_json(&self) -> String {
@@ -146,7 +177,9 @@ impl NetworkConfig {
     ///
     /// Supported keys: `hostname`, `listen_port`, `connect_timeout_ms`,
     /// `max_connections`, `user_agent`, `allow_private_access`, `proxy`
-    /// (object or `null`), `dns.primary`, `dns.secondary`, `dns.search_domains`.
+    /// (object or `null`), `dns` (object, primary-IP string or search-domain
+    /// array), `dns.primary`, `dns.secondary`, `dns.search_domains` and
+    /// `interfaces` (array of [`InterfaceConfig`] objects).
     pub fn apply_updates(&mut self, updates: &serde_json::Value) -> Result<(), String> {
         if let Some(v) = updates.get("hostname") {
             let name = v
@@ -198,47 +231,58 @@ impl NetworkConfig {
             }
         }
         if let Some(dns) = updates.get("dns") {
-            if let Some(v) = dns.get("primary") {
-                if v.is_null() {
-                    self.dns.primary = None;
-                } else {
-                    let ip = v
-                        .as_str()
-                        .ok_or_else(|| "dns.primary must be a string".to_string())?;
-                    if !validate_ip(ip) {
-                        return Err(format!("Invalid DNS server address: {ip}"));
+            match dns {
+                serde_json::Value::Object(_) => {
+                    if let Some(v) = dns.get("primary") {
+                        self.dns.primary = parse_optional_ip(v, "dns.primary")?;
                     }
-                    self.dns.primary = Some(ip.to_string());
-                }
-            }
-            if let Some(v) = dns.get("secondary") {
-                if v.is_null() {
-                    self.dns.secondary = None;
-                } else {
-                    let ip = v
-                        .as_str()
-                        .ok_or_else(|| "dns.secondary must be a string".to_string())?;
-                    if !validate_ip(ip) {
-                        return Err(format!("Invalid DNS server address: {ip}"));
+                    if let Some(v) = dns.get("secondary") {
+                        self.dns.secondary = parse_optional_ip(v, "dns.secondary")?;
                     }
-                    self.dns.secondary = Some(ip.to_string());
+                    if let Some(v) = dns.get("search_domains") {
+                        self.dns.search_domains = parse_search_domains(v)?;
+                    }
                 }
-            }
-            if let Some(v) = dns.get("search_domains") {
-                let domains = v
-                    .as_array()
-                    .ok_or_else(|| "dns.search_domains must be an array".to_string())?
-                    .iter()
-                    .map(|d| {
-                        d.as_str()
-                            .ok_or_else(|| "search domain must be a string".to_string())
-                            .map(str::to_string)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.dns.search_domains = domains;
+                serde_json::Value::String(_) => {
+                    self.dns.primary = parse_optional_ip(dns, "dns.primary")?;
+                }
+                serde_json::Value::Array(_) => {
+                    self.dns.search_domains = parse_search_domains(dns)?;
+                }
+                serde_json::Value::Null => self.dns = DnsConfig::default(),
+                _ => return Err("dns must be an object, address string, array or null".into()),
             }
         }
-        self.version = 2;
+        if let Some(v) = updates.get("interfaces") {
+            let list = v
+                .as_array()
+                .ok_or_else(|| "interfaces must be an array".to_string())?;
+            let mut interfaces = Vec::with_capacity(list.len());
+            for entry in list {
+                let interface: InterfaceConfig = serde_json::from_value(entry.clone())
+                    .map_err(|e| format!("Invalid interface: {e}"))?;
+                if interface.name.trim().is_empty() {
+                    return Err("interface name must not be empty".into());
+                }
+                for (field, value) in [
+                    ("ip", &interface.ip),
+                    ("netmask", &interface.netmask),
+                    ("gateway", &interface.gateway),
+                ] {
+                    if let Some(ip) = value {
+                        if !validate_ip(ip) {
+                            return Err(format!("Invalid interface {field} address: {ip}"));
+                        }
+                    }
+                }
+                if interface.mtu == Some(0) {
+                    return Err("interface mtu must be greater than zero".into());
+                }
+                interfaces.push(interface);
+            }
+            self.interfaces = interfaces;
+        }
+        self.version = self.version.max(2);
         Ok(())
     }
 }
@@ -327,6 +371,51 @@ mod tests {
         assert_eq!(c.dns.primary.as_deref(), Some("1.1.1.1"));
         assert_eq!(c.dns.secondary.as_deref(), Some("8.8.8.8"));
         assert_eq!(c.dns.search_domains, vec!["lan"]);
+    }
+
+    #[test]
+    fn test_apply_dns_shorthands() {
+        let mut c = base();
+        c.apply_updates(&serde_json::json!({ "dns": "1.1.1.1" }))
+            .unwrap();
+        assert_eq!(c.dns.primary.as_deref(), Some("1.1.1.1"));
+        c.apply_updates(&serde_json::json!({ "dns": ["lan", "example.test"] }))
+            .unwrap();
+        assert_eq!(c.dns.search_domains, vec!["lan", "example.test"]);
+        assert_eq!(c.dns.primary.as_deref(), Some("1.1.1.1"));
+        c.apply_updates(&serde_json::json!({ "dns": null }))
+            .unwrap();
+        assert_eq!(c.dns, DnsConfig::default());
+    }
+
+    #[test]
+    fn test_apply_interfaces() {
+        let mut c = base();
+        let u = serde_json::json!({
+            "interfaces": [{
+                "name": "eth0",
+                "ip": "10.0.0.5",
+                "netmask": "255.255.255.0",
+                "gateway": "10.0.0.1",
+                "mtu": 1500,
+                "dhcp": false
+            }]
+        });
+        c.apply_updates(&u).unwrap();
+        assert_eq!(c.interfaces.len(), 1);
+        assert_eq!(c.interfaces[0].name, "eth0");
+        assert_eq!(c.interfaces[0].ip.as_deref(), Some("10.0.0.5"));
+        assert_eq!(c.version, 2);
+    }
+
+    #[test]
+    fn test_apply_rejects_invalid_interface() {
+        let mut c = base();
+        let u = serde_json::json!({
+            "interfaces": [{ "name": "eth0", "ip": "not-an-ip", "netmask": null, "gateway": null, "mtu": null, "dhcp": true }]
+        });
+        assert!(c.apply_updates(&u).is_err());
+        assert!(c.interfaces.is_empty());
     }
 
     #[test]

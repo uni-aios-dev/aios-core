@@ -224,6 +224,7 @@ pub struct AutohalEngine {
     store: DriverStore,
     devices: Vec<DeviceDriver>,
     instances: HashMap<String, WasmBlock>,
+    tokens: HashMap<String, CapabilityToken>,
     toasts: VecDeque<Toast>,
     next_block_id: u32,
 }
@@ -238,6 +239,7 @@ impl AutohalEngine {
             store,
             devices: Vec::new(),
             instances: HashMap::new(),
+            tokens: HashMap::new(),
             toasts: VecDeque::new(),
             next_block_id: 1,
         })
@@ -253,6 +255,7 @@ impl AutohalEngine {
             store,
             devices: Vec::new(),
             instances: HashMap::new(),
+            tokens: HashMap::new(),
             toasts: VecDeque::new(),
             next_block_id: 1,
         })
@@ -268,6 +271,16 @@ impl AutohalEngine {
 
     pub fn devices(&self) -> &[DeviceDriver] {
         &self.devices
+    }
+
+    /// Signed capability tokens issued to live driver instances.
+    pub fn tokens(&self) -> &HashMap<String, CapabilityToken> {
+        &self.tokens
+    }
+
+    /// Token for one fingerprint/driver pair, if that driver is active.
+    pub fn token(&self, fp: &HardwareFingerprint, driver_id: &str) -> Option<&CapabilityToken> {
+        self.tokens.get(&instance_key(fp, driver_id))
     }
 
     pub fn toasts(&self) -> &VecDeque<Toast> {
@@ -318,7 +331,9 @@ impl AutohalEngine {
         let Some(driver_id) = driver_id else {
             return;
         };
-        self.instances.remove(&instance_key(fp, &driver_id));
+        let key = instance_key(fp, &driver_id);
+        self.instances.remove(&key);
+        self.tokens.remove(&key);
         self.devices.retain(|d| &d.fingerprint != fp);
         self.store.index_mut().remove(&fp.key());
         self.push_toast(
@@ -470,14 +485,16 @@ impl AutohalEngine {
         let block_id = self.next_block_id;
         self.next_block_id += 1;
         let caps = self.granted_capabilities(&manifest, &driver_id);
-        let _token = CapabilityToken::new(
+        let token = CapabilityToken::new(
             block_id,
             caps.clone(),
             self.config.capability_ttl_ms,
             &self.config.issuer_secret,
         );
 
-        self.instances.insert(instance_key(&fp, &driver_id), block);
+        let key = instance_key(&fp, &driver_id);
+        self.tokens.insert(key.clone(), token);
+        self.instances.insert(key, block);
         self.upsert_device(
             fp.clone(),
             driver_id,
@@ -510,6 +527,11 @@ impl AutohalEngine {
     /// no capabilities). Used when the dedicated driver is unavailable or was
     /// rolled back.
     pub fn activate_generic(&mut self, fp: &HardwareFingerprint) {
+        if let Some(current) = self.devices.iter().find(|d| &d.fingerprint == fp) {
+            let key = instance_key(fp, &current.driver_id);
+            self.instances.remove(&key);
+            self.tokens.remove(&key);
+        }
         let fb = generic_fallback();
         let driver_id = fb.manifest.id.clone();
         let version = fb.manifest.version.clone();
@@ -610,7 +632,9 @@ impl AutohalEngine {
 
         if !rolled_back.is_empty() {
             for fp in &rolled_back {
-                self.instances.remove(&instance_key(fp, driver_id));
+                let key = instance_key(fp, driver_id);
+                self.instances.remove(&key);
+                self.tokens.remove(&key);
                 self.store.index_mut().remove(&fp.key());
             }
             self.store
@@ -643,7 +667,9 @@ impl AutohalEngine {
             .find(|d| &d.fingerprint == fp)
             .map(|d| d.driver_id.clone());
         if let Some(id) = driver_id {
-            self.instances.remove(&instance_key(fp, &id));
+            let key = instance_key(fp, &id);
+            self.instances.remove(&key);
+            self.tokens.remove(&key);
             self.store.index_mut().remove(&fp.key());
         }
         self.activate_generic(fp);
@@ -663,6 +689,7 @@ impl AutohalEngine {
             .collect();
         for k in keys {
             self.instances.remove(&k);
+            self.tokens.remove(&k);
         }
         self.devices.retain(|d| d.driver_id != driver_id);
         self.store.remove_driver(driver_id)
@@ -829,6 +856,12 @@ mod tests {
         assert!(dev.manifest.is_some());
         assert!(!dev.capabilities.is_empty());
 
+        let token = engine
+            .token(&c270_fp(), "driver.usb.046d.0825")
+            .expect("capability token stored");
+        assert!(token.verify(&engine.config().issuer_secret));
+        assert_eq!(token.capabilities, dev.capabilities);
+
         // Cached for offline reuse.
         assert_eq!(
             engine.store().index().get(&c270_fp().key()),
@@ -914,6 +947,7 @@ mod tests {
             .unwrap();
         assert_eq!(dev.state, DriverState::Generic);
         assert_eq!(dev.driver_id, GENERIC_FALLBACK_ID);
+        assert!(engine.token(&c270_fp(), driver_id).is_none());
         assert!(engine.store().index().get(&c270_fp().key()).is_none());
         // A toast announces the rollback.
         let has_rollback = engine
@@ -968,6 +1002,8 @@ mod tests {
                 bus: "usb".into(),
                 vendor_id: Some(0x046D),
                 device_id: Some(0x0825),
+                class_code: None,
+                class_mask: None,
             }],
             required_capabilities: vec![Capability::HwAccess],
             hash_sha256: hex::encode(Sha256::digest(b"expected")),

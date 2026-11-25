@@ -331,6 +331,8 @@ mod tests {
                 bus: "usb".into(),
                 vendor_id: Some(0x046D),
                 device_id: Some(0x0825),
+                class_code: None,
+                class_mask: None,
             }],
             required_capabilities: vec![Capability::HwAccess],
             hash_sha256: hex::encode(Sha256::digest(b"wasm-binary")),

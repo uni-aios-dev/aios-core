@@ -78,7 +78,7 @@ pub const SPECS: &[CommandSpec] = &[
 
     // ── Hardware ───────────────────────────────────────────────────────────
     spec!("hw", CommandGroup::Hardware, Both, false, "hw detect|rescan|profile|fingerprints", "hardware detection and mock profiles", ["detect", "rescan", "profile", "fingerprints"], []),
-    spec!("driver", CommandGroup::Hardware, Host, false, "driver list|install|remove|rollback|provision|failures", "driver store and self-healing", ["list", "install", "remove", "rollback", "provision", "failures"], [Capability::DriverModify]),
+    spec!("driver", CommandGroup::Hardware, Host, false, "driver list|nics|install|remove|rollback|provision|failures", "driver store and self-healing", ["list", "nics", "install", "remove", "rollback", "provision", "failures"], [Capability::DriverModify]),
     spec!("hotplug", CommandGroup::Hardware, Host, false, "hotplug start|events|drain", "hotplug monitor", ["start", "events", "drain"], []),
 
     // ── Filesystem ─────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ pub const SPECS: &[CommandSpec] = &[
     spec!("fm", CommandGroup::Filesystem, Host, false, "fm jobs|cancel <id>", "file manager background jobs", ["jobs", "cancel"], []),
 
     // ── Network ────────────────────────────────────────────────────────────
-    spec!("net", CommandGroup::Network, Both, false, "net show|set|reset|validate|config|status|lease|apply|recheck", "network config and link state", ["show", "set", "reset", "validate", "config", "status", "lease", "apply", "recheck"], []),
+    spec!("net", CommandGroup::Network, Both, false, "net show|set|reset|validate|config|status|adapters|lease|apply|recheck", "network config and link state", ["show", "set", "reset", "validate", "config", "status", "adapters", "lease", "apply", "recheck"], []),
     spec!("wifi", CommandGroup::Network, Both, false, "wifi status|scan|connect|disconnect|sim|real", "Wi-Fi radio and association", ["status", "scan", "connect", "disconnect", "sim", "real"], []),
 
     // ── Diagnostics ────────────────────────────────────────────────────────

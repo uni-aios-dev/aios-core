@@ -270,13 +270,16 @@ pub fn init(devices: &[PciDevice]) -> Result<(), &'static str> {
         .iter()
         .filter(|d| d.class == CLASS_NETWORK && !d.is_wifi())
     {
+        let info = nic::describe(dev);
         match unsafe { Nic::init(dev) } {
             Ok(nic) => {
                 let mac = *nic.mac();
                 let kind = nic.kind_name();
+                let name = info.map(|entry| entry.name).unwrap_or(kind);
                 unsafe { NIC = Some(nic) };
                 crate::kprintln!(
-                    "[serial] [net] nic {} {:04x}:{:04x} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    "[serial] [net] nic {} ({}) {:04x}:{:04x} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    name,
                     kind,
                     dev.vendor_id,
                     dev.device_id,

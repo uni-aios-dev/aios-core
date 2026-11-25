@@ -102,6 +102,11 @@ impl HardwareFingerprint {
         }
     }
 
+    /// Functional NIC class derived from the PCI class code, when applicable.
+    pub fn nic_class(&self) -> Option<crate::nic::NicClass> {
+        crate::nic::classify(self)
+    }
+
     /// `true` when the fingerprint carries enough identification to drive a
     /// lookup (either a vendor/device pair or an ACPI/serial id).
     pub fn is_actionable(&self) -> bool {

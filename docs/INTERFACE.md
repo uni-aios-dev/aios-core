@@ -185,13 +185,13 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `sys info|tier` and `hw detect|rescan|profile|fingerprints`. Scheduling,
 networking and security: `sleep`, `fault resolve`,
 `sched mode|quantum|aging|rt-deadline|rt-clear`,
-`net show|set|reset|validate|config|status|apply|lease`,
+`net show|set|reset|validate|config|status|adapters|lease|apply|recheck`,
 `caps list|issue|revoke|check`, `sandbox start|stop|log|mem` and
 `hw-protect status|mpk|tee|iommu|clear`. Runtime and management adapters:
 `wasm compile|call|mem|grow`, `wasi policy`, `exec detect|caps|<program>`,
 `deps scan|heal`, `compat list|kill`, `context stats|export|compact|persist`,
 `workflow list|priority`, `stability list|best|worst`, `crash report`,
-`driver list|failures|remove|rollback|install|provision`,
+`driver list|nics|failures|remove|rollback|install|provision`,
 `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`,
 `hub status|scan|wifi|layout`, `alias`, `unalias` and `wd status|reset`.
 `alias`/`unalias` maintain session aliases expanded by `execute_line()` before
@@ -224,7 +224,6 @@ commands still report `ERR unavailable`, but with a concrete reason from
 | `jobs`, `fg`, `bg` | no host-owned job table with OS process groups, signals or TTY foreground in `aios-process-mgr` (`JobControl` supplies it in `aios-shell`) |
 | `acl` | no path-scoped ACL API; `AclContext` grants are global tokens, `caps` uses block IDs |
 | `ping` | no ICMP API or raw-socket privilege; TCP connect is not an echo reply |
-| `net recheck` on host | real `recheck()` is kernel-only; host `NetManager` reports cached status |
 
 The table is host-only and describes a `HostBackend` with no injected control
 seams. `console fm jobs` and `console fm cancel <id>` become real as soon as a
@@ -236,8 +235,11 @@ builtins, lists live jobs and resumes the requested id. `console
 state extract|restore <block>` is real on a host: it snapshots the live linear
 memory of an executed WASM block and restores it on request; restore requires a
 prior extract in the same session and a live instance (`block run <block>` first).
-On the kernel backend `console net recheck` is real: it calls
-`crate::net::recheck()` and prints `network recheck requested`.
+Host `console net recheck|apply|adapters|lease` are now real: `NetManager`
+queries the OS, refreshes the link/lease snapshot and prints adapter rows. The
+kernel backend uses the same `net` command names over its own settings; its
+`net recheck` calls `crate::net::recheck()` and prints
+`network recheck requested`.
 
 The generic `has no host backend yet` message is kept only for commands outside
 this investigated set.
@@ -540,7 +542,7 @@ Reads/writes the network configuration through the `NetSettingsBlock`, persisted
 | Command | Arguments | Description |
 |---------|-----------|-------------|
 | `net get` | — | Show the current network configuration (JSON) |
-| `net set` | `key=value [key2=value2 ...]` | Apply a partial update (e.g. `hostname=myhost`, `listen_port=9090`, `allow_private_access=true`, `dns={"primary":"1.1.1.1"}`); valid keys: `hostname`, `listen_port`, `connect_timeout_ms`, `max_connections`, `user_agent`, `allow_private_access`, `proxy` (JSON object or `null`), `dns` (JSON object with `primary`/`secondary`/`search_domains`) |
+| `net set` | `key=value [key2=value2 ...]` | Apply a partial update (e.g. `hostname=myhost`, `listen_port=9090`, `dns={"primary":"1.1.1.1"}`); valid keys: `hostname`, `listen_port`, `connect_timeout_ms`, `max_connections`, `user_agent`, `allow_private_access`, `proxy` (JSON object or `null`), `dns` (object, address string, search-domain array or `null`), `interfaces` (array), plus dotted keys such as `dns.primary=1.1.1.1` |
 | `net reset` | — | Restore factory defaults and persist |
 
 ### F1 Help Overlay
@@ -1618,3 +1620,27 @@ The calculator understands `help`, `reset`, `history`, `ans`, expressions and
 `reset`; coordinates are 1-based and the first opened cell is never a mine.
 Use `block run`, not `wasm call`: the latter sends no payload and instantiates
 the module anew, which discards block state.
+
+## Network console and NIC inventory (v2.84.0)
+
+The unified console now exposes the same network vocabulary on both backends.
+`net get` remains an alias of `net show`.
+
+| Command | Result |
+|---------|--------|
+| `net show` / `net config` | Print saved or kernel-held IPv4 settings (`dhcp`, `ip`, `mask`, `gateway`, `dns1`, `dns2`) |
+| `net status` | State, NIC kind, MAC, settings and bound lease in one snapshot |
+| `net set <key=value ...>` | Partial update; kernel accepts `dhcp`, `ip`, `mask`, `gw`, `dns1`, `dns2` and their aliases, host accepts config keys and dotted/nested JSON |
+| `net validate` | Reject static mode with no IP or malformed settings |
+| `net apply` | Host: persist config then recheck the link; kernel: reapply settings |
+| `net reset` | Restore defaults |
+| `net adapters` | Host: OS adapter table (`INTERFACE STATE IPV4 GATEWAY DHCP`); kernel: wired + Wi-Fi rows |
+| `net recheck` | Host: fresh `NetManager` link probe; kernel: `crate::net::recheck()` |
+| `net lease` | Bound DHCP lease details, or `no DHCP lease acquired in this session` before acquisition |
+
+On the host, nested JSON needs shell escaping, e.g.
+`console net set dns={\"primary\":\"8.8.8.8\"}`. `driver nics` adds a
+`DEVICE CLASS DRIVER STATE TOKEN` table for detected Ethernet/Wi-Fi hardware;
+`TOKEN` is `valid`, `expired` or `none`. The kernel `net` commands share the
+`aios-console::net_text` parser with workspace tests, so their formatting is
+not a host-only stub.

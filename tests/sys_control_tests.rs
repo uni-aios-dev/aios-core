@@ -28,7 +28,7 @@ use aios_sys_control::{SysControlHub, SysStatusSnapshot};
 fn test_discover_packet_has_magic_cookie_and_type53() {
     let p = build_discover(0xDEADBEEF, &[2, 0, 0, 0, 0, 1]);
     assert_eq!(p[0], 1, "op=BOOTREQUEST");
-    assert_eq!(&p[3..7], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(&p[4..8], &[0xDE, 0xAD, 0xBE, 0xEF]);
     assert_eq!(p[236..240], [99, 130, 83, 99]);
     assert!(p.windows(3).any(|w| w == [53, 1, 1]), "opt 53=DHCPDISCOVER");
 }

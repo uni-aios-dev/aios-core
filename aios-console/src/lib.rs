@@ -20,6 +20,8 @@ pub mod legacy;
 /// Host-only exact-output adapters for legacy shell commands with crate backends.
 #[cfg(feature = "std")]
 pub mod legacy_host;
+/// Backend-neutral text helpers for network console commands.
+pub mod net_text;
 pub mod output;
 pub mod parser;
 pub mod registry;

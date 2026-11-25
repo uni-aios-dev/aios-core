@@ -18,6 +18,7 @@ use aios_console::control::{
 use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::{ExitCode, OutputControl};
 use aios_hal::hardware::HardwareProfile;
+use aios_net_config::store::NetworkConfigStore;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -315,7 +316,28 @@ fn host_network_show_and_reset_work() {
 
     let set = dispatch(&mut host, "net set dns=1.1.1.1");
     assert_ok("net set", &set);
+    let shown = dispatch(&mut host, "net show");
+    let config: serde_json::Value = serde_json::from_str(&shown.lines[0]).unwrap();
+    assert_eq!(config["dns"]["primary"], "1.1.1.1");
     assert_ok("net reset", &dispatch(&mut host, "net reset"));
+}
+
+#[test]
+fn host_network_set_accepts_nested_json_and_dotted_keys() {
+    let mut host = backend("net-nested");
+
+    assert_ok(
+        "net set dns={\\\"primary\\\":\\\"8.8.8.8\\\"}",
+        &dispatch(&mut host, "net set dns={\\\"primary\\\":\\\"8.8.8.8\\\"}"),
+    );
+    assert_ok(
+        "net set dns.secondary=1.1.1.1",
+        &dispatch(&mut host, "net set dns.secondary=1.1.1.1"),
+    );
+    let shown = dispatch(&mut host, "net show");
+    let config: serde_json::Value = serde_json::from_str(&shown.lines[0]).unwrap();
+    assert_eq!(config["dns"]["primary"], "8.8.8.8");
+    assert_eq!(config["dns"]["secondary"], "1.1.1.1");
 }
 
 #[test]
@@ -495,7 +517,6 @@ fn host_unimplemented_subcommands_are_unavailable() {
         "bg 1",
         "acl grant net raw",
         "ping example.com",
-        "net recheck",
         "fm jobs",
         "wd force-safe-mode",
         "bridge status",
@@ -521,7 +542,6 @@ fn host_unavailable_commands_report_precise_reasons() {
         ("bg 1", "no job control"),
         ("acl grant CAP_FS_READ /tmp", "no path-scoped ACL API"),
         ("ping example.com", "no ICMP reachability API"),
-        ("net recheck", "recheck() is kernel-only"),
         ("fm jobs", "owns no live FileManager"),
     ] {
         let output = dispatch(&mut host, input);
@@ -1281,6 +1301,42 @@ fn host_network_validation_and_status_work() {
 }
 
 #[test]
+fn host_network_recheck_adapters_and_lease_work() {
+    let mut host = backend("net-live");
+
+    let adapters = dispatch(&mut host, "net adapters");
+    assert_ok("net adapters", &adapters);
+    assert!(adapters.lines.iter().any(|line| line.contains("wlan0")));
+
+    let recheck = dispatch(&mut host, "net recheck");
+    assert_ok("net recheck", &recheck);
+    assert!(recheck.lines.iter().any(|line| line.contains("state")));
+
+    assert_ok(
+        "wifi connect coffee-shop",
+        &dispatch(&mut host, "wifi connect coffee-shop"),
+    );
+    let lease = dispatch(&mut host, "net lease");
+    assert_ok("net lease", &lease);
+    assert!(lease
+        .lines
+        .iter()
+        .any(|line| line.contains("192.168.77.42")));
+
+    let applied = dispatch(&mut host, "net apply hostname=net-host");
+    assert_ok("net apply", &applied);
+    assert!(applied.lines.iter().any(|line| line.contains("link")));
+}
+
+#[test]
+fn host_default_net_config_path_matches_the_shared_store() {
+    assert_eq!(
+        HostBackendConfig::default().net_config_path,
+        NetworkConfigStore::default_path()
+    );
+}
+
+#[test]
 fn host_store_verify_and_vfs_readat_work() {
     let mut host = backend("verify-readat");
 
@@ -1433,6 +1489,25 @@ fn host_wifi_hotplug_and_hub_adapters_work() {
     assert_ok("driver failures", &dispatch(&mut host, "driver failures"));
     assert_ok("hub status", &dispatch(&mut host, "hub status"));
     assert_ok("hub layout", &dispatch(&mut host, "hub layout"));
+}
+
+#[test]
+fn host_driver_nics_reports_detected_nic_and_capability_token() {
+    let mut host = backend("driver-nics");
+    host.set_hardware_profile(HardwareProfile::mock_legacy());
+
+    assert_ok(
+        "driver install driver.pci.8086.1503",
+        &dispatch(&mut host, "driver install driver.pci.8086.1503"),
+    );
+    let output = dispatch(&mut host, "driver nics");
+    assert_ok("driver nics", &output);
+    assert!(output.lines[0].starts_with("DEVICE"));
+    assert!(output
+        .lines
+        .iter()
+        .any(|line| line.contains("driver.pci.8086.1503") && line.contains("ethernet")));
+    assert!(output.lines.iter().any(|line| line.ends_with("valid")));
 }
 
 #[test]

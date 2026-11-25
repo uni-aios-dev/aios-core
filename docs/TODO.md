@@ -243,18 +243,18 @@
   `control.rs` injection seams and real `aios` adapters: `wd start|stop|
   force-safe-mode|escalate`, `bridge status|start|stop`,
   `auth register|login|me`. `bridge stop` uses `start_server_with_shutdown`.
-- [x] Document the exact blocker for the six host-unavailable `ERR unavailable`
+- [x] Document the exact blocker for the host-unavailable `ERR unavailable`
   commands in `aios-console/src/unavailable.rs` and the EN/RU docs. Investigation
   confirmed they are NOT missing adapters: `jobs|fg|bg` need a host-owned job
   table with OS process groups, signals and TTY foreground; `acl` needs a path-scoped ACL API (existing
   `AclContext` grants are global and `caps` tokens are block-keyed); `ping` needs
-  ICMP with raw-socket privileges; `net recheck` needs a host equivalent of the
-  kernel-only `recheck()`; `state` needs live `StatefulBlock` handles in
-  `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked. The
-  kernel half of `net recheck` is now real and wired into `KernelBackend`,
-  `fm` is now real via an injected `FileManagerControl` seam, `jobs|fg|bg` is now
-  real via an injected `JobControl` seam in `aios-shell`, and `state` is now real
-  over the live WASM executor's linear memory (see below).
+  ICMP with raw-socket privileges; `state` needs live `StatefulBlock` handles in
+  `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked.
+  `net recheck` is no longer unavailable: the kernel calls `crate::net::recheck()`
+  and the host calls `NetManager::recheck()` for fresh link I/O. `fm` is real via
+  an injected `FileManagerControl` seam, `jobs|fg|bg` is real via an injected
+  `JobControl` seam in `aios-shell`, and `state` is real over the live WASM
+  executor's linear memory (see below).
 - [x] Add a `console <command> [args]` escape hatch to the standalone
   `aios-shell`: `main` owns one `HostBackend`, `console_prefix` detects the
   prefix case-insensitively before alias expansion, and bare `console` prints
@@ -354,10 +354,10 @@
     TCP connect is not an echo reply. Delegating to an OS `ping` binary would need
     a real adapter with privilege/error handling and output parsing, which does
     not exist yet.
-  - host `net recheck` needs a `NetManager`/`SysControlHub` method that performs
-    fresh network I/O, invalidates the cached link verdict and reports the probe
-    result. `status()`, `link()` and `refresh_status()` only clone cached state;
-    the real `recheck()` (ARP -> ICMP -> DNS) is `no_std` and kernel-only.
+  - [x] host `net recheck` is now backed by `NetManager::recheck()`, which
+    performs fresh link I/O, refreshes the cached link/lease verdict and reports
+    the probe result. `net apply` persists the config before rechecking, and
+    `net adapters` reports OS adapter rows parsed by `host_net`.
 - [x] Migrate the static bare `aios-shell` builtins (`help`/`?`, `clear`/`cls`,
   `pwd`, `echo`, `history`, `alias`, `unalias`) to exact text formatters in
   `aios-console/src/legacy.rs` plus the `ShellOutcome` adapter in
@@ -1086,5 +1086,12 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   built-in `font8x8` bitmap to fonts loaded through the `psf` parser (PSF2 from
   a future `/boot` font or a synthetic stream) so the console render path uses
   the same parser as the TUI panel and the boot check.
+- [x] **Network settings, host link APIs and NIC provisioning (v2.84.0)**: fixed
+  nested `dns`/`interfaces` updates in `aios-net-config`, stabilised the DHCP
+  xid and filtered stale replies, added host adapter/recheck/lease APIs, exposed
+  real host `net recheck|apply|adapters|lease` and `driver nics`, shared kernel
+  network text helpers, added AutoHAL NIC classes/capability tokens and kernel
+  NIC inventory/`net` commands. Workspace fmt/build/test/clippy and standalone
+  kernel check/clippy are green; real-hardware NIC validation remains open.
 
 ## Historical Issues (Fixed)

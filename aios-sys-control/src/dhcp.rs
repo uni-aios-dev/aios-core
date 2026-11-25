@@ -73,7 +73,7 @@ fn base_packet(
     p[0] = OP_BOOTREQUEST;
     p[1] = 1; // htype ethernet
     p[2] = 6; // hlen
-    p[3..7].copy_from_slice(&xid.to_be_bytes());
+    p[4..8].copy_from_slice(&xid.to_be_bytes());
     p[236..240].copy_from_slice(&MAGIC_COOKIE);
     p[28..34].copy_from_slice(mac);
     push_opt(&mut p, 53, &[msg_type]);
@@ -100,6 +100,15 @@ pub fn build_request(
     requested_ip: Ipv4Addr,
 ) -> Vec<u8> {
     base_packet(xid, mac, 3, Some(server_id), Some(requested_ip))
+}
+
+fn reply_xid(packet: &[u8]) -> Option<u32> {
+    if packet.len() < 244 {
+        return None;
+    }
+    Some(u32::from_be_bytes([
+        packet[4], packet[5], packet[6], packet[7],
+    ]))
 }
 
 fn parse_reply(packet: &[u8]) -> Option<(u8, Ipv4Addr)> {
@@ -201,7 +210,7 @@ impl DhcpClient {
         let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, CLIENT_PORT))
             .await
             .map_err(|e| AIOSException::PermissionDenied(format!("dhcp client bind: {e}")))?;
-        let mut xid: u32 = rand::random();
+        let xid: u32 = rand::random();
         let discover = build_discover(xid, &self.mac);
         sock.send_to(&discover, self.broadcast)
             .await
@@ -222,13 +231,15 @@ impl DhcpClient {
             if n > 1500 {
                 continue;
             }
+            if reply_xid(&buf[..n]) != Some(xid) {
+                continue;
+            }
             let Some(offer) = parse_offer(&buf[..n]) else {
                 continue;
             };
             let Some(server_id) = offer.server_id else {
                 continue;
             };
-            xid = xid.wrapping_add(1);
             let request = build_request(xid, &self.mac, server_id, offer.yiaddr);
             sock.send_to(&request, self.broadcast)
                 .await
@@ -243,8 +254,10 @@ impl DhcpClient {
                 Err(_) | Ok(Err(_)) => return Err(AIOSException::Timeout("dhcp: no ack".into())),
                 Ok(Ok(r)) => r,
             };
-            if let Some(lease) = parse_ack(&buf[..n2]) {
-                return Ok(lease);
+            if reply_xid(&buf[..n2]) == Some(xid) {
+                if let Some(lease) = parse_ack(&buf[..n2]) {
+                    return Ok(lease);
+                }
             }
         }
     }
@@ -260,7 +273,7 @@ mod tests {
     fn discover_contains_cookie_and_discover_type() {
         let p = build_discover(0xDEADBEEF, &MAC);
         assert_eq!(p[0], 1);
-        assert_eq!(&p[3..7], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(&p[4..8], &[0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(&p[236..240], &MAGIC_COOKIE);
         assert_eq!(p[28..34], MAC);
         assert!(opt_find(&p, 53).unwrap() == vec![1]);
@@ -284,6 +297,18 @@ mod tests {
         push_opt(&mut p, 53, &[msg_type]);
         push_opt(&mut p, 54, &[192, 168, 1, 1]);
         p
+    }
+
+    #[test]
+    fn reply_xid_tracks_the_dora_transaction() {
+        let mut offer = craft(2, Ipv4Addr::new(10, 0, 0, 5));
+        offer[4..8].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+        assert_eq!(reply_xid(&offer), Some(0xDEAD_BEEF));
+        assert_eq!(reply_xid(b"short"), None);
+        assert_eq!(
+            reply_xid(&build_discover(0xDEAD_BEEF, &MAC)),
+            Some(0xDEAD_BEEF)
+        );
     }
 
     #[test]

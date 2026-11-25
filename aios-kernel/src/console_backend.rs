@@ -7,6 +7,7 @@
 use aios_console::backend::{dispatch, CommandBackend};
 use aios_console::capability::{BackendKind, CapabilitySet};
 use aios_console::legacy::kernel_net_recheck_text;
+use aios_console::net_text::{self, AddressLease, AddressSettings};
 use aios_console::output::{CommandOutput, OutputControl};
 use aios_console::registry::{help, Invocation};
 use alloc::format;
@@ -118,6 +119,74 @@ impl CommandBackend for KernelBackend {
             ("udp", _) => CommandOutput::ok(crate::tui::cmd_udp(&invocation.args.join(" "))),
             ("http", _) => CommandOutput::ok(crate::tui::cmd_http(&invocation.args.join(" "))),
             ("socktest", _) => CommandOutput::ok(crate::tui::cmd_socktest()),
+            ("net", Some("show")) | ("net", Some("config")) => {
+                CommandOutput::ok(net_text::format_settings(&Self::net_settings()))
+            }
+            ("net", Some("status")) => {
+                let settings = Self::net_settings();
+                let lease = Self::net_lease();
+                CommandOutput::ok(net_text::format_status(
+                    crate::net::state().name(),
+                    crate::net::nic_kind(),
+                    crate::net::nic_mac(),
+                    &settings,
+                    lease.as_ref(),
+                ))
+            }
+            ("net", Some("lease")) => {
+                let lease = Self::net_lease().unwrap_or_default();
+                CommandOutput::ok(net_text::format_lease(&lease))
+            }
+            ("net", Some("set")) => {
+                if invocation.args.is_empty() {
+                    return CommandOutput::usage(invocation.spec.usage);
+                }
+                let mut next = Self::net_settings();
+                for arg in &invocation.args {
+                    if let Err(error) = net_text::apply_update(&mut next, arg) {
+                        return CommandOutput::error(error);
+                    }
+                }
+                if let Err(error) = net_text::validate(&next) {
+                    return CommandOutput::error(error);
+                }
+                Self::apply_net_settings(&next);
+                CommandOutput::ok(net_text::format_settings(&next))
+            }
+            ("net", Some("apply")) => {
+                crate::net::apply(&crate::net::settings());
+                CommandOutput::text("network settings reapplied")
+            }
+            ("net", Some("validate")) => match net_text::validate(&Self::net_settings()) {
+                Ok(()) => CommandOutput::text("network configuration valid"),
+                Err(error) => CommandOutput::error(error),
+            },
+            ("net", Some("reset")) => {
+                let next = AddressSettings::default();
+                Self::apply_net_settings(&next);
+                CommandOutput::ok(net_text::format_settings(&next))
+            }
+            ("net", Some("adapters")) => {
+                let mut lines = Vec::new();
+                match crate::net::nic_mac() {
+                    Some(mac) => lines.push(format!(
+                        "{:<10} {:<12} {}",
+                        "wired",
+                        crate::net::nic_kind(),
+                        net_text::format_mac(mac)
+                    )),
+                    None => lines.push("wired      none".to_string()),
+                }
+                let wifi = crate::tui::run_command("wifi");
+                lines.push(format!(
+                    "{:<10} {}",
+                    "wifi",
+                    wifi.first()
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string())
+                ));
+                CommandOutput::ok(lines)
+            }
             ("net", Some("recheck")) => {
                 crate::net::recheck();
                 CommandOutput::text(kernel_net_recheck_text())
@@ -131,6 +200,41 @@ impl CommandBackend for KernelBackend {
 }
 
 impl KernelBackend {
+    fn net_settings() -> AddressSettings {
+        let settings = crate::net::settings();
+        AddressSettings {
+            dhcp: settings.dhcp,
+            ip: settings.ip,
+            mask: settings.mask,
+            gw: settings.gw,
+            dns1: settings.dns1,
+            dns2: settings.dns2,
+        }
+    }
+
+    fn net_lease() -> Option<AddressLease> {
+        crate::net::lease().map(|lease| AddressLease {
+            ip: lease.ip,
+            mask: lease.mask,
+            gw: lease.gw,
+            dns1: lease.dns1,
+            dns2: lease.dns2,
+            server: lease.server,
+            secs: lease.secs,
+        })
+    }
+
+    fn apply_net_settings(settings: &AddressSettings) {
+        crate::net::apply(&crate::net::Settings {
+            dhcp: settings.dhcp,
+            ip: settings.ip,
+            mask: settings.mask,
+            gw: settings.gw,
+            dns1: settings.dns1,
+            dns2: settings.dns2,
+        });
+    }
+
     fn fault_resolve(&self, invocation: &Invocation) -> CommandOutput {
         let Some(pid) = invocation
             .first_arg()

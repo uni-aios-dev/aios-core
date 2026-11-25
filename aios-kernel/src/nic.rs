@@ -214,7 +214,7 @@ const RTL8169_IDS: &[u16] = &[
 const PCNET_IDS: &[u16] = &[0x2000, 0x2001];
 
 /// Which hardware backend drives this [`Nic`].
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// Intel PRO/1000 (QEMU `-device e1000`).
     E1000,
@@ -269,6 +269,93 @@ pub fn driver_kind(dev: &PciDevice) -> Option<Kind> {
         }
         _ => None,
     }
+}
+
+impl Kind {
+    /// Stable backend name used in serial logs, GUI and console output.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::E1000 => "e1000",
+            Self::E1000E => "e1000e",
+            Self::Rtl8139 => "rtl8139",
+            Self::Rtl8169 => "rtl8169",
+            Self::VirtioNet => "virtio-net",
+            Self::Pcnet => "pcnet",
+        }
+    }
+}
+
+/// Human-readable identification for a supported PCI NIC function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NicDeviceInfo {
+    pub vendor_id: u16,
+    pub device_id: u16,
+    pub kind: Kind,
+    pub name: &'static str,
+}
+
+/// Curated examples from the exact device-id tables, exposed to console and
+/// documentation so support can be queried without touching hardware.
+pub const SUPPORTED_DEVICES: &[NicDeviceInfo] = &[
+    NicDeviceInfo {
+        vendor_id: INTEL,
+        device_id: 0x100E,
+        kind: Kind::E1000,
+        name: "Intel PRO/1000 MT Desktop",
+    },
+    NicDeviceInfo {
+        vendor_id: INTEL,
+        device_id: 0x1503,
+        kind: Kind::E1000E,
+        name: "Intel Ethernet Controller I210",
+    },
+    NicDeviceInfo {
+        vendor_id: INTEL,
+        device_id: 0x1521,
+        kind: Kind::E1000E,
+        name: "Intel Ethernet Controller i350",
+    },
+    NicDeviceInfo {
+        vendor_id: REALTEK,
+        device_id: 0x8139,
+        kind: Kind::Rtl8139,
+        name: "Realtek RTL8139",
+    },
+    NicDeviceInfo {
+        vendor_id: REALTEK,
+        device_id: 0x8168,
+        kind: Kind::Rtl8169,
+        name: "Realtek RTL8168/8111",
+    },
+    NicDeviceInfo {
+        vendor_id: VIRTIO,
+        device_id: 0x1000,
+        kind: Kind::VirtioNet,
+        name: "virtio-net legacy",
+    },
+    NicDeviceInfo {
+        vendor_id: AMD,
+        device_id: 0x2000,
+        kind: Kind::Pcnet,
+        name: "AMD PCnet-PCI II",
+    },
+];
+
+/// Describes a PCI function when an exact NIC driver is available.
+pub fn describe(dev: &PciDevice) -> Option<NicDeviceInfo> {
+    let kind = driver_kind(dev)?;
+    Some(
+        SUPPORTED_DEVICES
+            .iter()
+            .find(|info| info.vendor_id == dev.vendor_id && info.device_id == dev.device_id)
+            .copied()
+            .unwrap_or(NicDeviceInfo {
+                vendor_id: dev.vendor_id,
+                device_id: dev.device_id,
+                kind,
+                name: kind.name(),
+            }),
+    )
 }
 
 /// One e1000 receive descriptor (16 bytes, hardware layout).
@@ -439,14 +526,7 @@ impl Nic {
 
     /// Backend name for GUI/serial status lines.
     pub fn kind_name(&self) -> &'static str {
-        match self.kind {
-            Kind::E1000 => "e1000",
-            Kind::E1000E => "e1000e",
-            Kind::Rtl8139 => "rtl8139",
-            Kind::Rtl8169 => "rtl8169",
-            Kind::VirtioNet => "virtio-net",
-            Kind::Pcnet => "pcnet",
-        }
+        self.kind.name()
     }
 
     /// Link status: `STATUS.LU` on e1000/e1000e, `BMSR` link bit on rtl8139,
@@ -1410,5 +1490,48 @@ unsafe fn bar_size(dev: &PciDevice, index: usize) -> Result<u32, &'static str> {
             }
         }
         Ok(size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pci(vendor_id: u16, device_id: u16) -> PciDevice {
+        PciDevice {
+            vendor_id,
+            device_id,
+            class: crate::pci::CLASS_NETWORK,
+            ..PciDevice::EMPTY
+        }
+    }
+
+    #[test]
+    fn driver_kind_maps_exact_vendor_device_pairs() {
+        assert_eq!(driver_kind(&pci(INTEL, 0x1503)), Some(Kind::E1000E));
+        assert_eq!(driver_kind(&pci(REALTEK, 0x8139)), Some(Kind::Rtl8139));
+        assert_eq!(driver_kind(&pci(REALTEK, 0x8168)), Some(Kind::Rtl8169));
+        assert_eq!(driver_kind(&pci(VIRTIO, 0x1000)), Some(Kind::VirtioNet));
+        assert_eq!(driver_kind(&pci(AMD, 0x2000)), Some(Kind::Pcnet));
+        assert_eq!(driver_kind(&pci(INTEL, 0xFFFF)), None);
+    }
+
+    #[test]
+    fn supported_device_table_agrees_with_driver_kind() {
+        for info in SUPPORTED_DEVICES {
+            let dev = pci(info.vendor_id, info.device_id);
+            assert_eq!(driver_kind(&dev), Some(info.kind));
+            assert_eq!(describe(&dev).map(|d| d.name), Some(info.name));
+        }
+    }
+
+    #[test]
+    fn kind_names_are_stable() {
+        assert_eq!(Kind::E1000.name(), "e1000");
+        assert_eq!(Kind::E1000E.name(), "e1000e");
+        assert_eq!(Kind::Rtl8139.name(), "rtl8139");
+        assert_eq!(Kind::Rtl8169.name(), "rtl8169");
+        assert_eq!(Kind::VirtioNet.name(), "virtio-net");
+        assert_eq!(Kind::Pcnet.name(), "pcnet");
     }
 }

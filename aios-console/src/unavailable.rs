@@ -20,9 +20,6 @@ pub fn host_unavailable_reason(command_id: &str, subcommand: Option<&str>) -> Op
         ("ping", _) => Some(
             "aios-net has no ICMP reachability API; raw sockets need CAP_NET_RAW and TCP connect is not an echo reply",
         ),
-        ("net", Some("recheck")) => Some(
-            "host NetManager exposes cached status only; the real recheck() is kernel-only (no_std)",
-        ),
         ("fm", _) => Some(
             "the aios host owns no live FileManager; transfer cancellation needs a host-injected control surface",
         ),
@@ -42,7 +39,6 @@ mod tests {
             ("bg", None, "no job control"),
             ("acl", Some("grant"), "no path-scoped ACL API"),
             ("ping", None, "no ICMP reachability API"),
-            ("net", Some("recheck"), "recheck() is kernel-only"),
             ("fm", Some("cancel"), "owns no live FileManager"),
         ];
         for (command, subcommand, fragment) in cases {
@@ -56,6 +52,7 @@ mod tests {
     fn implemented_and_unknown_commands_have_no_reason() {
         assert_eq!(host_unavailable_reason("block", Some("swap")), None);
         assert_eq!(host_unavailable_reason("net", Some("show")), None);
+        assert_eq!(host_unavailable_reason("net", Some("recheck")), None);
         assert_eq!(host_unavailable_reason("state", Some("extract")), None);
         assert_eq!(host_unavailable_reason("unknown", None), None);
     }

@@ -16,7 +16,8 @@ use aios_net_config::{NetworkConfig, NetworkConfigStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::dhcp::DhcpClient;
+use crate::dhcp::{DhcpClient, DhcpLease};
+use crate::host_net::AdapterState;
 
 /// Wi-Fi security mode advertised by an access point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +153,39 @@ pub struct SimulatedWifi {
 }
 
 impl SimulatedWifi {
+    /// Link state derived from the simulated association, without any I/O.
+    pub fn status(&self) -> LinkStatus {
+        match &self.associated {
+            Some((ssid, band, rssi)) => LinkStatus {
+                state: LinkState::Connected,
+                ssid: Some(ssid.clone()),
+                ipv4: Some(Ipv4Addr::new(192, 168, 77, 42)),
+                gateway: Some(Ipv4Addr::new(192, 168, 77, 1)),
+                dns: Some(Ipv4Addr::new(1, 1, 1, 1)),
+                rssi_dbm: *rssi,
+                band: Some(*band),
+            },
+            None => LinkStatus::default(),
+        }
+    }
+
+    /// Simulated adapter entry for `net adapters` in safe mode/tests.
+    pub fn adapter(&self) -> AdapterState {
+        let status = self.status();
+        let mut adapter = AdapterState::new("wlan0");
+        adapter.status = if status.ipv4.is_some() {
+            "up".into()
+        } else {
+            "down".into()
+        };
+        adapter.mac = Some("02:00:00:00:00:AA".into());
+        adapter.ipv4 = status.ipv4;
+        adapter.gateway = status.gateway;
+        adapter.dns = status.dns.into_iter().collect();
+        adapter.dhcp = true;
+        adapter
+    }
+
     /// The canned ether table.
     pub fn networks() -> Vec<WifiNetwork> {
         vec![
@@ -211,7 +245,7 @@ impl WifiBackend {
         ssid: &str,
         password: Option<&str>,
         dhcp_timeout: Duration,
-    ) -> Result<LinkStatus> {
+    ) -> Result<(LinkStatus, DhcpLease)> {
         match self {
             Self::Simulated(sim) => {
                 let net = SimulatedWifi::networks()
@@ -229,15 +263,8 @@ impl WifiBackend {
                     )));
                 }
                 sim.associated = Some((ssid.to_string(), net.band, net.rssi_dbm));
-                Ok(LinkStatus {
-                    state: LinkState::Connected,
-                    ssid: Some(ssid.into()),
-                    ipv4: Some(Ipv4Addr::new(192, 168, 77, 42)),
-                    gateway: Some(Ipv4Addr::new(192, 168, 77, 1)),
-                    dns: Some(Ipv4Addr::new(1, 1, 1, 1)),
-                    rssi_dbm: net.rssi_dbm,
-                    band: Some(net.band),
-                })
+                let status = sim.status();
+                Ok((status.clone(), lease_from_status(&status)))
             }
             Self::Host => {
                 host_associate(ssid).await?;
@@ -249,15 +276,27 @@ impl WifiBackend {
                         status.ipv4 = Some(lease.ip);
                         status.gateway = lease.gateway;
                         status.dns = lease.dns_servers.first().copied();
+                        Ok((status, lease))
                     }
-                    Err(e) => {
-                        return Err(AIOSException::Timeout(format!(
-                            "dhcp after assoc failed: {e}"
-                        )));
-                    }
+                    Err(e) => Err(AIOSException::Timeout(format!(
+                        "dhcp after assoc failed: {e}"
+                    ))),
                 }
-                Ok(status)
             }
+        }
+    }
+
+    async fn recheck(&mut self) -> Result<LinkStatus> {
+        match self {
+            Self::Simulated(sim) => Ok(sim.status()),
+            Self::Host => Ok(host_link().await),
+        }
+    }
+
+    fn adapters(&self) -> Result<Vec<AdapterState>> {
+        match self {
+            Self::Simulated(sim) => Ok(vec![sim.adapter()]),
+            Self::Host => crate::host_net::collect_adapters(),
         }
     }
 
@@ -391,11 +430,49 @@ fn signal_pct_to_quality(pct: u32) -> i8 {
     (200 - pct.min(100).saturating_mul(2)).clamp(20, 100) as i8
 }
 
+async fn host_link() -> LinkStatus {
+    if let Ok(status) = host_status().await {
+        if status.ssid.is_some() || status.state == LinkState::Connected {
+            return status;
+        }
+    }
+    let Ok(adapters) = crate::host_net::collect_adapters() else {
+        return LinkStatus::default();
+    };
+    let Some(adapter) = adapters
+        .iter()
+        .find(|a| a.status == "up" && a.ipv4.is_some())
+    else {
+        return LinkStatus::default();
+    };
+    LinkStatus {
+        state: LinkState::Connected,
+        ssid: None,
+        ipv4: adapter.ipv4,
+        gateway: adapter.gateway,
+        dns: adapter.dns.first().copied(),
+        rssi_dbm: 0,
+        band: None,
+    }
+}
+
+fn lease_from_status(status: &LinkStatus) -> DhcpLease {
+    DhcpLease {
+        ip: status.ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED),
+        netmask: Ipv4Addr::new(255, 255, 255, 0),
+        gateway: status.gateway,
+        dns_servers: status.dns.into_iter().collect(),
+        server_id: status.gateway,
+        lease_secs: 3_600,
+    }
+}
+
 /// High-level network connection engine.
 pub struct NetManager {
     backend: Mutex<WifiBackend>,
     config_store: Option<NetworkConfigStore>,
     link: LinkStatus,
+    lease: Option<DhcpLease>,
 }
 
 impl Default for NetManager {
@@ -408,6 +485,7 @@ impl std::fmt::Debug for NetManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NetManager")
             .field("link", &self.link)
+            .field("lease", &self.lease)
             .finish_non_exhaustive()
     }
 }
@@ -419,6 +497,7 @@ impl NetManager {
             backend: Mutex::new(backend),
             config_store,
             link: LinkStatus::default(),
+            lease: None,
         }
     }
 
@@ -437,6 +516,28 @@ impl NetManager {
         self.link.clone()
     }
 
+    /// Most recent DHCP lease acquired in this session, if any.
+    pub fn lease(&self) -> Option<DhcpLease> {
+        self.lease.clone()
+    }
+
+    /// Query host adapters through the active backend (Wi-Fi sim: one entry).
+    pub async fn adapters(&self) -> Result<Vec<AdapterState>> {
+        self.backend.lock().await.adapters()
+    }
+
+    /// Re-read the link state from the OS (or the simulated association) and
+    /// refresh the cached lease. Unlike [`Self::status`] this performs I/O.
+    pub async fn recheck(&mut self) -> Result<LinkStatus> {
+        let status = self.backend.lock().await.recheck().await?;
+        if status.state == LinkState::Connected && status.ipv4.is_some() {
+            self.lease = Some(lease_from_status(&status));
+            self.persist_lease(status.ssid.as_deref().unwrap_or("wired"), &status);
+        }
+        self.link = status.clone();
+        Ok(status)
+    }
+
     /// Associate with `ssid`, run DHCP, persist the lease into the
     /// network-config store and update the cached link.
     ///
@@ -447,12 +548,14 @@ impl NetManager {
             be.connect(ssid, password, Duration::from_secs(10)).await
         };
         match outcome {
-            Ok(st) => {
-                self.persist_lease(ssid, &st);
-                self.link = st.clone();
-                Ok(st)
+            Ok((status, lease)) => {
+                self.lease = Some(lease);
+                self.persist_lease(ssid, &status);
+                self.link = status.clone();
+                Ok(status)
             }
             Err(e) => {
+                self.lease = None;
                 self.link = LinkStatus {
                     state: LinkState::Failed(short_err(&e)),
                     ..LinkStatus::default()
@@ -466,25 +569,33 @@ impl NetManager {
         let Some(store) = self.config_store.as_mut() else {
             return;
         };
-        let cfg = NetworkConfig {
-            hostname: format!("aios-{ssid}"),
-            interfaces: vec![aios_net_config::InterfaceConfig {
-                name: "wlan0".into(),
-                ip: st.ipv4.map(|a| a.to_string()),
-                netmask: Some("255.255.255.0".into()),
-                gateway: st.gateway.map(|g| g.to_string()),
-                mtu: None,
-                dhcp: true,
-            }],
-            ..NetworkConfig::default()
+        let Ok(mut cfg) = store.load_or(NetworkConfig::default()) else {
+            return;
         };
+        cfg.hostname = format!("aios-{ssid}");
+        let interface = aios_net_config::InterfaceConfig {
+            name: "wlan0".into(),
+            ip: st.ipv4.map(|a| a.to_string()),
+            netmask: Some("255.255.255.0".into()),
+            gateway: st.gateway.map(|g| g.to_string()),
+            mtu: None,
+            dhcp: true,
+        };
+        match cfg.interfaces.iter().position(|i| i.name == interface.name) {
+            Some(index) => cfg.interfaces[index] = interface,
+            None => cfg.interfaces.push(interface),
+        }
+        if let Some(dns) = st.dns {
+            cfg.dns.primary = Some(dns.to_string());
+        }
         let _ = store.save(&cfg);
     }
 
-    /// Drop the association and reset the cached link.
+    /// Drop the association and reset the cached link and lease.
     pub async fn disconnect(&mut self) -> Result<()> {
         self.backend.lock().await.disconnect().await?;
         self.link = LinkStatus::default();
+        self.lease = None;
         Ok(())
     }
 }
@@ -596,5 +707,61 @@ mod tests {
         assert_eq!(st.state, LinkState::Connected);
         assert_eq!(st.ssid.as_deref(), Some("home-net"));
         assert_eq!(st.rssi_dbm, -68);
+    }
+
+    #[tokio::test]
+    async fn persist_lease_preserves_existing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NetworkConfigStore::new(dir.path().join("network.json"));
+        let mut cfg = NetworkConfig::default();
+        cfg.dns.primary = Some("9.9.9.9".into());
+        cfg.listen_port = 9090;
+        cfg.interfaces.push(aios_net_config::InterfaceConfig {
+            name: "eth0".into(),
+            ip: Some("10.0.0.5".into()),
+            netmask: None,
+            gateway: None,
+            mtu: None,
+            dhcp: false,
+        });
+        store.save(&cfg).unwrap();
+
+        let mut m = NetManager::new(
+            WifiBackend::default(),
+            Some(NetworkConfigStore::new(dir.path().join("network.json"))),
+        );
+        m.connect("coffee-shop", None).await.unwrap();
+        let saved = store.load().unwrap().unwrap();
+        assert_eq!(saved.listen_port, 9090);
+        assert_eq!(saved.dns.primary.as_deref(), Some("1.1.1.1"));
+        assert_eq!(saved.interfaces.len(), 2);
+        assert_eq!(saved.interfaces[0].name, "eth0");
+        assert_eq!(saved.interfaces[1].name, "wlan0");
+    }
+
+    #[tokio::test]
+    async fn recheck_refreshes_link_and_lease() {
+        let mut m = NetManager::default();
+        assert_eq!(m.recheck().await.unwrap().state, LinkState::Disconnected);
+        m.connect("coffee-shop", None).await.unwrap();
+        let status = m.recheck().await.unwrap();
+        assert_eq!(status.state, LinkState::Connected);
+        assert_eq!(m.lease().unwrap().ip, Ipv4Addr::new(192, 168, 77, 42));
+        m.disconnect().await.unwrap();
+        assert_eq!(m.recheck().await.unwrap().state, LinkState::Disconnected);
+        assert!(m.lease().is_none());
+    }
+
+    #[tokio::test]
+    async fn adapters_report_simulated_wlan() {
+        let mut m = NetManager::default();
+        let down = m.adapters().await.unwrap();
+        assert_eq!(down.len(), 1);
+        assert_eq!(down[0].name, "wlan0");
+        assert_eq!(down[0].status, "down");
+        m.connect("coffee-shop", None).await.unwrap();
+        let up = m.adapters().await.unwrap();
+        assert_eq!(up[0].status, "up");
+        assert_eq!(up[0].ipv4, Some(Ipv4Addr::new(192, 168, 77, 42)));
     }
 }

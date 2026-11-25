@@ -17,6 +17,7 @@
 //! [`SysStatusSnapshot`] consumed by the kernel TUI header and the GUI panel.
 
 pub mod dhcp;
+pub mod host_net;
 pub mod input_i18n;
 pub mod keyring;
 pub mod net_manager;

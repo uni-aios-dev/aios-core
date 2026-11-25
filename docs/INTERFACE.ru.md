@@ -184,13 +184,13 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `sys info|tier` и `hw detect|rescan|profile|fingerprints`. Планировщик, сеть и
 безопасность: `sleep`, `fault resolve`,
 `sched mode|quantum|aging|rt-deadline|rt-clear`,
-`net show|set|reset|validate|config|status|apply|lease`,
+`net show|set|reset|validate|config|status|adapters|lease|apply|recheck`,
 `caps list|issue|revoke|check`, `sandbox start|stop|log|mem` и
 `hw-protect status|mpk|tee|iommu|clear`. Рантайм и управление:
 `wasm compile|call|mem|grow`, `wasi policy`, `exec detect|caps|<program>`,
 `deps scan|heal`, `compat list|kill`, `context stats|export|compact|persist`,
 `workflow list|priority`, `stability list|best|worst`, `crash report`,
-`driver list|failures|remove|rollback|install|provision`,
+`driver list|nics|failures|remove|rollback|install|provision`,
 `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`,
 `hub status|scan|wifi|layout`, `alias`, `unalias` и `wd status|reset`.
 `alias`/`unalias` хранят алиасы сессии, которые `execute_line()` раскрывает до
@@ -224,7 +224,6 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 | `jobs`, `fg`, `bg` | нет принадлежащей фронтенду таблицы заданий с OS-группами процессов, сигналами и foreground TTY в `aios-process-mgr` (`JobControl` обеспечивает её в `aios-shell`) |
 | `acl` | нет API ACL для путей; гранты `AclContext` глобальны, `caps` использует block ID |
 | `ping` | нет ICMP-API и привилегий raw-сокета; TCP connect не является эхо-ответом |
-| `net recheck` на хосте | настоящий `recheck()` есть только в ядре; хост `NetManager` даёт кэш |
 
 Таблица описывает только хост без внедрённых адаптеров. `console fm jobs` и
 `console fm cancel <id>` становятся реальными, как только внедрён живой
@@ -235,8 +234,11 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 выводит живые задания и возобновляет нужный id. `console state extract|restore
 <block>` реален на хосте: он снимает снимок живой линейной памяти исполняемого
 WASM-блока и восстанавливает его по запросу; для restore нужен предыдущий extract
-в той же сессии и живой экземпляр (сначала `block run <block>`). В ядерном бэкенде
-`console net recheck` реален: он вызывает `crate::net::recheck()` и печатает
+в той же сессии и живой экземпляр (сначала `block run <block>`). Хостовые
+`console net recheck|apply|adapters|lease` теперь реальны: `NetManager`
+запрашивает ОС, обновляет снимок link/lease и печатает строки адаптеров.
+Ядерный бэкенд использует те же имена `net` над своими настройками; его
+`net recheck` вызывает `crate::net::recheck()` и печатает
 `network recheck requested`.
 
 Универсальное сообщение `has no host backend yet` остаётся только для команд вне
@@ -547,7 +549,7 @@ AIOS:cmd> intent free up memory
 | Команда | Аргументы | Описание |
 |---------|-----------|----------|
 | `net get` | — | Показать текущую сетевую конфигурацию (JSON) |
-| `net set` | `key=value [key2=value2 ...]` | Применить частичное обновление (например, `hostname=myhost`, `listen_port=9090`, `allow_private_access=true`, `dns={"primary":"1.1.1.1"}`); допустимые ключи: `hostname`, `listen_port`, `connect_timeout_ms`, `max_connections`, `user_agent`, `allow_private_access`, `proxy` (JSON-объект или `null`), `dns` (JSON-объект с `primary`/`secondary`/`search_domains`) |
+| `net set` | `key=value [key2=value2 ...]` | Применить частичное обновление (например, `hostname=myhost`, `listen_port=9090`, `dns={"primary":"1.1.1.1"}`); допустимые ключи: `hostname`, `listen_port`, `connect_timeout_ms`, `max_connections`, `user_agent`, `allow_private_access`, `proxy` (JSON-объект или `null`), `dns` (объект, строка-адрес, массив поисковых доменов или `null`), `interfaces` (массив), а также точечные ключи вроде `dns.primary=1.1.1.1` |
 | `net reset` | — | Восстановить заводские настройки и сохранить |
 
 ### Справка F1
@@ -1651,3 +1653,27 @@ block run minesweeper show
 координаты начинаются с 1, а первая открытая клетка никогда не содержит мину.
 Используйте `block run`, а не `wasm call`: последняя команда не передаёт payload
 и каждый раз создаёт новый экземпляр модуля, поэтому состояние блока теряется.
+
+## Сетевая консоль и инвентарь NIC (v2.84.0)
+
+Единая консоль использует одинаковую сетевую терминологию в обоих бэкендах.
+`net get` остаётся псевдонимом `net show`.
+
+| Команда | Результат |
+|---------|-----------|
+| `net show` / `net config` | Сохранённые или ядерные настройки IPv4 (`dhcp`, `ip`, `mask`, `gateway`, `dns1`, `dns2`) |
+| `net status` | Состояние, тип NIC, MAC, настройки и связанный lease одним снимком |
+| `net set <key=value ...>` | Частичное обновление; ядро принимает `dhcp`, `ip`, `mask`, `gw`, `dns1`, `dns2` и псевдонимы, хост — ключи конфига и точечные/вложенные JSON |
+| `net validate` | Отклоняет статический режим без IP и некорректные настройки |
+| `net apply` | Хост: сохранить конфиг и проверить link; ядро: применить настройки повторно |
+| `net reset` | Восстановить значения по умолчанию |
+| `net adapters` | Хост: таблица адаптеров ОС (`INTERFACE STATE IPV4 GATEWAY DHCP`); ядро: строки wired + Wi-Fi |
+| `net recheck` | Хост: новый запрос `NetManager`; ядро: `crate::net::recheck()` |
+| `net lease` | Данные связанного DHCP-lease или `no DHCP lease acquired in this session` до его получения |
+
+На хосте вложенный JSON требует экранирования в шелле, например
+`console net set dns={\"primary\":\"8.8.8.8\"}`. `driver nics` добавляет таблицу
+`DEVICE CLASS DRIVER STATE TOKEN` для найденного железа Ethernet/Wi-Fi;
+`TOKEN` принимает значения `valid`, `expired` или `none`. Ядерные команды `net`
+используют общий парсер `aios-console::net_text` с тестами рабочего
+пространства, поэтому их вывод не является хостовой заглушкой.

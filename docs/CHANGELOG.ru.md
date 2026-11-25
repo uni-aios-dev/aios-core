@@ -1,5 +1,51 @@
 # Журнал разработки AIOS
 
+## v2.84.0 - Сетевые настройки, хостовые проверки link и обеспечение NIC (25.11.2026)
+
+### Добавлено
+- `aios-autohal::nic` классифицирует PCI-сетевое железо как `Ethernet` и
+  `Wifi`; `SupportedHardware::for_class` поддерживает сравнение по маске класса,
+  каталог содержит `NIC_WAT` с точными и классовыми NIC-драйверами, а
+  `driver nics` показывает найденные карты, драйвер, состояние и статус токена.
+- `aios-console::net_text` предоставляет общий совместимый с `no_std` разбор и
+  вывод для ядерных команд `net show|config|status|lease|set|apply|validate|
+  reset|adapters|recheck`.
+- `aios-sys-control::host_net` разбирает вывод `netsh`/`ip addr` в
+  `AdapterState`; `NetManager` получил `recheck()`, `adapters()` и `lease()`,
+  поэтому хостовые `net recheck|apply|adapters|lease` выполняют реальный ввод/вывод.
+
+### Изменено
+- `ProvisioningEngine` сохраняет подписанные `CapabilityToken` и открывает их
+  через `tokens()`/`token()`; токены удаляются при откате, удалении или
+  деинсталляции.
+- `aios-kernel::nic` предоставляет `Kind::name()`, `NicDeviceInfo`,
+  `SUPPORTED_DEVICES` и `describe()`; лог загрузки называет и тип драйвера, и
+  бэкенд.
+- `NetworkConfig::apply_updates` принимает `dns` как объект, строку-адрес,
+  массив поисковых доменов или `null`, а также проверяет и заменяет `interfaces`,
+  сохраняя `version >= 2`.
+
+### Исправлено
+- DHCP записывал и читал transaction id по неверному смещению, менял xid между
+  DISCOVER и REQUEST и принимал ответы любой транзакции. Теперь xid стабилен,
+  читается из `p[4..8]`, а устаревшие ответы игнорируются.
+- Хостовый `net recheck` был заглушкой `unavailable` с кэшированным статусом;
+  теперь он выполняет новую проверку link. `net apply` сохраняет конфиг перед
+  проверкой, а сохранение lease больше не затирает соседние поля конфига.
+
+### Документация
+- EN/RU-документы `ARCHITECTURE`, `CHANGELOG`, `BUGS`, `TODO` и `INTERFACE`
+  описывают классификацию NIC, токены возможностей, хостовые/ядерные сетевые
+  команды и исправления DHCP/конфига.
+
+### Верификация
+- `cargo fmt --all`, `cargo build --workspace`, `cargo test --workspace` и
+  `cargo clippy --workspace` проходят чисто.
+- Отдельная сборка `aios-kernel` с `cargo check`/`clippy` под
+  `x86_64-unknown-none` проходит с настройками по умолчанию и
+  `--features limine`.
+  Новый запуск NIC на реальном железе не заявляется.
+
 ## v2.83.0 - Настоящие программы ядра и исправления ввода (24.11.2026)
 
 ### Добавлено

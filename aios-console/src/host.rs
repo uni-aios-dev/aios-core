@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use aios_autohal::catalog::find_builtin;
 use aios_autohal::engine::{AutohalEngine, EngineConfig};
 use aios_autohal::fingerprint::extract_fingerprints;
 use aios_autohal::hotplug::{HotplugConfig, HotplugMonitor};
@@ -123,7 +124,7 @@ impl Default for HostBackendConfig {
             version: env!("CARGO_PKG_VERSION").to_string(),
             blocks_dir: base.join("blocks"),
             vfs_root: base.join("vfs"),
-            net_config_path: base.join("network.json"),
+            net_config_path: aios_net_config::store::NetworkConfigStore::default_path(),
             context_db_path: base.join("context.redb"),
             total_ram_mb: 1024,
             max_restarts: 3,
@@ -504,8 +505,10 @@ impl CommandBackend for HostBackend {
             ("net", Some("validate")) => self.net_validate(invocation),
             ("net", Some("config")) => self.net_config(),
             ("net", Some("status")) => self.net_status(),
-            ("net", Some("apply")) => self.net_set(invocation),
+            ("net", Some("adapters")) => self.net_adapters(),
+            ("net", Some("apply")) => self.net_apply(invocation),
             ("net", Some("lease")) => self.net_lease(),
+            ("net", Some("recheck")) => self.net_recheck(),
             ("store", Some(subcommand)) => self.store_command(invocation, subcommand),
             ("vfs", Some(subcommand)) => self.vfs_command(invocation, subcommand),
             ("ipc", Some(subcommand)) => self.ipc_command(invocation, subcommand),
@@ -2425,11 +2428,11 @@ impl HostBackend {
             if key.is_empty() {
                 return CommandOutput::usage(invocation.spec.usage);
             }
-            updates.insert(key.to_string(), json_value(value));
+            insert_update(&mut updates, key, json_value(value));
         }
         for (key, value) in &invocation.flags {
             if let Some(value) = value {
-                updates.insert(key.clone(), json_value(value));
+                insert_update(&mut updates, key, json_value(value));
             }
         }
         if updates.is_empty() {
@@ -3208,8 +3211,90 @@ impl HostBackend {
         ])
     }
 
+    fn net_adapters(&self) -> CommandOutput {
+        match StoreManager::block_on(self.wifi.adapters()) {
+            Ok(adapters) => {
+                let mut lines = vec![
+                    "INTERFACE          STATE   IPV4            GATEWAY         DHCP".to_string(),
+                ];
+                for adapter in adapters {
+                    lines.push(adapter.status_line());
+                }
+                if lines.len() == 1 {
+                    lines.push("none               no network adapters reported".to_string());
+                }
+                CommandOutput::ok(lines)
+            }
+            Err(error) => CommandOutput::error(&format!("net adapters failed: {error}")),
+        }
+    }
+
+    fn net_recheck(&mut self) -> CommandOutput {
+        match StoreManager::block_on(self.wifi.recheck()) {
+            Ok(status) => {
+                self.note(format!("network link rechecked: {:?}", status.state));
+                self.net_status()
+            }
+            Err(error) => CommandOutput::error(&format!("net recheck failed: {error}")),
+        }
+    }
+
+    fn net_apply(&mut self, invocation: &Invocation) -> CommandOutput {
+        let applied = self.net_set(invocation);
+        if applied.code != ExitCode::Ok {
+            return applied;
+        }
+        match StoreManager::block_on(self.wifi.recheck()) {
+            Ok(status) => {
+                let mut lines = applied.lines;
+                lines.push(format!("link          {:?}", status.state));
+                lines.push(format!(
+                    "ipv4          {}",
+                    status
+                        .ipv4
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                CommandOutput::ok(lines)
+            }
+            Err(error) => CommandOutput::error(&format!(
+                "network configuration applied, recheck failed: {error}"
+            )),
+        }
+    }
+
     fn net_lease(&self) -> CommandOutput {
-        CommandOutput::text("no DHCP lease acquired in this session")
+        let Some(lease) = self.wifi.lease() else {
+            return CommandOutput::text("no DHCP lease acquired in this session");
+        };
+        CommandOutput::ok(vec![
+            "state         active".to_string(),
+            format!("ip            {}", lease.ip),
+            format!("netmask       {}", lease.netmask),
+            format!(
+                "gateway       {}",
+                lease
+                    .gateway
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!(
+                "dns           {}",
+                lease
+                    .dns_servers
+                    .first()
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!(
+                "server        {}",
+                lease
+                    .server_id
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!("lease         {} s", lease.lease_secs),
+        ])
     }
 
     fn caps_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
@@ -3950,6 +4035,47 @@ impl HostBackend {
                 }
                 CommandOutput::ok(lines)
             }
+            "nics" => {
+                let nics: Vec<_> = fingerprints
+                    .iter()
+                    .filter(|fp| fp.nic_class().is_some())
+                    .collect();
+                if nics.is_empty() {
+                    return CommandOutput::text("no NIC devices detected");
+                }
+                let engine = match self.ensure_autohal() {
+                    Ok(engine) => engine,
+                    Err(output) => return output,
+                };
+                let mut lines = vec![
+                    "DEVICE                  CLASS     DRIVER                   STATE      TOKEN"
+                        .to_string(),
+                ];
+                for fp in nics {
+                    let device = engine.devices().iter().find(|d| &d.fingerprint == fp);
+                    let driver_id = device
+                        .map(|d| d.driver_id.clone())
+                        .or_else(|| find_builtin(fp).map(|b| b.manifest.id))
+                        .unwrap_or_else(|| fp.driver_id());
+                    let state = device
+                        .map(|d| format!("{:?}", d.state))
+                        .unwrap_or_else(|| "detected".to_string());
+                    let token = match engine.token(fp, &driver_id) {
+                        Some(token) if token.is_expired() => "expired",
+                        Some(_) => "valid",
+                        None => "none",
+                    };
+                    lines.push(format!(
+                        "{:<24} {:<9} {:<25} {:<10} {}",
+                        fp.driver_id(),
+                        fp.nic_class().unwrap().label(),
+                        driver_id,
+                        state,
+                        token
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
             "failures" => {
                 let engine = match self.ensure_autohal() {
                     Ok(engine) => engine,
@@ -4219,11 +4345,33 @@ fn resolve_block(registry: &BlockRegistry, target: &str) -> Option<BlockId> {
     registry.find_by_name(target).map(|entry| entry.manifest.id)
 }
 
+fn insert_update(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    value: serde_json::Value,
+) {
+    if let Some((head, tail)) = path.split_once('.') {
+        let entry = target
+            .entry(head.to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if !entry.is_object() {
+            *entry = serde_json::Value::Object(serde_json::Map::new());
+        }
+        if let serde_json::Value::Object(child) = entry {
+            insert_update(child, tail, value);
+        }
+        return;
+    }
+    target.insert(path.to_string(), value);
+}
+
 fn json_value(raw: &str) -> serde_json::Value {
     if let Ok(number) = raw.parse::<u64>() {
         serde_json::Value::Number(number.into())
     } else if let Ok(boolean) = raw.parse::<bool>() {
         serde_json::Value::Bool(boolean)
+    } else if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+        value
     } else {
         serde_json::Value::String(raw.to_string())
     }
