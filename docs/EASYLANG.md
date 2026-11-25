@@ -268,6 +268,11 @@ blocks.hello.rights = log
 blocks.hello.fuel = 20000
 ```
 
+Both keys are `Effective` in `config::KeyPolicy`: the WASM host consumes
+`blocks.<stem>.rights` and `blocks.<stem>.fuel` at boot. Other shipped
+configuration keys (`system.*`, `boot.*`, `net.*`) are Informational and are
+only parsed, validated and logged.
+
 * A missing `blocks.<stem>.rights` grants `Rights::NONE` and the kernel logs a
   warning; a block that needs any host access is then skipped.
 * An unknown right name skips the block.

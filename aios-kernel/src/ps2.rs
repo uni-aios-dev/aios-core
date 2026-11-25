@@ -43,7 +43,7 @@ static KEY_SEQ: AtomicU32 = AtomicU32::new(0);
 static MOUSE_SEQ: AtomicU32 = AtomicU32::new(0);
 /// Mouse: horizontal delta accumulated since the last read (the reader swaps
 /// it to zero, so packets that arrive faster than the main-loop poll cannot
-/// overwrite each other — v2.38.30 burst-loss fix).
+/// overwrite each other — earlier release burst-loss fix).
 static MOUSE_DX: AtomicI32 = AtomicI32::new(0);
 /// Mouse: vertical delta accumulated since the last read (screen Y grows
 /// downwards), drained together with [`MOUSE_DX`].
@@ -70,7 +70,7 @@ pub fn mouse_seq() -> u32 {
     MOUSE_SEQ.load(Ordering::Relaxed)
 }
 
-/// Largest pointer step one drain may hand back (v2.38.35 pointer-jump fix):
+/// Largest pointer step one drain may hand back (earlier release pointer-jump fix):
 /// one full PS/2 packet (9-bit signed range) passes through untouched, while
 /// a bigger accumulated backlog is split across polls so a stale burst can
 /// never teleport the cursor across the screen (the "jumps to the task bar"
@@ -320,7 +320,7 @@ fn decode_packet(pkt: &[u8; 3]) {
     let b0 = pkt[0];
     // Byte 0 bits 6/7 are the X/Y overflow flags: the controller lost motion
     // data and the wrapped value decodes into a garbage delta that teleports
-    // the cursor (pointer-jump bug, v2.38.35). Drop the whole packet - the
+    // the cursor (pointer-jump bug, earlier release). Drop the whole packet - the
     // sequence counter stays put, so the input band never even sees it.
     if b0 & 0xC0 != 0 {
         return;

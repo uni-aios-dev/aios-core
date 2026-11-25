@@ -37,6 +37,7 @@ mod thermal;
 mod tui;
 mod user;
 mod vector;
+mod version;
 mod wifi;
 mod xhci;
 
@@ -211,7 +212,7 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
     }
 
     print_step(1, "serial online");
-    vprintln!("AIOS bare-metal kernel ({} + GOP)", LOADER_NAME);
+    vprintln!("{} ({} + GOP)", crate::version::KERNEL, LOADER_NAME);
     vprintln!("=======================================");
     kprintln!("[serial] aios-kernel: {} handoff", LOADER_NAME);
     kprintln!("[serial] hhdm offset = 0x{:x}", hhdm_offset);
@@ -240,21 +241,20 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
     // --- System configuration (M2) -----------------------------------------
     // The loader handed every `/aios/config/*.conf` file over as a
     // `MODULE_CONFIG` module; the kernel parses them in place (no copy) and the
-    // last layer wins. Only keys the kernel actually honours are shipped:
-    // `system.version`, `scheduler.tick_hz` and `memory.heap_min_kib` were
-    // removed because the release version and the timer/heap sizes are
-    // compile-time constants, not runtime knobs.
+    // last layer wins. Keys with no runtime effect are labelled informational
+    // in the log; the timer, heap and release version are compile-time values.
     let cfg = config::init();
     for (layer, entry) in config::entries() {
         kprintln!(
-            "[serial] [cfg] {} = \"{}\" ({})",
+            "[serial] [cfg] {} = \"{}\" ({}, {})",
             entry.key,
             entry.value,
-            layer
+            layer,
+            config::policy(entry.key).label()
         );
     }
     let system_name = config::get("system.name").unwrap_or("AIOS");
-    let system_version = env!("CARGO_PKG_VERSION");
+    let system_version = crate::version::SEMVER;
     let system_arch = config::get("system.arch").unwrap_or("x86_64");
     vprintln!(
         "Config: {} {} {} ({} layer(s), {} key(s))",
@@ -265,13 +265,14 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
         cfg.entries
     );
     kprintln!(
-        "[serial] [cfg] system = {} {} {} ({} layer(s), {} key(s), {} invalid)",
+        "[serial] [cfg] system = {} {} {} ({} layer(s), {} key(s), {} invalid layer(s), {} invalid value(s))",
         system_name,
         system_version,
         system_arch,
         cfg.layers,
         cfg.entries,
-        cfg.invalid
+        cfg.invalid,
+        cfg.invalid_values
     );
     kprintln!(
         "[serial] [cfg] timer = {} Hz, heap = {} KiB (compile-time)",
@@ -284,7 +285,7 @@ fn kmain(bootinfo: *const BootInfo, kernel_stack_top: u64) -> ! {
         (config::get_bool("net.dhcp"), config::source("net.dhcp"))
     {
         kprintln!(
-            "[serial] [cfg] net.dhcp = {} (from '{}', discovered drop-in)",
+            "[serial] [cfg] net.dhcp = {} (from '{}', discovered drop-in, informational)",
             dhcp,
             layer
         );
@@ -1010,7 +1011,7 @@ fn kernel_worker() -> ! {
     }
 }
 
-/// One pointer band's movement accumulator (v2.38.33). Per-packet
+/// One pointer band's movement accumulator (earlier release). Per-packet
 /// `[serial] … mouse dx=… dy=…` lines were a log storm on real hardware: a
 /// machine with no serial reader busy-waits the UART dry on every line and a
 /// runaway device produced dozens of lines per second. Movement is now
@@ -1066,7 +1067,7 @@ static PS2_MOVE: MoveLog = MoveLog::new();
 
 /// Diagnostic: reports an idle-loop stage whose execution pushed `TICKS` more
 /// than two seconds past the previous stage mark (the ~35 s first-keystroke
-/// stall of v2.38.36 hunts). `mark` is updated in place so every call measures
+/// stall of earlier release hunts). `mark` is updated in place so every call measures
 /// only its own stage.
 fn stage_check(name: &'static str, mark: &mut u64) {
     let now = interrupts::TICKS.load(Ordering::Relaxed);
@@ -1083,7 +1084,7 @@ fn stage_check(name: &'static str, mark: &mut u64) {
 /// (final state identical to the delivered one) is replayed here as up to
 /// three states - release of a stale held state, the press, and the final
 /// release - and the screen observes the down transition it would otherwise
-/// miss (the intermittent lost-click bug, v2.38.38). The first state carries
+/// miss (the intermittent lost-click bug, earlier release). The first state carries
 /// `(dx, dy)`; later states carry no motion. Returns the state the screen
 /// now believes.
 fn deliver_pointer(
@@ -1293,7 +1294,7 @@ pub fn idle_loop() -> ! {
         }
         // xHCI boot mouse band. Drained every iteration (not gated on a fresh
         // report): the driver clamps one application to its per-poll step
-        // limit and parks the remainder in the accumulator (v2.38.35
+        // limit and parks the remainder in the accumulator (earlier release
         // pointer-jump fix), so a carry-over residue must be picked up even
         // when no new report arrived. The sequence counter only marks the
         // button-change edge for the log lines.
@@ -1309,7 +1310,7 @@ pub fn idle_loop() -> ! {
                 // Same press-settles-motion rule as the PS/2 band below: a
                 // per-drain step clamp parks a backlog, so dispatching the
                 // click with a partial delta lands it short of the target and
-                // drifts during a USB-pointer title drag (v2.68.2).
+                // drifts during a USB-pointer title drag (earlier release).
                 for _ in 0..64 {
                     let (rx, ry) = xhci::take_mouse_delta();
                     dx += rx;
@@ -1321,7 +1322,7 @@ pub fn idle_loop() -> ! {
             }
             if dx != 0 || dy != 0 || btn_changed || edge_press {
                 // Runaway gate first: a suppressed stream must cost nothing at
-                // all — no log line, no cursor work, no repaint (v2.38.33).
+                // all — no log line, no cursor work, no repaint (earlier release).
                 let allowed = if gui::active() {
                     gui::input_allowed(dx, dy)
                 } else {
@@ -1339,7 +1340,7 @@ pub fn idle_loop() -> ! {
                     // GUI drives icons/windows) and then redraw so the arrow is
                     // freshly composited over it. `deliver_pointer` replays a
                     // press edge swallowed by same-poll press+release
-                    // coalescing (v2.38.38 lost-click fix).
+                    // coalescing (earlier release lost-click fix).
                     last_mouse_buttons = deliver_pointer(
                         last_mouse_buttons,
                         buttons,
@@ -1361,7 +1362,7 @@ pub fn idle_loop() -> ! {
         }
         // PS/2 pointer (native laptop touchpad in PS/2 mode): same wiring as
         // the xHCI band above - also drained every iteration so the step
-        // clamp's carry-over remainder is applied on the next pass (v2.38.35).
+        // clamp's carry-over remainder is applied on the next pass (earlier release).
         {
             let seq = ps2::mouse_seq();
             let seq_changed = seq != last_ps2m_seq;
@@ -1373,7 +1374,7 @@ pub fn idle_loop() -> ! {
             let btn_changed = seq_changed && buttons != last_ps2m_buttons;
             if edge_press || btn_changed {
                 // A press settles every pending motion byte first: the
-                // per-drain step clamp (v2.38.35) can park a backlog, and
+                // per-drain step clamp (earlier release) can park a backlog, and
                 // dispatching the click mid-journey would hit a coordinate
                 // the pointer has not reached yet (the flaky missed-button
                 // clicks in QEMU).
@@ -1414,7 +1415,7 @@ pub fn idle_loop() -> ! {
                     }
                     let id = ps2::mouse_id();
                     // `deliver_pointer` replays a press edge swallowed by
-                    // same-drain press+release coalescing (v2.38.38
+                    // same-drain press+release coalescing (earlier release
                     // lost-click fix) and logs every state it delivers.
                     last_ps2m_buttons = deliver_pointer(
                         last_ps2m_buttons,
@@ -1474,8 +1475,15 @@ fn halt_loop() -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    vprintln!("KERNEL PANIC: {}", info);
-    kprintln!("[serial] KERNEL PANIC: {}", info);
-    crate::console::panic_report("KERNEL PANIC: ", core::format_args!("{}", info));
+    vprintln!("KERNEL PANIC [{}]: {}", crate::version::SEMVER, info);
+    kprintln!(
+        "[serial] KERNEL PANIC [{}]: {}",
+        crate::version::SEMVER,
+        info
+    );
+    crate::console::panic_report(
+        "KERNEL PANIC: ",
+        core::format_args!("{} | {}", crate::version::KERNEL, info),
+    );
     halt_loop();
 }

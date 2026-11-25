@@ -80,7 +80,7 @@ const RESIZE_MIN_W: usize = 96;
 /// `TITLE_H`, i.e. 8 glyph rows of kernel text content.
 const RESIZE_MIN_H: usize = TITLE_H + 64;
 
-/// Modal confirm dialog (v2.38.30): fixed size, centered on the desktop.
+/// Modal confirm dialog (earlier release): fixed size, centered on the desktop.
 const DLG_W: usize = 464;
 const DLG_H: usize = 140;
 /// Top of the button row inside the dialog, measured from its top edge.
@@ -107,7 +107,7 @@ const CDLG_TM_W: usize = 136;
 const CDLG_RS_X: usize = 312;
 const CDLG_RS_W: usize = 136;
 
-/// Task Manager body layout (window-local, v2.38.35): the column-header strip
+/// Task Manager body layout (window-local, earlier release): the column-header strip
 /// sits right under the title bar, rows follow on the 16 px grid, and the
 /// count/selection lines fill the gap above the End Task / Switch To plates
 /// (at y 216 in [`TASK_WIDGETS`]).
@@ -139,7 +139,7 @@ const WIN_R: i32 = 7;
 /// Damage pad: soft shadows spill a few pixels past their shape, so every
 /// damage rectangle is unioned wider than its content by this margin.
 const SHADOW_PAD: usize = 7;
-/// Taskbar top stop of the vertical wash (v2.38.39).
+/// Taskbar top stop of the vertical wash (earlier release).
 const BAR_TOP: Color = 0x00_1a_22_3a;
 const TITLE_ON: Color = 0x00_2e_5a_c2;
 const TITLE_OFF: Color = 0x00_20_2c_48;
@@ -167,10 +167,10 @@ enum WinKind {
     /// Network status and settings: wired NIC/DHCP state plus the software
     /// Wi-Fi stack (scan/connect against the simulated radio).
     Network,
-    /// Task Manager (v2.38.35): the Windows-style list of open windows with
+    /// Task Manager (earlier release): the Windows-style list of open windows with
     /// an End Task / Switch To button pair acting on the selected row.
     Tasks,
-    /// Widget Lab (v2.47.0): a demo host for the generic widget set — editable
+    /// Widget Lab (earlier release): a demo host for the generic widget set — editable
     /// text fields, a scrollable list with a scrollbar and a dropdown menu —
     /// proving keyboard/mouse routing into the focused window's widgets.
     Widgets,
@@ -580,7 +580,7 @@ enum Drag {
 }
 
 /// A widget hosted in a window body — the first increment of the widget-set
-/// roadmap (v2.38.32, buttons). Coordinates are window-local, so the widget
+/// roadmap (earlier release, buttons). Coordinates are window-local, so the widget
 /// follows its host through move, resize and maximize, and it is painted on
 /// top of the body content by [`draw_widgets`] and hit-tested before any
 /// client event in [`dispatch_click`].
@@ -601,7 +601,7 @@ enum Widget {
         /// Click behaviour (after the serial proof line).
         action: WidgetAction,
     },
-    /// Editable single-line text field (v2.47.0): click to focus, then type.
+    /// Editable single-line text field (earlier release): click to focus, then type.
     /// `id` addresses the field in the host window's form store; the caption
     /// is drawn by the host body, not the widget.
     TextField {
@@ -612,7 +612,7 @@ enum Widget {
         /// Form-store slot addressing the field's buffer.
         id: u8,
     },
-    /// Scrollable single-column item list (v2.47.0). `id` addresses the list
+    /// Scrollable single-column item list (earlier release). `id` addresses the list
     /// selection/scroll state; `items` are the static rows.
     List {
         x: usize,
@@ -622,7 +622,7 @@ enum Widget {
         id: u8,
         items: &'static [&'static str],
     },
-    /// Vertical scrollbar bound to a list (v2.47.0): a track with a thumb
+    /// Vertical scrollbar bound to a list (earlier release): a track with a thumb
     /// positioned by the list's scroll offset; clicking jumps proportionally.
     Scrollbar {
         x: usize,
@@ -631,7 +631,7 @@ enum Widget {
         /// The [`Widget::List`] whose scroll this bar drives.
         list_id: u8,
     },
-    /// Dropdown menu (v2.47.0): a plate that opens [`Menu::items`] below it;
+    /// Dropdown menu (earlier release): a plate that opens [`Menu::items`] below it;
     /// picking a row runs [`WidgetAction::Menu`] with the picked index.
     Menu {
         x: usize,
@@ -642,7 +642,7 @@ enum Widget {
         label: &'static str,
         items: &'static [&'static str],
     },
-    /// Checkbox (v2.63.0): a square box with a caption that toggles its bit in
+    /// Checkbox (earlier release): a square box with a caption that toggles its bit in
     /// the host form store; the checked bit flips [`WidgetAction::Check`].
     Checkbox {
         x: usize,
@@ -653,7 +653,7 @@ enum Widget {
         id: u8,
         label: &'static str,
     },
-    /// Radio button (v2.64.0): a round box that selects its `group` slot in the
+    /// Radio button (earlier release): a round box that selects its `group` slot in the
     /// host form store; selecting one clears the others in the same group.
     Radio {
         x: usize,
@@ -666,7 +666,7 @@ enum Widget {
         value: u8,
         label: &'static str,
     },
-    /// Horizontal slider (v2.67.0): a track with a thumb whose fraction of the
+    /// Horizontal slider (earlier release): a track with a thumb whose fraction of the
     /// span maps to a value in `min..=max`, stored in the host form store.
     /// Clicking anywhere on the track jumps the thumb to that value.
     Slider {
@@ -707,14 +707,14 @@ enum WidgetAction {
     /// Open the built-in window of that kind, or focus it if already open.
     Open(WinKind),
     /// Close the hosting window through [`close_window`], so a typed note
-    /// still raises the modal confirm dialog (the v2.38.30 gate).
+    /// still raises the modal confirm dialog (the earlier release gate).
     CloseHost,
-    /// Run one of the Network window's command buttons (v2.38.34).
+    /// Run one of the Network window's command buttons (earlier release).
     Net(NetBtn),
     /// Network window text field: move the keyboard focus to field `0..=6`
     /// (`ip`, `mask`, `gw`, `dns1`, `dns2`, `ssid`, `pass`).
     NetField(u8),
-    /// Run one of the Task Manager's command buttons (v2.38.35).
+    /// Run one of the Task Manager's command buttons (earlier release).
     Task(TaskBtn),
 }
 
@@ -737,7 +737,7 @@ enum NetBtn {
     Disc,
 }
 
-/// Command buttons of the Task Manager window (v2.38.35).
+/// Command buttons of the Task Manager window (earlier release).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TaskBtn {
     /// Close the selected window through [`close_window`] (the typed-note
@@ -758,12 +758,12 @@ static mut DRAG: Option<(WinKind, Drag)> = None;
 static mut CRASH_SEEN: bool = false;
 /// Active modal confirm dialog: the window it closes on confirm, paired with
 /// its serial label. While `Some` every focus/spawn/keyboard/mouse dispatch
-/// path is gated (v2.38.30 focus-steal prevention) until the dialog is
+/// path is gated (earlier release focus-steal prevention) until the dialog is
 /// resolved through [`modal_confirm`] / [`modal_cancel`].
 static mut MODAL: Option<(WinKind, &'static str)> = None;
 /// Remembered z-ranks of closed windows: `(kind, position bottomв†’top among
 /// the open windows at close time)`. A later reopen of the same kind puts the
-/// window back at that place in the stack instead of on top (v2.38.31 z-order
+/// window back at that place in the stack instead of on top (earlier release z-order
 /// restore); an empty table just means "open on top" as before. Cleared with
 /// the rest of the session state in [`leave`].
 static mut CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS] = [None; MAX_WINS];
@@ -772,7 +772,7 @@ static mut CLOSED_Z: [Option<(WinKind, u8)>; MAX_WINS] = [None; MAX_WINS];
 /// every cursor move by [`update_widget_hover`] (frozen while a modal dialog
 /// is up) and cleared with the session state in [`leave`].
 static mut WIDGET_HOVER: Option<(WinKind, usize)> = None;
-/// Task Manager row selected by click (v2.38.35): keyed by [`WinKind`], so it
+/// Task Manager row selected by click (earlier release): keyed by [`WinKind`], so it
 /// stays valid across z-order/slot shifts and only goes stale when the window
 /// closes (End/Switch To then report the missing target). Cleared in [`leave`].
 static mut TASK_SEL: Option<WinKind> = None;
@@ -857,7 +857,7 @@ static mut CLIENTS: [Option<ClientWin>; MAX_CLIENTS] = [None, None, None, None];
 
 /// Base of the RAM backbuffer: a dense software frame the GUI renders into and
 /// then publishes to VRAM with a damage-aware `blit_region`. Sits in the spare
-/// PML4-slot gap directly above the kernel heap (v2.38.33: the 4 MiB heap ends
+/// PML4-slot gap directly above the kernel heap (earlier release: the 4 MiB heap ends
 /// exactly at `BACKBUF_BASE` — abutting, page-disjoint) and below the
 /// paging self-test page (`0xFFFF_FF00_1000_0000`), so it shares the paging
 /// hierarchy already built for the heap and never collides with it.
@@ -1263,7 +1263,7 @@ fn close_window(i: usize) {
 }
 
 /// Teardown half of [`close_window`]: records the window's z-rank for a
-/// future reopen (v2.38.31), clears the slot (and any drag that pointed at
+/// future reopen (earlier release), clears the slot (and any drag that pointed at
 /// it) and logs the `[gui] close` proof line.
 fn close_window_raw(i: usize) {
     dirty_all();
@@ -2579,11 +2579,9 @@ struct CreateReq {
 pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
     if frame.rdi == 0 {
         let req_va = frame.rsi;
-        // Request struct must be fully mapped and its fields within sensible
-        // window bounds before anything is copied.
-        let valid = crate::memory::translate(req_va).is_some()
-            && crate::memory::translate(req_va + 15).is_some();
-        if !valid {
+        // Request struct must be fully mapped with user rights and its fields
+        // within sensible window bounds before anything is copied.
+        if crate::memory::translate_user(req_va, 16, false).is_err() {
             frame.rax = u64::MAX;
             return;
         }
@@ -2601,8 +2599,7 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
             return;
         };
         if area > CLIENT_BUF_CAP
-            || crate::memory::translate(buf_va).is_none()
-            || crate::memory::translate(buf_va + area as u64 - 1).is_none()
+            || crate::memory::translate_user(buf_va, area as u64, false).is_err()
         {
             frame.rax = u64::MAX;
             return;
@@ -2614,11 +2611,16 @@ pub fn client_syscall(pid: u32, frame: &mut crate::interrupts::InterruptFrame) {
             if title_len == CLIENT_TITLE_CAP {
                 break;
             }
-            if crate::memory::translate(title_va).is_none() {
-                break;
+            if crate::memory::translate_user(title_va, 1, false).is_err() {
+                frame.rax = u64::MAX;
+                return;
             }
-            let byte = unsafe { core::ptr::read_volatile(title_va as *const u8) };
-            title_va += 1;
+            let byte = unsafe { crate::syscalls::user_byte(title_va) };
+            let Some(next) = title_va.checked_add(1) else {
+                frame.rax = u64::MAX;
+                return;
+            };
+            title_va = next;
             if byte == 0 {
                 break;
             }
@@ -2824,6 +2826,16 @@ fn draw_client(fb: &Framebuffer, win: &Window) {
     if body == 0 || c.w == 0 || c.buf.is_null() {
         return;
     }
+    // The client can unmap or re-purpose its buffer after CREATE, so every
+    // composite re-validates the full surface as ring-3 read-only memory.
+    let Some(area) = c.w.checked_mul(c.h).and_then(|n| n.checked_mul(4)) else {
+        return;
+    };
+    if area > CLIENT_BUF_CAP
+        || crate::memory::translate_user(c.buf as u64, area as u64, false).is_err()
+    {
+        return;
+    }
     unsafe {
         let client = Framebuffer::from_ram(c.buf as *mut u8, c.w, c.h, fb);
         if win.w == c.w && body == c.h {
@@ -2871,11 +2883,11 @@ pub fn handle_scancode(sc: u8) -> bool {
         return true;
     }
     // The focused Task Manager window takes Enter first: Switch To on the
-    // current selection (v2.38.35).
+    // current selection (earlier release).
     if task_key(sc) {
         return true;
     }
-    // The focused Network window edits its draft form first (v2.38.34):
+    // The focused Network window edits its draft form first (earlier release):
     // Tab/Backspace move the field focus, Enter applies, printable keys type.
     if net_key(sc) {
         return true;
@@ -2887,7 +2899,7 @@ pub fn handle_scancode(sc: u8) -> bool {
         return true;
     }
     // The focused Widget Lab window routes keys into its focused widget
-    // (v2.47.0): Tab cycles focus, Backspace edits, Enter activates, printable
+    // (earlier release): Tab cycles focus, Backspace edits, Enter activates, printable
     // keys type, and Escape dismisses an open dropdown.
     if widget_key(sc) {
         return true;
@@ -3039,14 +3051,14 @@ static PIN_SINCE: AtomicU64 = AtomicU64::new(0);
 /// the cursor away from the pinned edge.
 static PIN_LOCK: AtomicBool = AtomicBool::new(false);
 
-/// Runaway-pointer gate (v2.38.33): decides whether one pointer report may be
+/// Runaway-pointer gate (earlier release): decides whether one pointer report may be
 /// processed (logged, applied, rendered) by the active screen owner. Real
 /// hardware that streams garbage deltas — a desynced PS/2 touchpad next to a
 /// USB mouse, or a misbehaving xHCI device — used to pin the arrow in the
 /// bottom-left corner forever while every packet cost a serial line, a
 /// formatted log and a full repaint (the lag/storm seen on the laptop).
 ///
-/// One second (v2.79.0, previously 60 packets) of reports pushing an
+/// One second (earlier release, previously 60 packets) of reports pushing an
 /// already-clamped cursor further into an edge switches the gate off; it
 /// re-arms only when a moving packet pushes the cursor away from that edge
 /// (button-only reports stay swallowed so the phantom stream cannot click the
@@ -3238,7 +3250,7 @@ pub fn on_mouse(dx: i32, dy: i32, buttons: u8) {
     }
 }
 
-/// Paints the Task Manager body (v2.38.35): the Task/Status column header on
+/// Paints the Task Manager body (earlier release): the Task/Status column header on
 /// its own strip, one 16 px row per open window in task-bar rank order (the
 /// selected row highlighted with [`BAR_ON`], status Running/Background/
 /// Minimized), then the `N tasks` count and the current selection line. Row
@@ -3423,7 +3435,7 @@ fn win_label(kind: WinKind, title: &'static str) -> String {
     }
 }
 
-/// Buttons of the Welcome window (v2.38.32 widget demo): a quick-launch row
+/// Buttons of the Welcome window (earlier release widget demo): a quick-launch row
 /// for the three built-in apps plus a note-safe close button. The body text
 /// block ends at `TITLE_H + 8 + 4 * GLYPH_H = 90` px below the window top,
 /// so row one starts at 102 and row two at 132 — the 170 px window still
@@ -3463,7 +3475,7 @@ static WELCOME_WIDGETS: [Widget; 4] = [
     },
 ];
 
-/// Widget table of the Network window (v2.38.34): seven input fields and
+/// Widget table of the Network window (earlier release): seven input fields and
 /// seven command buttons, laid out on the 16 px body grid of the 420x356
 /// window — mode row at 104, address fields at 128..192, apply/test at 208,
 /// Wi-Fi fields at 296/312 and the scan/connect row at 328.
@@ -3590,7 +3602,7 @@ static NETWORK_WIDGETS: [Widget; 15] = [
     },
 ];
 
-/// Widget table of the Task Manager window (v2.38.35): the classic Windows
+/// Widget table of the Task Manager window (earlier release): the classic Windows
 /// pair anchored bottom-left of the 440x248 window, below the task list and
 /// the count/selection lines (`End Task` closes the selected row through
 /// [`close_window`], `Switch To` raises it).
@@ -3613,15 +3625,15 @@ static TASK_WIDGETS: [Widget; 2] = [
     },
 ];
 
-/// Widget Lab list rows (v2.47.0): ten palette names the list scrolls through.
+/// Widget Lab list rows (earlier release): ten palette names the list scrolls through.
 static LAB_ITEMS: [&str; 10] = [
     "Crimson", "Amber", "Lime", "Teal", "Azure", "Indigo", "Violet", "Magenta", "Slate", "Ivory",
 ];
 
-/// Widget Lab menu rows (v2.47.0): picking one runs its index as a command.
+/// Widget Lab menu rows (earlier release): picking one runs its index as a command.
 static LAB_MENU: [&str; 4] = ["Clear name", "Clear note", "Reset list", "Close"];
 
-/// Widget table of the Widget Lab window (v2.47.0): two editable text fields, a
+/// Widget table of the Widget Lab window (earlier release): two editable text fields, a
 /// scrollable list with a bound scrollbar, a dropdown menu and a close button —
 /// the first host that exercises the non-button widget variants and routed
 /// keyboard input. Laid out for the 460x300 window: captions at 30/54, fields
@@ -3728,9 +3740,8 @@ const LAB_NO: u8 = 0xFF;
 /// Visible rows of the Widget Lab list.
 const LAB_ROWS: usize = 5;
 
-/// Editable state of one widget host (v2.65.0). Originally the Widget Lab's
-/// `LAB_FORM` (v2.47.0), it is now a per-window store: [`FORMS`] holds one
-/// instance per built-in host, keyed by [`form_slot`], so a checkbox or radio
+/// Per-window widget state, originally the Widget Lab's `LAB_FORM`: [`FORMS`]
+/// holds one instance per built-in host, keyed by [`form_slot`], so a checkbox or radio
 /// in the Network window never aliases the Widget Lab's state. `focus`/`menu`
 /// name the widget that owns the keyboard; the routing ([`widget_key`]) is
 /// generic and dispatches to whichever host is focused.
@@ -3751,23 +3762,23 @@ struct WidgetForm {
     msg: [u8; 20],
     /// Used length of `msg`.
     msg_len: u8,
-    /// Checkbox checked bits (v2.63.0), addressed by `Widget::Checkbox::id`.
+    /// Checkbox checked bits (earlier release), addressed by `Widget::Checkbox::id`.
     checks: [bool; FORM_CHECK_N],
-    /// Radio group selection (v2.64.0): `radios[g]` = the `value` of the selected
+    /// Radio group selection (earlier release): `radios[g]` = the `value` of the selected
     /// radio in group `g`, or `LAB_NO` for none.
     radios: [u8; FORM_RADIO_N],
-    /// Slider values (v2.67.0), addressed by `Widget::Slider::id`.
+    /// Slider values (earlier release), addressed by `Widget::Slider::id`.
     sliders: [u8; FORM_SLIDER_N],
 }
 
-/// Checkbox count of a widget form (v2.63.0).
+/// Checkbox count of a widget form (earlier release).
 const FORM_CHECK_N: usize = 2;
-/// Radio group count of a widget form (v2.64.0).
+/// Radio group count of a widget form (earlier release).
 const FORM_RADIO_N: usize = 1;
-/// Slider count of a widget form (v2.67.0).
+/// Slider count of a widget form (earlier release).
 const FORM_SLIDER_N: usize = 1;
 
-/// One form slot per built-in host kind (v2.65.0).
+/// One form slot per built-in host kind (earlier release).
 const FORM_SLOTS: usize = 8;
 
 /// Slot of `kind` in [`FORMS`]: built-in windows own a slot each, ring-3
@@ -3857,7 +3868,7 @@ fn lab_menu() -> u8 {
     lab_form().menu
 }
 
-/// Runs a picked menu row (v2.47.0): indices edit the demo form, `3` closes
+/// Runs a picked menu row (earlier release): indices edit the demo form, `3` closes
 /// the host window.
 fn lab_menu_pick(index: usize) {
     crate::kprintln!("[gui] widget Widget Lab/menu item {} click", index);
@@ -3992,7 +4003,7 @@ fn lab_dropdown_click(x: usize, y: usize) -> bool {
     false
 }
 
-/// Routes a key to the focused host's form (v2.47.0, generic since v2.66.0):
+/// Routes a key to the focused host's form (earlier release, generic since an earlier release):
 /// menu dismissal, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` clipboard shortcuts, Tab field
 /// cycling, Backspace editing, Enter activation and printable typing. Returns
 /// `true` when the key was consumed by the focused window.
@@ -4127,7 +4138,7 @@ fn hover_widget(x: usize, y: usize) -> Option<(WinKind, usize)> {
 fn update_widget_hover() {
     // A Widget Lab dropdown highlights the row under the cursor, but the
     // dropdown is not a widget rect; while a menu is open, refresh the host on
-    // any cursor move inside it so the highlight tracks live (v2.47.0).
+    // any cursor move inside it so the highlight tracks live (earlier release).
     if !modal_active() && lab_menu() != LAB_NO {
         let (x, y) = unsafe { (*core::ptr::addr_of!(CUR_X), *core::ptr::addr_of!(CUR_Y)) };
         let wins = unsafe { &(*core::ptr::addr_of!(WINS)) };
@@ -4497,7 +4508,7 @@ fn draw_plate(
     tui::draw_text(fb, tx, ty, label, TEXT, plate, (ax + w).min(fb.width()));
 }
 
-/// Paints a checkbox (v2.63.0): a square box whose caption sits to its right.
+/// Paints a checkbox (earlier release): a square box whose caption sits to its right.
 /// The box border is [`BAR_ON`] when hovered, the interior shows a check mark
 /// when on, and the caption is [`TEXT`] (dimmed while off).
 fn draw_checkbox(
@@ -4532,7 +4543,7 @@ fn draw_checkbox(
     tui::draw_text(fb, tx, ty, label, color, BTN_BG, fb.width());
 }
 
-/// Paints a radio button (v2.64.0): a circle outline with a filled dot when
+/// Paints a radio button (earlier release): a circle outline with a filled dot when
 /// selected; the caption brightens when selected.
 fn draw_radio(
     fb: &Framebuffer,
@@ -4617,7 +4628,7 @@ fn slider_value_at(ax: usize, w: usize, min: u8, max: u8, x: usize) -> u8 {
     (min as usize + rel * span / tw).min(max as usize) as u8
 }
 
-/// One slider paint request (v2.68.0): geometry, caption and value. Grouping
+/// One slider paint request (earlier release): geometry, caption and value. Grouping
 /// them keeps `draw_slider` readable and under clippy's argument limit.
 struct SliderView<'a> {
     ax: usize,
@@ -4631,7 +4642,7 @@ struct SliderView<'a> {
     hovered: bool,
 }
 
-/// Paints a slider (v2.67.0): caption on the left, a sunken track with the
+/// Paints a slider (earlier release): caption on the left, a sunken track with the
 /// filled portion in [`BAR_ON`], a [`TEXT`] thumb at the value, and the numeric
 /// value on the right.
 fn draw_slider(fb: &Framebuffer, view: SliderView<'_>) {
@@ -4848,7 +4859,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                 break;
             }
             if hit_body(win, x, y) {
-                // Widget plates swallow the click first (v2.38.32), no client
+                // Widget plates swallow the click first (earlier release), no client
                 // event. Captured before `focus_window` moves slots around —
                 // see `cycle_focus`.
                 if let Some(wi) = widget_index_at(win, x, y) {
@@ -4876,7 +4887,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
                 // In-kernel apps hit-test their own buttons and list rows
                 // before the generic Task Manager row logic.
                 app_click(win, x, y);
-                // Task Manager rows select on click (v2.38.35); the button
+                // Task Manager rows select on click (earlier release); the button
                 // plates above already swallowed their own clicks.
                 if win.kind == WinKind::Tasks {
                     task_row_click(win, x, y);
@@ -4908,7 +4919,7 @@ fn dispatch_click(fb: &Framebuffer, x: usize, y: usize) {
 /// complete frame or the new complete one, which — together with the damage
 /// culling — removes both the full-screen flicker and torn rows. If the
 /// backbuffer is unavailable the renderer falls back to painting directly into
-/// VRAM (identical damage logic, v2.38.23 behaviour).
+/// VRAM (identical damage logic, earlier release behaviour).
 ///
 /// The partial path repaints desktop, then the task-bar strip (redrawn whole
 /// if touched), then every window whose rectangle overlaps the damage (drawn
@@ -5511,7 +5522,7 @@ fn draw_crash_dialog(fb: &Framebuffer) {
     modal_btn_label(fb, "Resume", sx, sy, CDLG_RS_W, rs_bg);
 }
 
-/// Centers a button label inside its plate (v2.38.30 dialog buttons).
+/// Centers a button label inside its plate (earlier release dialog buttons).
 fn modal_btn_label(
     fb: &Framebuffer,
     label: &'static str,
@@ -5668,7 +5679,7 @@ fn draw_clock(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
 }
 
 fn draw_about(fb: &Framebuffer, x: usize, y: &mut usize, max_px: usize) {
-    text_line(fb, x, y, tui::VERSION, colors::OK, WIN_BG, max_px);
+    text_line(fb, x, y, crate::version::KERNEL, colors::OK, WIN_BG, max_px);
     text_line(
         fb,
         x,
@@ -5831,7 +5842,7 @@ fn draw_store(fb: &Framebuffer, win: &Window, max_px: usize) {
 /// Content of one Files pseudo-file, generated from live kernel state.
 fn files_preview(row: usize) -> String {
     match row {
-        0 => String::from(tui::VERSION),
+        0 => String::from(crate::version::KERNEL),
         1 => uptime_hms(),
         2 => format!("ticks {} at {} Hz", TICKS.load(Ordering::Relaxed), TIMER_HZ),
         3 => format!("frames {}", crate::memory::frames_allocated()),
@@ -5940,8 +5951,8 @@ struct NetDraft {
     /// Active field `0..=6` (`ip`, `mask`, `gw`, `dns1`, `dns2`, `ssid`,
     /// `pass`); [`NET_F_NONE`] means no field takes keys.
     focus: u8,
-    /// Last button-feedback word shown right of the mode buttons (16 bytes
-    /// since v2.38.36, sized for `no wifi card`).
+    /// Last button-feedback word shown right of the mode buttons (16 bytes,
+    /// sized for `no wifi card`).
     msg: [u8; 16],
     msg_len: u8,
 }
@@ -6212,7 +6223,7 @@ fn net_connect() {
     }
 }
 
-/// Routes a make-code to the focused Network window's draft (v2.38.34):
+/// Routes a make-code to the focused Network window's draft (earlier release):
 /// Tab advances the field focus, Backspace deletes, Enter applies and
 /// printable characters type into the active field. Returns `false` for
 /// every key the normal window handling owns (Esc, F-keys, plain notes).
@@ -6269,7 +6280,7 @@ fn net_key(sc: u8) -> bool {
     }
 }
 
-/// Body painter of the Widget Lab (v2.47.0): the header, the hint/status lines.
+/// Body painter of the Widget Lab (earlier release): the header, the hint/status lines.
 /// The field frames, list, scrollbar, menu and slider are painted afterwards by
 /// [`draw_widgets`], and each field draws its own value and caret.
 fn draw_lab(fb: &Framebuffer, win: &Window, max_px: usize) {
@@ -6372,7 +6383,7 @@ fn draw_lab_scrollbar(fb: &Framebuffer, ax: usize, ay: usize, h: usize, list_id:
     }
 }
 
-/// Paints the Network window body (v2.38.34): five status lines on the 16 px
+/// Paints the Network window body (earlier release): five status lines on the 16 px
 /// grid from `y+24`, the mode row with its feedback word, the seven field
 /// captions and values (the widget layer draws their borders), the Wi-Fi status
 /// line and up to three scan rows. Everything clips at `max_px`, i.e. the
@@ -6541,7 +6552,7 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     }
 }
 
-/// Selects the task row under the click (v2.38.35): rows follow the task-bar
+/// Selects the task row under the click (earlier release): rows follow the task-bar
 /// rank order and the selection is keyed by [`WinKind`], so it survives the
 /// slot shifts of any later focus/z change and only goes stale when the
 /// window closes. Clicks in the gaps (header, foot, past the last row) do
@@ -6675,10 +6686,10 @@ fn form_slider_set(host: WinKind, id: u8, value: u8) {
     }
 }
 
-/// Capacity of the GUI clipboard in bytes (v2.68.0).
+/// Capacity of the GUI clipboard in bytes (earlier release).
 const CLIP_CAP: usize = 128;
 
-/// GUI clipboard (v2.68.0): UTF-8 bytes shared by every widget host, filled by
+/// GUI clipboard (earlier release): UTF-8 bytes shared by every widget host, filled by
 /// `Ctrl+C`/`Ctrl+X` and drained by `Ctrl+V`. Kernel-internal only — it is not
 /// the firmware/desktop clipboard of any host OS.
 static mut CLIP: [u8; CLIP_CAP] = [0; CLIP_CAP];
@@ -6708,7 +6719,7 @@ fn clip_bytes() -> &'static [u8] {
     unsafe { &(&*core::ptr::addr_of!(CLIP))[..n] }
 }
 
-/// Copies the focused text field of `host` into the clipboard (v2.68.0).
+/// Copies the focused text field of `host` into the clipboard (earlier release).
 /// Returns the copied byte count, or `None` when no text field has focus (the
 /// status line then says `no field`).
 fn form_clip_copy(host: WinKind) -> Option<usize> {
@@ -6742,7 +6753,7 @@ fn form_clip_cut(host: WinKind) -> Option<usize> {
     Some(n)
 }
 
-/// Appends the clipboard to the focused text field (`Ctrl+V`, v2.68.0),
+/// Appends the clipboard to the focused text field (`Ctrl+V`, earlier release),
 /// honouring [`LAB_FIELD_CAP`] and never splitting a UTF-8 scalar. Returns the
 /// pasted byte count (`0` when the clipboard is empty or the field is full).
 fn form_clip_paste(host: WinKind) -> Option<usize> {
@@ -6786,7 +6797,7 @@ fn form_focus_cycle(host: WinKind) {
     }
 }
 
-/// Deletes the last UTF-8 scalar of the focused text field, if any (v2.68.0:
+/// Deletes the last UTF-8 scalar of the focused text field, if any (earlier release:
 /// whole scalar, not one byte, so a multi-byte character never half-disappears).
 fn form_backspace(host: WinKind) {
     let f = form(host);
@@ -6804,7 +6815,7 @@ fn form_backspace(host: WinKind) {
     }
 }
 
-/// Types `c` into the focused text field as UTF-8 bytes (v2.68.0). A scalar is
+/// Types `c` into the focused text field as UTF-8 bytes (earlier release). A scalar is
 /// appended only when it fits whole in [`LAB_FIELD_CAP`]; otherwise the field is
 /// left untouched rather than truncated mid-character.
 fn form_type_char(host: WinKind, c: char) {

@@ -1,4 +1,4 @@
-//! Ring-3 demo programs and their memory setup (Milestones 3-5, sockets v2.51.0).
+//! Ring-3 demo programs and their memory setup (Milestones 3-5, sockets earlier release).
 //!
 //! Five tiny user programs are copied into freshly mapped user pages and
 //! entered through the scheduler's fabricated ring-3 frames:
@@ -14,10 +14,10 @@
 //!   (`SYS_GUI` GET_EVENT) — a key turns the fill red, a body click turns it
 //!   green, echoed back through `SYS_WRITE` (visible only while the GUI
 //!   desktop owns the screen);
-//! - program E (slot 6, v2.51.0): the ring-3 socket client — two UDP sockets
+//! - program E (slot 6, earlier release): the ring-3 socket client — two UDP sockets
 //!   bound to fixed local ports play a loopback ping-pong over the bound IP
 //!   (`SYS_SOCK_ADDR` first), sending `ring3` from client to server and `ack!`
-//!   back, printing `sock-e ok` once a round trip has completed. Since v2.52.0
+//!   back, printing `sock-e ok` once a round trip has completed. Now
 //!   a second (TCP) leg follows: a TCP client connects to a listening socket,
 //!   the accepted child echoes `tcp`/`ok` and is then closed, printing
 //!   `sock-t ok`. It proves the *userspace* face of the socket layer: every
@@ -610,7 +610,7 @@ fn build_pid4() -> Vec<u8> {
 /// kernel socket table and the loopback ring: `SYS_SOCK_ADDR` waits for a bound
 /// IPv4 (0 while the link is down), connect(client → server port) +
 /// `SYS_SOCK_SEND "ring3"`, a length-gated `SYS_SOCK_RECV`, then the reverse UDP
-/// leg (`ack!`). Since v2.52.0 a **TCP round** follows: a TCP client connects to
+/// leg (`ack!`). Now a **TCP round** follows: a TCP client connects to
 /// a listening TCP socket, the listener hands out the accepted child and the
 /// pair echo `tcp`/`ok`, then `SYS_SOCK_CLOSE` frees the child (the persistent
 /// client/listener fds stay open across rounds). `SYS_WRITE` prints `sock-e ok`
@@ -743,7 +743,7 @@ fn build_pid5() -> Vec<u8> {
     a.mov_eax(SYS_WRITE);
     a.int80();
 
-    // ---- TCP round (v2.52.0): listen/connect/accept/echo over loopback ----
+    // ---- TCP round (earlier release): listen/connect/accept/echo over loopback ----
     // connect the TCP client to the listener's port, retrying until the SYN goes out
     let tconn = a.buf.len();
     a.mov_edi_r12d();

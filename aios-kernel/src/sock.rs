@@ -1,4 +1,4 @@
-//! Kernel IPv4 socket layer (v2.49.0): UDP datagrams plus a minimal
+//! Kernel IPv4 socket layer (earlier release): UDP datagrams plus a minimal
 //! active-open TCP client, exposed to ring-3 tasks through the `SYS_SOCK_*`
 //! syscall family.
 //!
@@ -13,9 +13,9 @@
 //! The TCP side is deliberately small: sends larger than one segment
 //! are queued per socket and segmented into MSS-sized chunks with one
 //! segment in flight at a time (stop-and-wait over the queue, since
-//! v2.53.0), with Reno-style congestion-control accounting
-//! (`cwnd`/`ssthresh`, since v2.54.0), an 8 KiB receive ring and
-//! an 8 KiB transmit queue per socket. Since v2.50.0 it covers both
+//! an earlier release), with Reno-style congestion-control accounting
+//! (`cwnd`/`ssthresh`, since an earlier release), an 8 KiB receive ring and
+//! an 8 KiB transmit queue per socket. Now it covers both
 //! directions — a minimal **client** (active open) and a minimal
 //! **server** ([`listen`] + [`accept`] with a per-listener child
 //! created at the SYN-ACK and handed out once the three-way handshake
@@ -48,7 +48,7 @@ const REXMIT_MAX: u8 = 4;
 const TIME_WAIT_TICKS: u64 = 400;
 /// Initial TCP send window advertised in every segment.
 const TCP_WINDOW: u16 = 64240;
-/// Window-scale shift (v2.57.0): the advertised window field carries
+/// Window-scale shift (earlier release): the advertised window field carries
 /// `TCP_WINDOW >> wscale` and a peer restores the true window with `2^wscale`
 /// (scale factor 16). Offered as a TCP option on SYN/SYN-ACK.
 const WSCALE_SHIFT: u8 = 4;
@@ -133,7 +133,7 @@ struct Socket {
     tx_len: usize,
     tx_seq: u32,
     tx_buf: [u8; TCP_MSS],
-    /// Segmentation backlog (v2.53.0): bytes accepted by [`send`] but
+    /// Segmentation backlog (earlier release): bytes accepted by [`send`] but
     /// not yet handed to a segment, read from `tx_q_head`.
     tx_q_head: usize,
     tx_q_len: usize,
@@ -141,14 +141,14 @@ struct Socket {
     sent_at: u64,
     retries: u8,
     time_at: u64,
-    // Broadcast flag (v2.56.0): set when the peer address is 255.255.255.255;
+    // Broadcast flag (earlier release): set when the peer address is 255.255.255.255;
     // marks the socket as a broadcast member that accepts datagrams from any
     // source sent to its bound port.
     broadcast: bool,
-    // Congestion control (v2.54.0, live v2.57.0).
+    // Congestion control (earlier release, live earlier release).
     cwnd: u32,     // congestion window in bytes (>= 1 MSS)
     ssthresh: u32, // slow-start threshold
-    // Window scaling (v2.57.0): `wscale` scales our advertised window
+    // Window scaling (earlier release): `wscale` scales our advertised window
     // (offered on SYN/SYN-ACK); `peer_wscale` is the shift seen in the
     // peer's handshake options (kept for inspection, not yet applied).
     wscale: u8,
@@ -306,7 +306,7 @@ pub fn accept(fd: usize) -> Option<usize> {
 
 /// Sets the peer address. For UDP this merely arms [`send`]; for TCP it starts
 /// the three-way handshake (SYN) and requires a bound IPv4 address. Connecting
-/// a UDP socket to `255.255.255.255` puts it into broadcast mode (v2.56.0):
+/// a UDP socket to `255.255.255.255` puts it into broadcast mode (earlier release):
 /// [`send`]/[`deliver_udp`] then use the broadcast fan-out instead of a unicast
 /// peer, and the link loops the frame back to every member on the port.
 pub fn connect(fd: usize, ip: [u8; 4], port: u16) -> bool {
@@ -372,7 +372,7 @@ pub fn status(fd: usize) -> u8 {
     }
 }
 
-/// Congestion snapshot (v2.57.0): `(cwnd, ssthresh, wscale, peer_wscale)` for
+/// Congestion snapshot (earlier release): `(cwnd, ssthresh, wscale, peer_wscale)` for
 /// a TCP descriptor, or `None` for free/non-TCP ones. Feeds `SYS_SOCK_STATUS`'s
 /// scratch-buffer extension and the TUI `socktest` `tcp cc` phase.
 pub fn cc_info(fd: usize) -> Option<(u32, u32, u8, u8)> {
@@ -529,7 +529,7 @@ pub fn close(fd: usize) {
     }
 }
 
-/// Hands the next queued segment to the wire (v2.53.0). Does
+/// Hands the next queued segment to the wire (earlier release). Does
 /// nothing while a segment is still in flight or the backlog
 /// is empty; called by [`send`] and after every ACK that
 /// completes the in-flight segment.
@@ -538,7 +538,7 @@ fn kick(sk: &mut Socket) {
         return;
     }
     let n = sk.tx_q_len.min(TCP_MSS);
-    // Congestion window (v2.57.0): never put more than `cwnd` bytes in
+    // Congestion window (earlier release): never put more than `cwnd` bytes in
     // flight. Stop-and-wait keeps the ceiling at one segment, so the gate
     // binds only when a shrink dropped `cwnd` below MSS — not in normal
     // operation (slow start and the Reno floor keep it at or above MSS).
@@ -596,7 +596,7 @@ pub fn tick(now: u64) {
             TcpState::Established => {
                 if sk.tx_pending && now.wrapping_sub(sk.sent_at) >= REXMIT_TICKS {
                     if sk.retries < REXMIT_MAX {
-                        // Congestion control (v2.57.0): Reno multiplicative
+                        // Congestion control (earlier release): Reno multiplicative
                         // decrease on the first timeout — the connection
                         // survives with a halved window instead of shrinking
                         // only at the abort point.
@@ -642,9 +642,9 @@ fn wscale_opt(seg: &[u8], doff: usize) -> u8 {
 }
 
 /// Enqueues an inbound UDP datagram addressed to `dst` (`src`/`sport` identify
-/// the sender). Unicast frames (since v2.49.0) reach the single socket bound to
+/// the sender). Unicast frames (since an earlier release) reach the single socket bound to
 /// `dport` that either has no peer or matches the sender; broadcast
-/// (`255.255.255.255`) and multicast (class D) frames (v2.56.0) fan out to every
+/// (`255.255.255.255`) and multicast (class D) frames (earlier release) fan out to every
 /// member socket — peers connected to the destination address, broadcast
 /// members, and unconnected sockets bound to the port.
 pub fn deliver_udp(src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16, payload: &[u8]) {
@@ -759,7 +759,7 @@ pub fn deliver_tcp(src: [u8; 4], seg: &[u8]) {
             if sk.tx_pending && ack == seg_end {
                 sk.tx_pending = false;
                 sk.snd_una = ack;
-                // Congestion control (v2.57.0): grow per completed segment —
+                // Congestion control (earlier release): grow per completed segment —
                 // slow start adds one MSS while under `ssthresh`, congestion
                 // avoidance one MSS per window above it.
                 if sk.cwnd <= sk.ssthresh {
@@ -868,7 +868,7 @@ fn send_segment(sk: &Socket, seq: u32, flags: u8, payload: &[u8]) {
     seg[8..12].copy_from_slice(&ack.to_be_bytes());
     seg[12] = ((hdr / 4) as u8) << 4;
     seg[13] = flags;
-    // Advertised window, scaled by our shift (v2.57.0): the peer restores
+    // Advertised window, scaled by our shift (earlier release): the peer restores
     // the true 64240-byte window with `2^wscale`.
     let win = TCP_WINDOW >> sk.wscale;
     seg[14..16].copy_from_slice(&win.to_be_bytes());

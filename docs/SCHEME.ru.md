@@ -1,6 +1,6 @@
 # Схема программы и карта функций AIOS
 
-> Версия: v2.84.0 — Дата: 2026-11-25
+> Версия: v2.84.0 — Дата: 26.11.2026 (обновление после аудита)
 > Сопутствующие документы: `docs/AUDIT.ru.md` (полный аудит), `docs/ARCHITECTURE.ru.md` (глубокая архитектура), `docs/INTERFACE.ru.md` (руководство по интерфейсу).
 > Двуязычная пара: `docs/SCHEME.md` (английский). При обновлении карты функций обновляйте оба файла.
 > Этот документ — **карта уровня вызовов**: каждый крейт, его модули и ключевые публичные функции.
@@ -44,7 +44,8 @@
   boot/aios-easylang │ boot/aios-image │ boot/aios-install │ boot/aios-sbctl
   boot/aios-storectl │ boot/aios-wasmhost
   aios-boot → bootinfo → kernel → image/install; sbctl подписывает загрузчик;
-  aios-kernel-run собирает загрузочный ISO Limine (BIOS + UEFI).
+  aios-kernel-run собирает загрузочный ISO Limine (BIOS + UEFI) с двумя
+  записями ядра (текущее + откат); ISO и USB IMG проверяются по маркерам.
 ```
 
 Воркспейс: **41 участник** (`Cargo.toml:52-83`), плюс 13 перечисленных standalone-крейтов.
@@ -417,7 +418,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 ## 10. Bare-metal-ветка микроядра
 
-`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 38 файлов · ~26,5 тыс. непустых строк) загружается через Limine (BIOS + UEFI). `aios-kernel-run` собирает ISO Limine и запускает QEMU smoke-тесты.
+`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 39 файлов · ~26,5 тыс. непустых строк) загружается через Limine (BIOS + UEFI). `aios-kernel-run` собирает гибридный образ Limine ISO/USB (два ядра, метки `v<major>.<minor>+` для текущего и отката) и запускает QEMU smoke-тесты. С v2.84.0 отображаемая версия имеет единственный источник: `aios-kernel/src/version.rs` определяет `SEMVER = env!("CARGO_PKG_VERSION")` и `KERNEL = concat!("AIOS kernel v", ...)`, а `2.84.0` находится в `Cargo.toml`; boot-баннер/строка конфига, panic/fatal-отчёты, статус TUI/About/`ver`, заголовки GUI About/окон и превью Files читают эти константы.
 
 | Веха | Статус | Содержание |
 |---|---|---|
@@ -430,7 +431,15 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | M6 (v2.81–2.83) | ✅ | Нативный desktop GUI, Start menu, в-ядерные приложения (Store, Calculator, Files, Editor, Terminal) |
 | M7 (v2.84.0) | ✅ | NIC-строка при загрузке + DHCP DORA, fault/recovery syscalls, `ring3-demo` |
 
-Модули: `main`, `boot`, `gdt`, `idt`, `interrupts`, `memory`, `heap`, `framebuffer`, `font8x8`, `psf`, `serial`, `port`, `syscalls` (почтовые ящики + `int 0x80`), `sched`, `user`, `gui`, `console`, `console_backend`, `acpi`, `ahci`, `blocks`, `config`, `ec`, `fault`, `lapic`, `lid`, `net`, `nic`, `nvme`, `pci`, `ps2`, `sock`, `thermal`, `vector`, `wifi`, `xhci`, `build.rs` (asm-заглушки).
+> Укрепление после аудита (v2.84.0, 26.11.2026):
+> - `config.rs` добавляет `KeyPolicy { Effective, Informational }`: эффективны только `blocks.<name>.rights` / `blocks.<name>.fuel`; `system.*`, `boot.*`, `net.*` и неизвестные ключи информационные — проверяются и логируются с источником, но не применяются как рантайм-настройки. Шаблоны в `boot/assets/aios/config/{system,net,blocks}.conf` имеют соответствующие копии в `boot/out/assets/aios/config/` (идентичный SHA-256).
+> - `memory::translate_user(virt, len, write)` — единственный шлюз пользовательских буферов для `int 0x80` (отвергаются upper-half, неотображённые/не-USER страницы, запись в read-only, null и переполнение `addr + len`); `user_read`/`user_write` возвращают `Option`, `write_user_string` устойчив к переполнению, запрос/буфер/заголовок `SYS_GUI CREATE` и `draw_client()` проверяются повторно, некорректные буферы сокета возвращают `u64::MAX`.
+> - `scripts/flash-usb.ps1`: elevate с перенаправлением вывода, блокировка/размонтирование томов через `DeviceIoControl`, `FileMode.Open`/`FileShare.ReadWrite`, запись выровненных по 512 байтам дополненных блоков, `Flush($true)`, ограниченные `Update-Disk` + `pnputil /rescan-disks`, ожидание готовности диска без зависания на `ERROR_NOT_READY`, полный SHA-256 прочитанного образа и проверка MBR `55 AA`.
+> - `aios-kernel-run` разбирает версию ядра из `[package]` в `Cargo.toml`, размещает основной и резервный ELF, пишет двухпунктовое меню Limine (основной `v2.84+`, резервный по умолчанию `v2.79`; переопределение через `AIOS_FALLBACK_VERSION`), удаляет устаревший ISO перед пересборкой и проверяет MBR `55 AA` + ISO9660 `CD001` в ISO/USB. В чистых клонах нужен настоящий резервный ELF через `AIOS_FALLBACK_KERNEL` (по умолчанию локальный игнорируемый `out/aios-kernel-v279.elf`); поддельный ELF в репозиторий не коммитится.
+
+Модули: `main`, `boot`, `gdt`, `idt`, `interrupts`, `memory` (`USER_SPACE_LIMIT`, `user_range`, `translate_user`, `walk_user_leaf`), `heap`, `framebuffer`, `font8x8`, `psf`, `serial`, `port`, `syscalls` (почтовые ящики + `int 0x80`; `user_read`, `user_write`, `write_user_string`), `sched`, `user`, `gui`, `console`, `console_backend`, `acpi`, `ahci`, `blocks`, `config` (`KeyPolicy`, `policy`, `validate_informational`, `Summary.invalid_values`), `ec`, `fault`, `lapic`, `lid`, `net`, `nic`, `nvme`, `pci`, `ps2`, `sock`, `thermal`, `vector`, `version` (`SEMVER`, `KERNEL`), `wifi`, `xhci`, `build.rs` (asm-заглушки).
+
+Хост-хелперы из пунктов после аудита: `aios-kernel-run` — `kernel_version`, `parse_package_version`, `release_train`, `fallback_kernel`, `fallback_version`, `stage`, `menu_text`, `create_iso`, `create_usb_image`, `verify_hybrid_image`; `scripts/flash-usb.ps1` — `Lock-And-DismountVolumes`, `Open-RawDisk`, `Invoke-BoundedRecovery`, `Wait-ForDiskReady`.
 
 ## 11. Интеграционные тесты (корневой `tests/`, 15 файлов · 194 теста)
 
@@ -457,5 +466,6 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 - **358 `.rs`-файлов**, **~125,5 тыс. непустых строк** (~136,9 тыс. вместе с пустыми): **41 участник воркспейса + 13 standalone-крейтов**.
 - **1 824 теста пройдено в 100 наборах** (unit + integration + doc-tests) при `cargo test --workspace`; насчитано 2 011 атрибутов тестов (`#[test]` 1 941 + `#[tokio::test]` 70) в 232 файлах.
 - `cargo fmt --all -- --check`: чисто. `cargo clippy --workspace --all-targets -- -D warnings`: **0 предупреждений**.
+- Отдельные проверки: check/clippy `aios-kernel` (настройки по умолчанию и `--features limine`), тесты `aios-kernel-run` 2/2, проверка синтаксиса PowerShell. Свежая пересборка гибридного ISO/IMG здесь **не** выполнялась: бинарники `xorriso`/Limine отсутствуют, каталог `iso/` пуст — использовались только логика проверки маркеров и осмотр существующих образов.
 
 Крупнейшие крейты по непустым строкам: `aios-kernel` 26,5 тыс. · `boot/` 13,0 тыс. · `aios-console` 9,6 тыс. · `aios-tui` 6,1 тыс. · `aios-gui` 5,7 тыс. · `aios` 5,8 тыс. · `aios-autohal` 4,8 тыс. · `tests/` 4,3 тыс. · `aios-browser` 4,3 тыс.

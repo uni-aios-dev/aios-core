@@ -23,7 +23,7 @@ pub const APIC_TIMER_VECTOR: u64 = 0x90;
 
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
-/// Keyboard byte FIFO (v2.38.36): the IRQ1 handler and the polled PS/2 path
+/// Keyboard byte FIFO (earlier release): the IRQ1 handler and the polled PS/2 path
 /// push every byte here and the idle loop drains them all, so a make code can
 /// no longer be overwritten by the same key's break (or the next key's make)
 /// while the main loop is stalled — the source of intermittently lost typed
@@ -31,12 +31,12 @@ pub static LAST_SCANCODE: AtomicU64 = AtomicU64::new(0);
 static KEY_FIFO_TAIL: AtomicUsize = AtomicUsize::new(0);
 static KEY_FIFO_HEAD: AtomicUsize = AtomicUsize::new(0);
 static KEY_FIFO: [AtomicU8; 256] = [const { AtomicU8::new(0) }; 256];
-/// Shift-key state (v2.38.34): set/cleared from the raw PS/2 byte stream
+/// Shift-key state (earlier release): set/cleared from the raw PS/2 byte stream
 /// (make `0x2A`/`0x36`, break `0xAA`/`0xB6`) so typed text — including the
 /// Network window SSID/password fields — sees uppercase and shifted symbols.
 pub static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
 pub static SHIFTED: AtomicBool = AtomicBool::new(false);
-/// Ctrl-key state (v2.68.0): set/cleared from the make/break bytes of the left
+/// Ctrl-key state (earlier release): set/cleared from the make/break bytes of the left
 /// (`0x1D`/`0x9D`) and right (`0xE0 0x1D`/`0xE0 0x9D`) control keys on PS/2 and
 /// from HID modifier bit 0/4 on USB. The GUI reads it to consume the clipboard
 /// shortcuts (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`) and to keep Ctrl combos from typing.
@@ -119,11 +119,21 @@ fn debug_port_write(val: u8) {
 pub fn fatal_with(code: u32, detail: &str) -> ! {
     HALT_REASON.store(code, Ordering::Relaxed);
     debug_port_write((code & 0xFF) as u8);
-    kprintln!("[serial] FATAL code=0x{:08X}: {}", code, detail);
-    vprintln!("[fatal] code=0x{:08X}: {}", code, detail);
+    kprintln!(
+        "[serial] FATAL [{}] code=0x{:08X}: {}",
+        crate::version::SEMVER,
+        code,
+        detail
+    );
+    vprintln!(
+        "[fatal] [{}] code=0x{:08X}: {}",
+        crate::version::SEMVER,
+        code,
+        detail
+    );
     crate::console::panic_report(
         "FATAL ",
-        core::format_args!("code=0x{:08X}: {}", code, detail),
+        core::format_args!("{} code=0x{:08X}: {}", crate::version::KERNEL, code, detail),
     );
     halt()
 }
@@ -417,7 +427,7 @@ pub fn pit_count() -> u16 {
 /// programs `TIMER_HZ`).
 static PIT_DIV: AtomicU32 = AtomicU32::new(0);
 
-/// Elapsed PIT channel-0 clocks between two [`pit_count`] samples (v2.68.3).
+/// Elapsed PIT channel-0 clocks between two [`pit_count`] samples (earlier release).
 ///
 /// The countdown reloads at the divisor - `1193` (`0x4A9`) for 1000 Hz -
 /// which is *not* a 16-bit wrap: a sample pair that straddles the reload makes
@@ -463,7 +473,7 @@ pub fn init_pit() {
         // made every polled interval look longer than it was; together with
         // the reload-straddling delta bug (see `pit_elapsed`) that armed the
         // LAPIC tick several times too fast and made uptime run 2-5x fast
-        // (v2.68.3).
+        // (earlier release).
         port::outb(PIT_CMD, 0x34);
         port::outb(PIT_CH0, (divisor & 0xFF) as u8);
         port::outb(PIT_CH0, (divisor >> 8) as u8);

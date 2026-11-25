@@ -15,6 +15,15 @@ stick does not boot on UEFI firmware because the old UEFI stage was overwritten
 when the kernel was patched into ISO LBA 32. To boot the native UEFI-only image
 instead, use the GPT/ESP image described below on a UEFI-capable machine.
 
+`aios-kernel-run` now stages both ELFs and can build a clean two-entry menu
+(`/AIOS kernel v2.84+ (current, Limine + GOP)` and `/AIOS kernel v2.79 rollback
+(Limine + GOP)`); a real fallback ELF must be supplied via
+`AIOS_FALLBACK_KERNEL`, and `AIOS_FALLBACK_VERSION` relabels the fallback entry.
+This stick has not been reflashed with that clean hybrid image, so it remains
+Legacy-BIOS-only. `scripts/flash-usb.ps1` now locks/dismounts volumes, writes
+sector-aligned padded blocks and verifies the full image by SHA-256 read-back
+plus the MBR `55 AA` signature.
+
 ## Native UEFI image (host tools)
 
 The UEFI-only image built by `aios-image` (`boot/out/aios-esp.img`) is written
@@ -84,8 +93,8 @@ cargo run --manifest-path boot/aios-image/Cargo.toml -- --headless --timeout 20 
   template has no keys). Without enrolled variables a signed loader is still
   rejected.
 - Writing to a physical disk remains a separate, explicit `aios-install`
-  operation. Signing does not flash anything; the v2.79.0 stick was not
-  rewritten during M5.2.
+  operation. Signing does not flash anything; the v2.79.0 stick mentioned in the
+  historical M5.2 notes was not rewritten during that phase.
 
 ---
 
@@ -576,7 +585,7 @@ The kernel TUI uses the same Far Manager / Midnight Commander style as `aios-tui
 
 On narrow windows the status bar text clips at the right edge (Far/MC behaviour) and the F-key strip clips too; the tab titles and `AIOS v…` version are never chopped mid-word. On very short windows the System & HW **RAM gauge** overlays nothing — it stays inside the left panel; when the window is too small for the CPU/OS blocks, those blocks naturally compress instead of the drawer breaking.
 
-The version shown in the status bar, About tab, `ver` command and GUI About window is `AIOS kernel v<version>` built from `env!("CARGO_PKG_VERSION")` in `aios-kernel/Cargo.toml` (currently v2.79.0). It is no longer a hard-coded `v2.57.0` string or a `system.version` config value, so all four surfaces always agree.
+Every user-visible version surface — the boot banner and config line, panic/fatal reports, the kernel TUI status bar, About tab and `ver` command, and the GUI About window, window titles and Files preview — now reads `aios-kernel/src/version.rs`: `SEMVER = env!("CARGO_PKG_VERSION")` and `KERNEL = concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"))`. `aios-kernel/Cargo.toml` is currently `2.84.0`, so every surface reports v2.84.0. It is no longer a hard-coded `v2.57.0` string or a `system.version` config value.
 
 ### Tabs
 
@@ -981,7 +990,9 @@ appended to the activity log.
 - **Toolbar**: Refresh, Switch panel, Sort, Up, Mkdir, Rename, View, Copy, Move, Delete, HOST r / HOST w (grant `vfs:host:read` / `vfs:host:write` capabilities)
 - **Two panels**: navigate `AIOS://` (sandbox) and `HOST://` (real paths); single click selects and activates the panel, double-click opens a directory or AI-previews a file
 - **Mkdir / Rename dialog**: text field + OK / Cancel (Enter / Esc)
-- **AI Preview**: collapsible panel with the smart preview of the selected file
+- **AI Preview**: collapsible panel with the smart preview of the selected file;
+  its version line is read from `version::KERNEL` in `aios-kernel/src/gui.rs`, so
+  it shows the same v2.84.0 as the About window and window titles
 - **Jobs**: background copy/move/delete operations show live progress bars and completion status
 - **ACL line**: shows which HOST capabilities are currently granted
 
@@ -1301,8 +1312,13 @@ focused) returns to the console/TUI.
 - **Ring-3 client windows (v2.38.25)**: the desktop can host windows owned by
   ring-3 tasks. The client calls `SYS_GUI` CREATE once (16-byte request: width,
   height and user addresses of its pixel buffer and NUL-terminated title — every
-  pointer validated through the page tables, sizes capped at 512×512), then
-  `SYS_GUI` PRESENT every few ticks; the kernel composits its dense buffer into
+  range is validated across all its pages with `memory::translate_user`, the only
+  `int 0x80` user-pointer gate, which rejects kernel/high-half addresses,
+  overflow and missing write rights with `u64::MAX`; sizes are capped at
+  512×512), then `SYS_GUI` PRESENT every few ticks. `draw_client()` re-validates
+  the full buffer through `translate_user` on **every** composite, so a client
+  that unmaps or re-purposes its buffer after CREATE cannot make the kernel touch
+  a stale pointer. The kernel composits its dense buffer into
   a window below the title bar (title shown in the title bar and task bar) and
   re-opens the window if the user closed it, so a live client always gets its
   surface back. The demo client (fourth ring-3 task) shows a 96×64 surface
@@ -1551,9 +1567,11 @@ focused) returns to the console/TUI.
   Windows, arrows, F-rows, keypad-alt — are dropped at the source on both input
   paths and never reach the GUI/TUI: they type nothing and cannot crash the
   kernel. Plain printable keys still type into the focused window as above.
-- **No serial, no serial**: if the kernel ever panics or faults while the GUI is
-  active, the screen clears to show a `KERNEL PANIC: …` / `FATAL …` line instead
-  of freezing on the desktop.
+- **Panic is visible even without serial**: if the kernel panics or faults while
+  the GUI is active, the screen clears to an allocation-free on-screen report:
+  `KERNEL PANIC [v2.84.0]: …` or `FATAL [v2.84.0] …`, painted via
+  `console::panic_report` with `version::KERNEL`, instead of freezing on the
+  desktop. The version in the screenshot identifies the exact build that failed.
 
 Text is rendered on the PSF path across the whole panel: the embedded
 synthesized PSF2 stream (round-trip validated at boot) is parsed back and used

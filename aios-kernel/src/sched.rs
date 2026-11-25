@@ -19,11 +19,11 @@
 //! naturally falls back to task slot 0 (the idle context), which is logged as
 //! `[sched] idle`.
 //!
-//! Since v2.45.3 the outgoing-context refresh also runs the **hang watchdog**:
+//! Now the outgoing-context refresh also runs the **hang watchdog**:
 //! it tracks when each ring-3 task's saved `rip` last changed and when it last
 //! made a syscall, and hands a task that did neither for
 //! [`HANG_WATCHDOG_TICKS`] to `fault::record_hang` (freeze + crash dialog),
-//! catching a busy-spin hang that never raises a CPU exception. Since v2.46.0 a
+//! catching a busy-spin hang that never raises a CPU exception. Now a
 //! fresh [`note_activity`] heartbeat (bumped by every `int 0x80`) counts as
 //! progress, so a task looping on one syscall site is never false-flagged.
 
@@ -59,8 +59,8 @@ const SWITCH_DIVIDER: u64 = TIMER_HZ / 4;
 pub const HANG_WATCHDOG_TICKS: u64 = 10 * TIMER_HZ;
 
 /// One slot is always reserved for the CPU-wide idle task (slot 0); the kernel
-/// worker takes slot 1 and the ring-3 demo tasks slots 2..N-1. Raised to 7 in
-/// v2.51.0 for the fifth demo task (the ring-3 socket ping-pong client).
+/// worker takes slot 1 and the ring-3 demo tasks slots 2..N-1. Raised to 7 for
+/// the fifth demo task (the ring-3 socket ping-pong client).
 pub const MAX_TASKS: usize = 7;
 
 #[derive(Clone, Copy)]

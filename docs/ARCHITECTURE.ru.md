@@ -1427,10 +1427,11 @@ User Input (TUI)
 
 ## Архитектура тестирования
 
-- **Модульные тесты**: 1354 теста в исходных файлах под `#[cfg(test)] mod tests`
-- **Интеграционные тесты**: 217 тестов в целях `tests/` workspace (интеграционные, стресс, chaos, proptest)
+- **Модульные тесты**: 1354 теста в исходных файлах под `#[cfg(test)] mod tests` (базовый срез релиза v2.79.0)
+- **Интеграционные тесты**: 217 тестов в целях `tests/` workspace (интеграционные, стресс, chaos, proptest) (базовый срез релиза v2.79.0)
 - **Doc-тесты**: 1 тест в документации крейта
-- **Итого**: 1572 теста, все проходят, ноль предупреждений clippy
+- **Базовый итог**: 1572 теста на момент релиза v2.79.0, все проходили, ноль предупреждений clippy
+- **Актуальное состояние (повторная проверка v2.84.0)**: `cargo test --workspace` — **1824 пройдено / 0 упало в 100 наборах**; `cargo fmt --all -- --check` и `cargo clippy --workspace --all-targets -- -D warnings` проходят без замечаний (см. `docs/AUDIT.md` §2)
 
 **Пороги скорости**:
 - Debug-режим: < 50us (без оптимизации)
@@ -1758,7 +1759,7 @@ BUSYBOX_PATH=/usr/bin/busybox.static ./build_initramfs.sh   # + спасател
 - `power_mgr` — сэмплинг батареи/температуры (`Mock` или host sysfs) + термал-гувернёр с гистерезисом 80/70 °C: при нагреве LLM уходит в облако (`Groq`), при остывании возвращается локально.
 - `keyring` — `KeyringVault`: секреты AES-256-GCM в redb, canary-проверка мастер-пароля, PBKDF2-HMAC-SHA256 120k раундов, ключ шифрования привязан к TEE, ре-ключ мастера.
 
-Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент копируется побайтово через `memory::translate`, и каждый вызов проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
+Ядро в v2.29.0 получает вехи 3 и 4 на bare-metal-ветке: `sched.rs` — round-robin-планировщик по тикам PIT (переключение каждые TIMER_HZ/4 тиков) с frame-copy переключением контекста внутри ISR таймера плюс ring-0 worker; `user.rs` — две ring-3 демо-программы (сырые машинные циклы над `int 0x80`) с user-мапингом на CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` — почтовые ящики на pid (MAX_PID=4 × MAILBOX_DEPTH=16) за вентилем `int 0x80` c DPL-3 (флаги IDT 0xEE), заголовок пакета зеркалит `aios_core::ipc_protocol`; proof-строки `[stats] switches/sent/recv` раз в 5 с, проверяемые `scripts/qemu-smoke.ps1`. С v2.38.11 адресат `SYS_SEND` — это **слот планировщика** получателя (worker = 1, задачи = 2/3/4 в порядке спавна, плюс GUI-клиент = 5 с v2.38.25): программы шлют на константы слотов-собеседников `SLOT_A`/`SLOT_B`, а не на `PID_*`, а счётчики ящиков/`mailbox_len` питают экранный дашборд. Вентиль вырос до шести вызовов (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`); в v2.38.25 `MAX_TASKS`/`MAX_PID` подняты с 5 до 6 под четвёртую ring-3 демо-задачу, а `SYS_GUI` (id 6) — точка входа в оконный сервер (CREATE/PRESENT/GET_EVENT, см. пункт `gui`). С v2.46.0 вентиль обслуживает также `SYS_PING` (id 7, кооперативный heartbeat сторожа зависаний) и `SYS_FAULT_POLL` (id 8, вычерпывает ленту событий фолтов ядра для ring-3-монитора — freestanding-двойник host-IPC `FaultReport`). С v2.49.0 он обслуживает семейство `SYS_SOCK_*` (id 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — последние два с v2.50.0, и `SYS_SOCK_ADDR`, v2.51.0, отдающий ring-3 собственный привязанный IPv4) — ring-3-лицо сокетного слоя ядра; каждый буфер-аргумент проверяется на всю длину через `memory::translate_user` (единственный гейт указателей пользователя для `int 0x80`), затем копируется побайтово `user_read`/`user_write`, а некорректные буферы возвращают `u64::MAX`; каждый вызов дополнительно проверяет владение сокетом (`sock::owner(fd) == pid`). С v2.51.0 пятая ring-3 демо-задача (программа E) упражняет всё семейство из userspace через обратную петлю — UDP-пинг-понг и, с v2.52.0, круг TCP `listen`/`connect`/`accept`/эхо за цикл (`sock-e ok` / `sock-t ok`; см. пункт `user`).
 ## Собственная цепочка загрузки UEFI (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`, `aios-install`, `aios-sbctl`) — v2.76.0 (Secure Boot с v2.79.0)
 
 AIOS грузится на голом железе без Linux, Windows и сторонних загрузчиков:
@@ -1860,16 +1861,28 @@ AIOS грузится на голом железе без Linux, Windows и ст
   как `MODULE_CONFIG`, а каждый `\aios\blocks\*.wasm` — как `MODULE_BLOCK`.
   Модуль `config` ядра (`aios-kernel/src/config.rs`) разбирает каждый слой на
   месте через HHDM, логирует `[cfg] layer '<name>' = N key(s)`, каждую пару
-  `key = "value" (layer)` и дубли ключей, а поиск идёт от последнего слоя к
-  первому — поэтому drop-in вроде `config/net.conf` переопределяет базовый
-  `system.conf` без его правки. В v2.79.0 удалены `system.version`,
-  `scheduler.tick_hz` и `memory.heap_min_kib`: версия берётся из
-  `env!("CARGO_PKG_VERSION")`, а `interrupts::TIMER_HZ` / `heap::HEAP_SIZE` —
-  compile-time константы. В serial-логе по-прежнему печатаются фактические
-  значения таймера и кучи как константы сборки. Общие ключи остаются нужны для
-  реальных настроек времени выполнения — `blocks.<name>.fuel`, `net.dhcp`; в
-  штатном образе `net.conf` не указан в `boot.conf` и служит доказательством
-  работы drop-in.
+  `key = "value" (layer, effective|informational)` и дубли ключей, а поиск идёт
+  от последнего слоя к первому — поэтому drop-in вроде `config/net.conf`
+  переопределяет базовый `system.conf` без его правки. `KeyPolicy` и
+  `policy(key)` задают политику: `Effective` только у `blocks.<name>.rights` и
+  `blocks.<name>.fuel` (их потребляет хост WASM); `system.*`, `boot.*`, `net.*`
+  и неизвестные ключи — `Informational`: они разбираются, проверяются и
+  логируются с источником, но не являются настройками времени выполнения.
+  `validate_informational()` проверяет `boot.debug`/`net.dhcp` как булевы и
+  `net.mtu` как положительное целое, предупреждает о некорректных значениях и
+  считает их в `Summary.invalid_values` вместе с числом слоёв и ключей.
+  Устаревшие `system.version`, `scheduler.tick_hz` и `memory.heap_min_kib`
+  удалены в v2.79.0. Таймер, куча и версия намеренно не имеют ключей:
+  `interrupts::TIMER_HZ`, `heap::HEAP_SIZE` и `aios-kernel/src/version.rs`
+  (`SEMVER` = `env!("CARGO_PKG_VERSION")`, `KERNEL` =
+  `concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"))`) — compile-time факты
+  из `aios-kernel/Cargo.toml`, единственного источника версии; загрузочный лог
+  печатает фактические значения таймера/кучи и строку конфига с этими
+  константами. Штатные шаблоны
+  `boot/assets/aios/config/{system,net,blocks}.conf` несут те же комментарии о
+  политике, а их копии в `boot/out/assets/aios/config/` идентичны по SHA-256;
+  `net.conf` и `blocks.conf` намеренно не перечислены в `boot.conf` — это
+  доказательство работы drop-in.
 - `aios-wasmhost` (`boot/aios-wasmhost`, `no_std` + `alloc`, v2.71.0, M3.1):
   хост WebAssembly в песочнице для `MODULE_BLOCK`. `module` разбирает и
   статически проверяет бинарник на месте (без копирования): сигнатуры только
@@ -2095,7 +2108,7 @@ AIOS грузится на голом железе без Linux, Windows и ст
 - `interrupts` — C-обвязка `aios_interrupt_common` (`aios_handle_interrupt`) диспетчеризует по вектору: фатальные фолты (0/6/8/13/14) печатаются и ядро останавливается, диапазон IRQ `0x20..=0x2F` получает PIC-EOI (IRQ0/PIT увеличивает `TICKS` с частотой `TIMER_HZ` (1000 Гц с v2.78.2), IRQ1/клавиатура с v2.38.36 пушит сырой байт в `key_push` — кольцевой буфер `KEY_FIFO` на 256 слотов с атомарными HEAD/TAIL вместо прежнего одиночного слота `LAST_SCANCODE`, поэтому 1–2-секундный простой idle-цикла больше не затирает непрочитанные make-/break-коды; `ps2::feed_key` кормит тот же FIFO), а выделенный LAPIC-вектор `0x90` (v2.38.12) увеличивает `TICKS`, рисует прогресс-бар, делает LAPIC-EOI и кормит `sched::tick`, как PIT-путь (первое срабатывание один раз логирует сохранённый фрейм `cs/ss/rip`). С v2.38.20 ветка вектора 13 сначала проверяет `thermal::probe_active()` и отдаёт фолт пробирующего RDMSR в `thermal::on_probe_gp` (переписывает RIP фрейма на `_aios_probe_rdmsr_fault`) вместо остановки. `init_pic` ремапит 8259 PIC на `0x20`/`0x28` и маскирует всё, кроме IRQ0/IRQ1; `init_pit` (режим 2, rate generator, с v2.68.3) программирует канал 0 на `TIMER_HZ`. `set_pit_masked(true)` маскирует PIT IRQ0 после подъёма LAPIC-таймера, оставляя один аппаратный источник тиков. `pit_count`/`delay_ms`/`wait_for_irq32` управляют тем же отсчётом напрямую (без IRQ) для software-tick фолбэка.
 - `lapic` — (v2.38.12) драйвер таймера Local APIC, основной аппаратный источник тиков на любой плате: предпочитает x2APIC (IA32_APIC_BASE + расширенный MSR-диапазон), иначе fallback на xAPIC MMIO через `memory::map_mmio`, калибрует `bus_hz` по отсчёту PIT (`bus_hz = lapic_delta * 1_193_182 / pit_delta`, reload-aware via `pit_elapsed` since v2.68.3) и запускает периодический тик `TIMER_HZ` на векторе `0x90` (1000 Гц с v2.78.2). `active()` кормит режим дашборда (`HW-LAPIC`). Работает вообще без 8259 PIC.
 - `sched` — round-robin по тикам таймера над `MAX_TASKS = 7` кадрами (слот 0 = idle, worker = 1, пять ring-3 демо-задач в слотах 2..6). Ring-3 задачи вытесняемы (переключаются по любому аппаратному тику — PIT или LAPIC); ring-0 задачи переключаются только кооперативно через `yield_kernel` (`int 0xfa`), что охраняет предикат `hw_tick`, покрывающий и вектор `0x90`. До v2.38.12 на платах, где legacy PIC не доставлял IRQ0 (маршрутизация через IO-APIC), **прерываний для вытеснения не было** — ring-3 задача без syscall не отдавала CPU никому, останавливая экономику тиков; LAPIC-таймер вернул вытеснение на таких платах, но демо-программы по-прежнему обязаны спать (`SYS_SLEEP`). `idle_loop` по-прежнему обнаруживает отсутствие аппаратных тиков (`IRQ32_SEEN == false`) и синтезирует тактовость `TIMER_HZ` опросом счётчика PIT. С v2.38.20 `schedule()` также применяет термальный затвор: пока стоит `thermal::critical()` (только реальные чтения DTS с v2.68.4), ring-3 задачи (`frame.cs == USER_CS`) пропускаются — демо-задачи замирают на горячем кристалле, а задачи ядра и idle продолжают работать, TUI продолжает обновляться. С v2.45.3 обновление outgoing-контекста также ведёт **сторожевой таймер зависаний**, с v2.46.0 учитывающий прогресс: пер-слотовые `STALL_SINCE`/`STALL_RIP` отслеживают, когда сохранённый `rip` ring-3 задачи менялся в последний раз, а пер-слотовый `LAST_ACTIVITY` (обновляется на каждом `int 0x80` через `sched::note_activity`, он же heartbeat `SYS_PING`) — её последний syscall. Задача, у которой **одновременно** неизменён `rip` **и** не было syscall с момента якоря застоя в течение `HANG_WATCHDOG_TICKS` (10 с), передаётся в `fault::record_hang` и замораживается — настоящий бесконечный спиннер ловится без исключения CPU, а ограниченные циклы заливки буфера (двигающие `rip`) и задачи, активно делающие syscall, ложных срабатываний не дают. `task_snapshot(pid)` отдаёт сохранённый фрейм задачи (запечатанный `TaskSnapshot`) для шлюза целостности Resume.
-  - `memory` — ядро paging поверх HHDM Limine (`physical_offset = hhdm.offset`). `translate` обходит активные таблицы страниц (PML4/PDPT/PD/PT, большие страницы), читая физическую память через HHDM; `map_page`/`unmap_page` редактируют таблицы и выделяют кадры для таблиц по требованию, сбрасывая TLB через `invlpg`; `init` строит bump-аллокатор кадров по регионам `MEMMAP_USABLE` Limine, переданным как `MemRegion { start, end }`; `selftest` мапит тестовую страницу, пишет/читает паттерн и проверяет `translate` до и после unmap. `verify_region(virt, bytes)` (v2.38.13) обходит живые таблицы и возвращает `RegionCheck { pages_total, pages_present, pages_writable }`, считая huge-листья по одной записи на 4 КиБ-субстраницу с флагами самого листа — загрузочный путь использует её, чтобы доказать, что весь диапазон VRAM GOP промаплен. `map_mmio(phys, size)` мапит страницы BAR устройств в выделенное окно `0xffffff00_2000_0000` (слот PML4 510) — HHDM покрывает только RAM; `physical_to_virtual(phys)` возвращает HHDM-алиас, используемый для DMA-буферов.
+  - `memory` — ядро paging поверх HHDM Limine (`physical_offset = hhdm.offset`). `translate` обходит активные таблицы страниц (PML4/PDPT/PD/PT, большие страницы), читая физическую память через HHDM; `map_page`/`unmap_page` редактируют таблицы и выделяют кадры для таблиц по требованию, сбрасывая TLB через `invlpg`; `init` строит bump-аллокатор кадров по регионам `MEMMAP_USABLE` Limine, переданным как `MemRegion { start, end }`; `selftest` мапит тестовую страницу, пишет/читает паттерн и проверяет `translate` до и после unmap. `verify_region(virt, bytes)` (v2.38.13) обходит живые таблицы и возвращает `RegionCheck { pages_total, pages_present, pages_writable }`, считая huge-листья по одной записи на 4 КиБ-субстраницу с флагами самого листа — загрузочный путь использует её, чтобы доказать, что весь диапазон VRAM GOP промаплен. `map_mmio(phys, size)` мапит страницы BAR устройств в выделенное окно `0xffffff00_2000_0000` (слот PML4 510) — HHDM покрывает только RAM; `physical_to_virtual(phys)` возвращает HHDM-алиас, используемый для DMA-буферов. Отдельный гейт для буферов ring-3: `USER_SPACE_LIMIT` и `user_range(virt, len)` отвергают нуль (для ненулевой длины), верхнюю половину/нарушение канонического адреса и переполнение `virt + len`, а `translate_user(virt, len, write)` обходит каждую затронутую страницу через `walk_user_leaf()` и требует `PRESENT`/`USER` на PML4/PDPT/PD/листе (и `WRITABLE` при записи, включая huge-страницы). `translate` остаётся только для адресов ядра/драйверов/DMA. `user_read`/`user_write` возвращают `Option` и не разыменовывают отклонённый диапазон; `write_user_string` проверяет каждый байт и безопасно останавливается на `SYS_STR_CAP` или переполнении `addr + 1`.
   - `heap` — куча ядра 4 МиБ (`HEAP_START = 0xffff_ff00_0000_0000`, `HEAP_SIZE = 4 MiB`), замаплена страница за страницей через `memory::map_page`; `#[global_allocator]` free-list аллокатор — first-fit по *адресно-отсортированному* списку свободных: `alloc` сплитит с остатком на исходном адресе (порядок выживает), `dealloc` вставляет по порядку и сливается с **обеими** соседними блоками при смежности (прежнее слияние только с головой списка оставляло соседние фрагменты и вело к OOM на долгих сессиях), под spin-lock; `init_heap` создаёт единый свободный блок, `test_heap` выделяет `Vec`/`String`/`Box` и стресс-цикл из 200 строк,   `fragmentation_selftest` (v2.38.33, запускается из `main` сразу за `test_heap`) вырезает 24 × 96 KiB блока, освобождает их в порядке аллокации и заново добывает 1.5 MiB целиком через `try_reserve_exact`, логируя `heap: fragmentation self-test ok` (грепается смоуком) или `FAILED`. GUI backbuffer стоит на `HEAP_START + 4 MiB` — впритык, но без пересечения страниц.
 - `fault` — (v2.45.0, расширен v2.45.1/2/3/4/2.46.0) Перехватчик фолтов Ring 0,
   ядерный близнец host-функции `run_isolated`. `intercept(frame, kind)` вызывается
@@ -2212,7 +2225,7 @@ AIOS грузится на голом железе без Linux, Windows и ст
   v2.81.0 Win (`0x5B`), вверх/вниз (`0x48`/`0x50`) и Enter (`0x1C`)
   перенаправляются в `gui::handle_ext_scancode()` для навигации по «Пуску»
   (см. `ps2`/`main`/`xhci`). Окно System переиспользует
-  `tui::tick_mode()`/`lid_state()` и `VERSION`.
+  `tui::tick_mode()`/`lid_state()` и `version::KERNEL`.
   С v2.82.0 пять ring-3 демо-задач **выключены по умолчанию** в сборке десктопа:
   `user::start_demos()` идемпотентен и создаёт их только при выборе пункта
   `Пуск → Ring-3 демо` либо при загрузке с Cargo-feature `ring3-demo` (headless-
@@ -2224,7 +2237,10 @@ AIOS грузится на голом железе без Linux, Windows и ст
   С v2.38.25 оконная система открыта для ring-3: `syscalls.rs` маршрутизирует
   `SYS_GUI` (id 6) в `gui::client_syscall`, который диспетчеризует по `rdi` —
   CREATE (`rdi = 0`, `rsi` → 16-байтовая `CreateReq { w, h, buf, title }` из
-  user-VAs) валидирует каждый указатель через `memory::translate`, ограничивает
+  user-VAs) проверяет запрос, весь буфер и каждый байт заголовка через
+  `memory::translate_user` — единственный гейт указателей пользователя для
+  `int 0x80`, отвергающий адреса ядра, переполнение и не-user-маппинги с
+  `u64::MAX`, — ограничивает
   размеры (8..=512 px, ≤ 512×512×4 байт), копирует NUL-терминированный
   заголовок (≤ 24 байт) и регистрирует `ClientWin` в реестре `CLIENTS`
   (`MAX_CLIENTS = 4`); PRESENT (`rdi = 1`) заново помечает
@@ -2238,7 +2254,12 @@ AIOS грузится на голом железе без Linux, Windows и ст
   текста, `dispatch_click` публикует клики по телу ДО перестановки
   z-порядка (адресация по id клиента — сдвиг слотов в `bring_to_front` не
   «осиротит» событие), а `raise_clients()` фокусирует самое верхнее
-   клиентское окно, чтобы ввод шёл сразу. Рендер композитит плотный buffer-клиента с учётом pitch через
+   клиентское окно, чтобы ввод шёл сразу. Поскольку клиент может отмапить или
+   переиспользовать буфер после CREATE, `draw_client()` заново проверяет всю
+   поверхность через `translate_user` (read-only) при **каждом** composite и
+   пропускает blit, если какая-либо страница не прошла проверку, вместо
+   разыменования устаревшего указателя. Рендер композитит плотный
+   buffer-клиента с учётом pitch через
    `Framebuffer::blit_at` под тайтл-баром или — с v2.38.27, как только окно
    отресайзили — через nearest-neighbour `Framebuffer::blit_scaled`, поэтому
    клиент сохраняет свой родной буфер 96×64, а окно масштабируется (клампы
@@ -2439,35 +2460,46 @@ AIOS грузится на голом железе без Linux, Windows и ст
 - `main` — читает ответы framebuffer/rsdp/hhdm Limine, выполняет self-check чтения framebuffer, фильтрует карту памяти в `[MemRegion; 64]`, затем инициализирует память и кучу, GDT/TSS (с перезагрузкой CS/SS), IDT, PIC и PIT, поднимает LAPIC-таймер (`lapic::init()`) и маскирует PIT IRQ0, когда тот жив, `sti`, печатает на экран показания живости `[probe] irq32_seen/ticks delta`, перечисляет шину PCI и поднимает драйверы хранилища AHCI и NVMe (после `sti`, чтобы исключения обрабатывались), планирует kernel worker и, с v2.82.0, запускает пять ring-3 задач только при включённом feature `ring3-demo` (иначе они ждут выбора `Пуск → Ring-3 демо`); задачи — четыре IPC/GUI-демо плюс, с v2.51.0, клиент socket-пинг-понга. Далее объявляет атомарные статики статуса драйверов `G_AHCI`/`G_NVME`/`G_XHCI` (проставляются init-кодом драйверов) и входит в `idle_loop`, где работают квадрат heartbeat и `gui::render()` (или
   `tui::render()` после выхода из рабочего стола); с v2.81.0 `idle_loop()` вызывает
   `gui::enter()` при загрузке. Клавиши и отчёты мыши маршрутизируются владельцу экрана: `gui::handle_scancode`/`gui::on_mouse`, когда `gui::active()`, иначе `tui::*`. Байты клавиатуры приходят из 256-слотового FIFO, сливаемого через `while let Some(sc) = key_pop()` в начале каждой итерации (v2.38.36 — фильтрация extended/shift происходит уже по сливаемому потоку, поэтому простой цикла больше не теряет burst-ввод из-за прежнего перезаписа одиночным слотом), а на edge PS/2-кнопки бандл сначала сбрасывает весь накопленный `mouse_dx`/`mouse_dy` (до 64 шагов `drain_axis`) до вызова `on_mouse`, так что press диспатчится по устоявшейся позиции курсора, а не посреди бэклога (v2.38.36, фикс пропущенных кликов). Дельты мыши считываются **каждую итерацию idle-цикла** — обе полосы безусловно читают `ps2::mouse_dx`/`mouse_dy` и `xhci::take_mouse_delta`, так что carry-over-остаток клампа 256 px применяется даже без новых отчётов, а пакеты, пришедшие за время, пока цикл был занят, накапливаются, а не перезаписывают друг друга (v2.38.30) — а с v2.38.38 защёлкнутый press-edge (`take_button_edges()` в обеих полосах) или изменение состояния кнопки (`btn_changed = seq_changed && buttons != last`) доставляются через новый `deliver_pointer`, который воспроизводит до трёх состояний (залипший release → press с dx/dy → финальный release), так что пара press+release, склеенная между двумя итерациями цикла, всё равно доходит до `gui::on_mouse` (BUGS v2.38.38); сам кламп применения живёт в драйверах (`MOUSE_MAX_STEP`, v2.38.35). Прежде чем что-то логировать или рендерить, цикл спрашивает владельца экрана `gui::input_allowed`/`tui::input_allowed` (гейт runaway, v2.38.33): 60 пакетов подряд, толкающих уже прижатый к краю курсор дальше в тот же край, подавляют ввод указателя до первого пакета движения прочь от края, а само движение агрегируется максимум в одну serial-строку на бандл в секунду (`MoveLog`, статики `USB_MOVE`/`PS2_MOVE` — `[serial] usb mouse +N pkts dx=… dy=…`); смена кнопок сохраняет поотчётные строки. В serial логирует селекторы передачи от Limine (`boot selectors cs/ss/ds`) и выбранный источник тиков (`timer=LAPIC|PIT`). С v2.38.13 раздел framebuffer дополнительно логирует виртуальный адрес и `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), выполняет `write_volatile`-тест `direct_test` со `sfence` и readback пикселя (0, 0) плюс OK-зелёную пробу, затем `psf_check()` синтезирует PSF2-поток из `font8x8::BASIC`, парсит его обратно, проверяет round-trip глифа 'A' и рисует его в центре нижней полосы экрана.
-  - Panic-обработчик печатает в framebuffer-консоль и serial, затем уходит в `halt_loop`.
-- `aios-kernel-run`: собирает ядро с включённым путём Limine (`cargo build --target x86_64-unknown-none --release --features limine`, с v2.78.0), раскладывает дерево Limine ISO (`boot/aios-kernel`, `boot/limine.conf`, CD-стадии Limine BIOS/UEFI, `EFI/BOOT/BOOTX64.EFI`), создаёт гибридный ISO через `xorriso` + `limine bios-install` и байт-в-байт идентичный USB-образ `out\aios-kernel-usb.img` (isohybrid — загружается на legacy BIOS через MBR Limine и на UEFI через ESP). Грузит в QEMU — по умолчанию UEFI/OVMF (настоящий GOP), иначе legacy BIOS; `AIOS_QEMU_USB=1` подключает USB-образ как mass-storage вместо CD-ROM. Переопределения: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.
-- Запись на реальную USB-флешку: `scripts\flash-usb.ps1` от имени Администратора (записывает образ на `\\.\PhysicalDriveN`, проверяет SHA-256 и сигнатуру MBR `55 AA`). Флешка AIOS bare-metal загружается и на legacy BIOS, и на UEFI ноутбуках. Для нативного образа UEFI-only (GPT) используйте вместо него `aios-install`: он проверяет структуру GPT/ESP до записи (см. раздел «Собственная цепочка загрузки UEFI» выше).
+  - Panic-обработчик печатает версионированную строку `KERNEL PANIC [semver]: …`
+    во framebuffer-консоль и serial, рисует отчёт на экране без аллокаций через
+    `console::panic_report("KERNEL PANIC: ", …)` с `version::KERNEL`, затем уходит
+    в `halt_loop`. Фатальные прерывания идут тем же путём с префиксом
+    `FATAL [semver]`, поэтому по скриншоту видна точная сборка, в которой
+    произошёл сбой.
+- `aios-kernel-run`: собирает ядро с включённым путём Limine (`cargo build --target x86_64-unknown-none --release --features limine`, с v2.78.0), раскладывает дерево Limine ISO (`boot/aios-kernel`, `boot/limine.conf`, CD-стадии Limine BIOS/UEFI, `EFI/BOOT/BOOTX64.EFI`), создаёт гибридный ISO через `xorriso` + `limine bios-install` и байт-в-байт идентичный USB-образ `out\aios-kernel-usb.img` (isohybrid — загружается на legacy BIOS через MBR Limine и на UEFI через ESP). Грузит в QEMU — по умолчанию UEFI/OVMF (настоящий GOP), иначе legacy BIOS; `AIOS_QEMU_USB=1` подключает USB-образ как mass-storage вместо CD-ROM. Переопределения: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`. С v2.84.0 сборщик читает `[package] version` из `aios-kernel/Cargo.toml` и сводит его к релизной ветке через `release_train()` (`2.84.0` → `v2.84+`), записывая `limine.conf` с двумя записями: `/AIOS kernel v2.84+ (current, Limine + GOP)` и `/AIOS kernel v2.79 rollback (Limine + GOP)`. Текущий ELF раскладывается как `boot/aios-kernel`; резервный по умолчанию берётся из `out/aios-kernel-v279.elf` через `AIOS_FALLBACK_KERNEL` (сборщик требует наличия файла, поэтому чистая копия репозитория должна предоставить настоящий ELF v2.79), а его подпись задаётся через `AIOS_FALLBACK_VERSION` (по умолчанию `v2.79`). Устаревший `out\aios-kernel.iso` удаляется перед каждой сборкой, после чего `verify_hybrid_image()` проверяет сигнатуру MBR `55 AA` и дескриптор ISO9660 `CD001` по адресам `0x8001`/`0x8801`/`0x9001`, поэтому урезанный или негибридный образ не попадает ни в QEMU, ни в скрипт прошивки.
+- Запись на реальную USB-флешку: `scripts\flash-usb.ps1` от имени Администратора (записывает образ на `\\.\PhysicalDriveN`, проверяет SHA-256 и сигнатуру MBR `55 AA`). Скрипт блокирует и отмонтирует тома цели (`FSCTL_LOCK_VOLUME`/`FSCTL_DISMOUNT_VOLUME`), открывает диск с `FileShare.ReadWrite`, дополняет каждую запись до границы сектора и вызывает `Flush($true)`, затем снимает блокировки и выполняет ограниченный по времени recovery `Update-Disk` + `pnputil /rescan-disks` (каждая операция — в `Start-Job` с таймаутом `AIOS_FLASH_RECOVERY_TIMEOUT`, по умолчанию 30 с) плюс восемь попыток ожидания готовности диска. Весь образ повторно хешируется с raw-диска и сравнивается с исходным SHA-256 перед проверкой MBR; при запуске без прав скрипт сам перезапускается с повышением, перенаправляя stdout/stderr в логи `%TEMP%`. Чистый гибридный образ AIOS bare-metal загружается и на legacy BIOS, и на UEFI ноутбуках. Для нативного образа UEFI-only (GPT) используйте вместо него `aios-install`: он проверяет структуру GPT/ESP до записи (см. раздел «Собственная цепочка загрузки UEFI» выше).
 - Проверка: `cargo run --release` в `aios-kernel-run` — в serial выводятся `aios-kernel: Limine handoff`, смещение HHDM, RSDP, `framebuffer = WxH pitch=… bpp=… usable=true`, `framebuffer self-check OK (readback 0x…)`, `usable memory regions = N`, `paging selftest OK.`, `heap: …`, `interrupts online.`, `[sched] ready`, `five ring-3 tasks armed`. QEMU `screendump` подтверждает, что консоль действительно рисуется (гистограмма пикселей текста/фона).
 
-### Двухядерный Limine-образ на физической флешке (v2.81.0)
-- Перепрошитая флешка Kingston использует байтовую правку проверенного гибридного
-  ISO, а не полную пересборку через `xorriso` (хостовые бинарники недоступны).
-  В каталоге `/boot` две записи ядра: `AIOS_KER.;1` (Rock Ridge `aios-kernel`,
-  экстент 32) для нового ELF desktop и `AIOS_KER2;1` (Rock Ridge `aios-ker2`,
-  экстент 600) для старого ELF v2.79. Конфиг `limine.conf` размером 202 байта
-  в ISO-секторе 1780 задаёт `timeout: 3` и ставит запись desktop первой, поэтому
-  она выбирается по умолчанию; ↓ + Enter выбирает `AIOS Legacy v2.79 (old GUI)`.
-- Старый ELF берётся из `aios-kernel-usb-limine-current.img` и записывается в
-  ISO-сектор 600 — внутри уже перезаписанной области `LIMINE_U.BIN`, но до
-  boot-каталога (1569) и BIOS-стадий (1570+). Поскольку UEFI-стадия в LBA 32 была
-  уничтожена предыдущим патчем с одним ядром, образ остаётся совместимым только
-  с Legacy BIOS; для паритета UEFI + BIOS нужна чистая пересборка гибридного образа.
-- Проверено в QEMU Legacy BIOS: запись по умолчанию доходит до `Limine handoff`
-  и нативного desktop; при перемене записей конфигом местами грузится старое ядро
-  с тем же RIP в тике LAPIC, что и эталонная загрузка `current.img`. Флешка
-  прочитана целиком (SHA-256 `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`),
-  в обоих смещениях ядер присутствовала ELF-магия.
-- Обновление v2.84.0 заменяет только ELF по умолчанию в ISO LBA 32: 1 054 032
+### Двухядерный Limine-образ: историческая флешка и текущий результат сборщика (v2.84.0)
+- **Историческое, устаревшее (v2.81.0 → патч v2.84.0):** перепрошитая флешка
+  Kingston использовала байтовую правку проверенного гибридного ISO, а не полную
+  пересборку через `xorriso` (хостовые бинарники были недоступны). В `/boot`
+  лежали `AIOS_KER.;1` (Rock Ridge `aios-kernel`, экстент 32) для desktop ELF и
+  `AIOS_KER2;1` (Rock Ridge `aios-ker2`, экстент 600) для старого ELF v2.79, а
+  `limine.conf` размером 202 байта в ISO-секторе 1780 задавал `timeout: 3`.
+  Обновление v2.84.0 заменило только ELF по умолчанию в ISO LBA 32: 1 054 032
   байта (SHA-256 `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`),
-  SHA-256 всего образа `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`.
-  Меню теперь гласит `/AIOS Desktop v2.84 (native kernel)`; резервное ядро v2.79
-  и его хеш не изменены. QEMU Legacy BIOS подтвердил новую строку лога NIC и
-  полный цикл DHCP discover/request/bound до физической записи.
+  SHA-256 всего образа
+  `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`; резервное
+  ядро v2.79 и его хеш не менялись. Флешка прочитана целиком (SHA-256
+  `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`) с
+  ELF-магией в обоих смещениях, а QEMU Legacy BIOS подтвердил новую строку лога
+  NIC и полный цикл DHCP discover/request/bound до физической записи.
+- **Почему это устарело:** байтовая правка перезаписала UEFI-стадию в LBA 32,
+  поэтому физическая флешка по-прежнему работает только с Legacy BIOS, а её
+  ручное меню (`/AIOS Desktop v2.84 (native kernel)` /
+  `AIOS Legacy v2.79 (old GUI)`) больше не совпадает с тем, что генерирует
+  сборщик. Новой пересборки здесь не выполнялось: на этом хосте отсутствуют
+  `xorriso.exe` и бинарники Limine, поэтому раздел описывает существующий
+  артефакт, а не заново проверенный образ.
+- **Актуальное состояние (результат сборщика, v2.84.0):** `aios-kernel-run`
+  раскладывает два ELF в чистый гибридный ISO/IMG и пишет меню
+  `/AIOS kernel v2.84+ (current, Limine + GOP)` (по умолчанию) и
+  `/AIOS kernel v2.79 rollback (Limine + GOP)`, проверяя образ через
+  `verify_hybrid_image()` (MBR `55 AA` и ISO9660 `CD001`). Чтобы вернуть
+  поддержку UEFI + BIOS на физической флешке, требуется новая прошивка
+  сгенерированным образом; до этого флешка остаётся описанным выше
+  Legacy-BIOS-only артефактом.
 
 ## Загрузочный установщик AIOS (Live ISO → диск, v2.33.0)
 

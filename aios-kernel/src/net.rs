@@ -1,4 +1,4 @@
-//! IPv4 client stack over the polled [`nic`] driver (v2.38.34): DHCP with
+//! IPv4 client stack over the polled [`nic`] driver (earlier release): DHCP with
 //! persistent settings in CMOS, ARP resolution, ICMP link probing, a DNS
 //! reachability check and the GUI-facing network state machine.
 //!
@@ -652,7 +652,7 @@ pub(crate) fn emit_ipv4(dst: [u8; 4], proto: u8, l4: &[u8]) -> Result<(), &'stat
         // delivery avoids re-entering the socket state while the sending socket
         // still borrows it, and lets kernel servers and clients talk to each
         // other on one machine (the `socktest` self-test runs on this path).
-        // Broadcast and multicast destinations (v2.56.0) loop back too, so the
+        // Broadcast and multicast destinations (earlier release) loop back too, so the
         // socket layer can fan a datagram out to every member on the port.
         unsafe {
             let head = *addr_of!(LOOP_HEAD);

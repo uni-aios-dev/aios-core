@@ -13,6 +13,14 @@
 //! The kernel keeps no built-in copy of the defaults: when a key is absent
 //! [`get`] returns `None` and the caller uses its own compile-time constant,
 //! which is also logged at boot so a mismatch is visible in the serial log.
+//!
+//! Every shipped key has an explicit policy: `blocks.<name>.rights` and
+//! `blocks.<name>.fuel` are **effective** (they change WASM host behavior),
+//! while `system.*`, `boot.*` and `net.*` are **informational/validation-only**:
+//! they are parsed, validated and logged with their source, but they are not
+//! applied as runtime knobs. Timer frequency `interrupts::TIMER_HZ`, heap size
+//! `heap::HEAP_SIZE` and the release version are compile-time constants and
+//! deliberately have no configuration keys.
 
 use crate::boot;
 use aios_bootinfo::{ModuleInfo, MODULE_CONFIG};
@@ -27,6 +35,42 @@ pub struct Summary {
     pub entries: usize,
     /// Layers dropped because their bytes are not valid UTF-8.
     pub invalid: usize,
+    /// Informational values that failed validation and were ignored.
+    pub invalid_values: usize,
+}
+
+/// How the kernel treats one configuration key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyPolicy {
+    /// The value is consumed by a subsystem and changes its behavior.
+    Effective,
+    /// The value is parsed, validated and logged but does not change behavior.
+    Informational,
+}
+
+impl KeyPolicy {
+    /// Short label used in the serial configuration log.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Effective => "effective",
+            Self::Informational => "informational",
+        }
+    }
+}
+
+/// Returns the declared policy of `key`.
+///
+/// Unknown keys are informational: they are still logged with their source so
+/// drop-ins can be debugged, but they never change kernel behavior.
+pub fn policy(key: &str) -> KeyPolicy {
+    let effective = key
+        .strip_prefix("blocks.")
+        .is_some_and(|rest| rest.ends_with(".rights") || rest.ends_with(".fuel"));
+    if effective {
+        KeyPolicy::Effective
+    } else {
+        KeyPolicy::Informational
+    }
 }
 
 /// Validates every configuration layer and logs it to the serial console.
@@ -74,7 +118,41 @@ pub fn init() -> Summary {
             "[serial] [cfg] no configuration modules; every value falls back to the kernel default"
         );
     }
+    summary.invalid_values = validate_informational();
     summary
+}
+
+/// Parses every informational key and warns about values that cannot be used.
+///
+/// Returns the number of invalid values. Effective keys are validated by the
+/// subsystem that consumes them (see [`crate::blocks`]).
+pub fn validate_informational() -> usize {
+    let mut invalid = 0;
+    for key in ["boot.debug", "net.dhcp"] {
+        if let Some(value) = get(key) {
+            if aios_config::parse_bool(value).is_none() {
+                crate::kprintln!(
+                    "[serial] [cfg] warning: '{}' = \"{}\" is not a boolean (informational key ignored)",
+                    key,
+                    value
+                );
+                invalid += 1;
+            }
+        }
+    }
+    if let Some(value) = get("net.mtu") {
+        match aios_config::parse_u32(value) {
+            Some(0) | None => {
+                crate::kprintln!(
+                    "[serial] [cfg] warning: 'net.mtu' = \"{}\" is not a positive integer (informational key ignored)",
+                    value
+                );
+                invalid += 1;
+            }
+            Some(_) => {}
+        }
+    }
+    invalid
 }
 
 /// The `(name, text)` of every valid configuration module, earliest first.
@@ -157,5 +235,17 @@ mod tests {
         assert_eq!(summary.layers, 0);
         assert_eq!(summary.entries, 0);
         assert_eq!(summary.invalid, 0);
+        assert_eq!(summary.invalid_values, 0);
+    }
+
+    #[test]
+    fn block_keys_are_effective_and_others_informational() {
+        assert_eq!(policy("blocks.hello.rights"), KeyPolicy::Effective);
+        assert_eq!(policy("blocks.hello.fuel"), KeyPolicy::Effective);
+        assert_eq!(policy("system.name"), KeyPolicy::Informational);
+        assert_eq!(policy("net.dhcp"), KeyPolicy::Informational);
+        assert_eq!(policy("scheduler.tick_hz"), KeyPolicy::Informational);
+        assert_eq!(KeyPolicy::Effective.label(), "effective");
+        assert_eq!(KeyPolicy::Informational.label(), "informational");
     }
 }

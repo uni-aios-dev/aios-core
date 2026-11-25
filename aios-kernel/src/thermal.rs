@@ -8,7 +8,7 @@
 //! is `TjMax - delta`. When the readout cannot be trusted (no DTS bit, the MSR
 //! faults - QEMU advertises DTS yet raises #GP - or the status word marks the
 //! readout invalid) a synthetic wave is produced so the TUI still has a value
-//! to draw. Since v2.68.4 that value is clearly marked (`~` in the status bar,
+//! to draw. Now that value is clearly marked (`~` in the status bar,
 //! `sim=1` in the System tab) and never drives the scheduler gate. [`critical`]
 //! pauses ring-3 user tasks only on real DTS readings at or above the threshold.
 

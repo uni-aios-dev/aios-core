@@ -143,7 +143,7 @@ pub static MOUSE_DY: AtomicU64 = AtomicU64::new(0);
 
 /// Horizontal delta accumulated since the last input drain: reports that
 /// arrive faster than the main-loop poll sum up here instead of overwriting
-/// each other (v2.38.30 burst-loss fix; [`MOUSE_DX`] keeps the latest report
+/// each other (earlier release burst-loss fix; [`MOUSE_DX`] keeps the latest report
 /// for the diagnostics tab).
 static MOUSE_ACC_DX: AtomicI32 = AtomicI32::new(0);
 
@@ -627,7 +627,7 @@ fn harvest_report() {
     let current = pack_report(bytes);
     let previous = LAST_REPORT.load(Ordering::Relaxed);
     LAST_REPORT.store(current, Ordering::Relaxed);
-    // HID modifier byte (v2.68.0): bit 1/5 are Shift, bit 0/4 are Ctrl. The
+    // HID modifier byte (earlier release): bit 1/5 are Shift, bit 0/4 are Ctrl. The
     // boot report carries no keycode for them, so without this the USB keyboard
     // typed every letter lowercase and the GUI clipboard shortcuts could never
     // fire on a USB-only board.
@@ -782,7 +782,7 @@ pub fn take_button_edges() -> u64 {
     MOUSE_BTN_EDGE.swap(0, Ordering::Relaxed)
 }
 
-/// Largest pointer step one drain may hand back (v2.38.35 pointer-jump fix):
+/// Largest pointer step one drain may hand back (earlier release pointer-jump fix):
 /// covers a whole boot-mouse report (i8 range) untouched, while a bigger
 /// accumulated backlog is split across polls so a stale burst can never
 /// teleport the cursor across the screen (the "jumps to the task bar" bug).

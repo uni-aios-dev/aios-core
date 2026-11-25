@@ -12,18 +12,19 @@
 //!   cooperates with the scheduler so a sleeping task stops consuming CPU and
 //!   the kernel falls back to the idle context until the deadline passes.
 //!
-//! Fault recovery (v2.46.0) adds two more gates: `SYS_PING`, the cooperative
+//! Fault recovery (earlier release) adds two more gates: `SYS_PING`, the cooperative
 //! progress heartbeat that keeps the scheduler's hang watchdog from false-
 //! flagging a long compute loop, and `SYS_FAULT_POLL`, which drains the bounded
 //! kernel fault event ring so a ring-3 monitor can observe the kernel's
 //! recovery traffic (the freestanding twin of the host `FaultReport` IPC).
 //!
-//! Networking (v2.49.0) adds the `SYS_SOCK_*` family — open/bind/connect/send/
+//! Networking (earlier release) adds the `SYS_SOCK_*` family — open/bind/connect/send/
 //! recv/close/status over the kernel IPv4 socket layer [`crate::sock`], with
-//! `listen`/`accept` (server side) since v2.50.0. Every buffer argument is a
-//! user virtual address copied byte-by-byte through [`crate::memory::translate`],
-//! and each operation is gated on socket ownership (`pid`) so one task cannot
-//! touch another's descriptors.
+//! `listen`/`accept` (server side). Every buffer argument is a user virtual
+//! address checked through [`crate::memory::translate_user`] — lower-half
+//! range, PRESENT/USER on every paging level and WRITABLE for writes — before
+//! any byte is copied. Each operation is gated on socket ownership (`pid`) so
+//! one task cannot touch another's descriptors.
 
 use alloc::string::String;
 use core::ptr::addr_of_mut;
@@ -36,7 +37,7 @@ pub const SYS_WRITE: u64 = 3;
 pub const SYS_GETPID: u64 = 4;
 pub const SYS_SLEEP: u64 = 5;
 pub const SYS_GUI: u64 = 6;
-/// Progress heartbeat (v2.46.0): a ring-3 task that computes for a long time
+/// Progress heartbeat (earlier release): a ring-3 task that computes for a long time
 /// without issuing other syscalls calls `SYS_PING` to tell the hang watchdog it
 /// is alive. Bumps the task's activity clock and returns `0` in `rax`.
 pub const SYS_PING: u64 = 7;
@@ -46,7 +47,7 @@ pub const SYS_PING: u64 = 7;
 /// and `rdx = kind | (count << 32)`.
 pub const SYS_FAULT_POLL: u64 = 8;
 
-// --- IPv4 socket layer (v2.49.0, self-address v2.51.0) ---------------------
+// --- IPv4 socket layer (earlier release, self-address earlier release) ---------------------
 /// Open a socket: `rdi = kind` (0 UDP, 1 TCP). Returns `rax = fd`, or
 /// `u64::MAX` when the table is full.
 pub const SYS_SOCKET: u64 = 9;
@@ -69,7 +70,7 @@ pub const SYS_SOCK_CLOSE: u64 = 14;
 /// 5 time-wait, 6 listening): `rdi = fd`. Returns `rax = code`. When `rsi`
 /// points to a 10-byte scratch buffer, it is filled with the TCP congestion
 /// snapshot `cwnd` (u32 LE), `ssthresh` (u32 LE), `wscale`, `peer_wscale`
-/// (v2.57.0).
+/// (earlier release).
 pub const SYS_SOCK_STATUS: u64 = 15;
 /// Start listening on a bound TCP socket: `rdi = fd`. Returns `rax = 1|0`.
 pub const SYS_SOCK_LISTEN: u64 = 16;
@@ -77,7 +78,7 @@ pub const SYS_SOCK_LISTEN: u64 = 16;
 /// Returns `rax = child fd`, or `u64::MAX` when none has completed yet.
 pub const SYS_SOCK_ACCEPT: u64 = 17;
 /// Own IPv4 address packed big-endian in the low 32 bits (same layout as
-/// `SYS_SOCK_CONNECT`), or `0` when the link has no address yet (v2.51.0).
+/// `SYS_SOCK_CONNECT`), or `0` when the link has no address yet (earlier release).
 /// `rdi` is ignored. The only way a ring-3 program can learn its own address —
 /// needed to reach itself over loopback.
 pub const SYS_SOCK_ADDR: u64 = 18;
@@ -93,7 +94,7 @@ const SYS_STR_CAP: usize = 64;
 /// busy producer cannot flood the console proof lines.
 const WRITE_LOG_EVERY: u64 = 32;
 
-/// Highest task id reachable through the syscall gate. Raised to 7 in v2.51.0
+/// Highest task id reachable through the syscall gate. Raised to 7 in an earlier release
 /// for the fifth ring-3 demo task (slot 6); the mailbox arrays keep slot 0
 /// unused so index 0 stays an invalid mailbox target.
 pub const MAX_PID: usize = 7;
@@ -367,7 +368,10 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
             } else {
                 let cap = (frame.rdx as usize).min(SOCK_IO_CAP);
                 let buf = unsafe { &mut *addr_of_mut!(SOCK_IO) };
-                let n = user_read(frame.rsi, &mut buf[..cap]);
+                let Some(n) = user_read(frame.rsi, &mut buf[..cap]) else {
+                    frame.rax = u64::MAX;
+                    return;
+                };
                 match sock::send(fd, &buf[..n]) {
                     Some(w) => {
                         vprintln!("[sock] fd {} send {} bytes", fd, w);
@@ -385,14 +389,20 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
             } else {
                 let cap = (frame.rdx as usize).min(SOCK_IO_CAP);
                 let buf = unsafe { &mut *addr_of_mut!(SOCK_IO) };
+                if crate::memory::translate_user(frame.rsi, cap as u64, true).is_err() {
+                    frame.rax = u64::MAX;
+                    return;
+                }
                 match sock::recv(fd, &mut buf[..cap]) {
                     Some(0) => frame.rax = 0,
-                    Some(n) => {
-                        let w = user_write(frame.rsi, &buf[..n]);
-                        vprintln!("[sock] fd {} recv {} bytes", fd, w);
-                        kprintln!("[serial] [sock] fd {} recv {} bytes", fd, w);
-                        frame.rax = w as u64;
-                    }
+                    Some(n) => match user_write(frame.rsi, &buf[..n]) {
+                        Some(w) => {
+                            vprintln!("[sock] fd {} recv {} bytes", fd, w);
+                            kprintln!("[serial] [sock] fd {} recv {} bytes", fd, w);
+                            frame.rax = w as u64;
+                        }
+                        None => frame.rax = u64::MAX,
+                    },
                     None => frame.rax = u64::MAX,
                 }
             }
@@ -406,7 +416,7 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
         }
         SYS_SOCK_STATUS => {
             frame.rax = sock::status(frame.rdi as usize) as u64;
-            // Congestion snapshot (v2.57.0): when `rsi` points to a 10-byte
+            // Congestion snapshot (earlier release): when `rsi` points to a 10-byte
             // scratch buffer, fill `cwnd` (u32 LE), `ssthresh` (u32 LE),
             // `wscale` (u8), `peer_wscale` (u8) for a TCP descriptor.
             if frame.rsi != 0 {
@@ -418,7 +428,9 @@ pub fn syscall(frame: &mut crate::interrupts::InterruptFrame) {
                     buf[4..8].copy_from_slice(&ssthresh.to_le_bytes());
                     buf[8] = wscale;
                     buf[9] = peer_wscale;
-                    let _ = user_write(frame.rsi, &buf[..10]);
+                    if user_write(frame.rsi, &buf[..10]).is_none() {
+                        frame.rax = u64::MAX;
+                    }
                 }
             }
         }
@@ -534,41 +546,62 @@ fn sock_owned(pid: u32, fd: usize) -> bool {
     sock::owner(fd) == pid && pid != 0
 }
 
-/// Copies up to `out.len()` bytes from the user pointer `ptr` into `out`,
-/// validating every byte's virtual address so a bogus pointer cannot fault the
-/// kernel. Returns the number of bytes actually read.
-fn user_read(ptr: u64, out: &mut [u8]) -> usize {
-    let mut n = 0;
-    while n < out.len() {
-        if crate::memory::translate(ptr + n as u64).is_none() {
-            break;
-        }
-        out[n] = unsafe { core::ptr::read_volatile((ptr + n as u64) as *const u8) };
-        n += 1;
-    }
-    n
+/// Reads one byte from a validated ring-3 address.
+///
+/// The caller must have checked `translate_user(ptr, 1, false)` (or a larger
+/// range covering this byte) before calling; no paging walk happens here.
+pub(crate) unsafe fn user_byte(ptr: u64) -> u8 {
+    core::ptr::read_volatile(ptr as *const u8)
 }
 
-/// Copies `src` to the user pointer `ptr`, validating every byte's virtual
-/// address. Returns the number of bytes actually written.
-fn user_write(ptr: u64, src: &[u8]) -> usize {
-    let mut n = 0;
-    while n < src.len() {
-        if crate::memory::translate(ptr + n as u64).is_none() {
-            break;
-        }
-        unsafe { core::ptr::write_volatile((ptr + n as u64) as *mut u8, src[n]) };
-        n += 1;
+/// Writes one byte to a validated ring-3 address.
+///
+/// The caller must have checked `translate_user(ptr, 1, true)` (or a larger
+/// range covering this byte) before calling; no paging walk happens here.
+pub(crate) unsafe fn write_user_byte(ptr: u64, byte: u8) {
+    core::ptr::write_volatile(ptr as *mut u8, byte);
+}
+
+/// Copies `out.len()` bytes from a validated user pointer into `out`.
+///
+/// The whole range is checked once with [`crate::memory::translate_user`]
+/// before the first volatile read. Returns `None` for any rejected pointer, so
+/// callers can return an error code instead of dereferencing kernel memory.
+fn user_read(ptr: u64, out: &mut [u8]) -> Option<usize> {
+    if out.is_empty() {
+        return Some(0);
     }
-    n
+    crate::memory::translate_user(ptr, out.len() as u64, false).ok()?;
+    for (i, slot) in out.iter_mut().enumerate() {
+        let addr = ptr + i as u64;
+        *slot = unsafe { user_byte(addr) };
+    }
+    Some(out.len())
+}
+
+/// Copies `src` to a validated user pointer.
+///
+/// The whole range is checked once with [`crate::memory::translate_user`]
+/// (including WRITABLE on every paging level) before the first write.
+fn user_write(ptr: u64, src: &[u8]) -> Option<usize> {
+    if src.is_empty() {
+        return Some(0);
+    }
+    crate::memory::translate_user(ptr, src.len() as u64, true).ok()?;
+    for (i, &byte) in src.iter().enumerate() {
+        unsafe { write_user_byte(ptr + i as u64, byte) };
+    }
+    Some(src.len())
 }
 
 /// Copies the user string at `frame.rsi` into the kernel console.
 ///
-/// Reads byte-by-byte, validating each byte's virtual address through the
-/// page tables so a bogus pointer can never fault the kernel; opaque bytes
-/// (control chars) are dropped. Logs the first write of every 32-write block
-/// from `syscall`, while the terminal still receives every valid byte.
+/// Validates every byte with [`crate::memory::translate_user`] before the
+/// volatile read, so a kernel address, an unmapped page or an overflowing
+/// pointer stops the copy without faulting. Opaque bytes (control chars) are
+/// dropped. Logs the first write of every 32-write block from `syscall`, while
+/// the terminal still receives every valid byte. Returns the byte count; an
+/// invalid pointer simply yields zero bytes written.
 fn write_user_string(frame: &crate::interrupts::InterruptFrame) -> usize {
     let mut ptr = frame.rsi;
     let buf = unsafe { &mut *core::ptr::addr_of_mut!(USER_STR_BUF) };
@@ -577,11 +610,14 @@ fn write_user_string(frame: &crate::interrupts::InterruptFrame) -> usize {
         if n == SYS_STR_CAP {
             break;
         }
-        if crate::memory::translate(ptr).is_none() {
+        if crate::memory::translate_user(ptr, 1, false).is_err() {
             break;
         }
-        let byte = unsafe { core::ptr::read_volatile(ptr as *const u8) };
-        ptr += 1;
+        let byte = unsafe { user_byte(ptr) };
+        let Some(next) = ptr.checked_add(1) else {
+            break;
+        };
+        ptr = next;
         if byte == 0 {
             break;
         }

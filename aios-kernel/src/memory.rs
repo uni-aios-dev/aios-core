@@ -14,6 +14,9 @@ pub struct MemRegion {
 }
 
 pub const PAGE_SIZE: u64 = 0x1000;
+/// First address of the higher half. Every pointer accepted from ring 3 must
+/// be strictly below this canonical user/kernel boundary.
+pub const USER_SPACE_LIMIT: u64 = 0x0000_8000_0000_0000;
 const PTE_PRESENT: u64 = 1 << 0;
 const PTE_WRITABLE: u64 = 1 << 1;
 const PTE_USER: u64 = 1 << 2;
@@ -171,6 +174,80 @@ pub fn translate(addr: u64) -> Option<u64> {
         }
         Some((pte & PTE_FRAME) | (addr & 0xfff))
     }
+}
+
+/// Validates the arithmetic and canonical-range part of a user-buffer check.
+///
+/// Returns the last byte of `[virt, virt + len)`, or `None` for a null pointer,
+/// a `virt + len` wrap-around, or any address in/above the higher half. A zero
+/// length is accepted even for a null pointer: no byte will be dereferenced.
+pub fn user_range(virt: u64, len: u64) -> Option<u64> {
+    if len == 0 {
+        return Some(virt);
+    }
+    if virt == 0 {
+        return None;
+    }
+    let last = virt.checked_add(len - 1)?;
+    (last < USER_SPACE_LIMIT).then_some(last)
+}
+
+/// Validates a ring-3 buffer across every page it touches.
+///
+/// Checks, in order:
+/// 1. the virtual range stays in the lower canonical half without wrapping;
+/// 2. PRESENT and USER are set on PML4, PDPT, PD and the leaf entry (including
+///    1 GiB / 2 MiB huge pages);
+/// 3. WRITABLE is set on every level when `write` is true.
+///
+/// This is the only gate `int 0x80` may use before dereferencing a user
+/// pointer. Kernel-space addresses, unmapped pages, read-only pages used for a
+/// write and overflowing lengths are rejected without touching memory.
+pub fn translate_user(virt: u64, len: u64, write: bool) -> Result<(), &'static str> {
+    let last = user_range(virt, len).ok_or("user pointer: range outside user space")?;
+    if len == 0 {
+        return Ok(());
+    }
+    let required = PTE_PRESENT | PTE_USER | if write { PTE_WRITABLE } else { 0 };
+    let pml4 = cr3() & PTE_FRAME;
+    let first_page = virt / PAGE_SIZE;
+    let last_page = last / PAGE_SIZE;
+    for page in first_page..=last_page {
+        if unsafe { walk_user_leaf(pml4, page * PAGE_SIZE, required) } == 0 {
+            return Err("user pointer: mapping is absent, supervisor-only or read-only");
+        }
+    }
+    Ok(())
+}
+
+/// Walks the page tables like [`walk_leaf`] but requires `flags` at every level.
+///
+/// Returns 0 when any level is missing or lacks the required flags. Huge-page
+/// leaves are returned as-is so their own flags decide access.
+unsafe fn walk_user_leaf(pml4: u64, addr: u64, flags: u64) -> u64 {
+    let pml4e = read_entry(pml4, (addr >> 39) & INDEX_MASK);
+    if pml4e & flags != flags {
+        return 0;
+    }
+    let pdpte = read_entry(pml4e & PTE_FRAME, (addr >> 30) & INDEX_MASK);
+    if pdpte & flags != flags {
+        return 0;
+    }
+    if pdpte & PTE_HUGE != 0 {
+        return pdpte;
+    }
+    let pde = read_entry(pdpte & PTE_FRAME, (addr >> 21) & INDEX_MASK);
+    if pde & flags != flags {
+        return 0;
+    }
+    if pde & PTE_HUGE != 0 {
+        return pde;
+    }
+    let pte = read_entry(pde & PTE_FRAME, (addr >> 12) & INDEX_MASK);
+    if pte & flags != flags {
+        return 0;
+    }
+    pte
 }
 
 /// Result of a multi-page mapping inspection of a virtual range.
@@ -394,4 +471,23 @@ pub fn selftest() -> Result<(), &'static str> {
         return Err("selftest: unmap did not take effect");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_range_rejects_kernel_addresses_and_overflow() {
+        assert_eq!(user_range(0x4000_0000, 16), Some(0x4000_000f));
+        assert!(user_range(USER_SPACE_LIMIT, 1).is_none());
+        assert!(user_range(u64::MAX - 3, 8).is_none());
+        assert!(user_range(0, 1).is_none());
+    }
+
+    #[test]
+    fn user_range_accepts_empty_range() {
+        assert_eq!(user_range(0, 0), Some(0));
+        assert_eq!(user_range(USER_SPACE_LIMIT, 0), Some(USER_SPACE_LIMIT));
+    }
 }

@@ -1,5 +1,66 @@
 # Журнал разработки AIOS
 
+## v2.84.0 - Укрепление после аудита (26.11.2026)
+
+### Добавлено
+- `aios-kernel/src/version.rs` определяет `SEMVER` и `KERNEL` через
+  `env!("CARGO_PKG_VERSION")`; boot-баннер/строка конфига, отчёты panic/fatal,
+  статус TUI/About/`ver`, заголовки GUI About/окон и превью Files берут эти
+  константы. `aios-kernel/Cargo.toml` (`2.84.0`) — единственный источник
+  версии; в `aios-kernel/src` не осталось устаревших захардкоженных строк
+  `v2.x.y`, кроме намеренных идентификаторов.
+- `aios-kernel/src/config.rs` добавляет `KeyPolicy { Effective, Informational }`,
+  `policy(key)`, `validate_informational()` и `Summary.invalid_values`; лог
+  `[cfg] key = "value" (layer, effective|informational)` и сводные счётчики
+  теперь честно показывают, применяется ли ключ. Эффективны только
+  `blocks.<name>.rights` / `blocks.<name>.fuel`; `system.*`, `boot.*`, `net.*` и
+  неизвестные ключи разбираются, проверяются и логируются с источником, но не
+  применяются. Проверяются булевы `boot.debug` / `net.dhcp` и положительное
+  целое `net.mtu`: некорректные значения вызывают предупреждение и учитываются;
+  таймер, куча и версия остаются фактами сборки. Штатные шаблоны в
+  `boot/assets/aios/config/*` обновлены, копии в `boot/out` побайтово совпадают.
+- `aios-kernel/src/memory.rs` добавляет `USER_SPACE_LIMIT`
+  (`0x0000_8000_0000_0000`), `user_range()`,
+  `translate_user(virt, len, write)` и `walk_user_leaf()` — единственный шлюз
+  буферов `int 0x80`. Отвергаются null при `len > 0`, upper-half/не-canonical
+  адреса и переполнение `virt + len`, а также неотображённые, только супервизор
+  и read-only страницы при записи. `PRESENT|USER` проверяется на всех уровнях
+  (включая huge pages), `WRITABLE` — при записи. `syscalls.rs` возвращает
+  `Option` из `user_read`/`user_write`, делает `write_user_string` устойчивым к
+  переполнению, возвращает `u64::MAX` для некорректных буферов сокета и один
+  раз проверяет весь диапазон; запросы/буферы/заголовки `SYS_GUI` CREATE
+  проверяются, а `draw_client()` повторно проверяет каждый композит.
+  `memory::translate` по-прежнему только для ядра/драйверов/DMA.
+- `scripts/flash-usb.ps1` теперь блокирует и размонтирует тома
+  (`FSCTL_LOCK_VOLUME` / `FSCTL_DISMOUNT_VOLUME`), открывает
+  `\\.\PhysicalDriveN` через `FileMode.Open` + `FileShare.ReadWrite`, пишет
+  выровненные по 512 байтам блоки с дополнением до сектора, вызывает `Flush($true)`,
+  ограничивает `Update-Disk` и `pnputil /rescan-disks` через
+  `AIOS_FLASH_RECOVERY_TIMEOUT` (по умолчанию 30 с), ждёт готовности без зависания
+  на `ERROR_NOT_READY` и проверяет полный SHA-256 чтения образа назад и MBR
+  `55 AA`. Перезапуск с повышенными правами перенаправляет и воспроизводит
+  stdout/stderr.
+- `aios-kernel-run/src/main.rs` разбирает `[package] version` из
+  `aios-kernel/Cargo.toml`, выводит текущую подпись меню `v<major>.<minor>+`
+  (`v2.84+`), размещает текущий и резервный ELF, пишет двухпунктовое меню
+  Limine, удаляет устаревший ISO и проверяет MBR `55 AA` и ISO9660 `CD001` в ISO
+  и USB IMG. Резервный ELF по умолчанию — `out/aios-kernel-v279.elf`, если он
+  есть; в чистых клонах нужен настоящий ELF через `AIOS_FALLBACK_KERNEL`, а
+  `AIOS_FALLBACK_VERSION` по умолчанию `v2.79`. Чистая пересборка гибридного
+  образа здесь не выполнялась: `xorriso.exe` и бинарники Limine отсутствуют,
+  а текущая физическая флешка остаётся только для Legacy BIOS, пока её не
+  перезапишут чистым образом.
+
+### Верификация
+- `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D
+  warnings`; `cargo test --workspace` (1 824 пройдено / 0 провалено в 100
+  наборах); отдельные check/clippy `aios-kernel` с настройками по умолчанию и
+  `--features limine`; тесты `aios-kernel-run` 2/2.
+- `cargo test --manifest-path aios-kernel/Cargo.toml` по замыслу падает из-за
+  дублирования lang item `panic_impl` в freestanding `no_std`-бинарике; это не
+  обязательный гейт.
+- Проверка парсера PowerShell для `scripts/flash-usb.ps1` прошла.
+
 ## v2.84.0 - Сетевые настройки, хостовые проверки link и обеспечение NIC (25.11.2026)
 
 ### Добавлено
@@ -67,7 +128,9 @@
   `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`); оно
   вписано в проверенный двухядерный образ по ISO LBA 32 с обновлением записи
   каталога `AIOS_KER.;1` и подписи меню
-  `AIOS Desktop v2.84 (native kernel)`. Полученный
+  `AIOS Desktop v2.84 (native kernel)`. Эта подпись описывает исторический
+  образ, собранный вручную; чистый сборщик теперь выводит `v2.84+` из
+  `aios-kernel/Cargo.toml` (см. раздел после аудита выше). Полученный
   `aios-kernel-usb-limine-v284.img` имеет размер 4 683 776 байт и SHA-256
   `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`;
   резервное ядро v2.79 в LBA 600 не изменено.
@@ -84,7 +147,9 @@
   BIOS: пропатченный LBA 32 по-прежнему перезаписывает старую UEFI-стадию.
 - Первые попытки записи упёрлись в устаревшее состояние USB-устройства Windows
   (`ERROR_NOT_READY` в `WriteFile`); отключение и повторное включение активного
-  экземпляра `USBSTOR` восстановило прямую запись. Обходной путь описан в `BUGS`.
+  экземпляра `USBSTOR` восстановило прямую запись. Это исторический инцидент:
+  после аудита `scripts/flash-usb.ps1` блокирует/размонтирует тома, ограничивает
+  шаги восстановления и проверяет весь образ (см. раздел после аудита и `BUGS`).
 
 ## v2.83.0 - Настоящие программы ядра и исправления ввода (24.11.2026)
 

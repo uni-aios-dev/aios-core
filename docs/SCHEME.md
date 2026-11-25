@@ -1,6 +1,6 @@
 # AIOS Program Scheme & Function Map
 
-> Version: v2.84.0 — Date: 2026-11-25
+> Version: v2.84.0 — Date: 2026-11-26 (post-audit update)
 > Companion documents: `docs/AUDIT.md` (full audit), `docs/ARCHITECTURE.md` (deep architecture), `docs/INTERFACE.md` (UI guide).
 > Bilingual pair: `docs/SCHEME.ru.md` (Russian). Update both files together.
 > This document is the **call-level map**: every crate, its modules, and its key public functions.
@@ -43,7 +43,8 @@
   boot/aios-easylang │ boot/aios-image │ boot/aios-install │ boot/aios-sbctl
   boot/aios-storectl │ boot/aios-wasmhost
   aios-boot → bootinfo → kernel → image/install; sbctl signs the loader;
-  aios-kernel-run builds a Limine bootable ISO (BIOS + UEFI).
+  aios-kernel-run builds a Limine bootable ISO (BIOS + UEFI) with two kernel
+  entries (current + rollback); ISO and USB IMG are marker-verified.
 ```
 
 Workspace: **41 members** (`Cargo.toml:52-83`), plus the 13 standalone crates above.
@@ -415,7 +416,7 @@ Core types: `BridgeContext`, `IntentParser` (RU/EN keywords + `parse_with_llm_fa
 
 ## 10. Bare-Metal Microkernel Track
 
-`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 38 files · ~26.5k non-blank lines) boots via Limine (BIOS + UEFI). `aios-kernel-run` builds the Limine ISO and runs QEMU smoke tests.
+`aios-kernel` (`no_std`, `x86_64-unknown-none`, nightly; 39 files · ~26.5k non-blank lines) boots via Limine (BIOS + UEFI). `aios-kernel-run` builds the hybrid Limine ISO/USB image (dual kernel, `v<major>.<minor>+` current + rollback labels) and runs QEMU smoke tests. Since v2.84.0 the displayed release has one source of truth: `aios-kernel/src/version.rs` defines `SEMVER = env!("CARGO_PKG_VERSION")` and `KERNEL = concat!("AIOS kernel v", ...)`, with `2.84.0` in `Cargo.toml`; boot banner/config line, panic/fatal reports, TUI status/About/`ver`, GUI About/titles/Files preview all read those constants.
 
 | Milestone | Status | Content |
 |---|---|---|
@@ -428,7 +429,15 @@ Core types: `BridgeContext`, `IntentParser` (RU/EN keywords + `parse_with_llm_fa
 | M6 (v2.81–2.83) | ✅ | Native desktop GUI, Start menu, in-kernel apps (Store, Calculator, Files, Editor, Terminal) |
 | M7 (v2.84.0) | ✅ | NIC boot line + DHCP DORA, fault/recovery syscalls, `ring3-demo` |
 
-Modules: `main`, `boot`, `gdt`, `idt`, `interrupts`, `memory`, `heap`, `framebuffer`, `font8x8`, `psf`, `serial`, `port`, `syscalls` (mailboxes + `int 0x80`), `sched`, `user`, `gui`, `console`, `console_backend`, `acpi`, `ahci`, `blocks`, `config`, `ec`, `fault`, `lapic`, `lid`, `net`, `nic`, `nvme`, `pci`, `ps2`, `sock`, `thermal`, `vector`, `wifi`, `xhci`, `build.rs` (asm stubs).
+> Post-audit hardening (v2.84.0, 2026-11-26):
+> - `config.rs` adds `KeyPolicy { Effective, Informational }`: only `blocks.<name>.rights` / `blocks.<name>.fuel` are Effective; `system.*`, `boot.*`, `net.*` and unknown keys are Informational — validated and logged with their source, not applied as runtime knobs. Templates in `boot/assets/aios/config/{system,net,blocks}.conf` have matching copies under `boot/out/assets/aios/config/` (identical SHA-256).
+> - `memory::translate_user(virt, len, write)` is the only `int 0x80` user-buffer gate (higher-half, unmapped/non-USER, read-only writes, null and `addr + len` wrap are rejected); `user_read`/`user_write` return `Option`, `write_user_string` is overflow-safe, `SYS_GUI CREATE` request/buffer/title and `draw_client()` are revalidated, invalid socket buffers return `u64::MAX`.
+> - `scripts/flash-usb.ps1`: elevation with redirected output, volume lock/dismount via `DeviceIoControl`, `FileMode.Open`/`FileShare.ReadWrite`, 512-byte sector-aligned padded writes, `Flush($true)`, bounded `Update-Disk` + `pnputil /rescan-disks`, bounded disk-ready wait (no `ERROR_NOT_READY` hang), full-image SHA-256 read-back and MBR `55 AA` check.
+> - `aios-kernel-run` parses the kernel version from `[package]` in `Cargo.toml`, stages main + fallback ELFs, writes a two-entry Limine menu (main `v2.84+`, fallback default `v2.79`; `AIOS_FALLBACK_VERSION` override), deletes stale ISOs before rebuild and checks MBR `55 AA` + ISO9660 `CD001` on ISO/USB. Clean clones must supply a real fallback ELF via `AIOS_FALLBACK_KERNEL` (default local ignored `out/aios-kernel-v279.elf`); no fake ELF is committed.
+
+Modules: `main`, `boot`, `gdt`, `idt`, `interrupts`, `memory` (`USER_SPACE_LIMIT`, `user_range`, `translate_user`, `walk_user_leaf`), `heap`, `framebuffer`, `font8x8`, `psf`, `serial`, `port`, `syscalls` (mailboxes + `int 0x80`; `user_read`, `user_write`, `write_user_string`), `sched`, `user`, `gui`, `console`, `console_backend`, `acpi`, `ahci`, `blocks`, `config` (`KeyPolicy`, `policy`, `validate_informational`, `Summary.invalid_values`), `ec`, `fault`, `lapic`, `lid`, `net`, `nic`, `nvme`, `pci`, `ps2`, `sock`, `thermal`, `vector`, `version` (`SEMVER`, `KERNEL`), `wifi`, `xhci`, `build.rs` (asm stubs).
+
+Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel_version`, `parse_package_version`, `release_train`, `fallback_kernel`, `fallback_version`, `stage`, `menu_text`, `create_iso`, `create_usb_image`, `verify_hybrid_image`; `scripts/flash-usb.ps1` — `Lock-And-DismountVolumes`, `Open-RawDisk`, `Invoke-BoundedRecovery`, `Wait-ForDiskReady`.
 
 ## 11. Integration Tests (root `tests/`, 15 files · 194 tests)
 
@@ -455,5 +464,6 @@ Modules: `main`, `boot`, `gdt`, `idt`, `interrupts`, `memory`, `heap`, `framebuf
 - **358 `.rs` files**, **~125.5k non-blank lines** (~136.9k with blank lines): **41 workspace members + 13 standalone crates**.
 - **1,824 tests passed in 100 suites** (unit + integration + doc-tests) by `cargo test --workspace`; 2,011 test attributes counted (`#[test]` 1,941 + `#[tokio::test]` 70) across 232 files.
 - `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: **0 warnings**.
+- Standalone/tooling gates: `aios-kernel` check/clippy (default and `--features limine`), `aios-kernel-run` tests 2/2, PowerShell parser check. A fresh hybrid ISO/IMG rebuild was **not** run here: `xorriso`/Limine binaries are missing and `iso/` is empty — only marker/check logic and existing image inspection were used.
 
 Top crates by non-blank lines: `aios-kernel` 26.5k · `boot/` 13.0k · `aios-console` 9.6k · `aios-tui` 6.1k · `aios-gui` 5.7k · `aios` 5.8k · `aios-autohal` 4.8k · `tests/` 4.3k · `aios-browser` 4.3k.

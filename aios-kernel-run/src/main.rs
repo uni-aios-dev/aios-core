@@ -19,6 +19,10 @@
 //!   AIOS_KERNEL_TARGET_DIR, AIOS_ISO_OUT, AIOS_SKIP_QEMU, AIOS_QEMU_UEFI
 //!   AIOS_KERNEL_FEATURES  comma-separated extra kernel Cargo features
 //!                         (e.g. `limine,ring3-demo` for smoke proofs)
+//!   AIOS_FALLBACK_KERNEL  path to the v2.79 rollback ELF. Required for a
+//!                         dual-kernel image; defaults to
+//!                         `out/aios-kernel-v279.elf` when present.
+//!   AIOS_FALLBACK_VERSION label for the rollback menu entry (default `v2.79`)
 //!   AIOS_QEMU_USB     boot the USB-stick image (`aios-kernel-usb.img`) as USB
 //!                     mass storage instead of the ISO as a CD-ROM
 
@@ -36,6 +40,53 @@ fn repo_root() -> PathBuf {
 
 fn kernel_manifest_dir() -> PathBuf {
     repo_root().join("aios-kernel")
+}
+
+/// Reads the kernel's single source of truth for its release version.
+fn kernel_version() -> String {
+    let manifest = fs::read_to_string(kernel_manifest_dir().join("Cargo.toml"))
+        .expect("failed to read aios-kernel/Cargo.toml");
+    parse_package_version(&manifest).expect("aios-kernel/Cargo.toml has no package version")
+}
+
+fn parse_package_version(manifest: &str) -> Option<String> {
+    let mut in_package = false;
+    for raw in manifest.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("version") {
+            let value = value.trim_start();
+            if let Some(value) = value.strip_prefix('=') {
+                let version = value.trim().trim_matches('"').trim_matches('\'');
+                if !version.is_empty() {
+                    return Some(version.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `2.84.0` -> `v2.84+`: the menu advertises the release train, not a patch.
+fn release_train(semver: &str) -> String {
+    let mut parts = semver.split('.');
+    let major = parts.next().unwrap_or("0");
+    let minor = parts.next().unwrap_or("0");
+    format!("v{major}.{minor}+")
+}
+
+fn fallback_kernel(out_dir: &Path) -> PathBuf {
+    env_path("AIOS_FALLBACK_KERNEL", out_dir.join("aios-kernel-v279.elf"))
+}
+
+fn fallback_version() -> String {
+    env::var("AIOS_FALLBACK_VERSION").unwrap_or_else(|_| "v2.79".to_owned())
 }
 
 fn iso_root() -> PathBuf {
@@ -128,7 +179,7 @@ fn msys_path(path: &Path) -> String {
     }
 }
 
-fn stage(kernel_elf: &Path, staging: &Path) -> std::io::Result<()> {
+fn stage(kernel_elf: &Path, fallback_elf: &Path, staging: &Path) -> std::io::Result<()> {
     if staging.exists() {
         fs::remove_dir_all(staging)?;
     }
@@ -136,6 +187,10 @@ fn stage(kernel_elf: &Path, staging: &Path) -> std::io::Result<()> {
     fs::create_dir_all(staging.join("EFI").join("BOOT"))?;
 
     fs::copy(kernel_elf, staging.join("boot").join("aios-kernel"))?;
+    fs::copy(
+        fallback_elf,
+        staging.join("boot").join("aios-kernel-fallback"),
+    )?;
 
     let limine = limine_dir();
     fs::copy(
@@ -155,20 +210,65 @@ fn stage(kernel_elf: &Path, staging: &Path) -> std::io::Result<()> {
         staging.join("EFI").join("BOOT").join("BOOTX64.EFI"),
     )?;
 
-    let conf = "\
-timeout: 3
-
-/AIOS bare-metal kernel (Limine + GOP)
-    protocol: limine
-    kernel_path: boot():/boot/aios-kernel
-";
+    let conf = menu_text(&release_train(&kernel_version()), &fallback_version());
     fs::write(staging.join("boot").join("limine.conf"), conf)?;
+    Ok(())
+}
+
+fn menu_text(current: &str, rollback: &str) -> String {
+    format!(
+        "timeout: 3\n\
+\n\
+/AIOS kernel {current} (current, Limine + GOP)\n\
+    protocol: limine\n\
+    kernel_path: boot():/boot/aios-kernel\n\
+\n\
+/AIOS kernel {rollback} rollback (Limine + GOP)\n\
+    protocol: limine\n\
+    kernel_path: boot():/boot/aios-kernel-fallback\n"
+    )
+}
+
+/// Checks the isohybrid markers produced by xorriso + `limine bios-install`.
+fn verify_hybrid_image(path: &Path) -> std::io::Result<()> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path)?;
+    let mut head = [0u8; 0x9000];
+    if file.read_exact(&mut head).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "image is too small for an ISO primary volume descriptor",
+        ));
+    }
+    if head[510] != 0x55 || head[511] != 0xAA {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "missing Limine MBR signature 0x55AA",
+        ));
+    }
+    if ![
+        &head[0x8001..0x8006],
+        &head[0x8801..0x8806],
+        &head[0x9001..0x9006],
+    ]
+    .iter()
+    .any(|marker| *marker == b"CD001")
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "missing ISO9660 CD001 volume descriptor",
+        ));
+    }
     Ok(())
 }
 
 fn create_iso(staging: &Path, iso: &Path) -> std::io::Result<()> {
     if let Some(parent) = iso.parent() {
         fs::create_dir_all(parent)?;
+    }
+    if iso.exists() {
+        fs::remove_file(iso)?;
     }
     let status = Command::new(xorriso())
         .args([
@@ -328,24 +428,43 @@ fn run_qemu(qemu: &Path, iso: &Path, usb_img: &Path, out_dir: &Path) {
 
 fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = env_path("AIOS_ISO_OUT", root.join("out"));
+    fs::create_dir_all(&out_dir).expect("failed to create output dir");
+
+    let version = kernel_version();
+    let current = release_train(&version);
+    let rollback = fallback_version();
+    let fallback = fallback_kernel(&out_dir);
+    assert!(
+        fallback.is_file(),
+        "rollback kernel not found: {}. Supply a real v2.79 ELF via AIOS_FALLBACK_KERNEL",
+        fallback.display()
+    );
+    println!(
+        "kernel ELF: current {}, rollback {} ({})",
+        current,
+        rollback,
+        fallback.display()
+    );
+
     let target_dir = env::var_os("AIOS_KERNEL_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("target").join("kernel-target"));
 
     let kernel_elf = build_kernel(&target_dir);
-    println!("kernel ELF: {}", kernel_elf.display());
+    println!("main kernel ELF: {}", kernel_elf.display());
 
-    let out_dir = env_path("AIOS_ISO_OUT", root.join("out"));
-    fs::create_dir_all(&out_dir).expect("failed to create output dir");
     let staging = out_dir.join("kernel-iso");
     let iso = out_dir.join("aios-kernel.iso");
 
-    stage(&kernel_elf, &staging).expect("failed to stage the ISO tree");
+    stage(&kernel_elf, &fallback, &staging).expect("failed to stage the ISO tree");
     create_iso(&staging, &iso).expect("failed to create the ISO");
+    verify_hybrid_image(&iso).expect("generated ISO failed hybrid boot checks");
     println!("bootable ISO: {}", iso.display());
 
     let usb_img = out_dir.join("aios-kernel-usb.img");
     create_usb_image(&iso, &usb_img).expect("failed to create the USB image");
+    verify_hybrid_image(&usb_img).expect("generated USB image failed hybrid boot checks");
     println!("bootable USB image: {}", usb_img.display());
 
     if env::var_os("AIOS_SKIP_QEMU").is_some() {
@@ -356,4 +475,24 @@ fn main() {
     let qemu = find_qemu();
     println!("QEMU: {}", qemu.display());
     run_qemu(&qemu, &iso, &usb_img, &out_dir);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_kernel_version_from_the_package_section_only() {
+        let manifest = "[package]\nname = \"aios-kernel\"\nversion = \"2.84.0\"\n\n[dependencies]\nversion = \"9.9.9\"\n";
+        assert_eq!(parse_package_version(manifest).as_deref(), Some("2.84.0"));
+    }
+
+    #[test]
+    fn menu_advertises_current_and_rollback_entries() {
+        let menu = menu_text(&release_train("2.84.0"), "v2.79");
+        assert!(menu.contains("/AIOS kernel v2.84+ (current, Limine + GOP)"));
+        assert!(menu.contains("/AIOS kernel v2.79 rollback (Limine + GOP)"));
+        assert!(menu.contains("kernel_path: boot():/boot/aios-kernel\n"));
+        assert!(menu.contains("kernel_path: boot():/boot/aios-kernel-fallback\n"));
+    }
 }

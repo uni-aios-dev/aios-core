@@ -1,5 +1,40 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.84.0 post-audit): version and config claims matched implementation
+
+- `aios-kernel/src/version.rs` is now the only source of release strings:
+  `SEMVER` / `KERNEL` come from `env!("CARGO_PKG_VERSION")`, and the boot
+  banner/config line, panic/fatal reports, TUI status/About/`ver`, GUI
+  About/window titles and Files preview all use them. `aios-kernel/Cargo.toml`
+  (2.84.0) is the single source of truth; no stale hardcoded `v2.x.y` strings
+  remain in `aios-kernel/src` except intentional identifiers.
+- `aios-kernel/src/config.rs` assigns `KeyPolicy` to every shipped key: only
+  `blocks.<name>.rights` / `blocks.<name>.fuel` are `Effective`; `system.*`,
+  `boot.*`, `net.*` and unknown keys are `Informational` (parsed, validated and
+  logged with their source, never applied). The log prints
+  `[cfg] key = "value" (layer, effective|informational)` with summary counts,
+  and `Summary.invalid_values` counts invalid `boot.debug` / `net.dhcp` booleans
+  and non-positive `net.mtu` values. Timer/heap/version remain compile-time
+  facts; the stock templates in `boot/assets/aios/config/*` and byte-identical
+  `boot/out` copies were updated.
+- Cross-reference: the older v2.79.0 entries below stay as history. The
+  post-v2.84 audit centralized the version across all surfaces and extended the
+  policy to every shipped key, not just the three keys mentioned there.
+
+## FIXED (v2.84.0 post-audit): `int 0x80` accepted unchecked ring-3 pointers
+
+- `memory.rs` adds `USER_SPACE_LIMIT` (`0x0000_8000_0000_0000`), `user_range()`,
+  `translate_user(virt, len, write)` and `walk_user_leaf()` as the only buffer
+  gate for `int 0x80`: null with `len > 0`, higher-half / non-canonical
+  addresses, `virt + len` wrap, unmapped or supervisor-only pages and writes to
+  read-only pages are all rejected. `PRESENT|USER` is checked at every level
+  (huge pages included) and `WRITABLE` when writing.
+- `syscalls.rs` makes `user_read`/`user_write` return `Option`,
+  `write_user_string` overflow-safe, invalid socket buffers return `u64::MAX`,
+  and validates the full range once. `SYS_GUI` CREATE requests, buffers and
+  titles are validated, and `draw_client()` revalidates on every composite.
+  `memory::translate` remains kernel/driver/DMA-only.
+
 ## FIXED (kernel GUI): idle desktop spun five ring-3 demos
 
 The normal desktop build spawned all five ring-3 demo programs at boot. Their
@@ -367,6 +402,10 @@ EN/RU docs were aligned.
   from the stock config and the `aios-config` sample/tests; the serial log prints
   the effective timer/heap once as compile-time facts, and generic parsing stays
   for keys the kernel really honours (`blocks.<name>.fuel`, `net.dhcp`).
+- Cross-reference: this v2.79 fix was historical. The post-v2.84.0 audit
+  centralized every user-visible version string in `version.rs` and replaced
+  generic parsing with `KeyPolicy` for every shipped key (see the post-audit
+  FIXED entries at the top).
 - Deployed: after a separate explicit confirmation the physical stick now boots
   the v2.79.0 follow-up image `aios-kernel-usb-limine-v279-followup.img`
   (`600E2D2B…F2756`); full read-back SHA-256 and the kernel at LBA 32 were
@@ -470,24 +509,28 @@ EN/RU docs were aligned.
 - The dual-kernel image keeps this layout: the second ELF is placed at ISO
   sector 600 inside the old, already-overwritten `LIMINE_U.BIN` span, so UEFI
   boot stays unavailable. A clean hybrid rebuild is still required to restore
-  both BIOS and UEFI booting with the two-entry menu.
+  both BIOS and UEFI booting with the two-entry menu. Since v2.84.0
+  `aios-kernel-run` can emit that menu from source, but no fresh image was
+  built here (`xorriso.exe` and Limine binaries are missing) and the stick is
+  unchanged.
 
-## LIMITS (v2.84.0): raw flashing depends on a ready Windows USB device
+## FIXED (v2.84.0 post-audit): raw flashing no longer depends on a ready Windows USB device
 
-- `scripts/flash-usb.ps1` opens the target with `FileMode.Write` and
-  `FileShare.None`; on this host that fails even from an elevated process with
-  `UnauthorizedAccessException` when opening `\\.\PhysicalDriveN`. The v2.84
-  flash succeeded through an elevated PowerShell wrapper using `FileMode.Open`,
-  `FileAccess.Write` and `FileShare.ReadWrite` instead.
-- Repeated `diskpart` / `Clear-Disk` experiments left the Kingston stick
-  reported as `Online` but `WriteFile` returned `ERROR_NOT_READY` (21) while
-  reads still worked. `FSCTL_LOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`,
-  `mountvol /e` and `Reset-PhysicalDisk` did not clear the state;
-  `Disable-PnpDevice` followed by `Enable-PnpDevice` on the active
-  `USBSTOR\DISK&VEN_KINGSTON&PROD_DATATRAVELER_3.0&REV_PMAP\...` instance
-  restored raw writes. A physical replug is equivalent.
-- **Status:** workaround recorded; the v2.84 stick boots only in Legacy BIOS
-  because the patched kernel still occupies ISO LBA 32.
+- `scripts/flash-usb.ps1` now locks and dismounts volumes with
+  `FSCTL_LOCK_VOLUME` / `FSCTL_DISMOUNT_VOLUME`, opens `\\.\PhysicalDriveN` with
+  `FileMode.Open` + `FileShare.ReadWrite`, writes 512-byte sector-aligned padded
+  blocks and calls `Flush($true)`.
+- Recovery is bounded: `Update-Disk` and `pnputil /rescan-disks` respect
+  `AIOS_FLASH_RECOVERY_TIMEOUT` (default 30 s), and readiness waits no longer
+  hang on `ERROR_NOT_READY`. Full-image SHA-256 read-back and the MBR `55 AA`
+  marker are verified; an elevated relaunch redirects and replays stdout/stderr.
+- **Status:** the host-side limitation is closed. The earlier
+  `UnauthorizedAccessException` / `ERROR_NOT_READY` workaround via
+  `Disable-PnpDevice` + `Enable-PnpDevice` on the active `USBSTOR` instance is
+  historical (see the v2.84.0 deployment entries).
+- **Still open (physical stick):** this fix does not reflash the current stick
+  or restore UEFI boot. It remains Legacy-BIOS-only until a clean hybrid image
+  (built with `xorriso` + Limine and a real fallback ELF) is written.
 
 ## FIXED (v2.78.0): the Limine/legacy BIOS kernel could not be rebuilt from source
 
@@ -513,6 +556,10 @@ EN/RU docs were aligned.
   physical stick still carries the old 2026-10-06 image. On the Limine path
   `modules` and `kernel_phys/virt/size` are zero — `config::init()` accepts
   zero modules, so configuration is empty but boot is unaffected.
+- v2.84.0 cross-reference: `aios-kernel-run` now stages both ELFs, writes a
+  clean two-entry Limine menu and checks ISO/USB markers, but `xorriso.exe` and
+  Limine binaries are still absent here, so no fresh ISO/IMG was built and the
+  stick's state is unchanged.
 
 ## FIXED (v2.76.1): `aios-install` could not write to a physical disk on Windows
 
@@ -537,9 +584,10 @@ EN/RU docs were aligned.
 - **Symptom:** `scripts/flash-usb.ps1` writes any image to a physical disk and
   only checks SHA-256 plus the `55 AA` MBR marker afterwards. A truncated or
   non-AIOS GPT image passes the marker check and leaves an unbootable disk.
-- **Cause:** the script predates the native UEFI-only image (GPT + ESP) and was
-  written for the hybrid Limine ISO; it neither parses the GPT/ESP structure
-  nor compares the written bytes with the source.
+- **Cause:** the script targets the hybrid Limine ISO rather than the native
+  UEFI-only GPT/ESP layout: it does not parse GPT/ESP. Since v2.84.0 it does
+  verify the full image with a SHA-256 read-back (and locks/dismounts volumes),
+  but that still is not GPT/ESP validation.
 - **Workaround:** use `boot/aios-install` for the native image. It validates the
   GPT/ESP layout before writing, reads every chunk back and re-verifies the
   target prefix. Writing is opt-in (`--write --yes`), and a target larger than

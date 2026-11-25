@@ -9,7 +9,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// Lives in PML4 slot 510 (below the kernel image at slot 511 and above the
 /// direct-map window in slot 256), so it never collides with the direct map.
 pub const HEAP_START: u64 = 0xFFFF_FF00_0000_0000;
-/// Heap size: 4 MiB (v2.38.33, was 2 MiB). The freelist now coalesces every
+/// Heap size: 4 MiB (earlier release, was 2 MiB). The freelist now coalesces every
 /// adjacent pair on free (see [`FreeListAllocator::dealloc`]), but the larger
 /// heap buys headroom for long GUI sessions where transient `format!` labels
 /// of many sizes interleave with held buffers.
@@ -189,7 +189,7 @@ unsafe impl GlobalAlloc for FreeListAllocator {
         // patterns (alloc A, alloc B, free A, free B) accumulated
         // adjacent-but-unmerged fragments until a large allocation failed even
         // though the heap was mostly free — the long-run OOM panic seen on
-        // real hardware (v2.38.33).
+        // real hardware (earlier release).
         let mut prev: *mut BlockHeader = ptr::null_mut();
         let mut cur = free_head.read();
         while !cur.is_null() && (cur as usize) < (block as usize) {
@@ -217,7 +217,7 @@ unsafe impl GlobalAlloc for FreeListAllocator {
     }
 }
 
-/// Boot self-test for freelist coalescing (v2.38.33): carves most of the heap
+/// Boot self-test for freelist coalescing (earlier release): carves most of the heap
 /// into many same-size blocks, frees them in allocation order — the exact
 /// pattern that used to leave adjacent-but-unmerged fragments — and then
 /// demands one large contiguous block back. Uses `try_reserve_exact`, so a

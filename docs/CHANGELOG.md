@@ -1,5 +1,63 @@
 # AIOS Development Log
 
+## v2.84.0 - Post-audit hardening (2026-11-26)
+
+### Added
+- `aios-kernel/src/version.rs` defines `SEMVER` and `KERNEL` from
+  `env!("CARGO_PKG_VERSION")`; the boot banner/config line, panic/fatal reports,
+  TUI status/About/`ver`, GUI About/window titles and Files preview all read
+  those constants. `aios-kernel/Cargo.toml` (`2.84.0`) is the single source of
+  truth; no stale hardcoded `v2.x.y` strings remain in `aios-kernel/src` except
+  intentional identifiers.
+- `aios-kernel/src/config.rs` adds `KeyPolicy { Effective, Informational }`,
+  `policy(key)`, `validate_informational()` and `Summary.invalid_values`;
+  `[cfg] key = "value" (layer, effective|informational)` plus summary counts now
+  state whether a shipped key is applied. Only `blocks.<name>.rights` /
+  `blocks.<name>.fuel` are effective; `system.*`, `boot.*`, `net.*` and unknown
+  keys are parsed, validated and logged with their source but not applied.
+  `boot.debug` / `net.dhcp` booleans and `net.mtu` positive integers are
+  checked, with warnings and counts for invalid values; timer/heap/version stay
+  compile-time facts. Stock templates in `boot/assets/aios/config/*` were
+  updated and `boot/out` copies are byte-identical.
+- `aios-kernel/src/memory.rs` adds `USER_SPACE_LIMIT` (`0x0000_8000_0000_0000`),
+  `user_range()`, `translate_user(virt, len, write)` and `walk_user_leaf()` as
+  the only `int 0x80` buffer gate: null with `len > 0`, higher-half /
+  non-canonical addresses and `virt + len` wrap are rejected, as are unmapped,
+  supervisor-only or read-only pages on writes. `PRESENT|USER` is checked at
+  every level (huge pages included) and `WRITABLE` when writing. `syscalls.rs`
+  makes `user_read`/`user_write` return `Option`, `write_user_string`
+  overflow-safe, invalid socket buffers return `u64::MAX`, and validates the
+  full range once; `SYS_GUI` CREATE requests/buffers/titles are validated and
+  `draw_client()` revalidates every composite. `memory::translate` stays for
+  kernel/driver/DMA use only.
+- `scripts/flash-usb.ps1` now locks and dismounts volumes
+  (`FSCTL_LOCK_VOLUME` / `FSCTL_DISMOUNT_VOLUME`), opens `\\.\PhysicalDriveN`
+  with `FileMode.Open` + `FileShare.ReadWrite`, writes 512-byte sector-aligned
+  padded blocks, calls `Flush($true)`, bounds `Update-Disk` and
+  `pnputil /rescan-disks` with `AIOS_FLASH_RECOVERY_TIMEOUT` (default 30 s),
+  waits for readiness without hanging on `ERROR_NOT_READY`, and verifies a
+  full-image SHA-256 read-back plus the MBR `55 AA` marker. An elevated relaunch
+  redirects and replays stdout/stderr.
+- `aios-kernel-run/src/main.rs` parses `[package] version` from
+  `aios-kernel/Cargo.toml`, derives the current menu label `v<major>.<minor>+`
+  (`v2.84+`), stages current + fallback ELFs, writes a two-entry Limine menu,
+  deletes stale ISOs and verifies MBR `55 AA` plus ISO9660 `CD001` on both the
+  ISO and USB IMG. The fallback defaults to `out/aios-kernel-v279.elf` when
+  present; clean clones must supply a real ELF via `AIOS_FALLBACK_KERNEL`, and
+  `AIOS_FALLBACK_VERSION` defaults to `v2.79`. No fresh hybrid rebuild was run
+  here: `xorriso.exe` and Limine binaries are missing, and the current physical
+  stick remains Legacy-BIOS-only until reflashed with a clean image.
+
+### Verification
+- `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D
+  warnings`; `cargo test --workspace` (1,824 passed / 0 failed in 100 suites);
+  standalone `aios-kernel` check/clippy with default features and `--features
+  limine`; `aios-kernel-run` tests 2/2.
+- `cargo test --manifest-path aios-kernel/Cargo.toml` fails with the duplicate
+  `panic_impl` lang item by design for the freestanding `no_std` binary; it is
+  not a required gate.
+- PowerShell parser check for `scripts/flash-usb.ps1` passed.
+
 ## v2.84.0 - Network settings, host link checks and NIC provisioning (2026-11-25)
 
 ### Added
@@ -66,7 +124,9 @@
   `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`) and
   patched it into the known-good dual-kernel image at ISO LBA 32, updating the
   `AIOS_KER.;1` directory record and the menu label to
-  `AIOS Desktop v2.84 (native kernel)`. The resulting
+  `AIOS Desktop v2.84 (native kernel)`. That label describes the historical
+  hand-patched image; the clean builder now derives `v2.84+` from
+  `aios-kernel/Cargo.toml` (see the post-audit section above). The resulting
   `aios-kernel-usb-limine-v284.img` is 4,683,776 bytes with SHA-256
   `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`; the
   v2.79 fallback kernel at LBA 600 is unchanged.
@@ -84,7 +144,10 @@
   UEFI stage.
 - Early flash attempts hit a stale Windows USB device state (`ERROR_NOT_READY`
   on `WriteFile`); disabling and re-enabling the active `USBSTOR` device
-  instance restored raw write access. The workaround is documented in `BUGS`.
+  instance restored raw write access. That was the historical incident: the
+  post-audit `scripts/flash-usb.ps1` now locks/dismounts volumes, bounds the
+  recovery steps and verifies the full image (see post-audit section and
+  `BUGS`).
 
 ## v2.83.0 - Real in-kernel desktop apps and input fixes (2026-11-24)
 

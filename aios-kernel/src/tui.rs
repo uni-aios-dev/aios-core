@@ -38,11 +38,6 @@ pub fn panel_rows() -> usize {
     total.saturating_sub(1 + console::rows()).max(4)
 }
 
-/// Version banner shown on the About tab, the status bar, the `ver` shell
-/// command and the GUI About window. Derived from `Cargo.toml` so the kernel
-/// cannot disagree with the release version.
-pub(crate) const VERSION: &str = concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"));
-
 /// Tab labels, mirroring the host AIOS TUI numbering (tabs 1..=7).
 const TABS: [&str; 7] = ["System", "Sched", "USB", "IPC", "Storage", "Shell", "About"];
 
@@ -254,7 +249,7 @@ fn execute_kernel_adapter(cmd: &str) -> Option<Vec<String>> {
     match cmd {
         "help" => Some(KERNEL_HELP.iter().map(|line| line.to_string()).collect()),
         "tabs" | "gui" | "tui" => None,
-        "ver" => Some(kernel_version_text(VERSION)),
+        "ver" => Some(kernel_version_text(crate::version::KERNEL)),
         "clear" => {
             shell_clear();
             Some(Vec::new())
@@ -351,7 +346,7 @@ fn run_command_legacy(cmd: &str) -> Vec<String> {
                 ),
             ]
         }
-        "ver" => vec![VERSION.to_string()],
+        "ver" => vec![crate::version::KERNEL.to_string()],
         "clear" => Vec::new(),
         "gui" => {
             crate::gui::enter();
@@ -597,7 +592,7 @@ pub(crate) fn cmd_http(rest: &str) -> Vec<String> {
 /// `socktest` — loopback self-test of the kernel socket layer over the bound
 /// IP: a two-way UDP exchange, broadcast (`255.255.255.255`) and multicast
 /// (class D) fan-outs, a complete TCP `listen`/`connect`/`accept`/echo/close
-/// lifecycle, a segmented 3000-byte bulk transfer, and (v2.57.0) a
+/// lifecycle, a segmented 3000-byte bulk transfer, and (earlier release) a
 /// congestion-control/window-scaling check that asserts the client's `cwnd`
 /// (one MSS per completed segment) and the fixed `wscale = 4` shift. Prints
 /// one PASS/FAIL line per phase.
@@ -663,7 +658,7 @@ pub(crate) fn cmd_socktest() -> Vec<String> {
         lines.push("udp: socket table full - FAIL".to_string());
     }
 
-    // -- UDP broadcast + multicast fan-out (v2.56.0) --
+    // -- UDP broadcast + multicast fan-out (earlier release) --
     const BC_PORT: u16 = 40_003;
     const MC_PORT: u16 = 40_004;
     const MC_GROUP: [u8; 4] = [239, 1, 2, 3];
@@ -830,7 +825,7 @@ pub(crate) fn cmd_socktest() -> Vec<String> {
                 }
             ));
         }
-        // -- TCP bulk transfer (segmentation, v2.53.0) --
+        // -- TCP bulk transfer (segmentation, earlier release) --
         const BULK: usize = 3000;
         let mut big = [0u8; BULK];
         let mut rb = [0u8; BULK];
@@ -891,7 +886,7 @@ pub(crate) fn cmd_socktest() -> Vec<String> {
         crate::sock::close(c);
         crate::sock::close(s);
 
-        // -- TCP congestion / window scaling (v2.57.0) --
+        // -- TCP congestion / window scaling (earlier release) --
         let mss = crate::sock::tcp_mss() as u32;
         if let Some(info) = crate::sock::cc_info(c) {
             // After one data ACK and one segment received/ack'ed in a full
@@ -991,7 +986,7 @@ static PIN_SINCE: AtomicU64 = AtomicU64::new(0);
 /// the cursor away from the pinned edge.
 static PIN_LOCK: AtomicBool = AtomicBool::new(false);
 
-/// Runaway-pointer gate (v2.38.33), TUI twin of [`crate::gui::input_allowed`]:
+/// Runaway-pointer gate (earlier release), TUI twin of [`crate::gui::input_allowed`]:
 /// suppresses a runaway pointer stream (desynced touchpad / misbehaving HID
 /// device) that would otherwise pin the arrow at a screen edge and repaint the
 /// console for every garbage packet. Logs one line per state transition.
@@ -1201,7 +1196,7 @@ fn draw_status(fb: &Framebuffer) {
     }
     let helm = format!(
         "{}  tab {}/7  tick={}  mode={}  pit={:04x}",
-        VERSION,
+        crate::version::KERNEL,
         ACTIVE_TAB.load(Ordering::Relaxed) + 1,
         ticks,
         tick_mode(),
@@ -1283,7 +1278,7 @@ fn render_system(fb: &Framebuffer, y: &mut usize, max_px: usize) {
         fb,
         y,
         0,
-        &format!("AIOS MICROKERNEL - {}", VERSION),
+        &format!("AIOS MICROKERNEL - {}", crate::version::KERNEL),
         ACCENT,
         max_px,
     );
@@ -1507,7 +1502,7 @@ fn render_shell(fb: &Framebuffer, y: &mut usize, max_px: usize) {
 }
 
 fn render_about(fb: &Framebuffer, y: &mut usize, max_px: usize) {
-    line(fb, y, 0, VERSION, ACCENT, max_px);
+    line(fb, y, 0, crate::version::KERNEL, ACCENT, max_px);
     line(
         fb,
         y,

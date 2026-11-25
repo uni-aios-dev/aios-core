@@ -1416,10 +1416,11 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ## Testing Architecture
 
-- **Unit tests**: 1354 tests embedded in source files under `#[cfg(test)] mod tests`
-- **Integration tests**: 217 tests across the workspace `tests/` targets (integration, stress, chaos, proptest)
+- **Unit tests**: 1354 tests embedded in source files under `#[cfg(test)] mod tests` (v2.79.0 release baseline)
+- **Integration tests**: 217 tests across the workspace `tests/` targets (integration, stress, chaos, proptest) (v2.79.0 release baseline)
 - **Doc tests**: 1 test in crate documentation
-- **Total**: 1572 tests, all passing, zero clippy warnings
+- **Baseline total**: 1572 tests at v2.79.0, all passing, zero clippy warnings
+- **Current (v2.84.0 re-verification)**: `cargo test --workspace` — **1824 passed / 0 failed in 100 suites**; `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` are clean (see `docs/AUDIT.md` §2)
 
 **Speed test thresholds**:
 - Debug mode: < 50us (unoptimized)
@@ -1753,7 +1754,7 @@ Shared system-control plane consumed by the TUI, GUI, bridge and integration tes
 - `power_mgr` - battery/thermal sampling (`Mock` or host sysfs) + `ThermalGovernor` hysteresis 80/70 C that offloads the LLM to cloud (`Groq`) when hot and returns it to local when cool.
 - `keyring` - `KeyringVault`: AES-256-GCM secrets in redb, canary-checked master password, PBKDF2-HMAC-SHA256 120k rounds, TEE-bound sealing key, master re-key.
 
-Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet). Since v2.46.0 the gate also serves `SYS_PING` (id 7, the cooperative hang-watchdog heartbeat) and `SYS_FAULT_POLL` (id 8, which drains the kernel fault event ring for a ring-3 monitor — the freestanding twin of the host `FaultReport` IPC). Since v2.49.0 it serves the `SYS_SOCK_*` family (ids 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — the last two from v2.50.0 — and `SYS_SOCK_ADDR`, v2.51.0, which hands ring-3 its own bound IPv4), the ring-3 face of the kernel socket layer; every buffer argument is copied byte-by-byte through `memory::translate` and each call is gated on socket ownership (`sock::owner(fd) == pid`). Since v2.51.0 the fifth ring-3 demo task (program E) exercises the whole family from userspace over loopback — a UDP ping-pong plus, since v2.52.0, a TCP `listen`/`connect`/`accept`/echo round per loop (`sock-e ok` / `sock-t ok`; see the `user` bullet).
+Kernel v2.29.0 adds milestones 3 and 4 to the bare-metal track: `sched.rs` - PIT-tick round-robin scheduler (switch every TIMER_HZ/4 ticks) doing frame-copy context switches inside the timer ISR, plus a ring-0 worker; `user.rs` - two ring-3 demo programs (raw machine-code loops over `int 0x80`) mapped user-mode at CODE_BASE 0x40000000 / STACK_TOP 0x7F000000; `ipc.rs` - per-pid mailboxes (MAX_PID=4 x MAILBOX_DEPTH=16) behind the DPL-3 `int 0x80` gate (IDT flags 0xEE) with a packet header mirroring `aios_core::ipc_protocol`; runtime proof lines `[stats] switches/sent/recv` every 5 s, asserted by `scripts/qemu-smoke.ps1`. Since v2.38.11 the `SYS_SEND` destination is the target's **scheduler slot** (worker = 1, tasks = 2/3/4 in spawn order, plus the GUI client = 5 since v2.38.25) — programs send to peer-slot constants `SLOT_A`/`SLOT_B`, not `PID_*`, and the mailbox counters/`mailbox_len` feed the on-screen dashboard. The gate grew to six calls (`SYS_SEND`/`SYS_RECV`/`SYS_WRITE`/`SYS_GETPID`/`SYS_SLEEP`/`SYS_GUI`), `MAX_TASKS`/`MAX_PID` went 5 → 6 in v2.38.25 for the fourth ring-3 demo task, and `SYS_GUI` (id 6) is the window-server entry point (CREATE/PRESENT/GET_EVENT, see the `gui` bullet). Since v2.46.0 the gate also serves `SYS_PING` (id 7, the cooperative hang-watchdog heartbeat) and `SYS_FAULT_POLL` (id 8, which drains the kernel fault event ring for a ring-3 monitor — the freestanding twin of the host `FaultReport` IPC). Since v2.49.0 it serves the `SYS_SOCK_*` family (ids 9–18: `SYS_SOCKET`/`BIND`/`CONNECT`/`SEND`/`RECV`/`CLOSE`/`STATUS`/`LISTEN`/`ACCEPT` — the last two from v2.50.0 — and `SYS_SOCK_ADDR`, v2.51.0, which hands ring-3 its own bound IPv4), the ring-3 face of the kernel socket layer; every buffer argument is validated across its full range through `memory::translate_user` (the only `int 0x80` user-pointer gate) before being copied byte-by-byte by `user_read`/`user_write`, invalid buffers return `u64::MAX`, and each call is gated on socket ownership (`sock::owner(fd) == pid`). Since v2.51.0 the fifth ring-3 demo task (program E) exercises the whole family from userspace over loopback — a UDP ping-pong plus, since v2.52.0, a TCP `listen`/`connect`/`accept`/echo round per loop (`sock-e ok` / `sock-t ok`; see the `user` bullet).
 ## Native UEFI Boot Chain (`aios-boot`, `aios-bootinfo`, `aios-config`, `aios-wasmhost`, `aios-easylang`, `aios-image`, `aios-bootstore`, `aios-storectl`, `aios-install`, `aios-sbctl`) — v2.76.0 (Secure Boot since v2.79.0)
 
 AIOS boots on bare metal without Linux, Windows or a third-party boot loader:
@@ -1850,16 +1851,26 @@ no BIOS/El Torito path in v1).
   `MODULE_CONFIG`, and every `\aios\blocks\*.wasm` as `MODULE_BLOCK`. The
   kernel's `config` module (`aios-kernel/src/config.rs`) parses each layer in
   place through the HHDM, logs `[cfg] layer '<name>' = N key(s)`, every
-  `key = "value" (layer)` pair and any duplicate key, and resolves a lookup
-  last-to-first, so a drop-in such as `config/net.conf` overrides the base
-  `system.conf` without editing it. Only live keys are shipped: `system.version`,
-  `scheduler.tick_hz` and `memory.heap_min_kib` were removed in v2.79.0 because
-  the release version comes from `env!("CARGO_PKG_VERSION")` and
-  `interrupts::TIMER_HZ` / `heap::HEAP_SIZE` are compile-time constants. The
-  boot log still prints the effective timer/heap values as compile-time facts.
-  Generic keys remain useful for real runtime settings such as
-  `blocks.<name>.fuel` and `net.dhcp`; the stock image ships `net.conf`
-  unlisted in `boot.conf` as the drop-in proof.
+  `key = "value" (layer, effective|informational)` pair and any duplicate key,
+  and resolves a lookup last-to-first, so a drop-in such as `config/net.conf`
+  overrides the base `system.conf` without editing it. `KeyPolicy` and
+  `policy(key)` declare the policy: only `blocks.<name>.rights` and
+  `blocks.<name>.fuel` are `Effective` (consumed by the WASM host);
+  `system.*`, `boot.*`, `net.*` and unknown keys are `Informational` — parsed,
+  validated and logged with their source, never applied as runtime knobs.
+  `validate_informational()` checks `boot.debug`/`net.dhcp` as booleans and
+  `net.mtu` as a positive integer and warns about invalid values; their count is
+  reported in the boot summary as `Summary.invalid_values` alongside the layer
+  and entry counts. Timer, heap and version deliberately have no config keys:
+  `interrupts::TIMER_HZ`, `heap::HEAP_SIZE` and `aios-kernel/src/version.rs`
+  (`SEMVER` = `env!("CARGO_PKG_VERSION")`, `KERNEL` =
+  `concat!("AIOS kernel v", env!("CARGO_PKG_VERSION"))`) are compile-time facts
+  from `aios-kernel/Cargo.toml`, the single source of truth; the boot log prints
+  the effective timer/heap values and the config line with those constants.
+  The shipped templates in `boot/assets/aios/config/{system,net,blocks}.conf`
+  carry the same policy comments, with identical copies under
+  `boot/out/assets/aios/config/` (matching SHA-256); `net.conf` and
+  `blocks.conf` are intentionally unlisted in `boot.conf` as the drop-in proof.
 - `aios-wasmhost` (`boot/aios-wasmhost`, `no_std` + `alloc`, v2.71.0, M3.1):
   the sandboxed WebAssembly host for `MODULE_BLOCK`. `module` parses and
   statically validates the binary in place (no copy): `i32`-only signatures with
@@ -2079,7 +2090,10 @@ match on the bound local port and require the reply to come from the connected p
 - `interrupts` — `aios_interrupt_common` C shim (`aios_handle_interrupt`) dispatches by vector: fatal faults (0/6/8/13/14) print and halt, IRQ range `0x20..=0x2F` is PIC-EOI'd (IRQ0/PIT bumps `TICKS` at `TIMER_HZ` (1000 Hz since v2.78.2), IRQ1/keyboard `key_push`es the raw byte — since v2.38.36 into a 256-slot lock-free ring `KEY_FIFO` with atomic HEAD/TAIL instead of the old single `LAST_SCANCODE` slot, so a 1–2 s idle-loop stall can no longer overwrite un-consumed make/break codes; `ps2::feed_key` shares the same FIFO), and the dedicated LAPIC vector `0x90` (v2.38.12) bumps `TICKS`, draws the timer bar, LAPIC-EOIs and feeds `sched::tick` like the PIT path (its first firing logs the saved frame `cs/ss/rip` once). Since v2.38.20 the vector-13 arm first checks `thermal::probe_active()` and hands a probing RDMSR fault to `thermal::on_probe_gp` (rewrites the frame RIP to `_aios_probe_rdmsr_fault`) instead of halting. `init_pic` remaps the 8259 PIC to `0x20`/`0x28` and masks all but IRQ0/IRQ1; `init_pit` (mode 2, rate generator, since v2.68.3) programs channel 0 for `TIMER_HZ`. `set_pit_masked(true)` masks PIT IRQ0 once the LAPIC timer is live, keeping a single hardware tick source. `pit_count`/`delay_ms`/`wait_for_irq32` drive the same countdown directly (no IRQ involved) for the software-tick fallback.
 - `lapic` — (v2.38.12) Local APIC timer driver, the primary hardware tick source on any board: prefers x2APIC (IA32_APIC_BASE + the extended MSR range), falls back to xAPIC MMIO mapped via `memory::map_mmio`, calibrates `bus_hz` against the PIT countdown (`bus_hz = lapic_delta * 1_193_182 / pit_delta`, reload-aware via `pit_elapsed` since v2.68.3) and arms a periodic `TIMER_HZ` tick on vector `0x90` (1000 Hz since v2.78.2). `active()` feeds the dashboard mode (`HW-LAPIC`). Works with no 8259 PIC at all.
 - `sched` — tick-driven round-robin over `MAX_TASKS = 7` trap frames (slot 0 = idle, worker = 1, five ring-3 demos in slots 2..6). Ring-3 tasks are preemptive (switched at any hardware timer IRQ — PIT or LAPIC); ring-0 tasks switch only cooperatively via `yield_kernel` (`int 0xfa`), guarded by the `hw_tick` predicate which also covers vector `0x90`. Before v2.38.12, boards whose legacy PIC never delivered IRQ0 (UEFI IO-APIC routing) had **no preemption interrupts** — a ring-3 task that never syscalls yielded the tick economy to nobody — so demo programs keep sleeping (`SYS_SLEEP`) forever and must never end in a busy loop; the LAPIC timer restores preemption on those boards. `idle_loop` still detects no-hardware-ticks (`IRQ32_SEEN == false`) and synthesizes the `TIMER_HZ` cadence by polling the PIT countdown. Since v2.38.20 `schedule()` also applies a thermal gate: while `thermal::critical()` is set (real DTS readings only since v2.68.4) it skips ring-3 tasks (`frame.cs == USER_CS`), so demo tasks pause on a hot die while kernel and idle tasks still run and the TUI keeps refreshing. Since v2.45.3 the outgoing-context refresh also drives the **hang watchdog**, made progress-aware in v2.46.0: per-slot `STALL_SINCE`/`STALL_RIP` track when each ring-3 task's saved `rip` last changed, and per-slot `LAST_ACTIVITY` (bumped by every `int 0x80` through `sched::note_activity`, also the `SYS_PING` heartbeat) tracks its last syscall. A task that has **both** an unchanged `rip` **and** no syscall since the stall anchor for `HANG_WATCHDOG_TICKS` (10 s) is handed to `fault::record_hang` and frozen — a genuine infinite spinner is caught without a CPU exception, while bounded buffer-fill loops (which move their `rip`) and syscall-busy tasks never false-positive. `task_snapshot(pid)` exposes a task's saved frame (sealed `TaskSnapshot`) for the Resume integrity gate.
-  - `memory` — paging core over the Limine HHDM (`physical_offset = hhdm.offset`). `translate` walks the active page tables (PML4/PDPT/PD/PT, huge pages) reading physical memory through the HHDM; `map_page`/`unmap_page` edit tables and allocate page-table frames on demand, flushing the TLB with `invlpg`; `init` builds a bump frame allocator over the Limine `MEMMAP_USABLE` regions supplied as `MemRegion { start, end }`; `selftest` maps a scratch page, writes/reads a pattern and verifies `translate` before and after unmap. `verify_region(virt, bytes)` (v2.38.13) walks the live tables and reports a `RegionCheck { pages_total, pages_present, pages_writable }`, counting huge-page leaves per 4 KiB sub-page with the leaf's own flags — the boot path uses it to prove the whole GOP VRAM range is mapped. `map_mmio(phys, size)` maps device BAR pages into a dedicated window at `0xffffff00_2000_0000` (PML4 slot 510) — the HHDM covers RAM only; `physical_to_virtual(phys)` returns the HHDM alias used for DMA buffers.
+  - `memory` — paging core over the Limine HHDM (`physical_offset = hhdm.offset`). `translate` walks the active page tables (PML4/PDPT/PD/PT, huge pages) reading physical memory through the HHDM; `map_page`/`unmap_page` edit tables and allocate page-table frames on demand, flushing the TLB with `invlpg`; `init` builds a bump frame allocator over the Limine `MEMMAP_USABLE` regions supplied as `MemRegion { start, end }`; `selftest` maps a scratch page, writes/reads a pattern and verifies `translate` before and after unmap. `verify_region(virt, bytes)` (v2.38.13) walks the live tables and reports a `RegionCheck { pages_total, pages_present, pages_writable }`, counting huge-page leaves per 4 KiB sub-page with the leaf's own flags — the boot path uses it to prove the whole GOP VRAM range is mapped. `map_mmio(phys, size)` maps device BAR pages into a dedicated window at `0xffffff00_2000_0000` (PML4 slot 510) — the HHDM covers RAM only; `physical_to_virtual(phys)` returns the HHDM alias used for DMA buffers. Ring-3 syscall buffers use a separate gate: `USER_SPACE_LIMIT` and `user_range(virt, len)` reject null (for non-zero lengths), higher-half/canonical violations and `virt + len` wrap, while `translate_user(virt, len, write)` walks every touched page with `walk_user_leaf()` and requires `PRESENT`/`USER` at PML4/PDPT/PD/leaf (plus `WRITABLE` on writes, including huge pages). `translate` itself stays for kernel/driver/DMA addresses only.
+  `user_read`/`user_write` return `Option` and never dereference a rejected range;
+  `write_user_string` validates every byte and stops safely at `SYS_STR_CAP` or
+  on `addr + 1` overflow.
   - `heap` — 4 MiB kernel heap (`HEAP_START = 0xffff_ff00_0000_0000`, `HEAP_SIZE = 4 MiB`) mapped page-by-page by `memory::map_page`; `#[global_allocator]` free-list allocator — first-fit over an *address-sorted* free list: `alloc` splits with the remainder left at its original address (order survives), `dealloc` inserts in place and coalesces with **both** adjacent neighbours (the old list-head-only merge stranded adjacent fragments and caused long-run OOM), spin-lock guarded; `init_heap` sets up the single free block, `test_heap` allocates `Vec`/`String`/`Box` and stress-cycles 200 strings, `fragmentation_selftest` (v2.38.33, run from `main` right after `test_heap`) carves 24 × 96 KiB blocks, frees them in allocation order and re-acquires 1.5 MiB contiguously via `try_reserve_exact`, logging `heap: fragmentation self-test ok` (smoke-grepped) or `FAILED`. The GUI backbuffer sits at `HEAP_START + 4 MiB` — abutting but page-disjoint.
 - `fault` — (v2.45.0, extended v2.45.1/2/3/4/2.46.0) Ring-0 fault interceptor, the
   kernel twin of the host `run_isolated`. `intercept(frame, kind)` is called from
@@ -2198,7 +2212,7 @@ match on the bound local port and require the reply to come from the connected p
    Enter (`0x1C`) are forwarded to `gui::handle_ext_scancode()` for Start
    navigation (see `ps2`/`main`/`xhci`).
    System window reuses `tui::tick_mode()`/`lid_state()`
-   and `VERSION`.
+   and `version::KERNEL`.
     Since v2.82.0 the five ring-3 demo tasks are **off by default** in the
     desktop build: `user::start_demos()` is idempotent and spawns them only when
     the Start entry `Пуск → Ring-3 демо` is activated, or at boot when the
@@ -2211,9 +2225,11 @@ match on the bound local port and require the reply to come from the connected p
      Since v2.38.25 the window system is open to ring-3: `syscalls.rs` routes
     `SYS_GUI` (id 6) to `gui::client_syscall`, which dispatches on `rdi` —
     CREATE (`rdi = 0`, `rsi` → 16-byte `CreateReq { w, h, buf, title }` of user
-    VAs) validates every pointer through `memory::translate`, caps sizes
-    (8..=512 px, ≤ 512×512×4 bytes), copies the NUL-terminated title (≤ 24
-    bytes) and registers a `ClientWin` in the `CLIENTS` registry
+    VAs) validates the request, the full buffer surface and every title byte
+    through `memory::translate_user` — the only `int 0x80` user-pointer gate,
+    rejecting kernel addresses, overflow and non-user mappings with `u64::MAX` —
+    caps sizes (8..=512 px, ≤ 512×512×4 bytes), copies the NUL-terminated title
+    (≤ 24 bytes) and registers a `ClientWin` in the `CLIENTS` registry
     (`MAX_CLIENTS = 4`); PRESENT (`rdi = 1`) re-damages the
     client's `WinKind::Client(id)` window (re-spawning it via `spawn_client` if
     it was closed, so `leave()` never kills a live client); GET_EVENT
@@ -2224,7 +2240,11 @@ match on the bound local port and require the reply to come from the connected p
     instead of the typed-text note, `dispatch_click` posts body-relative
     clicks before the z-order shuffle (addressed by client id, so
     `bring_to_front`'s slot shift cannot orphan them), and `raise_clients()`
-    focuses the frontmost client so input flows immediately. Rendering composites
+    focuses the frontmost client so input flows immediately. Because a client can
+    unmap or re-purpose its buffer after CREATE, `draw_client()` re-validates the
+    whole surface through `translate_user` (read-only) on **every** composite and
+    skips the blit if any page fails, instead of dereferencing a stale pointer.
+    Rendering composites
     the client's dense pitch-aware buffer through `Framebuffer::blit_at` below
     the title bar, or — since v2.38.27, once the window has been resized —
     through the nearest-neighbour `Framebuffer::blit_scaled`, so the client
@@ -2420,34 +2440,43 @@ match on the bound local port and require the reply to come from the connected p
     crate is legacy reference code and is never launched from the kernel or
     either host TUI.
 - `main` — reads the Limine framebuffer/rsdp/hhdm responses, runs the framebuffer read-back self-check, filters the memory map into `[MemRegion; 64]`, then initializes memory + heap, GDT/TSS (the GDT reload of CS/SS), IDT, PIC and PIT, brings up the LAPIC timer (`lapic::init()`) and masks PIT IRQ0 when it is live, `sti`, prints an on-screen `[probe] irq32_seen/ticks delta` liveness readout, enumerates the PCI bus and brings up the AHCI and NVMe storage drivers (after `sti`, so faults are handled), schedules the kernel worker and, since v2.82.0, only starts the five ring-3 tasks when the `ring3-demo` feature is on (otherwise they wait for `Пуск → Ring-3 демо`); the tasks are the four IPC/GUI demos plus, since v2.51.0, the socket ping-pong client. It declares the atomic driver-status statics `G_AHCI`/`G_NVME`/`G_XHCI` (stamped by each driver's init), and enters `idle_loop` where the heartbeat square and `gui::render()` (or `tui::render()` after the desktop is left) are driven; since v2.81.0 `idle_loop()` calls `gui::enter()` at boot. Keys and mouse reports are routed to the screen owner: `gui::handle_scancode`/`gui::on_mouse` when `gui::active()`, otherwise `tui::*`. Keyboard bytes come from the 256-slot FIFO drained with `while let Some(sc) = key_pop()` at the top of each iteration (v2.38.36 — extended/shift filtering happens on the drained stream, so a stalled loop no longer loses burst input to the old single-slot overwrite), and on a PS/2 button edge the band first flushes every pending `mouse_dx`/`mouse_dy` (up to 64 `drain_axis` steps) before calling `on_mouse`, so a press is dispatched at the pointer's settled position rather than mid-backlog (v2.38.36, the missed-click fix). Mouse deltas are drained **every idle-loop iteration** — both bands read `ps2::mouse_dx`/`mouse_dy` and `xhci::take_mouse_delta` unconditionally, so the 256 px clamp's carry-over residue is applied even when no new report arrived, while packets that arrived while the loop was elsewhere accumulate instead of overwriting each other (v2.38.30) — and since v2.38.38 a latched press edge (`take_button_edges()` in both bands) or a button-state change (`btn_changed = seq_changed && buttons != last`) is delivered through the new `deliver_pointer`, which replays up to three states (stale release → press carrying dx/dy → final release) so a press+release pair coalesced between two loop iterations still reaches `gui::on_mouse` (BUGS v2.38.38); the per-application clamp itself lives in the drivers (`MOUSE_MAX_STEP`, v2.38.35). Before anything is logged or rendered the loop calls the screen owner's `gui::input_allowed`/`tui::input_allowed` (v2.38.33 runaway gate): 60 consecutive packets pushing an already-clamped cursor further into an edge suppress the pointer input until a moving packet pushes away, and movement itself is aggregated into at most one serial line per band per second (`MoveLog`, `USB_MOVE`/`PS2_MOVE` statics — `[serial] usb mouse +N pkts dx=… dy=…`); button changes keep their per-report lines. It logs the Limine handoff selectors (`boot selectors cs/ss/ds`) and the chosen tick source (`timer=LAPIC|PIT`) to serial. Since v2.38.13 the framebuffer section additionally logs the virtual address and `framebuffer pages: N present, M writable, K total` (`memory::verify_region`), runs the `write_volatile` `direct_test` with a `sfence` + readback of pixel (0, 0) plus the OK-green probe, then `psf_check()` synthesises a PSF2 stream from `font8x8::BASIC`, parses it back, verifies the 'A' glyph round-trips and paints it at the bottom-centre of the screen.
-  - Panic handler prints via the framebuffer console and serial, then `halt_loop`s.
-- `aios-kernel-run`: builds the kernel with the Limine path enabled (`cargo build --target x86_64-unknown-none --release --features limine`, since v2.78.0), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`.
-- Flash to a real USB stick: run `scripts\flash-usb.ps1` as Administrator (it writes the image to `\\.\PhysicalDriveN`, verifies SHA-256 and the MBR `55 AA` signature). A bare-metal AIOS stick boots on both legacy BIOS and UEFI laptops. For the native UEFI-only GPT image use `aios-install` instead: it validates the GPT/ESP layout before writing (see the Native UEFI Boot Chain section above).
+  - Panic handler prints a versioned `KERNEL PANIC [semver]: …` line to the
+    framebuffer console and serial, paints an allocation-free on-screen report
+    via `console::panic_report("KERNEL PANIC: ", …)` with `version::KERNEL`, then
+    `halt_loop`s. Fatal interrupts use the same path with a `FATAL [semver]` prefix,
+    so a screenshot identifies the exact build that failed.
+- `aios-kernel-run`: builds the kernel with the Limine path enabled (`cargo build --target x86_64-unknown-none --release --features limine`, since v2.78.0), stages the Limine ISO tree (`boot/aios-kernel`, `boot/limine.conf`, the Limine BIOS/UEFI CD stages, `EFI/BOOT/BOOTX64.EFI`), creates the hybrid ISO with `xorriso` + `limine bios-install`, and produces the byte-identical USB image `out\aios-kernel-usb.img` (isohybrid — boots on legacy BIOS via the Limine MBR and on UEFI via the ESP). Boots in QEMU — UEFI/OVMF (real GOP) by default, legacy BIOS otherwise; `AIOS_QEMU_USB=1` attaches the USB image as a mass-storage device instead of the CD-ROM. Overrides: `AIOS_LIMINE_DIR`, `AIOS_LIMINE_TOOL`, `AIOS_XORRISO`, `AIOS_QEMU`, `AIOS_QEMU_UEFI`, `AIOS_QEMU_USB`, `AIOS_SKIP_QEMU`. Since v2.84.0 the builder reads the `[package] version` from `aios-kernel/Cargo.toml` and reduces it to a release train with `release_train()` (`2.84.0` → `v2.84+`), writing a two-entry `limine.conf`: `/AIOS kernel v2.84+ (current, Limine + GOP)` and `/AIOS kernel v2.79 rollback (Limine + GOP)`. The current ELF is staged as `boot/aios-kernel`; the rollback ELF defaults to `out/aios-kernel-v279.elf` via `AIOS_FALLBACK_KERNEL` (the builder asserts the file exists, so a clean clone must supply a real v2.79 ELF) and its label comes from `AIOS_FALLBACK_VERSION` (default `v2.79`). A stale `out\aios-kernel.iso` is deleted before each build, and `verify_hybrid_image()` then checks the MBR `55 AA` signature and an ISO9660 `CD001` descriptor at `0x8001`/`0x8801`/`0x9001`, so a truncated or non-hybrid image never reaches QEMU or the flash script.
+- Flash to a real USB stick: run `scripts\flash-usb.ps1` as Administrator (it writes the image to `\\.\PhysicalDriveN`, verifies SHA-256 and the MBR `55 AA` signature). It locks and dismounts the target volumes (`FSCTL_LOCK_VOLUME`/`FSCTL_DISMOUNT_VOLUME`), opens the disk with `FileShare.ReadWrite`, pads each write to a sector boundary and calls `Flush($true)`, then unlocks and runs bounded `Update-Disk` + `pnputil /rescan-disks` recovery (each in a `Start-Job` governed by `AIOS_FLASH_RECOVERY_TIMEOUT`, default 30 s) plus a bounded eight-attempt readiness wait. The whole image is hashed again from the raw disk and compared with the source SHA-256 before the MBR check; an unprivileged run relaunches itself elevated with stdout/stderr redirected to `%TEMP%` logs. A bare-metal AIOS stick boots on both legacy BIOS and UEFI laptops. For the native UEFI-only GPT image use `aios-install` instead: it validates the GPT/ESP layout before writing (see the Native UEFI Boot Chain section above).
 - Verify: `cargo run --release` in `aios-kernel-run` — serial shows `aios-kernel: Limine handoff`, HHDM offset, RSDP, `framebuffer = WxH pitch=… bpp=… usable=true`, `framebuffer self-check OK (readback 0x…)`, `usable memory regions = N`, `paging selftest OK.`, `heap: …`, `interrupts online.`, `[sched] ready`, `five ring-3 tasks armed`. A QEMU `screendump` confirms the console draws (foreground/background pixel histogram).
 
-### Dual-kernel Limine image on the physical stick (v2.81.0)
-- The reflashed Kingston stick uses a byte-patched copy of the known-good hybrid
-  ISO rather than a full `xorriso` rebuild (those host binaries are unavailable).
-  Its `/boot` directory has two kernel records: `AIOS_KER.;1` (Rock Ridge
-  `aios-kernel`, extent 32) for the new desktop ELF and `AIOS_KER2;1` (Rock Ridge
-  `aios-ker2`, extent 600) for the old v2.79 ELF. The 202-byte `limine.conf` at
-  ISO sector 1780 sets `timeout: 3` and lists the desktop entry first, so it is
-  the default; ↓ + Enter selects `AIOS Legacy v2.79 (old GUI)`.
-- The old ELF is read from `aios-kernel-usb-limine-current.img` and written to
-  ISO sector 600, inside the already-overwritten `LIMINE_U.BIN` span but clear of
-  the boot catalog (1569) and BIOS stages (1570+). Because the UEFI stage at
-  LBA 32 was destroyed by the earlier single-kernel patch, this image remains
-  Legacy-BIOS-only; a clean hybrid rebuild is still needed for UEFI + BIOS parity.
-- Verified in QEMU Legacy BIOS: the default entry reaches `Limine handoff` and
-  the native desktop; swapping the config entries boots the old kernel with the
-  same LAPIC tick RIP as the reference `current.img` boot. The flashed disk was
-  read back in full (SHA-256 `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`) with ELF magic at both kernel offsets.
-- The v2.84.0 refresh replaces only the default ELF in ISO LBA 32: 1,054,032
-  bytes (SHA-256 `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`),
-  image SHA-256 `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`.
-  The menu now reads `/AIOS Desktop v2.84 (native kernel)`; the v2.79 fallback
-  ELF and its hash are unchanged. QEMU Legacy BIOS confirmed the new NIC boot
-  line and a full DHCP discover/request/bound cycle before the physical write.
+### Dual-kernel Limine image: historical stick vs. current builder output (v2.84.0)
+- **Historical, stale (v2.81.0 → v2.84.0 patch):** the reflashed Kingston stick
+  used a byte-patched copy of the known-good hybrid ISO rather than a full
+  `xorriso` rebuild (those host binaries were unavailable). Its `/boot` held
+  `AIOS_KER.;1` (Rock Ridge `aios-kernel`, extent 32) for the desktop ELF and
+  `AIOS_KER2;1` (Rock Ridge `aios-ker2`, extent 600) for the old v2.79 ELF, and a
+  202-byte `limine.conf` at ISO sector 1780 with `timeout: 3`. The v2.84.0 refresh
+  replaced only the default ELF at ISO LBA 32 (1,054,032 bytes, SHA-256
+  `BA534ECF802153D64D70D04FD0BBE9A5A4CD10E2FE2D7FFA1D3D4C0E1CB563D9`; image
+  SHA-256 `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929`),
+  while the v2.79 fallback ELF and its hash stayed unchanged. That stick was read
+  back in full (SHA-256 `8E0CE7F3F3CF5A0B66D6D9CCD2CFC196A5E74A6DE3540A4C55DEB98D0ED296A5`)
+  with ELF magic at both offsets, and QEMU Legacy BIOS confirmed the new NIC boot
+  line plus a full DHCP discover/request/bound cycle before the physical write.
+- **Why it is stale:** the byte patch overwrote the UEFI stage at LBA 32, so that
+  physical stick is still Legacy-BIOS-only, and its hand-written menu
+  (`/AIOS Desktop v2.84 (native kernel)` / `AIOS Legacy v2.79 (old GUI)`) no
+  longer matches what the builder generates. No fresh rebuild was performed
+  here: `xorriso.exe` and the Limine binaries are absent on this host, so this
+  section records the existing artifact, not a newly verified image.
+- **Current truth (builder-produced, v2.84.0):** `aios-kernel-run` stages two
+  ELFs into a clean hybrid ISO/IMG and writes the menu
+  `/AIOS kernel v2.84+ (current, Limine + GOP)` (default) and
+  `/AIOS kernel v2.79 rollback (Limine + GOP)`, validated by
+  `verify_hybrid_image()` (MBR `55 AA` and ISO9660 `CD001`). A clean reflash with
+  that generated image is still required on the physical stick to restore
+  UEFI + BIOS parity; until then the stick remains the Legacy-BIOS-only artifact
+  described above.
 
 ## Bootable AIOS Installer (Live ISO → disk, v2.33.0)
 
