@@ -54,8 +54,11 @@
   `EE05DB505AE9`) now reads back the GUI image with SHA-256
   `3B9DA3E1D0E890DF8FCA5FD87FB2C15738E550E28FCEA0F6E993D4DE6050525F`; LBA 32
   payload hash `FD69FF2D…B713EE17`, `AIOS_KER.;1` extent 32 / size `1,046,336`,
-  MBR `55 AA`, menu `/AIOS Desktop v2.84 (native kernel)`. The stick stays
-  Legacy-BIOS-only until a clean hybrid rebuild is flashed.
+  MBR `55 AA`, menu `/AIOS Desktop v2.84 (native kernel)`. The script's final
+  16-byte `ReadFile` probe printed `FLASH FAILED` after the full-image hash had
+  already passed because reads from the raw handle must be sector-sized; an
+  independent full read-back verifier confirmed every field with exit code 0.
+  The stick stays Legacy-BIOS-only until a clean hybrid rebuild is flashed.
 
 ## FIXED (v2.84.0 post-audit): elevated flash verification crashed and duplicated errors
 
