@@ -80,7 +80,12 @@
   `3B9DA3E1…DE6050525F`) boots in Legacy BIOS QEMU to `Limine handoff`, GOP
   `1280x800` and a bound DHCP lease; App Store, Network and hardware windows
   opened with `F4`/`F5`/`F9`, and no text row had a contiguous ink run wider
-  than the 16 px glyph cell.
+  than the 16 px glyph cell. The GUI image was then written to Disk 3 with a
+  checked `diskpart clean` + P/Invoke `WriteFile`/`FlushFileBuffers` path after
+  `scripts/flash-usb.ps1` failed to persist bytes when volume locks failed; full
+  read-back SHA-256, LBA 32 ELF hash, `AIOS_KER.;1` record size and MBR signature
+  all matched (`boot/out/flash-gui-disk3.log`). The stick remains
+  Legacy-BIOS-only.
 - `cargo test --manifest-path aios-kernel/Cargo.toml` fails with the duplicate
   `panic_impl` lang item by design for the freestanding `no_std` binary; it is
   not a required gate.

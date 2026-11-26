@@ -85,7 +85,12 @@
   `3B9DA3E1…DE6050525F`) грузится в Legacy BIOS QEMU до `Limine handoff`, GOP
   `1280x800` и полученной DHCP-аренды; клавиши `F4`/`F5`/`F9` открыли App Store,
   Network и окно оборудования, а ни в одной строке текста нет непрерывного
-  участка шире ячейки глифа 16 px.
+  участка шире ячейки глифа 16 px. Затем GUI-образ записан на Disk 3 проверенным
+  путём `diskpart clean` + P/Invoke `WriteFile`/`FlushFileBuffers`, поскольку
+  `scripts/flash-usb.ps1` не сохранил байты при неудачной блокировке томов;
+  полный read-back SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и
+  сигнатура MBR совпали (`boot/out/flash-gui-disk3.log`). Флешка остаётся
+  совместимой только с Legacy BIOS.
 - `cargo test --manifest-path aios-kernel/Cargo.toml` по замыслу падает из-за
   дублирования lang item `panic_impl` в freestanding `no_std`-бинарике; это не
   обязательный гейт.

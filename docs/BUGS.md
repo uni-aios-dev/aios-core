@@ -31,8 +31,31 @@
   DHCP `discover`/`request`/`bound`; with `F4`/`F5`/`F9` the App Store, Network
   and hardware windows were open. Screendump pixel analysis found no text row
   with a contiguous ink run wider than the 16 px glyph cell (longer runs were
-  widget borders only). The patched copy is still Legacy-BIOS-only and the
-  physical stick was **not** reflashed.
+  widget borders only). The patched copy remains Legacy-BIOS-only; it was later
+  written to Disk 3 as described below.
+
+## FIXED (v2.84.0 post-deploy): flash-usb.ps1 reported success without persisting the image
+
+- **Symptom:** `scripts/flash-usb.ps1 -Force` printed `Wrote 4.5 MB` and flushed
+  the handle, yet full read-back SHA-256 was still
+  `C172387199711E544EF5CEE1F112170B49096C77C8284F07064EBD78B0D43929` (the old
+  image), not the GUI image's `3B9DA3E1…DE6050525F`. All three
+  `FSCTL_LOCK_VOLUME` / `FSCTL_DISMOUNT_VOLUME` attempts failed with access
+  denied; the script logged warnings but continued.
+- **Cause:** with the stick's volumes still mounted/locked by other owners, raw
+  `FileStream` writes did not replace the on-disk image. The script did not
+  abort on failed volume locks, so it reported the write before the read-back
+  check caught the stale content.
+- **Fix/workaround:** after explicit user approval for Disk 3, a checked raw
+  path was used: `diskpart clean`, then P/Invoke `CreateFileW` + `WriteFile`
+  verifying each byte count and calling `FlushFileBuffers`, then full read-back.
+  Log: `boot/out/flash-gui-disk3.log`.
+- **Status:** closed. `\\.\PhysicalDrive3` (Kingston DataTraveler 3.0, serial
+  `EE05DB505AE9`) now reads back the GUI image with SHA-256
+  `3B9DA3E1D0E890DF8FCA5FD87FB2C15738E550E28FCEA0F6E993D4DE6050525F`; LBA 32
+  payload hash `FD69FF2D…B713EE17`, `AIOS_KER.;1` extent 32 / size `1,046,336`,
+  MBR `55 AA`, menu `/AIOS Desktop v2.84 (native kernel)`. The stick stays
+  Legacy-BIOS-only until a clean hybrid rebuild is flashed.
 
 ## FIXED (v2.84.0 post-audit): elevated flash verification crashed and duplicated errors
 

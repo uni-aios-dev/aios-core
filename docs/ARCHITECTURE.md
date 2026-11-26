@@ -2483,9 +2483,20 @@ match on the bound local port and require the reply to come from the connected p
   directory record updated to the new length. The copy
   (`out/aios-kernel-usb-limine-v284-gui.img`, `4,683,776` bytes, SHA-256
   `3B9DA3E1D0E890DF8FCA5FD87FB2C15738E550E28FCEA0F6E993D4DE6050525F`) was
-  checked only in Legacy BIOS QEMU (GOP `1280x800`, DHCP bound, windows opened
-  with `F4`/`F5`/`F9`); it inherits the UEFI limitation above and was not
-  written to the physical stick.
+  checked in Legacy BIOS QEMU (GOP `1280x800`, DHCP bound, windows opened
+  with `F4`/`F5`/`F9`) and then written to the physical stick (see below); it
+  inherits the UEFI limitation above.
+- **Physical deployment (v2.84.0 GUI fix):** the image above was written to
+  Disk 3 after explicit approval. `scripts/flash-usb.ps1` reported a successful
+  write but read back the previous image because all three volume
+  lock/dismount attempts failed; a checked `diskpart clean` + P/Invoke
+  `WriteFile`/`FlushFileBuffers` path was used instead
+  (`boot/out/flash-gui-disk3.log`). Full 4,683,776-byte read-back SHA-256 is
+  `3B9DA3E1D0E890DF8FCA5FD87FB2C15738E550E28FCEA0F6E993D4DE6050525F`, with
+  LBA 32 ELF hash
+  `FD69FF2DDE3969C74BC9CEDAFC3F4E2DB7C3A48A0CA8724987F6F7C7B713EE17`, directory
+  record size `1,046,336`, MBR `55 AA` and the hand-written v2.84 menu. UEFI
+  parity still requires a clean hybrid image.
 - **Current truth (builder-produced, v2.84.0):** `aios-kernel-run` stages two
   ELFs into a clean hybrid ISO/IMG and writes the menu
   `/AIOS kernel v2.84+ (current, Limine + GOP)` (default) and

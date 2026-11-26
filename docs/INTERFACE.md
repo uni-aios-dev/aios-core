@@ -19,10 +19,13 @@ instead, use the GPT/ESP image described below on a UEFI-capable machine.
 (`/AIOS kernel v2.84+ (current, Limine + GOP)` and `/AIOS kernel v2.79 rollback
 (Limine + GOP)`); a real fallback ELF must be supplied via
 `AIOS_FALLBACK_KERNEL`, and `AIOS_FALLBACK_VERSION` relabels the fallback entry.
-This stick has not been reflashed with that clean hybrid image, so it remains
-Legacy-BIOS-only. `scripts/flash-usb.ps1` now locks/dismounts volumes, writes
+The stick has been reflashed with the GUI-fix image
+(`aios-kernel-usb-limine-v284-gui.img`), not with that clean hybrid image, so it
+remains Legacy-BIOS-only. `scripts/flash-usb.ps1` locks/dismounts volumes, writes
 sector-aligned padded blocks and verifies the full image by SHA-256 read-back
-plus the MBR `55 AA` signature.
+plus the MBR `55 AA` signature; if volume locks fail, use a checked raw
+`diskpart clean` + `WriteFile`/`FlushFileBuffers` write instead (see BUGS v2.84.0
+post-deploy).
 
 ## Native UEFI image (host tools)
 
