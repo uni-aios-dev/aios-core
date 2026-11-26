@@ -18,6 +18,14 @@
   aios-kernel/Cargo.toml` (the standalone kernel is not covered by workspace
   `cargo fmt --all`).
 
+### Verified
+- A diagnostic image was prepared at
+  `aios-kernel-run/out/aios-kernel-usb-limine-v284-pfdiag.img` (`4,683,776`
+  bytes, SHA-256 `3DB811A1…E62F9F9F…43692E9`; kernel ELF `1,046,488` bytes,
+  SHA-256 `BD2D6AEE…C95CDB02`) by patching LBA 32 of the GUI image. Legacy BIOS
+  QEMU reached `scheduler online`, the 4 MiB GUI backbuffer and clean heap /
+  paging self-tests with no `FATAL`. The physical stick was **not** reflashed.
+
 ### Open
 - The real-hardware long-uptime `code=0x20000000` crash is not root-caused yet;
   the new on-screen `addr/ip/err/rsp` line is required for the next reproduction.

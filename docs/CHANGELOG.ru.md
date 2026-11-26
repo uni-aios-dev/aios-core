@@ -17,6 +17,14 @@
   Исходники ядра проходят rustfmt через `cargo fmt --manifest-path
   aios-kernel/Cargo.toml` (отдельное ядро не входит в workspace `cargo fmt --all`).
 
+### Проверено
+- Подготовлен диагностический образ
+  `aios-kernel-run/out/aios-kernel-usb-limine-v284-pfdiag.img` (`4 683 776` байт,
+  SHA-256 `3DB811A1…E62F9F9F…43692E9`; ELF ядра `1 046 488` байт, SHA-256
+  `BD2D6AEE…C95CDB02`) заменой ELF в LBA 32 образа с GUI-исправлением. Legacy BIOS
+  QEMU дошёл до `scheduler online`, 4 МиБ backbuffer GUI и чистых self-тестов
+  кучи/пейджинга без `FATAL`. Физическая флешка **не** перезаписывалась.
+
 ### Открытое
 - Краш на реальном железе после долгой работы с `code=0x20000000` ещё не разобран;
   для следующего воспроизведения нужна новая строка `addr/ip/err/rsp` на экране.
