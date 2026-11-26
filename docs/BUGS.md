@@ -23,7 +23,9 @@
   `addr/ip/err/rsp` off the screen; `0x20000000` alone cannot identify the cause.
   A ready-to-flash Legacy-BIOS image is
   `aios-kernel-run/out/aios-kernel-usb-limine-v284-pfdiag.img` (SHA-256
-  `3DB811A1…43692E9`); the physical stick still holds the GUI-fix image.
+  `3DB811A1…43692E9`), and it now **is** on the physical stick: Disk 3 was
+  reflashed with explicit approval and verified by full read-back
+  (`boot/out/verify-pfdiag-disk3.log`).
 
 ## FIXED (v2.84.0 post-audit): kernel GUI glyphs overlapped and labels escaped surfaces
 

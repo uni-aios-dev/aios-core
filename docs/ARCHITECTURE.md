@@ -2497,6 +2497,21 @@ match on the bound local port and require the reply to come from the connected p
   `FD69FF2DDE3969C74BC9CEDAFC3F4E2DB7C3A48A0CA8724987F6F7C7B713EE17`, directory
   record size `1,046,336`, MBR `55 AA` and the hand-written v2.84 menu. UEFI
   parity still requires a clean hybrid image.
+- **Physical deployment (post-v2.84.0, page-fault diagnostics):** after explicit
+  approval the diagnostic image
+  `out/aios-kernel-usb-limine-v284-pfdiag.img` (`4,683,776` bytes, SHA-256
+  `3DB811A18CB93C69B17B3776F63D5CDC8177B7FD8E62F9F9F8044866A43692E9`; kernel
+  ELF `1,046,488` bytes, SHA-256
+  `BD2D6AEEDCE91159877BFBADF0DFDD068D22EA86276F4EB0C91FD5CCE95CDB02`) replaced
+  the GUI-fix image on Disk 3 via the same checked `diskpart clean` +
+  `WriteFile`/`FlushFileBuffers` path (`boot/out/flash-pfdiag-disk3.log`).
+  Full-image read-back SHA-256 matches; LBA 32 ELF magic `7F 45 4C 46`, payload
+  hash `BD2D6AEE…C95CDB02`, directory record size `1,046,488`, MBR `55 AA` and
+  the hand-written menu were confirmed by an independent verifier
+  (`boot/out/verify-pfdiag-disk3.log`). The checked flash script's optional
+  post-read `ReadFile(LBA32)` step failed on its already-used handle after the
+  streaming SHA loop; the independent whole-disk verifier passed, so the image
+  on the stick is correct. UEFI parity still needs a clean hybrid rebuild.
 - **Current truth (builder-produced, v2.84.0):** `aios-kernel-run` stages two
   ELFs into a clean hybrid ISO/IMG and writes the menu
   `/AIOS kernel v2.84+ (current, Limine + GOP)` (default) and

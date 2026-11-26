@@ -24,7 +24,14 @@
   bytes, SHA-256 `3DB811A1…E62F9F9F…43692E9`; kernel ELF `1,046,488` bytes,
   SHA-256 `BD2D6AEE…C95CDB02`) by patching LBA 32 of the GUI image. Legacy BIOS
   QEMU reached `scheduler online`, the 4 MiB GUI backbuffer and clean heap /
-  paging self-tests with no `FATAL`. The physical stick was **not** reflashed.
+  paging self-tests with no `FATAL`.
+- **Physical deployment:** after explicit approval the diagnostic image replaced
+  the GUI-fix image on Disk 3 (`boot/out/flash-pfdiag-disk3.log`). Independent
+  whole-disk read-back (`boot/out/verify-pfdiag-disk3.log`) confirms the full
+  SHA-256, LBA 32 ELF `7F 45 4C 46`, payload hash `BD2D6AEE…C95CDB02`, record
+  size `1,046,488`, MBR `55 AA` and the menu. The checked flash script's optional
+  post-read `ReadFile(LBA32)` step failed on its reused handle after the SHA
+  loop; the independent verifier passed, so the written image is correct.
 
 ### Open
 - The real-hardware long-uptime `code=0x20000000` crash is not root-caused yet;
