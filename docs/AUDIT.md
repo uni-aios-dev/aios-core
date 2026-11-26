@@ -148,7 +148,7 @@ The following fixes were implemented in code after the baseline audit. They are 
 
 - `scripts/flash-usb.ps1` locks and dismounts volumes via `DeviceIoControl` (`FSCTL_LOCK_VOLUME` / `FSCTL_DISMOUNT_VOLUME`), opens physical disks with `FileMode.Open` + `FileShare.ReadWrite`, writes 512-byte sector-aligned padded 1 MiB blocks, calls `Flush($true)` and unlocks afterwards.
 - Recovery runs bounded `Update-Disk` + `pnputil /rescan-disks` jobs with `AIOS_FLASH_RECOVERY_TIMEOUT` (default 30 s) and probes disk readiness instead of hanging on `ERROR_NOT_READY`.
-- Full-image SHA-256 read-back must match the source, and the MBR `55 AA` signature is checked. The elevated relaunch redirects stdout/stderr to temp logs and replays them.
+- Full-image SHA-256 read-back must match the source, and the MBR `55 AA` signature is checked. The elevated relaunch writes all output to a single temp log that the parent replays once.
 
 ### P5. Hybrid build
 

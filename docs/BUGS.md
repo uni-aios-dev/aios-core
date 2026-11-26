@@ -1,5 +1,25 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.84.0 post-audit): elevated flash verification crashed and duplicated errors
+
+- `scripts/flash-usb.ps1` finalized the read-back hash with
+  `TransformFinalBlock([byte[]]::Empty, 0, 0)`. Under Windows PowerShell 5.1
+  `[byte[]]::Empty` resolves to `$null`, so finalization threw after the image
+  had already been written and verification never finished. It now uses a real
+  zero-length array from `New-Object byte[] 0`.
+- `Start-Process -Verb RunAs` cannot be combined with
+  `-RedirectStandardOutput` / `-RedirectStandardError` (AmbiguousParameterSet),
+  and the first logging workaround wrote error lines to both logs while the
+  parent printed both, duplicating every `[FAIL]` line. The elevated child now
+  takes a single `-Log` parameter; all prefixed lines go there once, the parent
+  replays the file once and propagates the child's exit code.
+- **Status:** verified on Disk 3 (Kingston DataTraveler 3.0 USB) with
+  `aios-kernel-usb-limine-v284.img`: 4,683,776 bytes written, source and disk
+  SHA-256 both match, MBR signature `0x55AA`, no duplicate output. Volume
+  lock/dismount warnings for the three letterless partitions are non-fatal.
+  The stick is still Legacy-BIOS-only; a clean hybrid rebuild needs `xorriso`
+  and Limine binaries.
+
 ## FIXED (v2.84.0 post-audit): version and config claims matched implementation
 
 - `aios-kernel/src/version.rs` is now the only source of release strings:
@@ -523,7 +543,8 @@ EN/RU docs were aligned.
 - Recovery is bounded: `Update-Disk` and `pnputil /rescan-disks` respect
   `AIOS_FLASH_RECOVERY_TIMEOUT` (default 30 s), and readiness waits no longer
   hang on `ERROR_NOT_READY`. Full-image SHA-256 read-back and the MBR `55 AA`
-  marker are verified; an elevated relaunch redirects and replays stdout/stderr.
+  marker are verified; an elevated relaunch writes a single log replayed by the
+  parent.
 - **Status:** the host-side limitation is closed. The earlier
   `UnauthorizedAccessException` / `ERROR_NOT_READY` workaround via
   `Disable-PnpDevice` + `Enable-PnpDevice` on the active `USBSTOR` instance is

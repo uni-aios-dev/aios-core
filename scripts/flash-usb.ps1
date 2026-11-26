@@ -17,16 +17,31 @@
 param(
     [string]$Image,
     [int]$DiskNumber,
-    [switch]$Force
+    [switch]$Force,
+    [string]$Log
 )
 
 $ErrorActionPreference = 'Stop'
 $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
 
-function Write-Info { Write-Host '[AIOS]' -ForegroundColor Cyan -NoNewline; Write-Host " $args" }
-function Write-Ok   { Write-Host '[  OK]' -ForegroundColor Green -NoNewline; Write-Host " $args" }
-function Write-Warn { Write-Host '[WARN]' -ForegroundColor Yellow -NoNewline; Write-Host " $args" }
-function Write-Err  { Write-Host '[FAIL]' -ForegroundColor Red -NoNewline; Write-Host " $args" }
+$script:FlashLog = $Log
+if ($script:FlashLog) { Set-Content -LiteralPath $script:FlashLog -Value '' -Encoding UTF8 }
+
+function Write-Line {
+    param(
+        [string]$Prefix,
+        [ConsoleColor]$Color,
+        [string[]]$Message
+    )
+    $text = $Message -join ' '
+    Write-Host $Prefix -ForegroundColor $Color -NoNewline
+    Write-Host " $text"
+    if ($script:FlashLog) { Add-Content -LiteralPath $script:FlashLog -Value "$Prefix $text" -Encoding UTF8 }
+}
+function Write-Info { Write-Line -Prefix '[AIOS]' -Color Cyan -Message $args }
+function Write-Ok   { Write-Line -Prefix '[  OK]' -Color Green -Message $args }
+function Write-Warn { Write-Line -Prefix '[WARN]' -Color Yellow -Message $args }
+function Write-Err  { Write-Line -Prefix '[FAIL]' -Color Red -Message $args }
 
 Add-Type -TypeDefinition @'
 using System;
@@ -203,14 +218,16 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
         $DiskNumber = ($disks | Sort-Object Number | Select-Object -First 1).Number
     }
 
-    $childArgs = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', "`"$PSCommandPath`"", '-Image', "`"$Image`"", '-DiskNumber', $DiskNumber)
+    $log = Join-Path $env:TEMP ("aios-flash-{0}.log" -f $PID)
+    $childArgs = @(
+        '-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', "`"$PSCommandPath`"",
+        '-Image', "`"$Image`"", '-DiskNumber', $DiskNumber,
+        '-Log', "`"$log`""
+    )
     if ($Force) { $childArgs += '-Force' }
-    $outLog = Join-Path $env:TEMP ("aios-flash-{0}.out" -f $PID)
-    $errLog = Join-Path $env:TEMP ("aios-flash-{0}.err" -f $PID)
     Write-Info 'Relaunching as Administrator...'
-    $child = Start-Process powershell.exe -Verb RunAs -ArgumentList $childArgs -PassThru -Wait -RedirectStandardOutput $outLog -RedirectStandardError $errLog
-    if (Test-Path $outLog) { Get-Content -LiteralPath $outLog; Remove-Item -LiteralPath $outLog -Force }
-    if (Test-Path $errLog) { Get-Content -LiteralPath $errLog; Remove-Item -LiteralPath $errLog -Force }
+    $child = Start-Process powershell.exe -Verb RunAs -ArgumentList $childArgs -PassThru -Wait
+    if (Test-Path $log) { Get-Content -LiteralPath $log; Remove-Item -LiteralPath $log -Force }
     exit $child.ExitCode
 }
 
@@ -301,7 +318,8 @@ try {
             [void]$sha.TransformBlock($hbuf, 0, $n, $hbuf, 0)
             $remaining -= $n
         }
-        [void]$sha.TransformFinalBlock([byte[]]::Empty, 0, 0)
+        $empty = New-Object byte[] 0
+        [void]$sha.TransformFinalBlock($empty, 0, 0)
         $diskHash = [BitConverter]::ToString($sha.Hash).Replace('-', '')
     } finally {
         $verify.Dispose()

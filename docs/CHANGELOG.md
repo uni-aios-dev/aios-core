@@ -37,7 +37,7 @@
   `pnputil /rescan-disks` with `AIOS_FLASH_RECOVERY_TIMEOUT` (default 30 s),
   waits for readiness without hanging on `ERROR_NOT_READY`, and verifies a
   full-image SHA-256 read-back plus the MBR `55 AA` marker. An elevated relaunch
-  redirects and replays stdout/stderr.
+  writes all output to a single `%TEMP%` log that the parent replays once.
 - `aios-kernel-run/src/main.rs` parses `[package] version` from
   `aios-kernel/Cargo.toml`, derives the current menu label `v<major>.<minor>+`
   (`v2.84+`), stages current + fallback ELFs, writes a two-entry Limine menu,
@@ -47,6 +47,17 @@
   `AIOS_FALLBACK_VERSION` defaults to `v2.79`. No fresh hybrid rebuild was run
   here: `xorriso.exe` and Limine binaries are missing, and the current physical
   stick remains Legacy-BIOS-only until reflashed with a clean image.
+
+### Fixed
+- `scripts/flash-usb.ps1` finalizes SHA-256 with `New-Object byte[] 0` instead of
+  `[byte[]]::Empty` (null under Windows PowerShell 5.1), so read-back verification
+  no longer throws after the write. The elevated relaunch now uses one `-Log`
+  parameter instead of `-RedirectStandardOutput`/`-RedirectStandardError`, which
+  are incompatible with `-Verb RunAs`, and the parent replays it once, removing
+  duplicate `[FAIL]` lines.
+- Verified on Disk 3 (Kingston DataTraveler 3.0 USB): `aios-kernel-usb-limine-v284.img`
+  (4,683,776 bytes) written, source/disk SHA-256 match, MBR `0x55AA`, no duplicate
+  output. UEFI parity still needs a clean hybrid rebuild and a hardware boot test.
 
 ### Verification
 - `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D
