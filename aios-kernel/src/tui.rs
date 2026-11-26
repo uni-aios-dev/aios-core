@@ -199,7 +199,10 @@ pub(crate) fn draw_text(
 ) {
     let x0 = TEXT_CLIP_X0.load(Ordering::Relaxed);
     let y0 = TEXT_CLIP_Y0.load(Ordering::Relaxed);
-    let x1 = TEXT_CLIP_X1.load(Ordering::Relaxed).min(max_px).min(fb.width());
+    let x1 = TEXT_CLIP_X1
+        .load(Ordering::Relaxed)
+        .min(max_px)
+        .min(fb.width());
     let y1 = TEXT_CLIP_Y1.load(Ordering::Relaxed).min(fb.height());
     if y < y0 || y.saturating_add(console::GLYPH_H) > y1 || x >= x1 {
         return;
@@ -1607,7 +1610,10 @@ mod glyph_layout_tests {
     #[test]
     fn text_width_uses_gapped_advance() {
         assert_eq!(text_width("AB"), 2 * TEXT_ADVANCE);
-        assert_eq!(TEXT_ADVANCE, crate::console::GLYPH_W + crate::console::SCALE);
+        assert_eq!(
+            TEXT_ADVANCE,
+            crate::console::GLYPH_W + crate::console::SCALE
+        );
     }
 
     #[test]

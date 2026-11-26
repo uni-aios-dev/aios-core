@@ -1,5 +1,27 @@
 # AIOS Development Log
 
+## Unreleased — ring-0 page-fault diagnostics (2026-11-26)
+
+### Added
+- `aios-kernel/src/interrupts.rs` adds `fatal_fmt(code, Arguments)`; `fatal_with`
+  and the frame-based `fatal` delegate to it, so one report reaches serial, the
+  F8 console and the framebuffer. A ring-0 `#PF` now paints
+  `PAGE FAULT <class> addr=0x.. ip=0x.. err=0x.. rsp=0x..` on the fatal screen
+  instead of the bare `PAGE FAULT`, making a long-uptime crash diagnosable with
+  no COM1 cable. `pf_kind(err)` decodes the x86 error-code bits into
+  `READ/WRITE/FETCH-NOT-PRESENT`, `WRITE-PROTECTED` and `USER-*` classes. Ring-3
+  page faults still go to `fault::intercept` and the crash dialog.
+
+### Changed
+- Five `#[cfg(test)]` tests in `interrupts.rs` cover the error-code classes.
+  Kernel sources are rustfmt-clean via `cargo fmt --manifest-path
+  aios-kernel/Cargo.toml` (the standalone kernel is not covered by workspace
+  `cargo fmt --all`).
+
+### Open
+- The real-hardware long-uptime `code=0x20000000` crash is not root-caused yet;
+  the new on-screen `addr/ip/err/rsp` line is required for the next reproduction.
+
 ## v2.84.0 - Post-audit hardening (2026-11-26)
 
 ### Added

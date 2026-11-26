@@ -1581,6 +1581,8 @@ focused) returns to the console/TUI.
   `KERNEL PANIC [v2.84.0]: …` or `FATAL [v2.84.0] …`, painted via
   `console::panic_report` with `version::KERNEL`, instead of freezing on the
   desktop. The version in the screenshot identifies the exact build that failed.
+  A ring-0 page fault adds `PAGE FAULT <class> addr=… ip=… err=… rsp=…` to that
+  report, so no serial cable is needed to diagnose a long-uptime crash.
 
 Text is rendered on the PSF path across the whole panel: the embedded
 synthesized PSF2 stream (round-trip validated at boot) is parsed back and used

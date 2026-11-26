@@ -1,5 +1,27 @@
 # AIOS Known Bugs & Workarounds
 
+## OPEN (v2.84.0, long uptime): ring-0 page fault `code=0x20000000`
+
+- **Symptom:** after a long bare-metal GUI session the kernel halts with
+  `FATAL [v2.84.0] code=0x20000000: PAGE FAULT`. This is vector 14 with
+  `cs=0x08` (ring 0): `interrupts::page_fault` calls `fatal_with`, which halts
+  with `cli`/`hlt`. Ring-3 `#PF` still routes to `fault::intercept` and the
+  crash dialog, so this is a kernel access, not an application fault.
+- **Diagnostics (post-v2.84.0):** no serial log was available, so the on-screen
+  fatal report now carries
+  `PAGE FAULT <class> addr=… ip=… err=… rsp=…` via `fatal_fmt`/`pf_kind`.
+  `addr` (CR2) identifies the region — heap `0xffff_ff00_0000_0000..+4 MiB`,
+  GUI backbuffer `0xffff_ff00_0040_0000..`, MMIO `0xffff_ff00_2000_0000..`,
+  HHDM `0xffff_8000…`, or a user pointer; `ip` maps back to the release ELF;
+  `err` bits are P (0x1), W/R (0x2), U/S (0x4), I/D (0x10).
+- **Candidates (unconfirmed):** heap exhaustion/fragmentation in long GUI
+  sessions (4 MiB heap), the bump frame allocator that never frees pages, a
+  32 KiB idle/worker stack overflow without a guard page, long-run driver paths
+  (xHCI ring wrap, DHCP renewal), or earlier memory corruption whose first
+  visible symptom is the `#PF`.
+- **Next step:** reproduce with the diagnostic build and read
+  `addr/ip/err/rsp` off the screen; `0x20000000` alone cannot identify the cause.
+
 ## FIXED (v2.84.0 post-audit): kernel GUI glyphs overlapped and labels escaped surfaces
 
 - `draw_text` advanced by `GLYPH_W` (16 px), so neighbouring glyph cells touched

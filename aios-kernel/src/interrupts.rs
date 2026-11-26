@@ -117,6 +117,15 @@ fn debug_port_write(val: u8) {
 /// Halts the system with a diagnostic error code.
 /// Writes the code to HALT_REASON, serial, framebuffer, and debug port 0x80.
 pub fn fatal_with(code: u32, detail: &str) -> ! {
+    fatal_fmt(code, core::format_args!("{}", detail))
+}
+
+/// Halts with a formatted diagnostic that is also painted on the framebuffer.
+///
+/// `fatal_with` wraps a plain `&str`; fault paths use this form so the on-screen
+/// report carries the faulting address, instruction pointer and error code even
+/// when no serial cable is attached.
+pub fn fatal_fmt(code: u32, detail: core::fmt::Arguments<'_>) -> ! {
     HALT_REASON.store(code, Ordering::Relaxed);
     debug_port_write((code & 0xFF) as u8);
     kprintln!(
@@ -155,11 +164,10 @@ fn fatal(frame: &InterruptFrame, name: &str) -> ! {
         frame.rip,
         frame.error_code
     );
-    crate::console::panic_report(
-        "FATAL ",
+    fatal_fmt(
+        code,
         core::format_args!("{} rip={:#x} err={:#x}", name, frame.rip, frame.error_code),
-    );
-    fatal_with(code, name)
+    )
 }
 
 fn halt() -> ! {
@@ -306,6 +314,25 @@ pub extern "C" fn aios_handle_interrupt(frame: *mut InterruptFrame) {
     }
 }
 
+/// Classifies an x86 #PF error code: bit 0 = page present, bit 1 = write,
+/// bit 2 = user access, bit 4 = instruction fetch.
+fn pf_kind(err: u64) -> &'static str {
+    let present = err & 0b0001 != 0;
+    let write = err & 0b0010 != 0;
+    let user = err & 0b0100 != 0;
+    let fetch = err & 0b1_0000 != 0;
+    match (user, present, write, fetch) {
+        (false, false, false, false) => "READ-NOT-PRESENT",
+        (false, false, false, true) => "FETCH-NOT-PRESENT",
+        (false, false, true, _) => "WRITE-NOT-PRESENT",
+        (false, true, true, _) => "WRITE-PROTECTED",
+        (false, true, false, true) => "FETCH-PROTECTED",
+        (false, true, false, false) => "READ-PROTECTED",
+        (true, false, _, _) => "USER-NOT-PRESENT",
+        (true, true, _, _) => "USER-PROTECTED",
+    }
+}
+
 fn page_fault(frame: &mut InterruptFrame) {
     let cr2 = read_cr2();
     kprintln!(
@@ -334,7 +361,17 @@ fn page_fault(frame: &mut InterruptFrame) {
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
         );
-        fatal_with(0x20000000, "PAGE FAULT")
+        fatal_fmt(
+            0x20000000,
+            core::format_args!(
+                "PAGE FAULT {} addr={:#x} ip={:#x} err={:#x} rsp={:#x}",
+                pf_kind(frame.error_code),
+                cr2,
+                frame.rip,
+                frame.error_code,
+                frame.rsp
+            ),
+        )
     } else {
         // User page faults no longer halt the system: the fault interceptor
         // freezes the task and the crash dialog decides (Resume/Terminate/Rollback).
@@ -594,4 +631,21 @@ pub fn scancode_to_char(sc: u8) -> Option<char> {
         return Some(c);
     }
     plain.map(|c| c.to_ascii_uppercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pf_kind;
+
+    #[test]
+    fn pf_kind_maps_error_code_bits() {
+        assert_eq!(pf_kind(0x0), "READ-NOT-PRESENT");
+        assert_eq!(pf_kind(0x2), "WRITE-NOT-PRESENT");
+        assert_eq!(pf_kind(0x3), "WRITE-PROTECTED");
+        assert_eq!(pf_kind(0x4), "USER-NOT-PRESENT");
+        assert_eq!(pf_kind(0x5), "USER-PROTECTED");
+        assert_eq!(pf_kind(0x6), "USER-NOT-PRESENT");
+        assert_eq!(pf_kind(0x10), "FETCH-NOT-PRESENT");
+        assert_eq!(pf_kind(0x15), "FETCH-PROTECTED");
+    }
 }

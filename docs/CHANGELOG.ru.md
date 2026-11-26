@@ -1,5 +1,26 @@
 # Журнал разработки AIOS
 
+## Unreleased — диагностика page fault в ring 0 (26.11.2026)
+
+### Добавлено
+- `aios-kernel/src/interrupts.rs` добавляет `fatal_fmt(code, Arguments)`;
+  `fatal_with` и кадровая `fatal` делегируют ему, поэтому один отчёт попадает
+  в serial, консоль F8 и framebuffer. `#PF` из ring 0 теперь рисует на экране
+  `PAGE FAULT <class> addr=0x.. ip=0x.. err=0x.. rsp=0x..` вместо просто
+  `PAGE FAULT` — краш после долгой работы можно диагностировать без кабеля COM1.
+  `pf_kind(err)` разбирает биты кода ошибки x86 в классы
+  `READ/WRITE/FETCH-NOT-PRESENT`, `WRITE-PROTECTED` и `USER-*`. Page fault из
+  ring 3 по-прежнему уходит в `fault::intercept` и диалог сбоя.
+
+### Изменено
+- Пять тестов `#[cfg(test)]` в `interrupts.rs` покрывают классы кодов ошибок.
+  Исходники ядра проходят rustfmt через `cargo fmt --manifest-path
+  aios-kernel/Cargo.toml` (отдельное ядро не входит в workspace `cargo fmt --all`).
+
+### Открытое
+- Краш на реальном железе после долгой работы с `code=0x20000000` ещё не разобран;
+  для следующего воспроизведения нужна новая строка `addr/ip/err/rsp` на экране.
+
 ## v2.84.0 - Укрепление после аудита (26.11.2026)
 
 ### Добавлено

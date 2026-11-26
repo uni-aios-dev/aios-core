@@ -5154,7 +5154,10 @@ fn draw_taskbar(fb: &Framebuffer) {
             break;
         }
         if let Some(win) = unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() } {
-            let avail = tray_x.saturating_sub(4).saturating_sub(bx).saturating_sub(8);
+            let avail = tray_x
+                .saturating_sub(4)
+                .saturating_sub(bx)
+                .saturating_sub(8);
             let title = short_label(win_live_title(win), avail);
             let w = 8 + tui::text_width(&title);
             if w == 0 || w > tray_x.saturating_sub(4).saturating_sub(bx) {
@@ -6949,8 +6952,8 @@ fn form_focus(host: WinKind) -> u8 {
 #[cfg(test)]
 mod layout_tests {
     use super::{
-        fit_label, short_label, Widget, LAB_WIDGETS, NETWORK_WIDGETS, SLIDER_LABEL_W,
-        TASK_WIDGETS, WELCOME_WIDGETS,
+        fit_label, short_label, Widget, LAB_WIDGETS, NETWORK_WIDGETS, SLIDER_LABEL_W, TASK_WIDGETS,
+        WELCOME_WIDGETS,
     };
     use crate::console::TEXT_ADVANCE;
     use crate::tui;
