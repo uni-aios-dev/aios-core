@@ -2168,8 +2168,15 @@ match on the bound local port and require the reply to come from the connected p
   button per open window (stable order, see below), and a z-ordered window list
   (title bar with the minimize/maximize/close cluster, draggable body,
   edge/corner resize handles) in `MAX_WINS = 8` static slots. Text uses the
-  TUI's char-aware `draw_text`/`draw_char`/`text_width` helpers, so Cyrillic
-  Start titles and text fields render from `font8x8::CYRILLIC`. Input:
+  TUI's char-aware `draw_text`/`draw_char`/`text_width` helpers and the shared
+  `console::TEXT_ADVANCE = GLYPH_W + SCALE` step, so every glyph keeps a 2 px
+  gap and Cyrillic Start titles and text fields render from `font8x8::CYRILLIC`.
+  `draw_text` clips to the rectangle installed by `tui::set_text_clip` /
+  `gui::set_surface_clip` (window, Start panel, task bar, modal and crash
+  dialogs) and to its `max_px`; overlong task bar/Start labels use `fit_label` /
+  `short_label` with `...` instead of spilling onto a neighboring surface.
+  `clear_text_clip()` restores the full framebuffer for TUI fallback renders.
+  Input:
   `Tab` cycles focus, `Esc` closes/leaves, printable keys type into the focused
    window; mouse clicks open/focus/close/drag (and, since v2.38.27, resize —
    `hit_resize` maps a press inside `RESIZE_BORDER = 5` px of a window's outer
@@ -2469,6 +2476,16 @@ match on the bound local port and require the reply to come from the connected p
   longer matches what the builder generates. No fresh rebuild was performed
   here: `xorriso.exe` and the Limine binaries are absent on this host, so this
   section records the existing artifact, not a newly verified image.
+- **GUI-verification copy (v2.84.0):** for the glyph-spacing/text-clip fix a
+  fresh release ELF (`1,046,336` bytes, SHA-256
+  `FD69FF2DDE3969C74BC9CEDAFC3F4E2DB7C3A48A0CA8724987F6F7C7B713EE17`) was
+  patched into ISO LBA 32 of a copy of the image above, with the `AIOS_KER.;1`
+  directory record updated to the new length. The copy
+  (`out/aios-kernel-usb-limine-v284-gui.img`, `4,683,776` bytes, SHA-256
+  `3B9DA3E1D0E890DF8FCA5FD87FB2C15738E550E28FCEA0F6E993D4DE6050525F`) was
+  checked only in Legacy BIOS QEMU (GOP `1280x800`, DHCP bound, windows opened
+  with `F4`/`F5`/`F9`); it inherits the UEFI limitation above and was not
+  written to the physical stick.
 - **Current truth (builder-produced, v2.84.0):** `aios-kernel-run` stages two
   ELFs into a clean hybrid ISO/IMG and writes the menu
   `/AIOS kernel v2.84+ (current, Limine + GOP)` (default) and

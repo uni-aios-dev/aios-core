@@ -1,5 +1,39 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (v2.84.0 post-audit): kernel GUI glyphs overlapped and labels escaped surfaces
+
+- `draw_text` advanced by `GLYPH_W` (16 px), so neighbouring glyph cells touched
+  and dense Cyrillic/Latin strings looked like one blob. The shared
+  `console::TEXT_ADVANCE = GLYPH_W + SCALE` now leaves a 2 px gap in the console,
+  panic screen, TUI and GUI, and `text_width`/`menu_dropdown_w` use the same
+  step, so centering and hit boxes stay aligned.
+- `max_px` clipped only the right edge: a long label in a short window could
+  paint over the next window or the task bar. `tui::set_text_clip` /
+  `clear_text_clip` and `gui::set_surface_clip` now bound every `draw_text` call
+  to the owning window, Start panel, task bar or dialog rectangle.
+- Task bar titles could run into the tray globe, and Start subtitles, the query
+  field and fixed button plates were sized for the old 16 px advance. Titles are
+  now ellipsized before the tray, the query/Start labels fit their surfaces, and
+  Task Manager, Network, crash dialog and Widget Lab plates were widened or
+  shortened to fit their captions.
+- The Network window's Wi-Fi fields and scan rows shared a crowded `420x356`
+  grid, causing vertical overlap. It is now `420x400` with those rows on the
+  same 16 px grid as the rest of the form.
+- **Status:** bare-metal `cargo check`/clippy clean; `cargo test --workspace`
+  1,824 passed / 0 failed. Five kernel `#[cfg(test)]` layout tests cover the new
+  advance and label fitting; the freestanding kernel has no runnable host test
+  harness, so a fresh QEMU visual check was performed instead. A release ELF
+  (`1,046,336` bytes, SHA-256 `FD69FF2D…48A0CA87…B713EE17`) was patched into
+  ISO LBA 32 of a copy of the known-good image, producing
+  `aios-kernel-usb-limine-v284-gui.img` (`4,683,776` bytes, SHA-256
+  `3B9DA3E1…FCA5FD87…DE6050525F`). Legacy BIOS QEMU reached `Limine handoff` and
+  a `1280x800` GOP framebuffer, allocated the 4 MiB GUI backbuffer and completed
+  DHCP `discover`/`request`/`bound`; with `F4`/`F5`/`F9` the App Store, Network
+  and hardware windows were open. Screendump pixel analysis found no text row
+  with a contiguous ink run wider than the 16 px glyph cell (longer runs were
+  widget borders only). The patched copy is still Legacy-BIOS-only and the
+  physical stick was **not** reflashed.
+
 ## FIXED (v2.84.0 post-audit): elevated flash verification crashed and duplicated errors
 
 - `scripts/flash-usb.ps1` finalized the read-back hash with

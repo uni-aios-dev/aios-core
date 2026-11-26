@@ -25,7 +25,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 /// Number of glyph rows the interactive panel owns when the TUI fallback is
 /// active. A compact `CONSOLE_TOP_ROWS` boot-log strip sits on top and every row
@@ -50,6 +50,26 @@ const TEXT_DIM: Color = 0x00_80_88_a0;
 const ACCENT: Color = colors::OK;
 
 static ACTIVE_TAB: AtomicU64 = AtomicU64::new(0);
+
+static TEXT_CLIP_X0: AtomicUsize = AtomicUsize::new(0);
+static TEXT_CLIP_Y0: AtomicUsize = AtomicUsize::new(0);
+static TEXT_CLIP_X1: AtomicUsize = AtomicUsize::new(usize::MAX);
+static TEXT_CLIP_Y1: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Restricts every following [`draw_text`] call to one screen rectangle.
+/// Each GUI surface (window, Start panel, task bar, dialog) sets its own clip
+/// before painting, so a long label can never spill onto another surface.
+pub(crate) fn set_text_clip(x0: usize, y0: usize, x1: usize, y1: usize) {
+    TEXT_CLIP_X0.store(x0, Ordering::Relaxed);
+    TEXT_CLIP_Y0.store(y0, Ordering::Relaxed);
+    TEXT_CLIP_X1.store(x1, Ordering::Relaxed);
+    TEXT_CLIP_Y1.store(y1, Ordering::Relaxed);
+}
+
+/// Restores text clipping to the full framebuffer (used by the TUI fallback).
+pub(crate) fn clear_text_clip() {
+    set_text_clip(0, 0, usize::MAX, usize::MAX);
+}
 
 static PSF_READY: AtomicBool = AtomicBool::new(false);
 static mut PSF_BUF: [u8; 2048] = [0; 2048];
@@ -113,9 +133,9 @@ pub(crate) fn char_bits(c: char) -> [u8; 8] {
     [0u8; 8]
 }
 
-/// Pixel width of `s` on the kernel glyph grid (one cell per scalar).
+/// Pixel width of `s` on the kernel glyph grid (one gaped cell per scalar).
 pub(crate) fn text_width(s: &str) -> usize {
-    s.chars().count() * console::GLYPH_W
+    s.chars().count() * console::TEXT_ADVANCE
 }
 
 /// Paints one glyph cell at pixel `(px, py)` from a Unicode scalar.
@@ -166,8 +186,8 @@ pub(crate) fn draw_glyph(fb: &Framebuffer, px: usize, py: usize, byte: u8, fg: C
 
 /// Draws a string glyph by glyph, clearing each cell to `bg` first so stale
 /// previous-frame digits cannot leak. Both ASCII and Cyrillic scalars are
-/// supported; `max_px` bounds the right edge so the string cannot reach the
-/// tick bar's column.
+/// supported; the active text clip and `max_px` bound the painted cells so a
+/// message cannot leave its window or reach the tick bar's column.
 pub(crate) fn draw_text(
     fb: &Framebuffer,
     x: usize,
@@ -177,13 +197,23 @@ pub(crate) fn draw_text(
     bg: Color,
     max_px: usize,
 ) {
+    let x0 = TEXT_CLIP_X0.load(Ordering::Relaxed);
+    let y0 = TEXT_CLIP_Y0.load(Ordering::Relaxed);
+    let x1 = TEXT_CLIP_X1.load(Ordering::Relaxed).min(max_px).min(fb.width());
+    let y1 = TEXT_CLIP_Y1.load(Ordering::Relaxed).min(fb.height());
+    if y < y0 || y.saturating_add(console::GLYPH_H) > y1 || x >= x1 {
+        return;
+    }
     let mut px = x;
     for c in s.chars() {
-        if px + console::GLYPH_W > max_px {
+        let cell_end = px.saturating_add(console::GLYPH_W);
+        if cell_end > x1 {
             break;
         }
-        draw_char(fb, px, y, c, fg, bg);
-        px += console::GLYPH_W;
+        if px >= x0 {
+            draw_char(fb, px, y, c, fg, bg);
+        }
+        px = px.saturating_add(console::TEXT_ADVANCE);
     }
 }
 
@@ -1233,6 +1263,7 @@ pub fn render() {
         return;
     };
     ensure_font();
+    clear_text_clip();
     let active = ACTIVE_TAB.load(Ordering::Relaxed) as usize;
     draw_tabs(fb);
     let (x, y0) = content_origin();
@@ -1565,5 +1596,23 @@ mod adapter_tests {
         ] {
             assert!(super::execute_kernel_adapter(cmd).is_none(), "input: {cmd}");
         }
+    }
+}
+
+#[cfg(test)]
+mod glyph_layout_tests {
+    use super::text_width;
+    use crate::console::TEXT_ADVANCE;
+
+    #[test]
+    fn text_width_uses_gapped_advance() {
+        assert_eq!(text_width("AB"), 2 * TEXT_ADVANCE);
+        assert_eq!(TEXT_ADVANCE, crate::console::GLYPH_W + crate::console::SCALE);
+    }
+
+    #[test]
+    fn text_width_counts_scalars_not_utf8_bytes() {
+        assert_eq!(text_width("Пуск"), 4 * TEXT_ADVANCE);
+        assert_eq!(text_width(""), 0);
     }
 }

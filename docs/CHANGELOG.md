@@ -47,6 +47,11 @@
   `AIOS_FALLBACK_VERSION` defaults to `v2.79`. No fresh hybrid rebuild was run
   here: `xorriso.exe` and Limine binaries are missing, and the current physical
   stick remains Legacy-BIOS-only until reflashed with a clean image.
+- `aios-kernel/src/console.rs` adds `TEXT_ADVANCE = GLYPH_W + SCALE` as the single
+  horizontal step for the boot console, panic screen, TUI and GUI text.
+  `aios-kernel/src/tui.rs` adds `set_text_clip` / `clear_text_clip`, and
+  `aios-kernel/src/gui.rs` installs a per-surface clip with `set_surface_clip`
+  and ellipsizes long labels with `fit_label` / `short_label`.
 
 ### Fixed
 - `scripts/flash-usb.ps1` finalizes SHA-256 with `New-Object byte[] 0` instead of
@@ -58,12 +63,24 @@
 - Verified on Disk 3 (Kingston DataTraveler 3.0 USB): `aios-kernel-usb-limine-v284.img`
   (4,683,776 bytes) written, source/disk SHA-256 match, MBR `0x55AA`, no duplicate
   output. UEFI parity still needs a clean hybrid rebuild and a hardware boot test.
+- Kernel GUI glyphs no longer touch and text stays inside its surface: task bar
+  titles are ellipsized before the tray, Start rows/query and dialog buttons use
+  widths that fit the new advance, and the Network window is `420x400` with its
+  Wi-Fi rows on a 16 px grid. Five `#[cfg(test)]` layout tests cover gapped text
+  width, UTF-8 scalar counting, ellipsis fitting and widget label widths.
 
 ### Verification
-- `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D
-  warnings`; `cargo test --workspace` (1,824 passed / 0 failed in 100 suites);
-  standalone `aios-kernel` check/clippy with default features and `--features
-  limine`; `aios-kernel-run` tests 2/2.
+- `cargo fmt --all --check`; `cargo build --workspace`; `cargo clippy --workspace`;
+  `cargo test --workspace` (1,824 passed / 0 failed in 100 suites); standalone
+  `aios-kernel` check/clippy with default features and `--features limine` (both
+  with `-D warnings`); `aios-kernel-run` tests 2/2.
+- A fresh release kernel (`1,046,336` bytes, SHA-256 `FD69FF2D…B713EE17`) was
+  patched into ISO LBA 32 of a known-good image. The resulting
+  `aios-kernel-usb-limine-v284-gui.img` (`4,683,776` bytes, SHA-256
+  `3B9DA3E1…DE6050525F`) boots in Legacy BIOS QEMU to `Limine handoff`, GOP
+  `1280x800` and a bound DHCP lease; App Store, Network and hardware windows
+  opened with `F4`/`F5`/`F9`, and no text row had a contiguous ink run wider
+  than the 16 px glyph cell.
 - `cargo test --manifest-path aios-kernel/Cargo.toml` fails with the duplicate
   `panic_impl` lang item by design for the freestanding `no_std` binary; it is
   not a required gate.

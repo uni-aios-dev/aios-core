@@ -839,7 +839,13 @@ those codes can never open Start over a blocking dialog.
 
 Text is drawn by the `no_std` framebuffer renderer. ASCII and Cyrillic use the
 same char-aware helpers; the generated `font8x8::CYRILLIC` table covers Russian
-titles, hints, fields and notifications. Windows are painted into a RAM
+titles, hints, fields and notifications. Glyphs advance by `TEXT_ADVANCE`
+(16 px glyph plus a 2 px gap), so neighbouring letters no longer touch. Every
+surface — window, Start panel, task bar, dialog — installs its own text clip;
+labels that do not fit are cut with `...` (task bar, Start entries) or bounded by
+the window edge, so no message paints outside its own rectangle. The Network
+window is `420x400` with its Wi-Fi rows on the same 16 px grid, and button/checkbox
+plates are sized for the wider advance. Windows are painted into a RAM
 backbuffer and only dirty rectangles are blitted to the scanout buffer, so there
 is no flicker or tearing.
 

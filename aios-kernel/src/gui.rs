@@ -58,7 +58,7 @@ const TITLE_BTNS: usize = 3 * TITLE_BTN;
 const TASKBAR_H: usize = 18;
 /// Width reserved for the bottom-left `☰ Пуск` button; task-bar window buttons
 /// start after it so the button never moves when windows open or close.
-const START_BTN_W: usize = 88;
+const START_BTN_W: usize = 112;
 /// Width/height of the Start panel above the task bar.
 const START_W: usize = 384;
 const START_HEADER_H: usize = 42;
@@ -69,7 +69,7 @@ const START_PAD: usize = 6;
 /// and live ring-3 clients have been merged and sorted.
 const START_CAP: usize = 40;
 /// Maximum characters accepted by the Start search field.
-const START_QUERY_CAP: usize = 24;
+const START_QUERY_CAP: usize = 18;
 /// Width of the hit zone along a window's outer edge that starts a resize
 /// drag (edges/corners, checked before title/body).
 const RESIZE_BORDER: usize = 5;
@@ -100,12 +100,12 @@ const CDLG_H: usize = 176;
 const CDLG_BTN_Y: usize = 136;
 const CDLG_BTN_H: usize = 26;
 /// `Rollback` / `Terminate` / `Resume` plates, 12 px gaps.
-const CDLG_RB_X: usize = 16;
-const CDLG_RB_W: usize = 136;
+const CDLG_RB_X: usize = 8;
+const CDLG_RB_W: usize = 144;
 const CDLG_TM_X: usize = 164;
-const CDLG_TM_W: usize = 136;
-const CDLG_RS_X: usize = 312;
-const CDLG_RS_W: usize = 136;
+const CDLG_TM_W: usize = 168;
+const CDLG_RS_X: usize = 344;
+const CDLG_RS_W: usize = 112;
 
 /// Task Manager body layout (window-local, earlier release): the column-header strip
 /// sits right under the title bar, rows follow on the 16 px grid, and the
@@ -415,7 +415,7 @@ const APP_ROW_Y: usize = 26;
 /// Height of one selectable row in an in-kernel app window.
 const APP_ROW_H: usize = 16;
 /// Window-local geometry `(x, y, w, h)` of the App Store Run button.
-const STORE_BTN: (usize, usize, usize, usize) = (8, 138, 120, 20);
+const STORE_BTN: (usize, usize, usize, usize) = (8, 138, 272, 20);
 
 /// Live state of the in-kernel integer calculator.
 #[derive(Clone, Copy)]
@@ -1166,9 +1166,14 @@ fn spawn(kind: WinKind) {
     let mut y = (fb_h / 3 + cascade * 34).min(fb_h.saturating_sub(WIN_H + TASKBAR_H + 20));
     let mut w = WIN_W;
     let mut h = if kind == WinKind::Clock { 140 } else { WIN_H };
+    if let WinKind::App(id) = kind {
+        if id == APP_STORE {
+            h = 180;
+        }
+    }
     if kind == WinKind::Network {
         w = 420;
-        h = 356;
+        h = 400;
         x = 420.min(fb_w.saturating_sub(w + 8));
         y = 356.min(fb_h.saturating_sub(h + TASKBAR_H + 8));
         net_draft_load();
@@ -2356,6 +2361,7 @@ fn draw_start(fb: &Framebuffer) {
         return;
     }
     let (x, y, w, h) = start_pos(fb);
+    set_surface_clip(fb, x, y, w, h);
     unsafe {
         vector::shadow_round(
             fb,
@@ -2434,8 +2440,25 @@ fn draw_start(fb: &Framebuffer) {
         unsafe {
             fb.fill_rect(x + 4, ry, w - 8, START_ROW_H, bg);
         }
-        tui::draw_text(fb, x + 8, ry, entry.title, TEXT, bg, x + w - 8);
-        tui::draw_text(fb, x + 8, ry + 16, entry.subtitle, TEXT_DIM, bg, x + w - 8);
+        let label_max = w.saturating_sub(16);
+        tui::draw_text(
+            fb,
+            x + 8,
+            ry,
+            &short_label(entry.title, label_max),
+            TEXT,
+            bg,
+            x + w - 8,
+        );
+        tui::draw_text(
+            fb,
+            x + 8,
+            ry + 16,
+            &short_label(entry.subtitle, label_max),
+            TEXT_DIM,
+            bg,
+            x + w - 8,
+        );
         row += 1;
     }
 }
@@ -3476,9 +3499,9 @@ static WELCOME_WIDGETS: [Widget; 4] = [
 ];
 
 /// Widget table of the Network window (earlier release): seven input fields and
-/// seven command buttons, laid out on the 16 px body grid of the 420x356
+/// seven command buttons, laid out on the 16 px body grid of the 420x400
 /// window — mode row at 104, address fields at 128..192, apply/test at 208,
-/// Wi-Fi fields at 296/312 and the scan/connect row at 328.
+/// Wi-Fi fields at 340/356 and the scan/connect row at 372.
 static NETWORK_WIDGETS: [Widget; 15] = [
     Widget::Button {
         x: 80,
@@ -3491,7 +3514,7 @@ static NETWORK_WIDGETS: [Widget; 15] = [
     Widget::Button {
         x: 160,
         y: 104,
-        w: 104,
+        w: 112,
         h: 16,
         label: "Static",
         action: WidgetAction::Net(NetBtn::Static),
@@ -3539,13 +3562,13 @@ static NETWORK_WIDGETS: [Widget; 15] = [
     Widget::Button {
         x: 80,
         y: 208,
-        w: 88,
+        w: 96,
         h: 16,
         label: "Apply",
         action: WidgetAction::Net(NetBtn::Apply),
     },
     Widget::Button {
-        x: 176,
+        x: 184,
         y: 208,
         w: 72,
         h: 16,
@@ -3558,11 +3581,11 @@ static NETWORK_WIDGETS: [Widget; 15] = [
         w: 160,
         h: 16,
         id: 0,
-        label: "Remember settings",
+        label: "Remember",
     },
     Widget::Button {
         x: 80,
-        y: 296,
+        y: 340,
         w: 252,
         h: 16,
         label: "",
@@ -3570,7 +3593,7 @@ static NETWORK_WIDGETS: [Widget; 15] = [
     },
     Widget::Button {
         x: 80,
-        y: 312,
+        y: 356,
         w: 252,
         h: 16,
         label: "",
@@ -3578,7 +3601,7 @@ static NETWORK_WIDGETS: [Widget; 15] = [
     },
     Widget::Button {
         x: 80,
-        y: 328,
+        y: 372,
         w: 72,
         h: 16,
         label: "Scan",
@@ -3586,15 +3609,15 @@ static NETWORK_WIDGETS: [Widget; 15] = [
     },
     Widget::Button {
         x: 160,
-        y: 328,
-        w: 120,
+        y: 372,
+        w: 128,
         h: 16,
         label: "Connect",
         action: WidgetAction::Net(NetBtn::Connect),
     },
     Widget::Button {
         x: 288,
-        y: 328,
+        y: 372,
         w: 72,
         h: 16,
         label: "Disc",
@@ -3610,15 +3633,15 @@ static TASK_WIDGETS: [Widget; 2] = [
     Widget::Button {
         x: 8,
         y: 216,
-        w: 96,
+        w: 152,
         h: 24,
         label: "End Task",
         action: WidgetAction::Task(TaskBtn::End),
     },
     Widget::Button {
-        x: 112,
+        x: 168,
         y: 216,
-        w: 112,
+        w: 176,
         h: 24,
         label: "Switch To",
         action: WidgetAction::Task(TaskBtn::Switch),
@@ -3691,7 +3714,7 @@ static LAB_WIDGETS: [Widget; 11] = [
         w: 152,
         h: 16,
         id: 0,
-        label: "Auto-connect",
+        label: "Auto",
     },
     Widget::Checkbox {
         x: 168,
@@ -3699,7 +3722,7 @@ static LAB_WIDGETS: [Widget; 11] = [
         w: 152,
         h: 16,
         id: 1,
-        label: "Persist config",
+        label: "Persist",
     },
     Widget::Radio {
         x: 8,
@@ -4081,8 +4104,8 @@ fn widget_key(sc: u8) -> bool {
 
 /// Dropdown pixel width of a menu: the widest row plus padding.
 fn menu_dropdown_w(items: &[&str]) -> usize {
-    let max = items.iter().map(|s| s.len()).max().unwrap_or(1);
-    max * console::GLYPH_W + 12
+    let max = items.iter().map(|s| tui::text_width(s)).max().unwrap_or(1);
+    max + 12
 }
 
 /// Widget table of a window kind; clients and built-ins without a demo table
@@ -4319,7 +4342,7 @@ fn draw_widgets(fb: &Framebuffer, win: &Window) {
                     draw_field_text(fb, ax + 4, ty, val, ax + w - 4);
                 }
                 if focused {
-                    let cx = ax + 4 + count * console::GLYPH_W;
+                    let cx = ax + 4 + count * console::TEXT_ADVANCE;
                     if cx + 2 < ax + w {
                         unsafe {
                             fb.fill_rect(cx, ay + 2, 2, h.saturating_sub(4), BAR_ON);
@@ -4599,7 +4622,7 @@ fn draw_radio(
 
 /// Left inset of a slider's track from its widget origin (leaves room for the
 /// caption).
-const SLIDER_LABEL_W: usize = 96;
+const SLIDER_LABEL_W: usize = 112;
 /// Right inset of a slider's track from its widget width (leaves room for the
 /// numeric value).
 const SLIDER_VALUE_W: usize = 40;
@@ -4760,14 +4783,7 @@ fn utf8_chars(bytes: &[u8]) -> usize {
 /// scalars use the kernel's shared Unicode glyph path; the string never crosses
 /// `max_px`, so it stays inside the field frame.
 fn draw_field_text(fb: &Framebuffer, x: usize, y: usize, s: &str, max_px: usize) {
-    let mut px = x;
-    for ch in s.chars() {
-        if px + console::GLYPH_W > max_px {
-            break;
-        }
-        tui::draw_char(fb, px, y, ch, TEXT, NET_BOX_BG);
-        px += console::GLYPH_W;
-    }
+    tui::draw_text(fb, x, y, s, TEXT, NET_BOX_BG, max_px);
 }
 
 /// Serial proof line for a finished resize drag: final geometry of the
@@ -4964,6 +4980,7 @@ pub fn render() {
     };
     let back = back_fb(vram);
     let target: &Framebuffer = back.as_ref().unwrap_or(vram);
+    tui::clear_text_clip();
     let screen_h = vram.height();
     for row in ry0..(ry0 + rh) {
         unsafe {
@@ -5066,8 +5083,47 @@ fn mark_live_dirty() {
     }
 }
 
+fn set_surface_clip(fb: &Framebuffer, x: usize, y: usize, w: usize, h: usize) {
+    tui::set_text_clip(
+        x.min(fb.width()),
+        y.min(fb.height()),
+        x.saturating_add(w).min(fb.width()),
+        y.saturating_add(h).min(fb.height()),
+    );
+}
+
+fn fit_label(s: &str, max_width: usize) -> (&str, bool) {
+    let mut end = 0;
+    let mut px: usize = 0;
+    for (i, c) in s.char_indices() {
+        let next = px.saturating_add(console::TEXT_ADVANCE);
+        if next > max_width {
+            return (&s[..end], true);
+        }
+        px = next;
+        end = i + c.len_utf8();
+    }
+    (s, false)
+}
+
+fn short_label(s: &str, max_width: usize) -> String {
+    let (prefix, clipped) = fit_label(s, max_width);
+    if !clipped {
+        return String::from(prefix);
+    }
+    let ellipsis = 3 * console::TEXT_ADVANCE;
+    if max_width <= ellipsis {
+        return String::new();
+    }
+    let (head, _) = fit_label(s, max_width.saturating_sub(ellipsis));
+    let mut out = String::from(head);
+    out.push_str("...");
+    out
+}
+
 fn draw_taskbar(fb: &Framebuffer) {
     let y = fb.height().saturating_sub(TASKBAR_H);
+    set_surface_clip(fb, 0, y, fb.width(), TASKBAR_H);
     unsafe {
         fb.fill_rect_vgrad(0, y, fb.width(), TASKBAR_H, BAR_TOP, BAR_BG);
         fb.fill_rect(0, y, fb.width(), 1, vector::mix(BAR_TOP, TEXT_DIM, 110));
@@ -5091,14 +5147,19 @@ fn draw_taskbar(fb: &Framebuffer) {
         }
     }
     tui::draw_text(fb, 26, y, "Пуск", TEXT, start_bg, START_BTN_W);
+    let tray_x = fb.width().saturating_sub(20);
     let mut bx = START_BTN_W + 4;
     for i in taskbar_slots() {
-        if i == usize::MAX {
+        if i == usize::MAX || bx + 8 > tray_x.saturating_sub(4) {
             break;
         }
         if let Some(win) = unsafe { (*core::ptr::addr_of!(WINS))[i].as_ref() } {
-            let title = win_live_title(win);
-            let w = 8 + tui::text_width(title);
+            let avail = tray_x.saturating_sub(4).saturating_sub(bx).saturating_sub(8);
+            let title = short_label(win_live_title(win), avail);
+            let w = 8 + tui::text_width(&title);
+            if w == 0 || w > tray_x.saturating_sub(4).saturating_sub(bx) {
+                break;
+            }
             let bg = if win.focused {
                 BAR_ON
             } else if win.minimized {
@@ -5118,13 +5179,13 @@ fn draw_taskbar(fb: &Framebuffer) {
                     bg,
                 );
             }
-            tui::draw_text(fb, bx + 4, y, title, TEXT, bg, bx + w);
-            bx += w + 4;
+            tui::draw_text(fb, bx + 4, y, &title, TEXT, bg, bx + w);
+            bx = bx.saturating_add(w + 4);
         }
     }
     // Tray: a recessed pill holding the state globe (circle + ring +
     // meridian + equator), painted inside [width-20, width-4).
-    let gx = fb.width().saturating_sub(20);
+    let gx = tray_x;
     let cx = fb.width().saturating_sub(12);
     let cy = (y + TASKBAR_H / 2) as i32;
     let color = globe_color();
@@ -5176,6 +5237,7 @@ fn globe_color() -> Color {
 }
 
 fn draw_window(fb: &Framebuffer, win: &Window) {
+    set_surface_clip(fb, win.x, win.y, win.w, win.h);
     let title_bg = if win.focused { TITLE_ON } else { TITLE_OFF };
     let title = win_live_title(win);
     let (vx, vy) = (win.x as i32, win.y as i32);
@@ -5293,6 +5355,7 @@ fn draw_window(fb: &Framebuffer, win: &Window) {
 /// these two rectangles.
 fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
     let (x, y) = modal_pos(fb);
+    set_surface_clip(fb, x, y, DLG_W, DLG_H);
     let max = x + DLG_W - 6;
     let (vx, vy) = (x as i32, y as i32);
     unsafe {
@@ -5384,6 +5447,7 @@ fn draw_modal(fb: &Framebuffer, kind: WinKind, title: &'static str) {
 /// [`crash_click`]; the faulting task stays frozen until one is chosen.
 fn draw_crash_dialog(fb: &Framebuffer) {
     let (x, y) = crash_pos(fb);
+    set_surface_clip(fb, x, y, CDLG_W, CDLG_H);
     let max = x + CDLG_W - 6;
     let (vx, vy) = (x as i32, y as i32);
     unsafe {
@@ -6290,7 +6354,7 @@ fn draw_lab(fb: &Framebuffer, win: &Window, max_px: usize) {
     };
     at(TITLE_H + 8, "Widget Lab", TEXT);
     at(300, "Tab focus  n/p list  enter pick", TEXT_DIM);
-    at(314, "ctrl+c/x/v copy/cut/paste", TEXT_DIM);
+    at(316, "ctrl+c/x/v copy/cut/paste", TEXT_DIM);
     if lab_menu() == LAB_NO {
         let f = lab_form();
         if f.msg_len > 0 {
@@ -6385,9 +6449,9 @@ fn draw_lab_scrollbar(fb: &Framebuffer, ax: usize, ay: usize, h: usize, list_id:
 
 /// Paints the Network window body (earlier release): five status lines on the 16 px
 /// grid from `y+24`, the mode row with its feedback word, the seven field
-/// captions and values (the widget layer draws their borders), the Wi-Fi status
-/// line and up to three scan rows. Everything clips at `max_px`, i.e. the
-/// window's own right edge.
+/// captions and values (the widget layer draws their borders), then the Wi-Fi
+/// status, card and up to three scan rows on the same 16 px grid. Text is
+/// clipped to the window's own rectangle, including its bottom edge.
 fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     let x = win.x + 8;
     let d = unsafe { *core::ptr::addr_of!(NET_DRAFT) };
@@ -6458,7 +6522,7 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     }
 
     const CAPTIONS: [&str; 7] = ["ip", "mask", "gw", "dns1", "dns2", "ssid", "pass"];
-    const ROWS: [usize; 7] = [128, 144, 160, 176, 192, 296, 312];
+    const ROWS: [usize; 7] = [128, 144, 160, 176, 192, 340, 356];
     let bx = win.x + 80;
     for i in 0..NET_FIELDS as usize {
         let focused = d.focus == i as u8;
@@ -6481,7 +6545,7 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
         } else {
             String::from_utf8_lossy(&field[..len]).into_owned()
         };
-        let max_chars = 244 / console::GLYPH_W;
+        let max_chars = 244 / console::TEXT_ADVANCE;
         let shown = if val.len() > max_chars {
             &val[val.len() - max_chars..]
         } else {
@@ -6506,7 +6570,7 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
     let cn = crate::wifi::card_desc(&mut card_b);
     let card = core::str::from_utf8(&card_b[..cn]).unwrap_or("?");
     at(
-        240,
+        248,
         &format!("wifi card {}", card),
         if crate::wifi::has_card() {
             TEXT
@@ -6524,7 +6588,7 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
         } else {
             "no scan yet"
         };
-        at(248, hint, TEXT_DIM);
+        at(264, hint, TEXT_DIM);
     } else {
         let mut cbuf = [0u8; 32];
         let cn = crate::wifi::connected_ssid(&mut cbuf);
@@ -6537,7 +6601,7 @@ fn draw_network(fb: &Framebuffer, win: &Window, max_px: usize) {
                 crate::wifi::Security::Wpa2 => "wpa2",
             };
             at(
-                248 + k * 16,
+                264 + k * 16,
                 &format!(
                     "{}{} {} {} {}",
                     if assoc { "*" } else { " " },
@@ -6880,4 +6944,53 @@ fn form_menu_set(host: WinKind, m: u8) {
 
 fn form_focus(host: WinKind) -> u8 {
     form(host).focus
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::{
+        fit_label, short_label, Widget, LAB_WIDGETS, NETWORK_WIDGETS, SLIDER_LABEL_W,
+        TASK_WIDGETS, WELCOME_WIDGETS,
+    };
+    use crate::console::TEXT_ADVANCE;
+    use crate::tui;
+
+    #[test]
+    fn widget_labels_fit_their_plates() {
+        for wg in WELCOME_WIDGETS
+            .iter()
+            .chain(NETWORK_WIDGETS.iter())
+            .chain(TASK_WIDGETS.iter())
+            .chain(LAB_WIDGETS.iter())
+        {
+            match *wg {
+                Widget::Button { label, w, .. } | Widget::Menu { label, w, .. } => {
+                    if !label.is_empty() {
+                        assert!(tui::text_width(label) <= w, "label {label}");
+                    }
+                }
+                Widget::Checkbox { label, w, .. } | Widget::Radio { label, w, .. } => {
+                    assert!(tui::text_width(label) + 14 <= w, "label {label}");
+                }
+                Widget::Slider { label, .. } => {
+                    assert!(tui::text_width(label) <= SLIDER_LABEL_W, "label {label}");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn fit_label_stops_on_scalar_boundary() {
+        let (prefix, clipped) = fit_label("Пуск", 2 * TEXT_ADVANCE);
+        assert_eq!(prefix, "Пу");
+        assert!(clipped);
+    }
+
+    #[test]
+    fn short_label_appends_ellipsis() {
+        assert_eq!(short_label("Welcome", 3 * TEXT_ADVANCE).as_str(), "");
+        assert_eq!(short_label("Welcome", 5 * TEXT_ADVANCE).as_str(), "We...");
+        assert_eq!(short_label("OK", 5 * TEXT_ADVANCE).as_str(), "OK");
+    }
 }

@@ -19,6 +19,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 pub const SCALE: usize = 2;
 /// Glyph cell width in pixels.
 pub const GLYPH_W: usize = 8 * SCALE;
+/// Horizontal step between neighbouring glyphs (two pixels of breathing room).
+pub const TEXT_ADVANCE: usize = GLYPH_W + SCALE;
 /// Glyph cell height in pixels.
 pub const GLYPH_H: usize = 8 * SCALE;
 /// Number of glyph rows reserved for the boot/console log at the top of the
@@ -48,7 +50,7 @@ impl Console {
     fn init(&mut self, fb: Option<&FramebufferInfo>, hhdm_offset: u64) {
         self.fb = fb.map(|fb| Framebuffer::new(fb, hhdm_offset));
         if let Some(fb) = self.fb.as_ref().filter(|fb| fb.is_usable()) {
-            self.cols = fb.width() / GLYPH_W;
+            self.cols = fb.width() / TEXT_ADVANCE;
             // Keep a compact boot/log strip on top (CONSOLE_TOP_ROWS); the
             // interactive TUI panel below occupies every row to the bottom
             // status strip, so the console never draws past its own rows and
@@ -79,7 +81,7 @@ impl Console {
         } else {
             [0u8; 8]
         };
-        let px = self.cursor_x * GLYPH_W;
+        let px = self.cursor_x * TEXT_ADVANCE;
         let py = self.cursor_y * GLYPH_H;
         unsafe {
             fb.fill_rect(px, py, GLYPH_W, GLYPH_H, colors::BG);
@@ -273,7 +275,7 @@ pub fn panic_screen(msg: &str) {
     if !fb.is_usable() {
         return;
     }
-    let cols = (fb.width() / GLYPH_W).max(1);
+    let cols = (fb.width() / TEXT_ADVANCE).max(1);
     const ROWS: usize = 8;
     unsafe {
         fb.fill_rect(0, 0, fb.width(), ROWS * GLYPH_H, colors::BG);
@@ -291,7 +293,7 @@ pub fn panic_screen(msg: &str) {
             }
         }
         let bits = crate::tui::glyph_bits(byte);
-        let px = cx * GLYPH_W;
+        let px = cx * TEXT_ADVANCE;
         let py = cy * GLYPH_H;
         unsafe {
             fb.fill_rect(px, py, GLYPH_W, GLYPH_H, colors::BG);
