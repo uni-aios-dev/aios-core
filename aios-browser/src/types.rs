@@ -102,6 +102,22 @@ impl Default for BrowserConfig {
     }
 }
 
+impl BrowserConfig {
+    /// Configuration for callers that supply URLs from an untrusted source.
+    ///
+    /// Keeps `NetworkClient` authoritative: the native headless fallback is
+    /// disabled because it would re-resolve DNS, follow its own redirects and
+    /// execute scripts outside the validated path. Embedded page scripts are
+    /// disabled as well, leaving only the hardened fetch/render pipeline.
+    pub fn for_untrusted() -> Self {
+        Self {
+            headless_fallback: false,
+            execute_scripts: false,
+            ..Self::default()
+        }
+    }
+}
+
 /// A script injected into every matching page after its own scripts ran
 /// (Tampermonkey-style userscript).
 #[derive(Debug, Clone, Serialize, Deserialize)]

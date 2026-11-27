@@ -53,6 +53,13 @@
   SSRF class: `aios-llm`, `aios-search`, `aios-store` and `aios-autohal` take
   endpoints from operator config/env or fixed defaults, and bridge requests
   cannot supply `api_url`/store URLs. No remotely controlled target was found.
+- `/api/v1/browse` still used `BrowserConfig::default()`, whose headless fallback
+  launches a native Chromium-class browser with the caller-supplied URL. That
+  browser re-resolved DNS, followed its own redirects and executed scripts
+  outside the validated path, so a page that looked like a JS shell could reach
+  private targets despite the hardened `NetworkClient`. The bridge now uses
+  `BrowserConfig::for_untrusted()` with native fallback and embedded scripts
+  disabled; two config-boundary tests cover the change.
 - Tests that registered bridge users reused the shared `aios_data/users.json`
   and short passwords, so they became order-dependent under the stricter auth
   policy. `BridgeContext::with_auth()` injects an isolated store, the E2E test
@@ -61,6 +68,24 @@
 - **Status:** fixed in the working tree; `cargo fmt --all -- --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace` and `scripts/check_unsafe_safety.py HEAD~1` are green.
+
+## OPEN (P2, 2026-11-27): residual local panic paths
+
+- `aios-process-mgr/src/scheduler.rs:738` divides by `aging_threshold_ms`;
+  `sched aging 0` from the console accepts zero and can panic the shared
+  scheduler thread (`aios-console/src/host.rs:3197-3211`). `scheduler.rs:773`
+  multiplies `default_time_slice_ms` by a priority weight without overflow
+  checking; `sched quantum <u64::MAX>` panics in debug builds.
+- `aios-browser/src/script.rs:429` casts an arbitrary JS `length` to `usize`
+  and loops that many times, so `eval_js` with a large `length` can hang/OOM the
+  browser block task. Local IPC only; `/api/v1/browse` no longer executes page
+  scripts.
+- `aios-cluster/src/executor.rs:198,207,215,229,240` still use
+  `lock().unwrap()` on shared scheduler/state mutexes. A poisoned scheduler
+  (for example after the `sched aging 0` panic) makes the next remote
+  `Spawn`/`Kill`/`SetPriority`/`StatusRequest` panic the cluster loop.
+- **Verdict:** no P0/P1 remains from the URL/panic audit. These are local or
+  poison-dependent P2 hardening items; tracked here for the next pass.
 
 ## OPEN (v2.84.0, long uptime): ring-0 page fault `code=0x20000000`
 

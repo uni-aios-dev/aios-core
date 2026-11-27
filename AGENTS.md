@@ -94,7 +94,9 @@ cargo fmt --all
 - Never hardcode secrets, issuer keys or heartbeat keys. Resolve them with
   `aios_core::secrets` (`AIOS_<NAME>_SECRET` → `<data_dir>/secrets/<name>.key` → CSPRNG).
 - Network fetches must go through the SSRF policy in `aios-browser`: HTTP(S) only,
-  DNS/IP validation, bounded redirects and bounded response bodies.
+  DNS/IP validation, bounded redirects and bounded response bodies. Untrusted
+  caller URLs must use `BrowserConfig::for_untrusted()`; never enable the native
+  headless fallback or private targets on those paths.
 - Bridge handlers must enforce input limits and default-deny authorization.
   Never make `/ws/` public; a bearer token is always required.
 - Prefer recovering poisoned locks (`unwrap_or_else(|poisoned| poisoned.into_inner())`)

@@ -323,7 +323,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 | Крейт | Непустые строки / тесты | Ключевой API |
 |---|---|---|
-| `aios-browser` | 4 339 / 113 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes}` |
+| `aios-browser` | 4 339 / 113 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
@@ -385,9 +385,9 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `WorkflowCompiler::{generate_wat,compile_to_wasm}` | WAT→WASM-модуль (экспорты `init/start/step_N`) |
 | `AutoManifestGenerator::{from_wasm_binary,from_workflow_intents}` | Вывод полномочий + JSON-манифест |
 
-### 8.3 `aios-bridge` — API-шлюз (6 файлов · ~2,7 тыс. строк · 24 unit + 24 integration-теста)
+### 8.3 `aios-bridge` — API-шлюз (6 файлов · ~2,7 тыс. строк · 25 unit + 24 integration-теста)
 
-`BridgeContext` хранит общие дескрипторы подсистем: health, watchdog/процессы/блоки, магазин, браузер, sys_control, телеметрия, auth, live_update, ipc_bus и `LlmEngine`. middleware `require_auth` по умолчанию закрывает `/api/` и `/ws/`; `start_server_with_shutdown()` владеет axum-сервером. Пароли хешируются PBKDF2-HMAC-SHA256 с constant-time проверками и блокировкой после 5 попыток на 5 минут; регистрация включается явно (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS работает по fail-closed. `validate_credentials()` общий для register/login (имена 3–64 байта, пароли 12–1024 байта проверяются до хеширования), а `failed_logins` очищается и ограничен 10 000 записей. Валидация DTO ограничивает промпты, пакеты воркфлоу, `max_tokens` и загрузки WASM; `block_binary_path()` ограничивает бинарники блоков каноническими путями внутри `AIOS_BLOCKS_DIR`; отравленные блокировки восстанавливаются через `lock_or_recover()`. Прямые `reqwest`-клиенты вне браузера используют эндпоинты оператора/окружения или фиксированные значения; DTO моста не принимают URL.
+`BridgeContext` хранит общие дескрипторы подсистем: health, watchdog/процессы/блоки, магазин, браузер, sys_control, телеметрия, auth, live_update, ipc_bus и `LlmEngine`. middleware `require_auth` по умолчанию закрывает `/api/` и `/ws/`; `start_server_with_shutdown()` владеет axum-сервером. Пароли хешируются PBKDF2-HMAC-SHA256 с constant-time проверками и блокировкой после 5 попыток на 5 минут; регистрация включается явно (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS работает по fail-closed. `validate_credentials()` общий для register/login (имена 3–64 байта, пароли 12–1024 байта проверяются до хеширования), а `failed_logins` очищается и ограничен 10 000 записей. Валидация DTO ограничивает промпты, пакеты воркфлоу, `max_tokens` и загрузки WASM; `block_binary_path()` ограничивает бинарники блоков каноническими путями внутри `AIOS_BLOCKS_DIR`; отравленные блокировки восстанавливаются через `lock_or_recover()`. Прямые `reqwest`-клиенты вне браузера используют эндпоинты оператора/окружения или фиксированные значения; DTO моста не принимают URL, кроме `BrowseRequest.url`, а `browse_handler` применяет `BrowserConfig::for_untrusted()`, поэтому нативный headless-fallback и встроенные скрипты остаются отключёнными.
 
 | Метод Путь | Обработчик |
 |---|---|
@@ -461,7 +461,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `stress_test.rs` | 11 | ×1000 спавнов, RT ×500, реестр ×500 (двойные пороги) |
 | `real_threads.rs` | 10 | Реальные потоки: terminate/suspend/resume |
 | `real_wasm.rs` | 8 | Wasmtime end-to-end, изоляция мультиблоков |
-| `browser_search_tests.rs` | 7 | HTML-парсер |
+| `browser_search_tests.rs` | 8 | HTML-парсер и конфигурация untrusted-браузера |
 | `full_lifecycle.rs` | 7 | Boot→deploy→swap→watchdog→shutdown |
 | `real_hot_swap.rs` | 7 | Hot-swap WASM при смене версии |
 | `e2e_pipeline_test.rs` | 6 | Цепочка HW→тир→LLM intent→EasyLang→WASM; мост поднят с `with_signup(true)` |
@@ -480,7 +480,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
   SSRF-политика `aios-browser/src/network.rs` с привязкой DNS через
   `resolve_to_addrs`; 201 восстановление отравленных
   блокировок в 21 production-файле; CI-шаг `Require SAFETY comments on new unsafe blocks`.
-  После усилений `cargo test --workspace`: **1 858 тестов пройдено / 0 провалено в 100 наборах**;
+  После усилений `cargo test --workspace`: **1 860 тестов пройдено / 0 провалено в 100 наборах**;
   `scripts/check_unsafe_safety.py HEAD~1` не находит новых unsafe-блоков без комментария.
 - Отдельные проверки: check/clippy `aios-kernel` (настройки по умолчанию и `--features limine`), тесты `aios-kernel-run` 2/2, проверка синтаксиса PowerShell. Свежая пересборка гибридного ISO/IMG здесь **не** выполнялась: бинарники `xorriso`/Limine отсутствуют, каталог `iso/` пуст — использовались только логика проверки маркеров и осмотр существующих образов.
 - Пять тестов `aios-kernel` на компоновку текста — это исходные проверки `#[cfg(test)]` для freestanding-бинарика: они не входят в приведённый выше счёт `cargo test --workspace`, потому что в bare-metal-цели нет crates `test`. Проверка в рантайме выполнена на релизном ELF, записанном в LBA 32 ISO копии образа (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU дошёл до `Limine handoff` / GOP `1280x800` / DHCP bound, клавишами `F4`/`F5`/`F9` открыл App Store, Network и окно оборудования, а screendump показал, что ни один текстовый участок не шире ячейки глифа 16 px. Затем образ записан и полностью прочитан назад с Disk 3 (`\\.\PhysicalDrive3`, серийник `EE05DB505AE9`): SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и MBR `55 AA` совпали (`boot/out/flash-gui-disk3.log`).

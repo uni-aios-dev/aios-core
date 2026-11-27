@@ -39,6 +39,15 @@ fn test_browser_config_default() {
 }
 
 #[test]
+fn test_browser_config_for_untrusted() {
+    let cfg = BrowserConfig::for_untrusted();
+    assert!(!cfg.headless_fallback);
+    assert!(!cfg.execute_scripts);
+    assert!(!cfg.allow_private_targets);
+    assert!(cfg.sandbox_enabled);
+}
+
+#[test]
 fn test_html_parser_complex_links() {
     let html = r#"<a href="https://example.com/page?q=1&lang=en">Link</a>"#;
     let links = HtmlParser::extract_links(html, "https://base.com");

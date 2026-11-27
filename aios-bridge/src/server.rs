@@ -1024,8 +1024,12 @@ impl From<BridgeError> for IntentApiError {
     }
 }
 
+fn bridge_browser_config() -> aios_browser::types::BrowserConfig {
+    aios_browser::types::BrowserConfig::for_untrusted()
+}
+
 async fn browse_handler(Json(req): Json<BrowseRequest>) -> Json<BrowseResponse> {
-    let config = aios_browser::types::BrowserConfig::default();
+    let config = bridge_browser_config();
     let engine = aios_browser::BrowserEngine::new(config);
 
     match engine.navigate(&req.url).await {
@@ -1518,6 +1522,14 @@ mod tests {
         assert_eq!(version_from_path(p, "bar").as_deref(), Some("2.1.0"));
         let p2 = std::path::Path::new("blocks/wasm_heap.wasm");
         assert_eq!(version_from_path(p2, "wasm_heap"), None);
+    }
+
+    #[test]
+    fn bridge_browse_config_disables_native_fallback() {
+        let config = bridge_browser_config();
+        assert!(!config.headless_fallback);
+        assert!(!config.execute_scripts);
+        assert!(!config.allow_private_targets);
     }
 
     #[test]

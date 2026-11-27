@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## Unreleased — bridge headless SSRF bypass (2026-11-27)
+
+### Added
+- `BrowserConfig::for_untrusted()` supplies a browser profile for caller-supplied
+  URLs: `headless_fallback` and `execute_scripts` are disabled, private targets
+  stay denied, and the hardened `NetworkClient` remains the only fetch path.
+
+### Changed
+- `/api/v1/browse` now builds its engine with `BrowserConfig::for_untrusted()`
+  instead of `BrowserConfig::default()`.
+
+### Fixed
+- An authenticated caller could bypass the browser SSRF policy: a public page
+  that looked like a JS shell caused the native headless-browser fallback to
+  re-navigate the caller URL, re-resolve DNS, follow its own redirects and run
+  scripts outside the validated path. The bridge no longer invokes that fallback
+  for user-supplied URLs. The URL-config audit found no other remotely
+  controlled network target; residual local-only panic paths are recorded in
+  `BUGS.md`.
+
+### Verified
+- `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings.
+- `cargo test --workspace`: 1,860 passed / 0 failed in 100 suites. `python scripts/check_unsafe_safety.py HEAD~1`: no undocumented new unsafe blocks.
+- New tests: bridge browse config boundary and `BrowserConfig::for_untrusted()`.
+
 ## Unreleased — security hardening of bridge, browser and secrets (2026-11-27)
 
 ### Added
