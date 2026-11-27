@@ -373,14 +373,16 @@ mod tests {
         let provider = HostAuthProvider::new(open_auth(dir.path()).expect("auth handle"));
 
         let token = provider
-            .register("alice", "secret123")
+            .register("alice", "secret-password-123")
             .expect("register alice");
         assert!(!token.is_empty());
-        assert!(provider.register("alice", "secret123").is_err());
+        assert!(provider.register("alice", "secret-password-123").is_err());
 
-        let login = provider.login("alice", "secret123").expect("login alice");
+        let login = provider
+            .login("alice", "secret-password-123")
+            .expect("login alice");
         assert!(!login.is_empty());
-        assert!(provider.login("alice", "wrongpass").is_err());
+        assert!(provider.login("alice", "wrong-password-123").is_err());
 
         assert_eq!(provider.me(&token).expect("me by token"), "alice");
         assert_eq!(

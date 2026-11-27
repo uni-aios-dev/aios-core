@@ -1,5 +1,56 @@
 # AIOS Development Log
 
+## Unreleased — security hardening of bridge, browser and secrets (2026-11-27)
+
+### Added
+- `aios_core::secrets`: a single secret resolver (`AIOS_<NAME>_SECRET` →
+  `<data_dir>/secrets/<name>.key` → CSPRNG). Compiled-in issuer/heartbeat secrets
+  in `aios-gui`, `aios`, `aios-console`, `aios-autohal`, `aios-tui`,
+  `aios-daemon` and `aios-watchdog` are gone.
+- `aios-bridge` authentication now uses PBKDF2-HMAC-SHA256 (100 000 iterations),
+  per-user salts, constant-time comparisons and a 5-attempt/5-minute lockout;
+  `BridgeError::Unauthorized` / `TooManyRequests` map to HTTP 401/429. Ten new
+  auth tests cover these cases.
+- `aios-bridge` DTOs enforce limits: `MAX_PROMPT_CHARS`,
+  `MAX_SYSTEM_PROMPT_CHARS`, `MAX_WORKFLOW_PROMPTS`, `MAX_TOKENS`,
+  `MAX_WASM_BASE64_CHARS` and `MAX_WASM_BYTES` (four new tests).
+- `BrowserConfig::allow_private_targets` and `max_response_bytes` (8 MiB default)
+  make the browser's SSRF policy explicit and configurable.
+- `scripts/check_unsafe_safety.py` and a CI step require a `// SAFETY:` comment
+  for every newly added unsafe line; existing boot/ICMP unsafe blocks documented.
+- `BridgeContext::with_auth()` injects an isolated `AuthStore`; the E2E bridge
+  test now uses a temporary data directory and a policy-compliant password.
+
+### Changed
+- `require_auth` is default-deny for `/api/*` and `/ws/*`; WebSocket always
+  requires a bearer token, registration is opt-in via `with_signup(true)` or
+  `AIOS_BRIDGE_ALLOW_SIGNUP=true`, and CORS is fail-closed.
+- Poisoned mutexes are recovered (201 `lock().unwrap()` calls in 21 production
+  files) instead of panicking in long-running services.
+- Block load/hot-swap binaries are confined to canonicalized paths under
+  `AIOS_BLOCKS_DIR`.
+- `NetworkClient` performs manual redirects and validates scheme/DNS/IP on every
+  hop (HTTP(S) only, no loopback/private/link-local/non-global targets without
+  opt-in); response bodies are streamed under a hard byte cap.
+- `HostBackend::executor` is now `Option`; a failed WASM sandbox no longer
+  panics on startup. Console `exec` is default-denied unless the program is in
+  `AIOS_CONSOLE_EXEC_ALLOWLIST`.
+- `Sandbox::compile_any` no longer calls `unsafe Module::deserialize` on
+  external bytes.
+- `AGENTS.md` documents the new security rules.
+
+### Fixed
+- Predictable/hardcoded secrets, path traversal via `wasm_path`, unsafe WASM
+  deserialization, startup and poisoned-lock panics, unbounded
+  prompts/workflows/LLM token budgets/WASM uploads, SSRF through redirects or
+  private addresses, and unintentionally public WS/registration/CORS.
+
+### Verified
+- `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings.
+- `cargo test --workspace`: 1,854 passed / 0 failed in 100 suites (30 new tests
+  over the previous baseline). `python scripts/check_unsafe_safety.py HEAD~1`:
+  no undocumented new unsafe blocks.
+
 ## Unreleased — path-scoped ACL and real ICMP ping (2026-11-27)
 
 ### Added

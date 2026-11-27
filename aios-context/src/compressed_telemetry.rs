@@ -41,7 +41,10 @@ impl CompressedTelemetryStore {
             if let Ok(compressed) = self.compressor.compress(&serialized) {
                 let key = format!("chunk_{}", self.next_chunk_id);
                 self.next_chunk_id += 1;
-                let mut cold = self.compressed_cold.lock().unwrap();
+                let mut cold = self
+                    .compressed_cold
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 cold.insert(key, compressed);
             }
         }
@@ -56,7 +59,10 @@ impl CompressedTelemetryStore {
 
     pub fn total_entries(&self) -> usize {
         let cold_count: usize = {
-            let cold = self.compressed_cold.lock().unwrap();
+            let cold = self
+                .compressed_cold
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cold.values()
                 .map(|v| {
                     self.compressor
@@ -76,11 +82,17 @@ impl CompressedTelemetryStore {
     }
 
     pub fn compressed_chunks(&self) -> usize {
-        self.compressed_cold.lock().unwrap().len()
+        self.compressed_cold
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     pub fn compression_ratio(&self) -> f32 {
-        let cold = self.compressed_cold.lock().unwrap();
+        let cold = self
+            .compressed_cold
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if cold.is_empty() {
             return 1.0;
         }
@@ -100,7 +112,10 @@ impl CompressedTelemetryStore {
 
     pub fn clear(&mut self) {
         self.hot_entries.clear();
-        self.compressed_cold.lock().unwrap().clear();
+        self.compressed_cold
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 }
 

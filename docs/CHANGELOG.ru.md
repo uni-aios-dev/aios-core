@@ -1,5 +1,59 @@
 # Журнал разработки AIOS
 
+## Unreleased — усиление безопасности моста, браузера и секретов (27.11.2026)
+
+### Добавлено
+- `aios_core::secrets`: единый resolver секретов (`AIOS_<NAME>_SECRET` →
+  `<data_dir>/secrets/<name>.key` → CSPRNG). Встроенные в код секреты
+  issuer/heartbeat в `aios-gui`, `aios`, `aios-console`, `aios-autohal`,
+  `aios-tui`, `aios-daemon` и `aios-watchdog` удалены.
+- Аутентификация `aios-bridge` использует PBKDF2-HMAC-SHA256 (100 000 итераций),
+  соль на пользователя, constant-time сравнения и блокировку после 5 неудач
+  на 5 минут; `BridgeError::Unauthorized` / `TooManyRequests` дают HTTP 401/429.
+  Десять новых тестов покрывают эти случаи.
+- DTO `aios-bridge` ограничивают размеры: `MAX_PROMPT_CHARS`,
+  `MAX_SYSTEM_PROMPT_CHARS`, `MAX_WORKFLOW_PROMPTS`, `MAX_TOKENS`,
+  `MAX_WASM_BASE64_CHARS` и `MAX_WASM_BYTES` (четыре новых теста).
+- `BrowserConfig::allow_private_targets` и `max_response_bytes` (по умолчанию
+  8 МиБ) делают SSRF-политику браузера явной и настраиваемой.
+- `scripts/check_unsafe_safety.py` и шаг CI требуют комментарий `// SAFETY:`
+  для каждой новой строки с `unsafe`; существующие unsafe-блоки boot/ICMP
+  задокументированы.
+- `BridgeContext::with_auth()` внедряет изолированный `AuthStore`; E2E-тест моста
+  теперь использует временный каталог данных и пароль, соответствующий политике.
+
+### Изменено
+- `require_auth` по умолчанию закрывает `/api/*` и `/ws/*`; WebSocket всегда
+  требует bearer-токен, регистрация включается явно через `with_signup(true)`
+  или `AIOS_BRIDGE_ALLOW_SIGNUP=true`, CORS работает по fail-closed.
+- Отравленные мьютексы восстанавливаются (201 вызов `lock().unwrap()` в 21
+  production-файле) вместо паники в долгоживущих сервисах.
+- Бинарники блоков при загрузке/hot-swap ограничены каноническими путями внутри
+  `AIOS_BLOCKS_DIR`.
+- `NetworkClient` выполняет редиректы вручную и проверяет схему/DNS/IP на каждом
+  hop (только HTTP(S), без loopback/private/link-local/non-global без явного
+  включения); тела ответов читаются потоком под жёстким лимитом байт.
+- `HostBackend::executor` теперь `Option`; сбой WASM-песочницы больше не роняет
+  запуск. `exec` консоли запрещён по умолчанию, пока программа не указана в
+  `AIOS_CONSOLE_EXEC_ALLOWLIST`.
+- `Sandbox::compile_any` больше не вызывает `unsafe Module::deserialize` для
+  внешних байт.
+- `AGENTS.md` описывает новые правила безопасности.
+
+### Исправлено
+- Предсказуемые/жёстко заданные секреты, обход путей через `wasm_path`,
+  небезопасная десериализация WASM, паники при запуске и отравленных блокировках,
+  неограниченные промпты/воркфлоу/бюджеты токенов/загрузки WASM, SSRF через
+  редиректы или приватные адреса, случайно публичные WS/регистрация/CORS.
+
+### Проверено
+- `cargo fmt --all -- --check`: чисто. `cargo clippy --workspace --all-targets --
+  -D warnings`: 0 предупреждений.
+- `cargo test --workspace`: 1 854 пройдено / 0 провалено в 100 наборах
+  (на 30 тестов больше предыдущего счёта).
+  `python scripts/check_unsafe_safety.py HEAD~1`: новых unsafe-блоков без
+  комментария `// SAFETY:` нет.
+
 ## Unreleased — ACL по путям и реальный ICMP ping (27.11.2026)
 
 ### Добавлено

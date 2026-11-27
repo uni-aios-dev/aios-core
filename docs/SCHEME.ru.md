@@ -103,9 +103,9 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 ## 4. Крейты фундамента
 
-### 4.1 `aios-core` — типы, протокол, крипто, fault, ФС (10 файлов · ~1,3 тыс. строк · 43 теста)
+### 4.1 `aios-core` — типы, протокол, крипто, fault, ФС, секреты (11 файлов · ~1,4 тыс. строк · 39 тестов)
 
-Модули: `block`, `crypto`, `error`, `fault`, `filesystem`, `ipc_protocol`, `runtime`.
+Модули: `block`, `crypto`, `error`, `fault`, `filesystem`, `ipc_protocol`, `runtime`, `secrets`.
 
 | Функция / Тип | Назначение |
 |---|---|
@@ -120,6 +120,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `FileSystem::local()/virtual_fs()/overlay()` | Бэкенды ФС с пресетами прав |
 | `FileSystem::{read,write,list}_{local,virtual}` | Операции с проверкой прав |
 | `runtime::block_on_future(fut)` | Безопасный sync→async мост |
+| `secrets::{random_secret,data_dir,env_name,resolve_secret,resolve_secret_in,secret_or_ephemeral}` | Общий resolver секретов: `AIOS_<NAME>_SECRET` → `<data_dir>/secrets/<name>.key` → CSPRNG; никогда не выводится из пути |
 
 ### 4.2 `aios-ipc` — транспорт (5 файлов · 806 строк · 29 тестов)
 
@@ -322,7 +323,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 | Крейт | Непустые строки / тесты | Ключевой API |
 |---|---|---|
-| `aios-browser` | 4 339 / 106 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк |
+| `aios-browser` | 4 339 / 111 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
@@ -384,26 +385,26 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `WorkflowCompiler::{generate_wat,compile_to_wasm}` | WAT→WASM-модуль (экспорты `init/start/step_N`) |
 | `AutoManifestGenerator::{from_wasm_binary,from_workflow_intents}` | Вывод полномочий + JSON-манифест |
 
-### 8.3 `aios-bridge` — API-шлюз (6 файлов · ~2,5 тыс. строк · 14 unit + 24 integration-теста)
+### 8.3 `aios-bridge` — API-шлюз (6 файлов · ~2,7 тыс. строк · 22 unit + 24 integration-теста)
 
-`BridgeContext` хранит общие дескрипторы подсистем: health, watchdog/процессы/блоки, магазин, браузер, sys_control, телеметрия, auth, live_update, ipc_bus и `LlmEngine`. middleware `require_auth` закрывает маршруты `/api/`; `start_server_with_shutdown()` владеет axum-сервером.
+`BridgeContext` хранит общие дескрипторы подсистем: health, watchdog/процессы/блоки, магазин, браузер, sys_control, телеметрия, auth, live_update, ipc_bus и `LlmEngine`. middleware `require_auth` по умолчанию закрывает `/api/` и `/ws/`; `start_server_with_shutdown()` владеет axum-сервером. Пароли хешируются PBKDF2-HMAC-SHA256 с constant-time проверками и блокировкой после 5 попыток на 5 минут; регистрация включается явно (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS работает по fail-closed. Валидация DTO ограничивает промпты, пакеты воркфлоу, `max_tokens` и загрузки WASM; `block_binary_path()` ограничивает бинарники блоков каноническими путями внутри `AIOS_BLOCKS_DIR`; отравленные блокировки восстанавливаются через `lock_or_recover()`.
 
 | Метод Путь | Обработчик |
 |---|---|
 | GET `/api/v1/health` | Здоровье/версия/uptime |
-| POST `/api/v1/auth/register` · `/api/v1/auth/login` · GET `/api/v1/auth/me` | Регистрация, bearer-логин, текущий пользователь |
+| POST `/api/v1/auth/register` · `/api/v1/auth/login` · GET `/api/v1/auth/me` | Регистрация (по включению), bearer-логин (401/429 при ошибке/блокировке), текущий пользователь |
 | GET `/api/v1/system/status` · GET `/api/v1/sys/status` | Watchdog/процессы/блоки/RAM; компактный sys status |
 | GET `/api/v1/sys/wifi/scan` · POST `/api/v1/sys/wifi/connect` · POST `/api/v1/sys/layout` | Сканирование/подключение Wi-Fi и раскладка EN/RU |
-| POST `/api/v1/intent` | Исполнение NL-интента (LLM fallback, проверки ACL) |
-| POST `/api/v1/workflow` | Последовательность промптов |
-| POST `/api/v1/llm/query` | Прямой LLM-запрос |
+| POST `/api/v1/intent` | Исполнение NL-интента (LLM fallback, проверки ACL, лимит промпта) |
+| POST `/api/v1/workflow` | Последовательность промптов (лимиты пакета и промптов) |
+| POST `/api/v1/llm/query` | Прямой LLM-запрос (лимиты prompt/system/токенов/температуры) |
 | POST `/api/v1/browse` · `/api/v1/search` | Прокси браузера/поиска |
-| GET `/api/v1/store/index` · POST `/api/v1/store/register` · POST `/api/v1/store/publish` | Магазин (publish проверяет SHA-256 + опционально Ed25519) |
+| GET `/api/v1/store/index` · POST `/api/v1/store/register` · POST `/api/v1/store/publish` | Магазин (publish проверяет SHA-256 + опционально Ed25519, ограничения base64/WASM) |
 | GET `/index.json` · `/store/index.json` · `/blocks/{name}.wasm` · `/store/blocks/{name}.wasm` | Каталог/загрузка службы обновлений |
 | GET `/api/v1/metrics` · `/api/v1/traces` · POST `/api/v1/crash-report` | Prometheus / спаны / crash-отчёт |
-| WS `/ws/telemetry` | Push RAM/процессов каждые 100 мс |
+| WS `/ws/telemetry` | Push RAM/процессов каждые 100 мс; bearer-токен обязателен при каждом повышении |
 
-Ключевые типы: `BridgeContext`, `IntentParser` (RU/EN-ключевые слова + `parse_with_llm_fallback`), `UserIntent`, `AuthStore`, ~30 DTO, `BridgeError`.
+Ключевые типы: `BridgeContext` (билдеры `with_blocks_dir`, `with_signup`, `with_auth`), `IntentParser` (RU/EN-ключевые слова + `parse_with_llm_fallback`), `UserIntent`, `AuthStore`, ~30 DTO, `BridgeError` (вкл. `Unauthorized` / `TooManyRequests`), `block_binary_path()`, `lock_or_recover()`, валидаторы DTO.
 
 ---
 
@@ -463,7 +464,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `browser_search_tests.rs` | 7 | HTML-парсер |
 | `full_lifecycle.rs` | 7 | Boot→deploy→swap→watchdog→shutdown |
 | `real_hot_swap.rs` | 7 | Hot-swap WASM при смене версии |
-| `e2e_pipeline_test.rs` | 6 | Цепочка HW→тир→LLM intent→EasyLang→WASM |
+| `e2e_pipeline_test.rs` | 6 | Цепочка HW→тир→LLM intent→EasyLang→WASM; мост поднят с `with_signup(true)` |
 | `fuzz_test.rs` | 6 | Fuzzing случайных пакетов |
 | `sys_control_tests.rs` | 32 | Wi-Fi-симуляция, wire-формат DHCP, раскладки, термоциклы, keyring |
 | `stress_fault_tolerance.rs` | 5 | 50 параллельных WASM-блоков, штормы сбоев |
@@ -473,6 +474,13 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 - **358 `.rs`-файлов**, **~125,5 тыс. непустых строк** (~136,9 тыс. вместе с пустыми): **41 участник воркспейса + 13 standalone-крейтов**.
 - **1 824 теста пройдено в 100 наборах** (unit + integration + doc-tests) при `cargo test --workspace`; насчитано 2 011 атрибутов тестов (`#[test]` 1 941 + `#[tokio::test]` 70) в 232 файлах.
 - `cargo fmt --all -- --check`: чисто. `cargo clippy --workspace --all-targets -- -D warnings`: **0 предупреждений**.
+- Карта усилений после аудита (27.11.2026): новые `aios-core/src/secrets.rs` и
+  `scripts/check_unsafe_safety.py`; `aios-bridge/src/auth.rs` (PBKDF2, блокировки),
+  валидаторы `dto.rs`, `server.rs::{block_binary_path,lock_or_recover,with_auth}`;
+  SSRF-политика `aios-browser/src/network.rs`; 201 восстановление отравленных
+  блокировок в 21 production-файле; CI-шаг `Require SAFETY comments on new unsafe blocks`.
+  После усилений `cargo test --workspace`: **1 854 теста пройдено / 0 провалено в 100 наборах**;
+  `scripts/check_unsafe_safety.py HEAD~1` не находит новых unsafe-блоков без комментария.
 - Отдельные проверки: check/clippy `aios-kernel` (настройки по умолчанию и `--features limine`), тесты `aios-kernel-run` 2/2, проверка синтаксиса PowerShell. Свежая пересборка гибридного ISO/IMG здесь **не** выполнялась: бинарники `xorriso`/Limine отсутствуют, каталог `iso/` пуст — использовались только логика проверки маркеров и осмотр существующих образов.
 - Пять тестов `aios-kernel` на компоновку текста — это исходные проверки `#[cfg(test)]` для freestanding-бинарика: они не входят в приведённый выше счёт `cargo test --workspace`, потому что в bare-metal-цели нет crates `test`. Проверка в рантайме выполнена на релизном ELF, записанном в LBA 32 ISO копии образа (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU дошёл до `Limine handoff` / GOP `1280x800` / DHCP bound, клавишами `F4`/`F5`/`F9` открыл App Store, Network и окно оборудования, а screendump показал, что ни один текстовый участок не шире ячейки глифа 16 px. Затем образ записан и полностью прочитан назад с Disk 3 (`\\.\PhysicalDrive3`, серийник `EE05DB505AE9`): SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и MBR `55 AA` совпали (`boot/out/flash-gui-disk3.log`).
 

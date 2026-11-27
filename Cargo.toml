@@ -102,5 +102,8 @@ crossterm = "0.28"
 zstd = "0.13"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
+getrandom = "0.2"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+tempfile = "3"
 egui = "0.31"
 eframe = "0.31"

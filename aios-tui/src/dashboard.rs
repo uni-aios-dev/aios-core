@@ -2181,7 +2181,11 @@ mod tests {
         let gen = state.begin_task("search 'demo'");
         assert!(state.task_running());
         assert_eq!(state.task_label(), Some("search 'demo'"));
-        *state.task_outbox.lock().unwrap() = Some((gen, Ok(vec!["Found 1 result(s):".into()])));
+        *state
+            .task_outbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((gen, Ok(vec!["Found 1 result(s):".into()])));
         state.check_task_outbox();
         assert!(!state.task_running());
         assert!(state
@@ -2194,7 +2198,11 @@ mod tests {
     fn test_task_error_line_is_printed() {
         let mut state = make_state();
         let gen = state.begin_task("install 'demo'");
-        *state.task_outbox.lock().unwrap() = Some((gen, Err("Install failed: no network".into())));
+        *state
+            .task_outbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((gen, Err("Install failed: no network".into())));
         state.check_task_outbox();
         assert!(!state.task_running());
         assert!(state
@@ -2208,7 +2216,11 @@ mod tests {
         let mut state = make_state();
         state.begin_task("update");
         let stale = state.task_gen - 1;
-        *state.task_outbox.lock().unwrap() = Some((stale, Ok(vec!["stale line".into()])));
+        *state
+            .task_outbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((stale, Ok(vec!["stale line".into()])));
         state.check_task_outbox();
         assert!(state.task_running());
         assert!(!state.shell_state.output.contains(&"stale line".to_string()));
@@ -2218,7 +2230,10 @@ mod tests {
     fn test_fetched_block_is_taken_for_the_current_generation() {
         let mut state = make_state();
         let gen = state.begin_task("fetch 'https://x/block.wasm'");
-        *state.fetch_out.lock().unwrap() =
+        *state
+            .fetch_out
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
             Some((gen, Ok(("block.wasm".to_string(), vec![1u8, 2]))));
         let result = state.take_fetched_block().expect("block expected");
         let (name, bytes) = result.expect("fetch ok");
@@ -2232,7 +2247,11 @@ mod tests {
         let mut state = make_state();
         state.begin_task("fetch 'https://x/block.wasm'");
         let stale = state.task_gen - 1;
-        *state.fetch_out.lock().unwrap() = Some((stale, Ok(("old.wasm".to_string(), vec![9u8]))));
+        *state
+            .fetch_out
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((stale, Ok(("old.wasm".to_string(), vec![9u8]))));
         assert!(state.take_fetched_block().is_none());
         assert!(state.task_running());
     }
@@ -2369,7 +2388,11 @@ mod tests {
         state.selected_tab = 5;
         state.web_state.web_fetch_gen = 3;
         let page = make_page("https://applied", 0);
-        *state.page_cache.lock().unwrap() = Some((3, Ok((page, Some("q".into())))));
+        *state
+            .page_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((3, Ok((page, Some("q".into())))));
         state.check_page_cache();
         assert!(state.web_state.page.is_some());
         assert_eq!(state.web_state.current_url, "https://applied");
@@ -2384,7 +2407,10 @@ mod tests {
         let mut state = make_state();
         state.web_state.web_fetch_gen = 3;
         let page = make_page("https://stale", 0);
-        *state.page_cache.lock().unwrap() = Some((2, Ok((page, None))));
+        *state
+            .page_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((2, Ok((page, None))));
         state.check_page_cache();
         assert!(state.web_state.page.is_none());
         assert_eq!(state.web_state.cache.len(), 0);

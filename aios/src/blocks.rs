@@ -536,7 +536,13 @@ mod tests {
         assert!(!report.loaded[0].routed);
         assert!(report.registered_only.contains(&"legacy".to_string()));
         assert!(registry.find_by_name("demo").is_some());
-        assert!(executor.lock().unwrap().executed_count() >= 1);
+        assert!(
+            executor
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .executed_count()
+                >= 1
+        );
     }
 
     #[test]

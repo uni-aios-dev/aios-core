@@ -1,9 +1,40 @@
 use aios_store::manifest::SignatureInfo;
 use serde::{Deserialize, Serialize};
 
+/// Maximum accepted user prompt length in characters.
+pub const MAX_PROMPT_CHARS: usize = 8_192;
+/// Maximum accepted system prompt length in characters.
+pub const MAX_SYSTEM_PROMPT_CHARS: usize = 4_096;
+/// Maximum number of prompts in one workflow request.
+pub const MAX_WORKFLOW_PROMPTS: usize = 64;
+/// Maximum accepted `max_tokens` value.
+pub const MAX_TOKENS: u32 = 4_096;
+/// Maximum encoded length of an uploaded WASM block.
+pub const MAX_WASM_BASE64_CHARS: usize = 16 * 1024 * 1024;
+/// Maximum decoded size of an uploaded WASM block in bytes.
+pub const MAX_WASM_BYTES: usize = 12 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct IntentRequest {
     pub prompt: String,
+}
+
+impl IntentRequest {
+    /// Reject empty and oversized prompts before any parsing or LLM call.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        validate_prompt(&self.prompt, MAX_PROMPT_CHARS, "prompt")
+    }
+}
+
+fn validate_prompt(value: &str, limit: usize, label: &str) -> std::result::Result<(), String> {
+    let chars = value.chars().count();
+    if chars == 0 {
+        return Err(format!("{label} must not be empty"));
+    }
+    if chars > limit {
+        return Err(format!("{label} exceeds {limit} characters"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +130,22 @@ pub struct WorkflowRequest {
     pub prompts: Vec<String>,
 }
 
+impl WorkflowRequest {
+    /// Reject oversized batches and oversized individual prompts.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.prompts.is_empty() {
+            return Err("prompts must not be empty".to_string());
+        }
+        if self.prompts.len() > MAX_WORKFLOW_PROMPTS {
+            return Err(format!("prompts exceeds {MAX_WORKFLOW_PROMPTS} entries"));
+        }
+        for prompt in &self.prompts {
+            validate_prompt(prompt, MAX_PROMPT_CHARS, "prompt")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct WorkflowStepResult {
     pub step: usize,
@@ -124,6 +171,27 @@ pub struct LlmQueryRequest {
     pub system_prompt: Option<String>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+}
+
+impl LlmQueryRequest {
+    /// Validate prompt sizes and the token budget before querying the LLM.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        validate_prompt(&self.prompt, MAX_PROMPT_CHARS, "prompt")?;
+        if let Some(system) = &self.system_prompt {
+            validate_prompt(system, MAX_SYSTEM_PROMPT_CHARS, "system_prompt")?;
+        }
+        if let Some(tokens) = self.max_tokens {
+            if tokens == 0 || tokens > MAX_TOKENS {
+                return Err(format!("max_tokens must be 1..={MAX_TOKENS}"));
+            }
+        }
+        if let Some(temperature) = self.temperature {
+            if !temperature.is_finite() || !(0.0..=2.0).contains(&temperature) {
+                return Err("temperature must be between 0 and 2".to_string());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -195,6 +263,18 @@ pub struct StorePublishRequest {
     /// installer's trust policy (`AIOS_TRUSTED_PUBLIC_KEYS`).
     #[serde(default)]
     pub signature: Option<SignatureInfo>,
+}
+
+impl StorePublishRequest {
+    /// Reject oversized uploads before base64 decoding or installation.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.wasm_base64.len() > MAX_WASM_BASE64_CHARS {
+            return Err(format!(
+                "wasm_base64 exceeds {MAX_WASM_BASE64_CHARS} characters"
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -269,4 +349,78 @@ pub struct MeResponse {
     pub username: String,
     pub user_count: usize,
     pub data_dir: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intent_prompt_limits_are_enforced() {
+        assert!(IntentRequest {
+            prompt: String::new()
+        }
+        .validate()
+        .is_err());
+        assert!(IntentRequest {
+            prompt: "x".repeat(MAX_PROMPT_CHARS)
+        }
+        .validate()
+        .is_ok());
+        assert!(IntentRequest {
+            prompt: "x".repeat(MAX_PROMPT_CHARS + 1)
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn workflow_batch_limits_are_enforced() {
+        assert!(WorkflowRequest {
+            prompts: Vec::new()
+        }
+        .validate()
+        .is_err());
+        assert!(WorkflowRequest {
+            prompts: vec!["ok".into(); MAX_WORKFLOW_PROMPTS]
+        }
+        .validate()
+        .is_ok());
+        assert!(WorkflowRequest {
+            prompts: vec!["ok".into(); MAX_WORKFLOW_PROMPTS + 1]
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn llm_limits_are_enforced() {
+        let request = |max_tokens, temperature| LlmQueryRequest {
+            prompt: "hello".into(),
+            system_prompt: None,
+            max_tokens,
+            temperature,
+        };
+        assert!(request(Some(MAX_TOKENS), Some(0.5)).validate().is_ok());
+        assert!(request(Some(MAX_TOKENS + 1), None).validate().is_err());
+        assert!(request(Some(0), None).validate().is_err());
+        assert!(request(None, Some(f32::NAN)).validate().is_err());
+        assert!(request(None, Some(3.0)).validate().is_err());
+    }
+
+    #[test]
+    fn publish_upload_limits_are_enforced() {
+        let request = |size| StorePublishRequest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: String::new(),
+            capabilities: Vec::new(),
+            checksum_sha256: String::new(),
+            wasm_base64: "A".repeat(size),
+            signature: None,
+        };
+        assert!(request(MAX_WASM_BASE64_CHARS).validate().is_ok());
+        assert!(request(MAX_WASM_BASE64_CHARS + 1).validate().is_err());
+    }
 }

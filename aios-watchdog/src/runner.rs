@@ -39,12 +39,17 @@ impl WatchdogRunner {
                 }
 
                 let action = {
-                    let mut wd = wd_clone.lock().unwrap();
+                    let mut wd = wd_clone
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     wd.check_timeout()
                 };
 
                 if action != WatchdogAction::None {
-                    actions_clone.lock().unwrap().push(action);
+                    actions_clone
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(action);
                 }
 
                 std::thread::sleep(std::time::Duration::from_millis(interval / 2));
@@ -70,33 +75,54 @@ impl WatchdogRunner {
     }
 
     pub fn receive_heartbeat(&self, heartbeat: &Heartbeat) -> Result<()> {
-        let mut wd = self.watchdog.lock().unwrap();
+        let mut wd = self
+            .watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         wd.receive_heartbeat(heartbeat)
     }
 
     pub fn state(&self) -> WatchdogState {
-        self.watchdog.lock().unwrap().state()
+        self.watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .state()
     }
 
     pub fn missed_count(&self) -> u32 {
-        self.watchdog.lock().unwrap().missed_count()
+        self.watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .missed_count()
     }
 
     pub fn stats(&self) -> (u64, u64) {
-        self.watchdog.lock().unwrap().stats()
+        self.watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stats()
     }
 
     pub fn pop_actions(&self) -> Vec<WatchdogAction> {
-        let mut actions = self.actions_received.lock().unwrap();
+        let mut actions = self
+            .actions_received
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         actions.drain(..).collect()
     }
 
     pub fn escalate(&self) -> Vec<WatchdogAction> {
-        let wd = self.watchdog.lock().unwrap();
+        let wd = self
+            .watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let actions = wd.escalate_actions();
         drop(wd);
         if !actions.is_empty() {
-            let mut queue = self.actions_received.lock().unwrap();
+            let mut queue = self
+                .actions_received
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for action in &actions {
                 queue.push(action.clone());
             }
@@ -105,11 +131,17 @@ impl WatchdogRunner {
     }
 
     pub fn force_safe_mode(&self) {
-        self.watchdog.lock().unwrap().force_safe_mode();
+        self.watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .force_safe_mode();
     }
 
     pub fn reset(&self) {
-        self.watchdog.lock().unwrap().reset();
+        self.watchdog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .reset();
     }
 
     pub fn watchdog(&self) -> &Arc<Mutex<Watchdog>> {

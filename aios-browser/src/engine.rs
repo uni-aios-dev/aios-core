@@ -907,6 +907,7 @@ mod tests {
         BrowserEngine::new(BrowserConfig {
             headless_fallback: false,
             timeout_secs,
+            allow_private_targets: true,
             ..Default::default()
         })
     }

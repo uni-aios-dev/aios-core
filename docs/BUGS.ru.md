@@ -1,5 +1,53 @@
 # AIOS: Известные баги и обходные пути
 
+## ИСПРАВЛЕНО (после аудита): жёстко заданные секреты, открытый мост, SSRF и паники (27.11.2026)
+
+- Семь предсказуемых литералов — `aios_master_secret_2026`,
+  `aios-console-issuer-v1`, `aios-autohal-driver-issuer-v1`, `aios_gui_secret`,
+  `aios_heartbeat_secret`, `default_aios_secret` и
+  `format!("aios-bridge-{}", data_dir)` — были вкомпилированы в сборки
+  GUI/TUI/daemon/watchdog/console/autohal/orchestrator/bridge: любой, кто прочёл
+  бинарник, мог подделать capability-токены или heartbeat. `aios_core::secrets`
+  теперь берёт `AIOS_<NAME>_SECRET` → `<data_dir>/secrets/<name>.key` → CSPRNG
+  без fallback-а на путь; GUI использует один и тот же секрет и для producer,
+  и для watchdog.
+- Пароли и сессии моста были слабыми: теперь PBKDF2-HMAC-SHA256 (100 000
+  итераций) с constant-time проверками, пять неудачных входов блокируют аккаунт
+  на пять минут, вместо общих ошибок возвращаются `401`/`429`, а повреждённый
+  `users.json` работает по fail-closed.
+- `/ws/telemetry` был публичным, когда не было пользователей, самостоятельная
+  регистрация была включена по умолчанию, а CORS работал по fail-open. `require_auth` теперь
+  по умолчанию закрывает `/api/*` и `/ws/*`, токен WS проверяется при каждом
+  повышении, регистрация требует явного включения, а CORS принимает только
+  точный корректный `AIOS_CORS_ORIGIN`.
+- `wasm_path` при загрузке/hot-swap блока мог прочесть любой файл на диске.
+  `block_binary_path()` канонизирует путь и ограничивает его `AIOS_BLOCKS_DIR`,
+  отклоняя `..` и символьные ссылки наружу.
+- `Sandbox::compile_any` вызывал `unsafe Module::deserialize` для внешних байт —
+  это могло привести к неопределённому поведению на битых данных. Путь удалён:
+  внешние модули компилируются только из binary/WAT.
+- `HostBackend::from_handles` паниковал при сбое инициализации WASM-песочницы и
+  уносил консоль. Исполнитель стал `Option`, а `exec` запрещён по умолчанию, пока
+  программа не указана в `AIOS_CONSOLE_EXEC_ALLOWLIST`.
+- 201 вызов `lock().unwrap()` в 21 production-файле превращал любое отравление
+  мьютекса в панику процесса; теперь guard восстанавливается с журналированием.
+- Обработчики intent, workflow, LLM и publish принимали неограниченные промпты,
+  пакеты, токены и загрузки WASM. Валидаторы DTO применяют лимиты
+  `MAX_PROMPT_CHARS`, `MAX_SYSTEM_PROMPT_CHARS`, `MAX_WORKFLOW_PROMPTS`,
+  `MAX_TOKENS`, `MAX_WASM_BASE64_CHARS` и `MAX_WASM_BYTES`.
+- `NetworkClient` принимал не-HTTP схемы, приватные/loopback-адреса и
+  редиректы без повторной проверки, читая тела без лимита. Теперь каждый hop
+  проверяется по схеме и DNS/IP, редиректы явные, а тела читаются потоком под
+  `max_response_bytes` (по умолчанию 8 МиБ).
+- Тесты регистрации пользователей моста переиспользовали общий
+  `aios_data/users.json` и короткие пароли, поэтому при ужесточении политики
+  стали зависеть от порядка запуска. `BridgeContext::with_auth()` внедряет
+  изолированное хранилище, E2E-тест использует временный каталог и подходящий
+  пароль, а при отказе печатает HTTP-статус и тело ответа.
+- **Статус:** исправлено в рабочей копии; `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace` и `scripts/check_unsafe_safety.py HEAD~1` зелёные.
+
 ## ОТКРЫТО (v2.84.0, долгая работа): page fault в ring 0 `code=0x20000000`
 
 - **Симптом:** после долгой работы GUI на железе ядро останавливается с

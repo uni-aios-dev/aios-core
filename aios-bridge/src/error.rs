@@ -8,6 +8,8 @@ pub enum BridgeError {
     SerializationFailed(String),
     ServerError(String),
     InvalidRequest(String),
+    Unauthorized(String),
+    TooManyRequests(String),
     WebSocketError(String),
 }
 
@@ -20,6 +22,8 @@ impl fmt::Display for BridgeError {
             Self::SerializationFailed(msg) => write!(f, "Serialization failed: {msg}"),
             Self::ServerError(msg) => write!(f, "Server error: {msg}"),
             Self::InvalidRequest(msg) => write!(f, "Invalid request: {msg}"),
+            Self::Unauthorized(msg) => write!(f, "Unauthorized: {msg}"),
+            Self::TooManyRequests(msg) => write!(f, "Too many requests: {msg}"),
             Self::WebSocketError(msg) => write!(f, "WebSocket error: {msg}"),
         }
     }

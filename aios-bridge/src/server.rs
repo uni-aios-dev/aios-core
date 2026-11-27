@@ -29,7 +29,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -65,6 +65,8 @@ pub struct BridgeContext {
     pub live_update: Mutex<LiveUpdateEngine>,
     /// Kernel IPC bus shared by the bridge, telemetry feed and text console.
     pub ipc_bus: Arc<Mutex<IpcBus>>,
+    /// Whether public self-registration is enabled (`AIOS_BRIDGE_ALLOW_SIGNUP`).
+    pub allow_signup: bool,
 }
 
 impl BridgeContext {
@@ -76,12 +78,13 @@ impl BridgeContext {
         bridge_block_id: u32,
     ) -> Self {
         let data_dir = std::env::var("AIOS_DATA_DIR").unwrap_or_else(|_| "aios_data".to_string());
+        let allow_signup = std::env::var("AIOS_BRIDGE_ALLOW_SIGNUP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
         let auth = crate::auth::open_auth(std::path::Path::new(&data_dir)).unwrap_or_else(|e| {
-            log::warn!("AUTH: failed to open auth store, auth disabled: {e}");
-            std::sync::Arc::new(Mutex::new(
-                AuthStore::new(std::path::Path::new(&data_dir))
-                    .expect("in-memory auth store fallback"),
-            ))
+            log::warn!("AUTH: failed to open auth store: {e}; bridge cannot authorize users");
+            std::sync::Arc::new(Mutex::new(AuthStore::empty()))
         });
         Self {
             intent_parser: IntentParser::new(),
@@ -105,6 +108,7 @@ impl BridgeContext {
             auth,
             live_update: Mutex::new(LiveUpdateEngine::new(10_000)),
             ipc_bus: Arc::new(Mutex::new(IpcBus::new(256))),
+            allow_signup,
         }
     }
 
@@ -119,12 +123,35 @@ impl BridgeContext {
         self
     }
 
+    /// Enable or disable public self-registration for tests and embedding.
+    pub fn with_signup(mut self, allowed: bool) -> Self {
+        self.allow_signup = allowed;
+        self
+    }
+
+    /// Override the authentication store for tests and embedding.
+    pub fn with_auth(mut self, auth: AuthHandle) -> Self {
+        self.auth = auth;
+        self
+    }
+
     pub fn uptime_secs(&self) -> u64 {
         self.start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0)
     }
 }
 
 type SharedState = Arc<BridgeContext>;
+
+/// Lock a shared component, recovering a poisoned mutex instead of panicking.
+///
+/// Poisoning means another task panicked while holding the lock; recovering the
+/// guard keeps the bridge available and records the event in the log.
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, label: &str) -> MutexGuard<'a, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        log::warn!("Recovering poisoned {label} mutex");
+        poisoned.into_inner()
+    })
+}
 
 pub async fn start_server(state: SharedState, addr: &str) -> Result<()> {
     start_server_with_shutdown(state, addr, std::future::pending()).await
@@ -144,19 +171,24 @@ where
     // API, so cross-origin access is not needed). This replaces the previous
     // permissive policy that allowed any website to call the bridge.
     let allowed_origin = std::env::var("AIOS_CORS_ORIGIN").ok();
-    let cors = allowed_origin.as_ref().map(|origin| {
-        CorsLayer::new()
-            .allow_origin(AllowOrigin::exact(
-                axum::http::HeaderValue::from_str(origin)
-                    .unwrap_or(axum::http::HeaderValue::from_static("*")),
-            ))
-            .allow_headers(Any)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::OPTIONS,
-            ])
-    });
+    let cors = match allowed_origin {
+        Some(origin) => {
+            let value = axum::http::HeaderValue::from_str(&origin).map_err(|e| {
+                BridgeError::ServerError(format!("Invalid AIOS_CORS_ORIGIN '{origin}': {e}"))
+            })?;
+            Some(
+                CorsLayer::new()
+                    .allow_origin(AllowOrigin::exact(value))
+                    .allow_headers(Any)
+                    .allow_methods([
+                        axum::http::Method::GET,
+                        axum::http::Method::POST,
+                        axum::http::Method::OPTIONS,
+                    ]),
+            )
+        }
+        None => None,
+    };
 
     let app = Router::new()
         // Public auth endpoints.
@@ -219,18 +251,27 @@ where
 }
 
 /// Reject calls to protected routes unless a valid bearer token is presented.
+///
+/// Authorization is default-deny for every `/api/` and `/ws/` route. The small
+/// public set is explicit: health, login, registration (only when enabled) and
+/// the unauthenticated update-service catalog. Static SPA assets served by the
+/// fallback are not API routes and remain public.
 async fn require_auth(State(state): State<SharedState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
-    // Always allow the public surfaces.
-    if path == "/api/v1/auth/register"
-        || path == "/api/v1/auth/login"
-        || path == "/api/v1/health"
-        || path == "/ws/telemetry"
-        || !path.starts_with("/api/")
-    {
+    if path.starts_with("/ws/") {
+        // The telemetry endpoint validates its own token (query or header).
         return next.run(req).await;
     }
-    // `/api/v1/auth/me` is protected and reads the token below.
+    let public_api = path == "/api/v1/health"
+        || path == "/api/v1/auth/login"
+        || (state.allow_signup && path == "/api/v1/auth/register")
+        || path == "/index.json"
+        || path == "/store/index.json"
+        || path.starts_with("/blocks/")
+        || path.starts_with("/store/blocks/");
+    if !path.starts_with("/api/") || public_api {
+        return next.run(req).await;
+    }
 
     let Some(header) = req.headers().get(axum::http::header::AUTHORIZATION) else {
         return (
@@ -255,7 +296,7 @@ async fn require_auth(State(state): State<SharedState>, req: Request, next: Next
             .into_response();
     };
     let user = {
-        let store = state.auth.lock().unwrap();
+        let store = lock_or_recover(&state.auth, "auth");
         store.bearer_user(header_str).ok()
     };
     match user {
@@ -280,7 +321,13 @@ async fn auth_register_handler(
     State(state): State<SharedState>,
     Json(req): Json<RegisterRequest>,
 ) -> std::result::Result<Json<AuthResponse>, IntentApiError> {
-    let mut store = state.auth.lock().unwrap();
+    if !state.allow_signup {
+        return Err(IntentApiError {
+            status: StatusCode::FORBIDDEN,
+            error: BridgeError::CapabilityDenied("Self-registration is disabled".into()),
+        });
+    }
+    let mut store = lock_or_recover(&state.auth, "auth");
     let token = store.register(&req.username, &req.password)?;
     Ok(Json(AuthResponse {
         success: true,
@@ -294,7 +341,7 @@ async fn auth_login_handler(
     State(state): State<SharedState>,
     Json(req): Json<LoginRequest>,
 ) -> std::result::Result<Json<AuthResponse>, IntentApiError> {
-    let mut store = state.auth.lock().unwrap();
+    let mut store = lock_or_recover(&state.auth, "auth");
     let token = store.login(&req.username, &req.password)?;
     Ok(Json(AuthResponse {
         success: true,
@@ -310,7 +357,7 @@ async fn auth_me_handler(State(state): State<SharedState>, req: Request) -> Json
         .get::<String>()
         .cloned()
         .unwrap_or_else(|| "anonymous".into());
-    let store = state.auth.lock().unwrap();
+    let store = lock_or_recover(&state.auth, "auth");
     let user_count = store.user_count();
     let data_dir = store
         .users_path()
@@ -346,9 +393,9 @@ async fn health_handler(State(state): State<SharedState>) -> Json<HealthResponse
 }
 
 async fn status_handler(State(state): State<SharedState>) -> Json<SystemStatus> {
-    let scheduler = state.scheduler.lock().unwrap();
-    let registry = state.registry.lock().unwrap();
-    let watchdog = state.watchdog.lock().unwrap();
+    let scheduler = lock_or_recover(&state.scheduler, "scheduler");
+    let registry = lock_or_recover(&state.registry, "registry");
+    let watchdog = lock_or_recover(&state.watchdog, "watchdog");
 
     let process_count = scheduler.process_count();
     let (ram_used, ram_total) = scheduler.ram_usage();
@@ -418,6 +465,7 @@ async fn intent_handler(
     State(state): State<SharedState>,
     Json(req): Json<IntentRequest>,
 ) -> std::result::Result<Json<IntentResponse>, IntentApiError> {
+    req.validate().map_err(invalid_request)?;
     let bridge_id = state.bridge_block_id;
     let prompt = req.prompt;
 
@@ -431,7 +479,7 @@ async fn intent_handler(
     let plan = state.intent_parser.create_execution_plan(&intent);
 
     {
-        let acl = state.access_control.lock().unwrap();
+        let acl = lock_or_recover(&state.access_control, "access_control");
         for cap in &plan.required_capabilities {
             if let Err(e) = acl.check_permission(bridge_id, cap) {
                 return Err(IntentApiError {
@@ -488,7 +536,8 @@ async fn intent_handler(
 async fn workflow_handler(
     State(state): State<SharedState>,
     Json(req): Json<WorkflowRequest>,
-) -> Json<WorkflowResponse> {
+) -> std::result::Result<Json<WorkflowResponse>, IntentApiError> {
+    req.validate().map_err(invalid_request)?;
     let mut results = Vec::new();
     let bridge_id = state.bridge_block_id;
 
@@ -501,7 +550,7 @@ async fn workflow_handler(
         let plan = state.intent_parser.create_execution_plan(&intent);
 
         {
-            let acl = state.access_control.lock().unwrap();
+            let acl = lock_or_recover(&state.access_control, "access_control");
             let mut denied = false;
             for cap in &plan.required_capabilities {
                 if acl.check_permission(bridge_id, cap).is_err() {
@@ -558,12 +607,12 @@ async fn workflow_handler(
     let successful = results.iter().filter(|r| r.success).count();
     let failed = results.iter().filter(|r| !r.success).count();
 
-    Json(WorkflowResponse {
+    Ok(Json(WorkflowResponse {
         total_steps: results.len(),
         successful,
         failed,
         results,
-    })
+    }))
 }
 
 fn execute_intent(
@@ -615,12 +664,11 @@ fn execute_intent(
                 }
                 BlockAction::Load => {
                     let name = block_name.as_deref().unwrap_or("unknown");
-                    let data = std::fs::read(
-                        wasm_path
-                            .as_ref()
-                            .unwrap_or(&std::path::PathBuf::from(name)),
-                    )
-                    .map_err(|e| format!("Read failed: {e}"))?;
+                    let requested = wasm_path
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from(name));
+                    let path = block_binary_path(&state.blocks_dir, &requested)?;
+                    let data = std::fs::read(&path).map_err(|e| format!("Read failed: {e}"))?;
                     aios_block_mgr::loader::BlockLoader::load_from_binary(
                         &mut registry,
                         name,
@@ -643,14 +691,15 @@ fn execute_intent(
                 }
                 BlockAction::HotSwap => {
                     let name = block_name.as_deref().unwrap_or("unknown");
-                    let wasm_path = wasm_path
+                    let requested = wasm_path
                         .as_ref()
                         .ok_or_else(|| format!("Hot-swap of '{name}' missing wasm_path"))?;
-                    let new_binary = std::fs::read(wasm_path)
+                    let wasm_path = block_binary_path(&state.blocks_dir, requested)?;
+                    let new_binary = std::fs::read(&wasm_path)
                         .map_err(|e| format!("Read failed for {:?}: {e}", wasm_path))?;
                     let binary_len = new_binary.len();
                     let new_version =
-                        version_from_path(wasm_path, name).unwrap_or_else(|| "1.0.0".into());
+                        version_from_path(&wasm_path, name).unwrap_or_else(|| "1.0.0".into());
                     let new_sha256 = aios_core::crypto::compute_sha256_bytes(&new_binary);
 
                     let old = registry
@@ -761,7 +810,7 @@ fn execute_intent(
             }))
         }
         UserIntent::Unknown { raw_prompt } => Ok(
-            serde_json::json!({ "unknown_intent": raw_prompt, "hint": "Try: 'show processes', 'status', 'kill 2', 'запусти блок'" }),
+            serde_json::json!({ "unknown_intent": raw_prompt, "hint": "Try: 'show processes', 'status', 'kill 2', 'Р·Р°РїСѓСЃС‚Рё Р±Р»РѕРє'" }),
         ),
     }
 }
@@ -786,6 +835,33 @@ fn parse_adjust_target(
     Ok((pid, priority))
 }
 
+/// Resolve a block binary path inside `AIOS_BLOCKS_DIR`.
+///
+/// Relative paths are joined to the configured blocks directory; absolute
+/// paths are accepted only when they resolve beneath it. Symlinks and `..`
+/// traversal are rejected after canonicalization.
+fn block_binary_path(
+    blocks_dir: &str,
+    requested: &std::path::Path,
+) -> std::result::Result<std::path::PathBuf, String> {
+    let base = std::fs::canonicalize(blocks_dir)
+        .map_err(|e| format!("Blocks directory '{blocks_dir}' unavailable: {e}"))?;
+    let joined = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        std::path::Path::new(blocks_dir).join(requested)
+    };
+    let resolved = std::fs::canonicalize(&joined)
+        .map_err(|e| format!("Block path {:?} unavailable: {e}", joined))?;
+    if !resolved.starts_with(&base) {
+        return Err(format!(
+            "Block path {:?} is outside AIOS_BLOCKS_DIR",
+            requested
+        ));
+    }
+    Ok(resolved)
+}
+
 /// Guess a block version from a `<name>_<version>.wasm` path (falls back to
 /// the last `_`-delimited segment when it looks like a version).
 fn version_from_path(path: &std::path::Path, name: &str) -> Option<String> {
@@ -804,32 +880,38 @@ fn version_from_path(path: &std::path::Path, name: &str) -> Option<String> {
 
 async fn ws_handler(
     Query(params): Query<WsAuthParams>,
+    headers: axum::http::HeaderMap,
     State(state): State<SharedState>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    // Telemetry is a protected surface: enforce the bearer token once any
-    // local user exists, mirroring the REST middleware. When auth is disabled
-    // (no registered users) the feed stays open for local tooling.
-    let auth_enabled = {
-        let store = state.auth.lock().unwrap();
-        store.user_count() > 0
-    };
-    if auth_enabled {
-        let token = params.token.unwrap_or_default();
-        let allowed = {
-            let store = state.auth.lock().unwrap();
+    // Browsers cannot set an Authorization header on WebSocket upgrades, so a
+    // token may also be supplied as `?token=`. A valid token is always required
+    // — there is no "no users yet, feed is open" bypass.
+    let token = params.token.or_else(|| {
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(str::trim)
+            .map(str::to_string)
+    });
+    let allowed = match token {
+        Some(token) if !token.is_empty() => {
+            let store = lock_or_recover(&state.auth, "auth");
             store.bearer_user(&format!("Bearer {token}")).is_ok()
-        };
-        if !allowed {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "Invalid or missing telemetry token",
-                })),
-            )
-                .into_response();
         }
+        _ => false,
+    };
+    if !allowed {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            Json(serde_json::json!({
+                "success": false,
+                "error": "Invalid or missing telemetry token",
+            })),
+        )
+            .into_response();
     }
     ws.on_upgrade(move |socket| handle_ws_socket(socket, state))
         .into_response()
@@ -879,6 +961,13 @@ pub struct IntentApiError {
     pub error: BridgeError,
 }
 
+fn invalid_request(message: impl Into<String>) -> IntentApiError {
+    IntentApiError {
+        status: StatusCode::BAD_REQUEST,
+        error: BridgeError::InvalidRequest(message.into()),
+    }
+}
+
 impl IntoResponse for IntentApiError {
     fn into_response(self) -> axum::response::Response {
         let body = Json(ErrorResponse {
@@ -893,7 +982,8 @@ impl IntoResponse for IntentApiError {
 async fn llm_query_handler(
     State(state): State<SharedState>,
     Json(req): Json<LlmQueryRequest>,
-) -> impl IntoResponse {
+) -> std::result::Result<Json<LlmQueryResponse>, IntentApiError> {
+    req.validate().map_err(invalid_request)?;
     let llm_request = aios_llm::LlmRequest {
         system_prompt: req
             .system_prompt
@@ -905,18 +995,18 @@ async fn llm_query_handler(
 
     let llm = state.llm.lock().await;
     match llm.query(&llm_request).await {
-        Ok(response) => Json(LlmQueryResponse {
+        Ok(response) => Ok(Json(LlmQueryResponse {
             success: true,
             text: Some(response.text),
             duration_ms: response.duration_ms,
             error: None,
-        }),
-        Err(e) => Json(LlmQueryResponse {
+        })),
+        Err(e) => Ok(Json(LlmQueryResponse {
             success: false,
             text: None,
             duration_ms: 0,
             error: Some(e.to_string()),
-        }),
+        })),
     }
 }
 
@@ -925,6 +1015,8 @@ impl From<BridgeError> for IntentApiError {
         let status = match &e {
             BridgeError::CapabilityDenied(_) => StatusCode::FORBIDDEN,
             BridgeError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            BridgeError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            BridgeError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             BridgeError::IntentParseFailed(_) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -1014,7 +1106,7 @@ async fn search_handler(Json(req): Json<SearchRequest>) -> Json<SearchResponse> 
 }
 
 async fn store_index_handler(State(state): State<SharedState>) -> Json<StoreIndexResponse> {
-    let registry = state.store_registry.lock().unwrap();
+    let registry = lock_or_recover(&state.store_registry, "store_registry");
     let manifests: Vec<serde_json::Value> = registry
         .list()
         .iter()
@@ -1041,7 +1133,7 @@ async fn store_register_handler(
     State(state): State<SharedState>,
     Json(req): Json<StoreRegisterRequest>,
 ) -> Json<StoreRegisterResponse> {
-    let mut registry = state.store_registry.lock().unwrap();
+    let mut registry = lock_or_recover(&state.store_registry, "store_registry");
     let manifest = aios_store::ManifestInfo {
         name: req.name.clone(),
         version: req.version.clone(),
@@ -1120,6 +1212,14 @@ async fn store_publish_handler(
     Json(req): Json<StorePublishRequest>,
 ) -> Json<StorePublishResponse> {
     use base64::Engine;
+    if let Err(error) = req.validate() {
+        return Json(StorePublishResponse {
+            success: false,
+            name: req.name,
+            version: req.version,
+            error: Some(error),
+        });
+    }
     let wasm = match base64::engine::general_purpose::STANDARD.decode(&req.wasm_base64) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -1131,6 +1231,17 @@ async fn store_publish_handler(
             })
         }
     };
+
+    if wasm.len() > MAX_WASM_BYTES {
+        return Json(StorePublishResponse {
+            success: false,
+            name: req.name,
+            version: req.version,
+            error: Some(format!(
+                "wasm exceeds {MAX_WASM_BYTES} bytes after decoding"
+            )),
+        });
+    }
 
     let sha = hex::encode(Sha256::digest(&wasm));
     if !req.checksum_sha256.is_empty() && sha != req.checksum_sha256 {
@@ -1201,7 +1312,7 @@ async fn store_publish_handler(
 }
 
 async fn metrics_handler(State(state): State<SharedState>) -> Json<MetricsResponse> {
-    let collector = state.metric_collector.lock().unwrap();
+    let collector = lock_or_recover(&state.metric_collector, "metric_collector");
     let prometheus = collector.to_prometheus();
     Json(MetricsResponse {
         success: true,
@@ -1210,7 +1321,7 @@ async fn metrics_handler(State(state): State<SharedState>) -> Json<MetricsRespon
 }
 
 async fn traces_handler(State(state): State<SharedState>) -> Json<TracesResponse> {
-    let trace = state.trace_context.lock().unwrap();
+    let trace = lock_or_recover(&state.trace_context, "trace_context");
     let json: serde_json::Value =
         serde_json::from_str(&trace.to_json()).unwrap_or(serde_json::json!({}));
     let traces = vec![json];
@@ -1224,7 +1335,7 @@ async fn crash_report_handler(
     State(state): State<SharedState>,
     Json(req): Json<CrashReportRequest>,
 ) -> Json<CrashReportResponse> {
-    let mut reporter = state.crash_reporter.lock().unwrap();
+    let mut reporter = lock_or_recover(&state.crash_reporter, "crash_reporter");
     let kind = match req.kind.to_lowercase().as_str() {
         "panic" => CrashKind::Panic,
         "watchdog" | "watchdog_timeout" => CrashKind::WatchdogTimeout,
@@ -1425,7 +1536,7 @@ mod tests {
         let json = run(&state, &intent).unwrap();
         assert_eq!(json["priority"], "Critical");
         let process = {
-            let scheduler = state.scheduler.lock().unwrap();
+            let scheduler = lock_or_recover(&state.scheduler, "scheduler");
             scheduler.get_process(pid).unwrap().clone()
         };
         assert_eq!(process.priority, Priority::Critical);
@@ -1433,15 +1544,18 @@ mod tests {
 
     #[test]
     fn test_hot_swap_via_bridge() {
-        let state = test_state();
+        let mut state = test_state();
         let old_binary = b"old-wasm-binary-v1".to_vec();
         {
-            let mut registry = state.registry.lock().unwrap();
+            let mut registry = lock_or_recover(&state.registry, "registry");
             BlockLoader::load_from_binary(&mut registry, "wasm_heap", "1.0.0", old_binary).unwrap();
         }
 
         let dir = tempfile::tempdir().unwrap();
-        let new_path = dir.path().join("wasm_heap_2.0.0.wasm");
+        let blocks_dir = dir.path().join("blocks");
+        std::fs::create_dir_all(&blocks_dir).unwrap();
+        Arc::get_mut(&mut state).unwrap().blocks_dir = blocks_dir.to_string_lossy().into_owned();
+        let new_path = blocks_dir.join("wasm_heap_2.0.0.wasm");
         let new_binary = b"new-wasm-binary-v2-bigger".to_vec();
         std::fs::write(&new_path, &new_binary).unwrap();
 
@@ -1456,19 +1570,41 @@ mod tests {
         assert_eq!(json["swapped"], true);
 
         let (version_on_disk, binary_on_registry) = {
-            let registry = state.registry.lock().unwrap();
+            let registry = lock_or_recover(&state.registry, "registry");
             let entry = registry.find_by_name("wasm_heap").unwrap();
             (entry.manifest.version.clone(), entry.binary.clone())
         };
         assert_eq!(version_on_disk, "2.0.0");
         assert_eq!(binary_on_registry, new_binary);
 
-        let engine = state.live_update.lock().unwrap();
+        let engine = lock_or_recover(&state.live_update, "live_update");
         let history = engine.swap_history();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].old_version, "1.0.0");
         assert_eq!(history[0].new_version, "2.0.0");
         assert!(history[0].success);
+    }
+
+    #[test]
+    fn test_block_binary_path_rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocks_dir = dir.path().join("blocks");
+        std::fs::create_dir_all(&blocks_dir).unwrap();
+        let outside = dir.path().join("secret.wasm");
+        std::fs::write(&outside, b"not-a-block").unwrap();
+        std::fs::write(blocks_dir.join("ok_1.0.0.wasm"), b"block").unwrap();
+
+        assert!(block_binary_path(
+            &blocks_dir.to_string_lossy(),
+            std::path::Path::new("../secret.wasm")
+        )
+        .is_err());
+        assert!(block_binary_path(&blocks_dir.to_string_lossy(), &outside).is_err());
+        assert!(block_binary_path(
+            &blocks_dir.to_string_lossy(),
+            std::path::Path::new("ok_1.0.0.wasm")
+        )
+        .is_ok());
     }
 
     #[test]

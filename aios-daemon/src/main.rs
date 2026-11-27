@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let watchdog_config = WatchdogConfig {
         heartbeat_interval_ms: 2000,
         max_missed_heartbeats: 3,
-        secret: b"aios_heartbeat_secret".to_vec(),
+        secret: aios_core::secrets::secret_or_ephemeral("daemon-heartbeat"),
         ..Default::default()
     };
     let mut watchdog = Watchdog::new(watchdog_config.clone());

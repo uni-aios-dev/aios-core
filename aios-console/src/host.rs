@@ -146,7 +146,10 @@ pub struct HostBackend {
     /// Shared block registry so the host orchestrator and console see the same blocks.
     pub registry: Arc<Mutex<BlockRegistry>>,
     /// WASM executor that preserves state between `block run` invocations.
-    pub executor: Arc<Mutex<BlockExecutor>>,
+    ///
+    /// `None` when sandbox initialization failed; commands that need it report
+    /// an error instead of crashing the console.
+    pub executor: Option<Arc<Mutex<BlockExecutor>>>,
     config: HostBackendConfig,
     publish_url: Option<String>,
     store: StoreManager,
@@ -219,10 +222,9 @@ impl HostBackend {
         );
         let version = config.version.clone();
         let live_update = PersistedLiveUpdateEngine::new(30_000, config.blocks_dir.clone()).ok();
-        let executor = Arc::new(Mutex::new(
-            BlockExecutor::with_default_config()
-                .unwrap_or_else(|error| panic!("aios WASM sandbox: {error}")),
-        ));
+        let executor = BlockExecutor::with_default_config()
+            .ok()
+            .map(|executor| Arc::new(Mutex::new(executor)));
         Self {
             scheduler,
             registry,
@@ -250,7 +252,10 @@ impl HostBackend {
             runtime_blocks: BTreeMap::new(),
             state_snapshots: HashMap::new(),
             compat_manager: CompatSandboxManager::new(),
-            access_control: AccessControlLayer::new(b"aios-console-issuer-v1".to_vec(), 3_600_000),
+            access_control: AccessControlLayer::new(
+                aios_core::secrets::secret_or_ephemeral("console-issuer"),
+                3_600_000,
+            ),
             cap_token_ids: Vec::new(),
             sandboxes: BTreeMap::new(),
             hw_bridge: HardwareSecurityBridge::new(),
@@ -286,7 +291,7 @@ impl HostBackend {
     /// Shares the host WASM executor so `block run` reuses the same live
     /// instances (and therefore the same block state) as the orchestrator.
     pub fn set_executor(&mut self, executor: Arc<Mutex<BlockExecutor>>) {
-        self.executor = executor;
+        self.executor = Some(executor);
     }
 
     /// Overrides the bridge publish endpoint used by `store publish`.
@@ -1912,10 +1917,13 @@ impl HostBackend {
         };
         self.runtime_blocks.insert(name.to_string(), id);
 
-        if !guard(&self.executor).is_executed(id) {
+        let Some(executor) = self.executor.as_ref() else {
+            return CommandOutput::error("WASM executor unavailable");
+        };
+        if !guard(executor).is_executed(id) {
             let registry = guard(&self.registry);
             if let Err(error) =
-                guard(&self.executor).execute_block(&registry, id, IsolationConfig::default())
+                guard(executor).execute_block(&registry, id, IsolationConfig::default())
             {
                 return CommandOutput::error(&format!("block execute failed: {error}"));
             }
@@ -1927,7 +1935,7 @@ impl HostBackend {
             CommandId::Custom,
             Payload::Custom(name.to_string(), text.into_bytes()),
         );
-        match guard(&self.executor).dispatch_wasm_packet(id, &packet) {
+        match guard(executor).dispatch_wasm_packet(id, &packet) {
             Ok(Some(response)) => {
                 let payload = response.payload;
                 let reply = match payload {
@@ -2469,7 +2477,10 @@ impl HostBackend {
         let Some(id) = self.state_target(target) else {
             return CommandOutput::error(&format!("block '{target}' not found"));
         };
-        let mut executor = guard(&self.executor);
+        let Some(executor) = self.executor.as_ref() else {
+            return CommandOutput::error("WASM executor unavailable");
+        };
+        let mut executor = guard(executor);
         if !executor.is_executed(id) {
             return CommandOutput::error(&format!(
                 "block '{target}' has no live instance; run 'block run {target}' first"
@@ -2497,7 +2508,10 @@ impl HostBackend {
                 "no extracted state for '{target}'; run 'state extract {target}' first"
             ));
         };
-        let mut executor = guard(&self.executor);
+        let Some(executor) = self.executor.as_ref() else {
+            return CommandOutput::error("WASM executor unavailable");
+        };
+        let mut executor = guard(executor);
         if !executor.is_executed(id) {
             return CommandOutput::error(&format!(
                 "block '{target}' has no live instance; run 'block run {target}' first"
@@ -3780,6 +3794,11 @@ impl HostBackend {
                 let Some(program) = invocation.first_arg() else {
                     return CommandOutput::usage(invocation.spec.usage);
                 };
+                if !exec_allowed(program) {
+                    return CommandOutput::error(&format!(
+                        "exec '{program}' is not allowed; add it to AIOS_CONSOLE_EXEC_ALLOWLIST"
+                    ));
+                }
                 match std::process::Command::new(program)
                     .args(&invocation.args[1..])
                     .output()
@@ -4388,6 +4407,24 @@ impl HostBackend {
             _ => CommandOutput::unavailable(&format!("hub {subcommand} has no host backend yet")),
         }
     }
+}
+
+/// Return whether `exec` may start `program`.
+///
+/// The allowlist is a comma-separated list of executable names or paths from
+/// `AIOS_CONSOLE_EXEC_ALLOWLIST`. It is empty by default, so `exec` is denied
+/// unless an operator explicitly opts in.
+fn exec_allowed(program: &str) -> bool {
+    let Ok(list) = std::env::var("AIOS_CONSOLE_EXEC_ALLOWLIST") else {
+        return false;
+    };
+    let name = Path::new(program)
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| program.to_string());
+    list.split([';', ','])
+        .map(str::trim)
+        .any(|allowed| allowed == program || allowed == name)
 }
 
 fn guard<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

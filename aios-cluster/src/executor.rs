@@ -59,15 +59,18 @@ impl MockProcessExecutor {
 impl ProcessExecutor for MockProcessExecutor {
     fn spawn(&self, spec: &RemoteProcessSpec) -> Result<u64, String> {
         let pid = self.next_pid.fetch_add(1, Ordering::Relaxed);
-        self.processes.lock().unwrap().insert(
-            pid,
-            MockProcess {
-                name: spec.name.clone(),
-                priority: spec.priority,
-                ram_mb: spec.ram_mb,
-                state: "Running".into(),
-            },
-        );
+        self.processes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                pid,
+                MockProcess {
+                    name: spec.name.clone(),
+                    priority: spec.priority,
+                    ram_mb: spec.ram_mb,
+                    state: "Running".into(),
+                },
+            );
         // The init payload seeds the process state snapshot, so tests can
         // inject migration state through the spawn spec.
         self.states
@@ -78,9 +81,17 @@ impl ProcessExecutor for MockProcessExecutor {
     }
 
     fn kill(&self, pid: u64) -> Result<(), String> {
-        match self.processes.lock().unwrap().remove(&pid) {
+        match self
+            .processes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&pid)
+        {
             Some(_) => {
-                self.states.lock().unwrap().remove(&pid);
+                self.states
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&pid);
                 Ok(())
             }
             None => Err(format!("no process with pid {pid}")),
@@ -88,7 +99,10 @@ impl ProcessExecutor for MockProcessExecutor {
     }
 
     fn set_priority(&self, pid: u64, priority: u8) -> Result<(), String> {
-        let mut guard = self.processes.lock().unwrap();
+        let mut guard = self
+            .processes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.get_mut(&pid) {
             Some(proc) => {
                 proc.priority = priority.clamp(0, 4);
@@ -99,7 +113,10 @@ impl ProcessExecutor for MockProcessExecutor {
     }
 
     fn status(&self) -> Vec<RemoteProcessStatus> {
-        let guard = self.processes.lock().unwrap();
+        let guard = self
+            .processes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut out: Vec<RemoteProcessStatus> = guard
             .iter()
             .map(|(pid, proc)| RemoteProcessStatus {
@@ -117,13 +134,19 @@ impl ProcessExecutor for MockProcessExecutor {
     }
 
     fn metrics(&self) -> NodeMetrics {
-        let guard = self.processes.lock().unwrap();
+        let guard = self
+            .processes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let ram_used: u64 = guard.values().map(|p| p.ram_mb).sum();
         NodeMetrics::new(0.0, ram_used, 16384, guard.len() as u64)
     }
 
     fn extract_state(&self, pid: u64) -> Result<Vec<u8>, String> {
-        let guard = self.states.lock().unwrap();
+        let guard = self
+            .states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.get(&pid) {
             Some(state) => Ok(state.clone()),
             None => Err(format!("no process with pid {pid}")),
@@ -131,7 +154,10 @@ impl ProcessExecutor for MockProcessExecutor {
     }
 
     fn restore_state(&self, pid: u64, state: &[u8]) -> Result<(), String> {
-        let mut guard = self.states.lock().unwrap();
+        let mut guard = self
+            .states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.get_mut(&pid) {
             Some(slot) => {
                 slot.clear();
@@ -189,7 +215,10 @@ impl ProcessExecutor for SchedulerProcessExecutor {
             .unwrap()
             .kill_process(aios_process_mgr::task::ProcessId(pid))
             .map(|_| {
-                self.states.lock().unwrap().remove(&pid);
+                self.states
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&pid);
             })
             .map_err(|e| e.to_string())
     }
@@ -224,13 +253,19 @@ impl ProcessExecutor for SchedulerProcessExecutor {
     }
 
     fn metrics(&self) -> NodeMetrics {
-        let sched = self.scheduler.lock().unwrap();
+        let sched = self
+            .scheduler
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (used, total) = sched.ram_usage();
         NodeMetrics::new(0.0, used, total, sched.process_count() as u64)
     }
 
     fn extract_state(&self, pid: u64) -> Result<Vec<u8>, String> {
-        let guard = self.states.lock().unwrap();
+        let guard = self
+            .states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.get(&pid) {
             Some(state) => Ok(state.clone()),
             None => Err(format!("no process with pid {pid}")),
@@ -238,7 +273,10 @@ impl ProcessExecutor for SchedulerProcessExecutor {
     }
 
     fn restore_state(&self, pid: u64, state: &[u8]) -> Result<(), String> {
-        let mut guard = self.states.lock().unwrap();
+        let mut guard = self
+            .states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.get_mut(&pid) {
             Some(slot) => {
                 slot.clear();

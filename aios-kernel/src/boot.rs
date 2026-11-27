@@ -26,6 +26,8 @@ pub unsafe fn init(ptr: *const BootInfo) -> Result<&'static BootInfo, &'static s
     if ptr.is_null() {
         return Err("boot: null BootInfo pointer");
     }
+    // SAFETY: `init` checked the pointer is non-null and the loader wrote a
+    // valid, page-mapped BootInfo before handing it to the kernel.
     let info = unsafe { &*ptr };
     if !info.is_valid() {
         return Err("boot: invalid BootInfo magic/version/size");
@@ -40,6 +42,9 @@ pub fn info() -> Option<&'static BootInfo> {
     if ptr.is_null() {
         None
     } else {
+        // SAFETY: the pointer was validated and published by `init` with
+        // release/acquire ordering; BootInfo storage is static for the kernel's
+        // lifetime.
         Some(unsafe { &*ptr })
     }
 }

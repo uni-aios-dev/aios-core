@@ -20,7 +20,10 @@ impl PanicHandler {
     where
         F: Fn() -> String + Send + 'static,
     {
-        *self.flight_recorder_getter.lock().unwrap() = Some(Box::new(getter));
+        *self
+            .flight_recorder_getter
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(getter));
     }
 
     pub fn install(&self) {
@@ -53,14 +56,17 @@ impl PanicHandler {
                 .map(|f| f())
                 .unwrap_or_default();
 
-            reporter.lock().unwrap().generate_report(
-                CrashKind::Panic,
-                std::thread::current().name().unwrap_or("unknown"),
-                &message,
-                "panic stack not captured",
-                &fr_dump,
-                false,
-            );
+            reporter
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .generate_report(
+                    CrashKind::Panic,
+                    std::thread::current().name().unwrap_or("unknown"),
+                    &message,
+                    "panic stack not captured",
+                    &fr_dump,
+                    false,
+                );
 
             eprintln!("\nAIOS Panic: {message}");
             eprintln!("   Report saved. Check crash_reporter logs.\n");
@@ -75,6 +81,13 @@ mod tests {
     #[test]
     fn test_panic_handler_creation() {
         let handler = PanicHandler::new("aios-test", "0.1.0");
-        assert_eq!(handler.reporter.lock().unwrap().report_count(), 0);
+        assert_eq!(
+            handler
+                .reporter
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .report_count(),
+            0
+        );
     }
 }

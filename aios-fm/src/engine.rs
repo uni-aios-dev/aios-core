@@ -127,7 +127,10 @@ impl FileManager {
 
     /// Index (0 = left, 1 = right) of the active panel.
     pub fn active(&self) -> usize {
-        self.state.lock().unwrap().active
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
     }
 
     /// Side of the active panel.
@@ -137,7 +140,10 @@ impl FileManager {
 
     /// Immutable snapshot for rendering.
     pub fn snapshot(&self) -> FmSnapshot {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         FmSnapshot {
             panels: st.panels.clone(),
             active: st.active,
@@ -152,7 +158,10 @@ impl FileManager {
     /// finished), `false` when the id is unknown. The real cancellation is
     /// delivered through the job's live [`Progress`] token.
     pub fn cancel_job(&self, id: u64) -> bool {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match st.jobs.iter().find(|job| job.id == id) {
             Some(job) => {
                 job.progress.cancel();
@@ -164,19 +173,28 @@ impl FileManager {
 
     /// Move focus to the other panel.
     pub fn switch_panel(&self) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.active = 1 - st.active;
     }
 
     /// Make the panel at `index` (0 = left, 1 = right) the active one.
     pub fn set_active(&self, index: usize) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.active = index % 2;
     }
 
     /// Move a panel's cursor by `delta` rows.
     pub fn move_cursor(&self, side: PanelSide, delta: isize) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let idx = side_index(side);
         st.panels[idx].move_cursor(delta);
         st.panels[idx].clamp_cursor(20);
@@ -184,32 +202,47 @@ impl FileManager {
 
     /// Place a panel's cursor on a specific row (used by GUI click selection).
     pub fn set_cursor(&self, side: PanelSide, index: usize) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let idx = side_index(side);
         st.panels[idx].cursor = index.min(st.panels[idx].entries.len().saturating_sub(1));
     }
 
     /// Clamp the viewport of a panel to `rows` visible rows.
     pub fn clamp_viewport(&self, side: PanelSide, rows: usize) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].clamp_cursor(rows);
     }
 
     /// Current directory of a panel.
     pub fn panel_path(&self, side: PanelSide) -> VfsPath {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].path.clone()
     }
 
     /// Full path of the selected entry in a panel, if any.
     pub fn selected(&self, side: PanelSide) -> Option<VfsPath> {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].selected_path()
     }
 
     /// Name of the selected entry in a panel, if any.
     pub fn selected_name(&self, side: PanelSide) -> Option<String> {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)]
             .selected()
             .map(|e| e.name.clone())
@@ -217,13 +250,19 @@ impl FileManager {
 
     /// Whether the selected entry in a panel is a directory, if any.
     pub fn selected_is_dir(&self, side: PanelSide) -> Option<bool> {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].selected().map(|e| e.is_dir)
     }
 
     /// Toggle the sort direction of a panel.
     pub fn toggle_sort(&self, side: PanelSide) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].toggle_sort();
     }
 
@@ -292,7 +331,9 @@ async fn dispatch(
     match cmd {
         Command::Navigate { side, path } => {
             let entries = fs.list_dir(&path).await?;
-            let mut st = state.lock().unwrap();
+            let mut st = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let idx = side_index(side);
             st.panels[idx].path = path;
             st.panels[idx].set_entries(entries);
@@ -302,11 +343,15 @@ async fn dispatch(
         }
         Command::Refresh { side } => {
             let path = {
-                let st = state.lock().unwrap();
+                let st = state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 st.panels[side_index(side)].path.clone()
             };
             if let Ok(entries) = fs.list_dir(&path).await {
-                let mut st = state.lock().unwrap();
+                let mut st = state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 st.panels[side_index(side)].set_entries(entries);
                 drop(st);
                 let _ = ack_tx.send(Ack::DirChanged { side });
@@ -373,7 +418,9 @@ async fn spawn_job(
         None => kind_verb(kind).to_string(),
     };
     let id = {
-        let mut st = state.lock().unwrap();
+        let mut st = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let id = st.next_job_id;
         st.next_job_id += 1;
         st.jobs.push(JobInfo {
@@ -418,7 +465,9 @@ async fn spawn_job(
             _ => None,
         };
         {
-            let mut st = state2.lock().unwrap();
+            let mut st = state2
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(job) = st.jobs.iter_mut().find(|j| j.id == id) {
                 job.status = status;
                 job.error = error;
@@ -450,11 +499,15 @@ async fn refresh_panel(
     side: PanelSide,
 ) {
     let path = {
-        let st = state.lock().unwrap();
+        let st = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].path.clone()
     };
     if let Ok(entries) = fs.list_dir(&path).await {
-        let mut st = state.lock().unwrap();
+        let mut st = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels[side_index(side)].set_entries(entries);
         drop(st);
         let _ = ack_tx.send(Ack::DirChanged { side });
@@ -463,12 +516,16 @@ async fn refresh_panel(
 
 async fn refresh_all(state: Arc<Mutex<FmState>>, fs: Arc<dyn VirtualFileSystem>) {
     let paths: Vec<VfsPath> = {
-        let st = state.lock().unwrap();
+        let st = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         st.panels.iter().map(|p| p.path.clone()).collect()
     };
     for (idx, path) in paths.iter().enumerate() {
         if let Ok(entries) = fs.list_dir(path).await {
-            let mut st = state.lock().unwrap();
+            let mut st = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             st.panels[idx].set_entries(entries);
         }
     }

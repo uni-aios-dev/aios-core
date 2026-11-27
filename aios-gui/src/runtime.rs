@@ -20,7 +20,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const HEARTBEAT_SECRET: &[u8] = b"aios_gui_secret";
 const SCHEDULER_TICK_MS: u64 = 25;
 
 /// Boot-time block loader report for the GUI, surfaced by the Blocks tab.
@@ -80,6 +79,8 @@ pub struct GuiRuntime {
     pub hot_reloader: Arc<Mutex<HotReloader>>,
     pub marketplace: Arc<Mutex<BlockMarketplace>>,
     pub blocks_dir: PathBuf,
+    /// Secret shared by the watchdog config and the GUI heartbeat producer.
+    pub heartbeat_secret: Vec<u8>,
     /// Boot-time loader report surfaced by the Blocks tab (TUI parity).
     pub loader_report: GuiBlockLoadReport,
     /// Total packets drained off the IPC bus so far (live traffic counter).
@@ -149,8 +150,9 @@ impl GuiRuntime {
         let scheduler = Scheduler::new(ram_total_mb)
             .with_aging_threshold(5000)
             .with_time_slice(100);
+        let heartbeat_secret = aios_core::secrets::secret_or_ephemeral("gui-heartbeat");
         let watchdog = Watchdog::new(WatchdogConfig {
-            secret: HEARTBEAT_SECRET.to_vec(),
+            secret: heartbeat_secret.clone(),
             ..Default::default()
         });
         let installer = BlockInstaller::new(blocks_dir.as_path());
@@ -204,6 +206,7 @@ impl GuiRuntime {
             hot_reloader: Arc::new(Mutex::new(hot_reloader)),
             marketplace: Arc::new(Mutex::new(marketplace)),
             blocks_dir,
+            heartbeat_secret,
             loader_report,
             ipc_drained: AtomicU64::new(0),
             started: false,
@@ -251,6 +254,7 @@ impl GuiRuntime {
 
         let watchdog = self.watchdog.clone();
         let heartbeat_stop = self.heartbeat_stop.clone();
+        let heartbeat_secret = self.heartbeat_secret.clone();
         self.heartbeat_thread = Some(std::thread::spawn(move || {
             let mut seq: u64 = 1;
             loop {
@@ -262,8 +266,8 @@ impl GuiRuntime {
                     Ok(wd) => wd,
                     Err(_) => break,
                 };
-                let heartbeat = Heartbeat::new(seq, HEARTBEAT_SECRET);
-                if heartbeat.verify(HEARTBEAT_SECRET) {
+                let heartbeat = Heartbeat::new(seq, &heartbeat_secret);
+                if heartbeat.verify(&heartbeat_secret) {
                     let _ = wd.receive_heartbeat(&heartbeat);
                 }
                 seq += 1;
@@ -361,10 +365,20 @@ mod tests {
         assert!(rt.is_started());
         assert!(rt.scheduler_thread.is_some());
         assert!(rt.heartbeat_thread.is_some());
-        let (ram_used, ram_total) = rt.scheduler.lock().unwrap().ram_usage();
+        let (ram_used, ram_total) = rt
+            .scheduler
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .ram_usage();
         assert_eq!(ram_total, 4096);
         assert_eq!(ram_used, 0, "the desktop shell must not seed processes");
-        assert_eq!(rt.scheduler.lock().unwrap().process_count(), 0);
+        assert_eq!(
+            rt.scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .process_count(),
+            0
+        );
     }
 
     #[test]
@@ -372,7 +386,10 @@ mod tests {
         let mut rt = GuiRuntime::new(4096);
         rt.start();
         std::thread::sleep(Duration::from_millis(120));
-        let scheduler = rt.scheduler.lock().unwrap();
+        let scheduler = rt
+            .scheduler
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(scheduler.process_count(), 0);
         assert!(scheduler.all_processes().is_empty());
     }
@@ -382,7 +399,10 @@ mod tests {
         let mut rt = GuiRuntime::new(4096);
         rt.start();
         let pid = {
-            let mut s = rt.scheduler.lock().unwrap();
+            let mut s = rt
+                .scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             s.spawn_real_process(
                 "explicit_task",
                 aios_process_mgr::task::Priority::Normal,
@@ -396,7 +416,13 @@ mod tests {
             .expect("explicit process must spawn")
             .0
         };
-        assert_eq!(rt.scheduler.lock().unwrap().process_count(), 1);
+        assert_eq!(
+            rt.scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .process_count(),
+            1
+        );
         assert!(rt
             .scheduler
             .lock()
@@ -412,7 +438,11 @@ mod tests {
         assert_eq!(rt.drain_ipc(), 0, "no background generators should run");
 
         let packet = IpcPacket::new(0, 42, CommandId::Custom, Payload::Text("manual".into()));
-        rt.ipc_bus.lock().unwrap().send(packet).unwrap();
+        rt.ipc_bus
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .send(packet)
+            .unwrap();
         std::thread::sleep(Duration::from_millis(20));
         let drained = rt.drain_ipc();
         assert_eq!(drained, 1);
@@ -423,7 +453,12 @@ mod tests {
     fn test_hot_reload_noop_on_empty_dir() {
         let mut rt = GuiRuntime::new(4096);
         rt.poll_hot_reload();
-        assert!(!rt.registry.lock().unwrap().all_ids().is_empty());
+        assert!(!rt
+            .registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .all_ids()
+            .is_empty());
     }
 
     #[test]

@@ -168,11 +168,15 @@ pub struct TuiApp {
 impl TuiApp {
     pub fn new(state: Arc<Mutex<OrchestratorState>>) -> Self {
         let logs = {
-            let s = state.lock().unwrap();
+            let s = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             s.logs.clone()
         };
         let bridge_port = {
-            let s = state.lock().unwrap();
+            let s = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             s.bridge_port
         };
         let console = {
@@ -335,7 +339,10 @@ impl TuiApp {
         let new_profile = crate::hw_probe::probe();
         if let Ok(mut state) = self.state.lock() {
             state.hw_profile = new_profile;
-            let mut logs = state.logs.lock().unwrap();
+            let mut logs = state
+                .logs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             logs.push("AIOS: hardware re-probed.".into());
         }
         if let Some(engine) = &mut self.hw_engine {
@@ -412,7 +419,10 @@ fn seed_presets() -> BTreeMap<String, String> {
 fn init_hw_engine(
     state: &Arc<Mutex<OrchestratorState>>,
 ) -> (Option<AutohalEngine>, Vec<DeviceView>, Vec<Toast>) {
-    let safe_mode = state.lock().unwrap().safe_mode;
+    let safe_mode = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .safe_mode;
     if safe_mode {
         return (None, Vec::new(), Vec::new());
     }

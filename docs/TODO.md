@@ -2,6 +2,10 @@
 
 ## Completed
 
+- [x] Post-audit security hardening (2026-11-27) — centralized secret resolver
+      (`aios_core::secrets`), PBKDF2 bridge auth with lockout/default-deny,
+      bounded DTOs, SSRF-safe browser fetches, confined block paths, poisoned-lock
+      recovery and a CI gate for documented `unsafe` blocks
 - [x] In-kernel desktop apps (v2.83.0) — App Store (`F4`), Calculator, Files
       viewer, Text Editor plus Terminal/Network launchers run on bare metal;
       `STORE_IDS` catalog, mouse/keyboard controls, serial proofs, and PS/2/xHCI

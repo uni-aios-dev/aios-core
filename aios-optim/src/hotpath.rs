@@ -46,7 +46,10 @@ impl HotPath {
         if !self.enabled {
             return;
         }
-        let mut counters = self.counters.lock().unwrap();
+        let mut counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let counter = counters
             .entry(name.to_string())
             .or_insert_with(|| HotPathCounter {
@@ -65,7 +68,10 @@ impl HotPath {
     }
 
     pub fn stats(&self) -> Vec<(String, u64, f64, u64)> {
-        let counters = self.counters.lock().unwrap();
+        let counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         counters
             .values()
             .map(|c| {
@@ -83,7 +89,10 @@ impl HotPath {
     }
 
     pub fn count(&self, name: &str) -> u64 {
-        let counters = self.counters.lock().unwrap();
+        let counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         counters
             .get(name)
             .map(|c| c.total_count.load(Ordering::Relaxed))
@@ -91,7 +100,10 @@ impl HotPath {
     }
 
     pub fn avg_us(&self, name: &str) -> f64 {
-        let counters = self.counters.lock().unwrap();
+        let counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(c) = counters.get(name) {
             let count = c.total_count.load(Ordering::Relaxed);
             let total = c.total_duration_us.load(Ordering::Relaxed);
@@ -106,7 +118,10 @@ impl HotPath {
     }
 
     pub fn clear(&self) {
-        self.counters.lock().unwrap().clear();
+        self.counters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {

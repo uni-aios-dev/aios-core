@@ -1,5 +1,52 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (post-audit): hardcoded secrets, default-open bridge, SSRF and panic paths (2026-11-27)
+
+- Seven predictable literals — `aios_master_secret_2026`, `aios-console-issuer-v1`,
+  `aios-autohal-driver-issuer-v1`, `aios_gui_secret`, `aios_heartbeat_secret`,
+  `default_aios_secret` and `format!("aios-bridge-{}", data_dir)` — were compiled
+  into GUI/TUI/daemon/watchdog/console/autohal/orchestrator/bridge builds, so
+  anyone who read a binary could forge capability tokens or heartbeats.
+  `aios_core::secrets` now resolves `AIOS_<NAME>_SECRET` →
+  `<data_dir>/secrets/<name>.key` → CSPRNG with no path-derived fallback; the
+  GUI heartbeat producer shares the resolved key with its watchdog.
+- Bridge passwords and sessions were weak: hashing is now PBKDF2-HMAC-SHA256
+  (100 000 iterations) with constant-time checks, five failed logins lock an
+  account for five minutes, `401`/`429` are returned instead of generic errors,
+  and a corrupt `users.json` fails closed.
+- `/ws/telemetry` was public when no user was registered, self-signup was on by
+  default and CORS was fail-open. `require_auth` is now default-deny for
+  `/api/*` and `/ws/*`, the WebSocket token is validated on every upgrade,
+  registration requires an explicit opt-in and CORS accepts only a valid exact
+  `AIOS_CORS_ORIGIN`.
+- `wasm_path` in block load/hot-swap could read any file on disk.
+  `block_binary_path()` canonicalizes the path and confines it to
+  `AIOS_BLOCKS_DIR`, rejecting `..` traversal and symlinks outside the tree.
+- `Sandbox::compile_any` called `unsafe Module::deserialize` on external bytes,
+  which can be undefined behaviour on malformed input. The path is gone;
+  external modules are only compiled from binary/WAT text.
+- `HostBackend::from_handles` panicked when the WASM sandbox could not start,
+  taking the console with it. The executor is now `Option`, and `exec` is
+  default-denied unless the program is listed in `AIOS_CONSOLE_EXEC_ALLOWLIST`.
+- 201 `lock().unwrap()` calls in 21 production files turned any poisoned mutex
+  into a process-wide panic; they now recover the guard with logging.
+- Intent, workflow, LLM and publish handlers accepted unbounded prompts,
+  batches, token budgets and WASM uploads. DTO validators now enforce
+  `MAX_PROMPT_CHARS`, `MAX_SYSTEM_PROMPT_CHARS`, `MAX_WORKFLOW_PROMPTS`,
+  `MAX_TOKENS`, `MAX_WASM_BASE64_CHARS` and `MAX_WASM_BYTES`.
+- `NetworkClient` accepted non-HTTP schemes, private/loopback addresses and
+  automatic redirects without revalidation, and read unbounded response bodies.
+  Every hop is now scheme- and DNS/IP-checked, redirects are explicit and
+  response bodies are streamed under `max_response_bytes` (8 MiB default).
+- Tests that registered bridge users reused the shared `aios_data/users.json`
+  and short passwords, so they became order-dependent under the stricter auth
+  policy. `BridgeContext::with_auth()` injects an isolated store, the E2E test
+  uses a temporary directory and a compliant password, and its failure path now
+  reports the HTTP status/body.
+- **Status:** fixed in the working tree; `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace` and `scripts/check_unsafe_safety.py HEAD~1` are green.
+
 ## OPEN (v2.84.0, long uptime): ring-0 page fault `code=0x20000000`
 
 - **Symptom:** after a long bare-metal GUI session the kernel halts with

@@ -99,7 +99,10 @@ impl ClusterTransport for InMemoryClusterTransport {
 
     fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.registry.lock().unwrap().remove(&self.addr);
+        self.registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.addr);
     }
 }
 
@@ -146,8 +149,14 @@ impl ClusterTransport for TcpClusterTransport {
     fn start(&self, inbox: mpsc::Sender<ClusterMessage>) -> io::Result<()> {
         let listener = std::net::TcpListener::bind(&self.bind)?;
         let actual = listener.local_addr()?.to_string();
-        *self.listener.lock().unwrap() = Some(listener.try_clone()?);
-        *self.actual.lock().unwrap() = Some(actual);
+        *self
+            .listener
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(listener.try_clone()?);
+        *self
+            .actual
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(actual);
         let stop = self.stop.clone();
         std::thread::Builder::new()
             .name("aios-cluster-tcp-accept".into())
@@ -173,7 +182,12 @@ impl ClusterTransport for TcpClusterTransport {
 
     fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(listener) = self.listener.lock().unwrap().take() {
+        if let Some(listener) = self
+            .listener
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
             drop(listener);
         }
     }

@@ -982,7 +982,10 @@ mod tests {
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
-                sched.lock().unwrap().process_events();
+                sched
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .process_events();
                 std::thread::sleep(Duration::from_millis(2));
             }
         })
@@ -1076,7 +1079,10 @@ mod tests {
     fn test_two_node_spawn_and_kill() {
         let cluster = build_cluster(2);
         let rid = {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             assert_eq!(a.nodes().len(), 1);
             let rid = a
                 .spawn(RemoteProcessSpec::new("net", 2, 128), None)
@@ -1088,7 +1094,10 @@ mod tests {
             rid
         };
         {
-            let b = cluster.sched(1).lock().unwrap();
+            let b = cluster
+                .sched(1)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             assert!(
                 b.local_processes().iter().all(|p| p.id != rid),
                 "killed process is gone from the worker"
@@ -1099,7 +1108,10 @@ mod tests {
     #[test]
     fn test_spawn_unknown_node_errors() {
         let cluster = build_cluster(2);
-        let mut a = cluster.sched(0).lock().unwrap();
+        let mut a = cluster
+            .sched(0)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(a
             .spawn(RemoteProcessSpec::new("x", 2, 64), Some(99))
             .is_err());
@@ -1109,7 +1121,10 @@ mod tests {
     fn test_least_loaded_placement() {
         let cluster = build_cluster(3);
         {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             // Load worker 2 with a heavy process.
             let heavy = a
                 .spawn(RemoteProcessSpec::new("loader", 2, 512), Some(2))
@@ -1119,13 +1134,19 @@ mod tests {
         // Let the worker's updated metrics reach the coordinator.
         wait_until(
             || {
-                let a = cluster.sched(0).lock().unwrap();
+                let a = cluster
+                    .sched(0)
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 (a.node(2).is_some() && a.node(2).unwrap().metrics.ram_used_mb >= 512).then_some(())
             },
             Duration::from_secs(3),
         );
         {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             // The next untargeted spawn must land on the lighter worker 3.
             let light = a
                 .spawn(RemoteProcessSpec::new("app", 2, 128), None)
@@ -1145,7 +1166,10 @@ mod tests {
     #[test]
     fn test_round_robin_alternates() {
         let cluster = build_cluster(3);
-        let mut a = cluster.sched(0).lock().unwrap();
+        let mut a = cluster
+            .sched(0)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         a.strategy = PlacementStrategy::RoundRobin;
         let mut first = None;
         let mut seen_both = false;
@@ -1164,7 +1188,10 @@ mod tests {
     fn test_tier_placement_and_filters() {
         let cluster = build_cluster(3);
         {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             // Node 2 is tier 1, node 3 is tier 2 (see build_cluster).
             let rid = a
                 .spawn(
@@ -1190,7 +1217,10 @@ mod tests {
         let cluster = build_cluster(3);
         // Spawn on node 2 (worker).
         let rid = {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             a.spawn(RemoteProcessSpec::new("net", 2, 128), Some(2))
                 .unwrap()
         };
@@ -1199,14 +1229,20 @@ mod tests {
         // Take node 2 down: stop its event loop and close its transport.
         cluster.stops[1].store(true, Ordering::Relaxed);
         {
-            let mut b = cluster.sched(1).lock().unwrap();
+            let mut b = cluster
+                .sched(1)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             b.shutdown();
         }
 
         // Wait past the failover threshold, then let the coordinator notice.
         std::thread::sleep(Duration::from_millis(250));
         let (events, processes, nodes) = {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let events = a.tick();
             (events, a.processes(), a.nodes())
         };
@@ -1227,7 +1263,10 @@ mod tests {
         let cluster = build_cluster(2);
         // Node 2 is a coordinator-only node: point worker 1's spawn back at it
         // by temporarily removing node 1's executor? Instead verify directly:
-        let mut a = cluster.sched(0).lock().unwrap();
+        let mut a = cluster
+            .sched(0)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         a.set_executor(Arc::new(MockProcessExecutor::new(1)));
         // Ask node 1 (self) is excluded; so target must be node 2 which has an
         // executor, so this path just confirms cross-node placement works.
@@ -1242,7 +1281,10 @@ mod tests {
     fn test_checkpoint_replicated_and_restored_on_failover() {
         let cluster = build_cluster(3);
         let rid = {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             a.spawn(
                 RemoteProcessSpec::new("db", 2, 128).with_payload(b"wal-77".to_vec()),
                 Some(2),
@@ -1268,12 +1310,19 @@ mod tests {
 
         // Take node 2 down; its snapshots no longer refresh.
         cluster.stops[1].store(true, Ordering::Relaxed);
-        cluster.sched(1).lock().unwrap().shutdown();
+        cluster
+            .sched(1)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .shutdown();
         std::thread::sleep(Duration::from_millis(250));
 
         // The coordinator respawns onto node 3 and restores the snapshot.
         let (events, processes) = {
-            let mut a = cluster.sched(0).lock().unwrap();
+            let mut a = cluster
+                .sched(0)
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let events = a.tick();
             (events, a.processes())
         };

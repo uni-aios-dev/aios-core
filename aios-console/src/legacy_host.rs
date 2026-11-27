@@ -24,7 +24,9 @@ pub fn aios_cluster_text(
             out.push("Usage: cluster status | cluster nodes | cluster spawn <name> [ram_mb] [priority] [target_node] | cluster kill <node> <pid> | cluster migrate <node> <pid> [target_node]".into());
         }
         "status" => {
-            let s = cluster.lock().unwrap();
+            let s = cluster
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             out.push(format!(
                 "  self: [{}] {} tier={}",
                 s.self_info().id,
@@ -59,7 +61,9 @@ pub fn aios_cluster_text(
             ));
         }
         "nodes" => {
-            let s = cluster.lock().unwrap();
+            let s = cluster
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for n in s.nodes() {
                 out.push(format!(
                     "  [{}] {} tier={} {:?} load={:.1}%",
@@ -84,7 +88,11 @@ pub fn aios_cluster_text(
             let prio = parts.get(4).and_then(|p| p.parse::<u8>().ok()).unwrap_or(2);
             let target = parts.get(5).and_then(|p| p.parse::<u64>().ok());
             let spec = RemoteProcessSpec::new(name, prio, ram);
-            match cluster.lock().unwrap().spawn(spec, target) {
+            match cluster
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .spawn(spec, target)
+            {
                 Ok(rid) => out.push(format!("  spawned {rid} on node {}", rid.node)),
                 Err(e) => out.push(format!("  spawn failed: {e}")),
             }
@@ -97,7 +105,11 @@ pub fn aios_cluster_text(
                 return out;
             };
             let rid = RemoteProcessId { node, pid };
-            match cluster.lock().unwrap().kill(rid) {
+            match cluster
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .kill(rid)
+            {
                 Ok(()) => out.push(format!("  killed {rid}")),
                 Err(e) => out.push(format!("  kill failed: {e}")),
             }
@@ -111,7 +123,11 @@ pub fn aios_cluster_text(
             };
             let rid = RemoteProcessId { node, pid };
             let target = parts.get(4).and_then(|p| p.parse::<u64>().ok());
-            match cluster.lock().unwrap().migrate(rid, target) {
+            match cluster
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .migrate(rid, target)
+            {
                 Ok(new_rid) => out.push(format!("  migrated {rid} -> {new_rid}")),
                 Err(e) => out.push(format!("  migrate failed: {e}")),
             }

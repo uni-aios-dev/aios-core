@@ -202,8 +202,10 @@ pub async fn initialize(
     );
 
     push_log(&logs, "AIOS: initializing access control...".into());
-    let mut access_control =
-        AccessControlLayer::new(b"aios_master_secret_2026".to_vec(), 86_400_000);
+    let mut access_control = AccessControlLayer::new(
+        aios_core::secrets::secret_or_ephemeral("master"),
+        86_400_000,
+    );
     // The bridge block is the trusted in-process caller of the REST/WS API.
     // Without a capability token every state-changing intent (`kill`, `spawn`,
     // `load block`, `unload block`, `compact memory`) is rejected with 403

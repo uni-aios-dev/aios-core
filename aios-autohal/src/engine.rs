@@ -185,7 +185,7 @@ impl Default for EngineConfig {
             fetcher: crate::fetcher::FetcherConfig::default(),
             max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
             capability_ttl_ms: 3_600_000,
-            issuer_secret: b"aios-autohal-driver-issuer-v1".to_vec(),
+            issuer_secret: aios_core::secrets::secret_or_ephemeral("autohal-driver-issuer"),
         }
     }
 }

@@ -74,6 +74,17 @@ pub struct BrowserConfig {
     /// through the embedded JS engine before rendering. Off = classic
     /// text-only fetch.
     pub execute_scripts: bool,
+    /// Allow requests to loopback/private/link-local addresses. Intended for
+    /// local test servers; disabled by default to prevent SSRF.
+    #[serde(default)]
+    pub allow_private_targets: bool,
+    /// Hard cap on a fetched response body in bytes.
+    #[serde(default = "default_max_response_bytes")]
+    pub max_response_bytes: usize,
+}
+
+const fn default_max_response_bytes() -> usize {
+    8 * 1024 * 1024
 }
 
 impl Default for BrowserConfig {
@@ -85,6 +96,8 @@ impl Default for BrowserConfig {
             sandbox_enabled: true,
             headless_fallback: true,
             execute_scripts: true,
+            allow_private_targets: false,
+            max_response_bytes: default_max_response_bytes(),
         }
     }
 }

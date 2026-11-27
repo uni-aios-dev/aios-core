@@ -27,7 +27,7 @@ impl Default for WatchdogConfig {
             max_missed_heartbeats: 3,
             warn_threshold: 2,
             recovery_timeout_ms: 10_000,
-            secret: b"default_aios_secret".to_vec(),
+            secret: aios_core::secrets::secret_or_ephemeral("watchdog-heartbeat"),
         }
     }
 }

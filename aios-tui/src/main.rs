@@ -483,8 +483,12 @@ fn execute_shell_cmd(
     if execute_legacy_mutation_command(state, console, cmd) {
         return false;
     }
-    let mut scheduler = scheduler.lock().unwrap();
-    let mut registry = registry.lock().unwrap();
+    let mut scheduler = scheduler
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut registry = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     execute_shell_cmd_inner(
         state,
         cmd,
@@ -1447,7 +1451,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let registry = Arc::new(Mutex::new(BlockRegistry::new()));
     {
-        let mut reg = registry.lock().unwrap();
+        let mut reg = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let hal_data = b"hal-native-module";
         let _ = BlockLoader::load_from_binary(&mut reg, "hal", "1.0.0", hal_data.to_vec());
         let _ = BlockLoader::load_from_binary(&mut reg, "ipc_bus", "1.0.0", b"ipc_bus".to_vec());
@@ -1494,7 +1500,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let scheduler = Arc::new(Mutex::new(Scheduler::new(profile.memory.total_mb)));
     {
-        let mut sched = scheduler.lock().unwrap();
+        let mut sched = scheduler
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = sched.spawn_process("ai_orchestrator", Priority::High, 512);
         let _ = sched.spawn_process("io_handler", Priority::Normal, 128);
         let _ = sched.spawn_process("health_monitor", Priority::Low, 64);
@@ -1503,7 +1511,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let watchdog_config = WatchdogConfig {
         heartbeat_interval_ms: 2000,
         max_missed_heartbeats: 3,
-        secret: b"aios_heartbeat_secret".to_vec(),
+        secret: aios_core::secrets::secret_or_ephemeral("tui-heartbeat"),
         ..Default::default()
     };
     let mut watchdog = Watchdog::new(watchdog_config.clone());
@@ -1564,8 +1572,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = {
-        let sched = scheduler.lock().unwrap();
-        let reg = registry.lock().unwrap();
+        let sched = scheduler
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let reg = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         DashboardState::new(ai_tier, profile, &reg, &sched)
     };
 
@@ -1601,7 +1613,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(result) = state.take_fetched_block() {
             match result {
                 Ok((name, binary)) => {
-                    let mut reg = registry.lock().unwrap();
+                    let mut reg = registry
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     match BlockLoader::load_from_binary(&mut reg, &name, "1.0.0", binary) {
                         Ok(m) => state
                             .shell_state
@@ -1614,8 +1628,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         terminal.draw(|f| {
-            let sched = scheduler.lock().unwrap();
-            let reg = registry.lock().unwrap();
+            let sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             state.update_from_scheduler(&sched, &reg);
             dashboard::draw_dashboard(f, &state);
         })?;
@@ -1727,7 +1745,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         .get(state.selected_row)
                                                         .map(|b| b.name.clone())
                                                         .unwrap_or_else(|| "unknown".into());
-                                                    let mut reg = registry.lock().unwrap();
+                                                    let mut reg = registry.lock().unwrap_or_else(
+                                                        |poisoned| poisoned.into_inner(),
+                                                    );
                                                     match BlockLoader::load_from_binary(
                                                         &mut reg, &name, &value, binary,
                                                     ) {
@@ -1914,8 +1934,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if state.selected_tab == 1 {
                                 if let Some(pid) = state.selected_process_pid() {
                                     use aios_process_mgr::task::ProcessId;
-                                    let result =
-                                        scheduler.lock().unwrap().kill_process(ProcessId(pid));
+                                    let result = scheduler
+                                        .lock()
+                                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                        .kill_process(ProcessId(pid));
                                     match result {
                                         Ok(proc) => {
                                             state.add_log(format!(
@@ -1942,7 +1964,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let selected_id =
                                         state.blocks.get(state.selected_row).map(|b| BlockId(b.id));
                                     if let Some(id) = selected_id {
-                                        match registry.lock().unwrap().unload_block(id) {
+                                        match registry
+                                            .lock()
+                                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                            .unload_block(id)
+                                        {
                                             Ok(entry) => {
                                                 state.add_log(format!(
                                                     "Unloaded block '{}' ({})",
@@ -1981,11 +2007,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     ));
                                     if path.exists() {
                                         if let Some(id) = selected_id {
-                                            let _ = registry.lock().unwrap().unload_block(id);
+                                            let _ = registry
+                                                .lock()
+                                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                                .unload_block(id);
                                         }
                                         match std::fs::read(&path) {
                                             Ok(binary) => {
-                                                let mut reg = registry.lock().unwrap();
+                                                let mut reg =
+                                                    registry.lock().unwrap_or_else(|poisoned| {
+                                                        poisoned.into_inner()
+                                                    });
                                                 match BlockLoader::load_from_binary(
                                                     &mut reg, &name, &version, binary,
                                                 ) {
@@ -2093,7 +2125,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ),
                         KeyCode::Char('s') => {
                             let (process_count, used_ram) = {
-                                let sched = scheduler.lock().unwrap();
+                                let sched = scheduler
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                                 (sched.process_count(), sched.ram_usage().0)
                             };
                             let entry = TelemetryEntry::new(
@@ -2114,8 +2148,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ));
                         }
                         KeyCode::Char('x') => {
-                            let mut sched = scheduler.lock().unwrap();
-                            let mut reg = registry.lock().unwrap();
+                            let mut sched = scheduler
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let mut reg = registry
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
                             let resp = safe_shell.execute(
                                 aios_watchdog::safe_mode::ShellCommand::SystemStatus,
                                 &mut sched,
@@ -2362,14 +2400,18 @@ mod tests {
         let mut state = make_dashboard_state();
         let (scheduler, registry) = make_shared_handles();
         {
-            let mut sched = scheduler.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let pid = sched
                 .spawn_process("shared_worker", aios_process_mgr::task::Priority::High, 64)
                 .unwrap();
             assert_eq!(pid.0, 1);
         }
         {
-            let mut reg = registry.lock().unwrap();
+            let mut reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             aios_block_mgr::loader::BlockLoader::load_from_binary(
                 &mut reg,
                 "shared_block",
@@ -2404,8 +2446,12 @@ mod tests {
         let out = state.shell_state.output.join("\n");
         assert!(out.contains("shared_block"), "got {out}");
 
-        let mut sched = scheduler.lock().unwrap();
-        let mut reg = registry.lock().unwrap();
+        let mut sched = scheduler
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut reg = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let resp = safe_shell.execute(
             aios_watchdog::safe_mode::ShellCommand::ListProcesses,
             &mut sched,
@@ -2420,14 +2466,20 @@ mod tests {
         let mut state = make_dashboard_state();
         let (scheduler, registry) = make_shared_handles();
         {
-            let mut sched = scheduler.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             sched
                 .spawn_process("shared_worker", aios_process_mgr::task::Priority::High, 64)
                 .unwrap();
         }
         let expected = {
-            let mut sched = scheduler.lock().unwrap();
-            let mut reg = registry.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
             shell
                 .execute(
@@ -2458,8 +2510,12 @@ mod tests {
             let mut state = make_dashboard_state();
             let (scheduler, registry) = make_shared_handles();
             let expected = {
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
                 shell
                     .execute(
@@ -2494,7 +2550,9 @@ mod tests {
             let mut state = make_dashboard_state();
             let (scheduler, registry) = make_shared_handles();
             {
-                let mut reg = registry.lock().unwrap();
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 aios_block_mgr::loader::BlockLoader::load_from_binary(
                     &mut reg,
                     "hal",
@@ -2504,8 +2562,12 @@ mod tests {
                 .unwrap();
             }
             let expected = {
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
                 shell
                     .execute(
@@ -2539,8 +2601,12 @@ mod tests {
         let mut state = make_dashboard_state();
         let (scheduler, registry) = make_shared_handles();
         let expected = {
-            let mut sched = scheduler.lock().unwrap();
-            let mut reg = registry.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
             shell
                 .execute(
@@ -2571,14 +2637,18 @@ mod tests {
             let mut state = make_dashboard_state();
             let (scheduler, registry) = make_shared_handles();
             {
-                let mut sched = scheduler.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let pid = sched
                     .spawn_process("shared_worker", aios_process_mgr::task::Priority::High, 64)
                     .unwrap();
                 sched.report_crash(pid).unwrap();
             }
             {
-                let mut reg = registry.lock().unwrap();
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 aios_block_mgr::loader::BlockLoader::load_from_binary(
                     &mut reg,
                     "hal",
@@ -2588,8 +2658,12 @@ mod tests {
                 .unwrap();
             }
             let expected = {
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
                 shell
                     .execute(
@@ -2623,8 +2697,12 @@ mod tests {
         let mut state = make_dashboard_state();
         let (scheduler, registry) = make_shared_handles();
         let expected = {
-            let mut sched = scheduler.lock().unwrap();
-            let mut reg = registry.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
             shell
                 .execute(
@@ -2655,8 +2733,12 @@ mod tests {
             let mut state = make_dashboard_state();
             let (scheduler, registry) = make_shared_handles();
             let expected = {
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
                 shell
                     .execute(
@@ -2692,8 +2774,12 @@ mod tests {
             let mut state = make_dashboard_state();
             let (scheduler, registry) = make_shared_handles();
             let expected = {
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
                 shell
                     .execute(
@@ -2729,8 +2815,12 @@ mod tests {
             let mut state = make_dashboard_state();
             let (scheduler, registry) = make_shared_handles();
             let expected = {
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell = aios_watchdog::safe_mode::SafeModeShell::new(3);
                 let parsed = aios_watchdog::safe_mode::SafeModeShell::parse_command(command);
                 let resp = shell.execute(parsed, &mut sched, &mut reg);
@@ -2765,8 +2855,12 @@ mod tests {
             let event_log = make_shared_event_log(entries);
             let expected = {
                 let (scheduler, registry) = make_shared_handles();
-                let mut sched = scheduler.lock().unwrap();
-                let mut reg = registry.lock().unwrap();
+                let mut sched = scheduler
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut reg = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut shell =
                     aios_watchdog::safe_mode::SafeModeShell::with_event_log(3, event_log.clone());
                 shell
@@ -2819,8 +2913,12 @@ mod tests {
             aios_block_mgr::registry::BlockRegistry::new(),
         ));
         {
-            let mut sched = scheduler.lock().unwrap();
-            let mut reg = registry.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             setup(&mut sched, &mut reg);
         }
         let event_log = make_shared_event_log(&[]);
@@ -2836,8 +2934,12 @@ mod tests {
                 cmd
             ));
         } else {
-            let mut sched = scheduler.lock().unwrap();
-            let mut reg = registry.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut reg = registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             super::execute_shell_cmd_inner(
                 &mut state,
                 cmd,
@@ -2848,7 +2950,10 @@ mod tests {
             );
         }
         let output = state.shell_state.output.clone();
-        let events = event_log.lock().unwrap().clone();
+        let events = event_log
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         (output, events)
     }
 
@@ -2911,8 +3016,12 @@ mod tests {
                         cmd
                     ));
                 } else {
-                    let mut sched = scheduler.lock().unwrap();
-                    let mut reg = registry.lock().unwrap();
+                    let mut sched = scheduler
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut reg = registry
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     super::execute_shell_cmd_inner(
                         &mut state,
                         cmd,
@@ -2924,7 +3033,13 @@ mod tests {
                 }
                 steps.push(state.shell_state.output.clone());
             }
-            results.push((steps, event_log.lock().unwrap().clone()));
+            results.push((
+                steps,
+                event_log
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone(),
+            ));
         }
         assert_eq!(results[0], results[1]);
         assert_eq!(

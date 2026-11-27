@@ -64,8 +64,8 @@ cargo build --workspace
 # Test
 cargo test --workspace
 
-# Clippy (must be zero warnings)
-cargo clippy --workspace
+# Clippy (must be zero warnings, all targets)
+cargo clippy --workspace --all-targets -- -D warnings
 
 # Format
 cargo fmt --all
@@ -88,6 +88,19 @@ cargo fmt --all
 - No direct memory pointers between blocks — data exchange only via `IpcPacket`
 - Every `StatefulBlock` implementation must provide `extract_state()` / `restore_state()`
 - All speed tests must have dual thresholds: debug (`cfg!(debug_assertions)`) and release
+
+## Security Rules
+
+- Never hardcode secrets, issuer keys or heartbeat keys. Resolve them with
+  `aios_core::secrets` (`AIOS_<NAME>_SECRET` → `<data_dir>/secrets/<name>.key` → CSPRNG).
+- Network fetches must go through the SSRF policy in `aios-browser`: HTTP(S) only,
+  DNS/IP validation, bounded redirects and bounded response bodies.
+- Bridge handlers must enforce input limits and default-deny authorization.
+  Never make `/ws/` public; a bearer token is always required.
+- Prefer recovering poisoned locks (`unwrap_or_else(|poisoned| poisoned.into_inner())`)
+  over `lock().unwrap()` in long-running services.
+- Every new `unsafe` block needs a nearby `// SAFETY:` comment; CI checks new
+  unsafe lines with `scripts/check_unsafe_safety.py`.
 
 ## Testing Rules
 

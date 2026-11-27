@@ -47,7 +47,10 @@ impl JobTable {
     }
 
     fn snapshot(&self) -> Vec<Job> {
-        self.inner.lock().unwrap().clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn entries(&self) -> Vec<(usize, String, u32)> {
@@ -58,36 +61,58 @@ impl JobTable {
     }
 
     fn push(&self, job: Job) {
-        self.inner.lock().unwrap().push(job);
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(job);
     }
 
     #[cfg(unix)]
     fn clear(&self) {
-        self.inner.lock().unwrap().clear();
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 
     #[cfg(unix)]
     fn last(&self) -> Option<Job> {
-        self.inner.lock().unwrap().last().cloned()
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .last()
+            .cloned()
     }
 
     fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty()
     }
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     #[cfg(unix)]
     fn retain(&self, predicate: impl FnMut(&Job) -> bool) {
-        self.inner.lock().unwrap().retain(predicate);
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(predicate);
     }
 
     #[cfg(unix)]
     fn remove(&self, id: usize) -> bool {
-        let mut jobs = self.inner.lock().unwrap();
+        let mut jobs = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match jobs.iter().position(|job| job.id == id) {
             Some(index) => {
                 jobs.remove(index);

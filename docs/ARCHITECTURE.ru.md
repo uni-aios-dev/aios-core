@@ -1007,9 +1007,9 @@ TUI не может отображать настоящие веб-страни�
 - Локальный `BlockMarketplace` (репозиторий `official`, 4 внутренних предложения) + `BlockInstaller` пишут настоящие `<name>_<version>.wasm`/sidecar-манифесты; установка/обновление/удаление App Store пишут и удаляют реальные файлы store и записи реестра. Тестовые сборки перенаправляют каталог блоков в уникальную временную директорию, чтобы юнит-тесты не трогали репозиторий.
 - Все фоновые **системные** потоки стартуют только в `start_runtime()` (вызывается из `aios-gui/src/main.rs`), поэтому `AiosApp::new` остаётся без побочных эффектов и потоков для тестов. `GuiRuntime::start()` идемпотентен и запускает только тик планировщика и heartbeat watchdog; таблица процессов остаётся пустой, пока процесс не запущен явно. В `aios-gui` 33 проходящих теста: отсортированность/уникальность/полнота пунктов «Пуск», фокус и сворачивание окон, отсутствие демо-процессов, завершение явного процесса, ручные IPC-пакеты и навигация по окнам рабочего стола.
 
-#### Аутентификация WebSocket-телеметрии (`aios-bridge`)
+#### Аутентификация WebSocket-телеметрии и политика входа моста (`aios-bridge`)
 
-`/ws/telemetry` остаётся в allowlist посредника `require_auth`, но теперь проверяет опциональный `?token=<session>` слоем `auth` моста, если зарегистрирован хотя бы один пользователь; `aios-studio`/`app.js` добавляет сохранённый токен к WS-URL. `HotSwap` моста выполняет live-update swap (`LiveUpdateEngine::perform_swap`), затем `registry.swap_binary`; `WorkflowExecution` последовательно запускает вложенные интенты через тот же путь `execute_intent`.
+Авторизация по умолчанию запрещена для всех маршрутов `/api/` и `/ws/`. `/ws/telemetry` принимает токен в `?token=<session>` или заголовке `Authorization: Bearer` и проверяет его через `AuthStore` при каждом повышении соединения — обхода «нет зарегистрированных пользователей» больше нет. Публичная регистрация выключена, если не задано `AIOS_BRIDGE_ALLOW_SIGNUP=true`; CORS отключён, если `AIOS_CORS_ORIGIN` не задан как точный корректный origin. Отравленные общие мьютексы восстанавливаются с журналированием вместо паники. Запросы intent/workflow/LLM проверяют лимиты промптов, пакетов и `max_tokens`; бинарники блоков читаются только из `AIOS_BLOCKS_DIR` (проверка канонического пути). `HotSwap` моста выполняет live-update swap (`LiveUpdateEngine::perform_swap`), затем `registry.swap_binary`; `WorkflowExecution` последовательно запускает вложенные интенты через тот же путь `execute_intent`.
 
 ---
 
@@ -1464,7 +1464,7 @@ User Input (TUI)
 - **Граф зависимостей блоков** предотвращает загрузку блоков до их зависимостей
 - **Семантическое версионирование** обеспечивает совместимость обновлений блоков
 - **Обнаружение недостатка памяти** оповещает при превышении порогов использования RAM
-- **Веб-аутентификация** (v2.30.0): локальные аккаунты в `<AIOS_DATA_DIR>/users.json`, пароли с солью и растяжением (SHA-256 × 10 000), самоподписанные HMAC-SHA256 сессионные токены (TTL 12 ч), middleware `require_auth` закрывает поверхность `/api/v1/*`, CORS отключён по умолчанию или зафиксирован на `AIOS_CORS_ORIGIN`
+- **Веб-аутентификация** (v2.30.0, усилено после аудита): локальные аккаунты в `<AIOS_DATA_DIR>/users.json`, PBKDF2-HMAC-SHA256 (100 000 итераций) с солью на пользователя, constant-time проверки хэша и подписи, HMAC-SHA256 сессионные токены (TTL 12 ч), подписанные секретом из `aios_core::secrets` (`AIOS_AUTH_SECRET` → `<data_dir>/secrets/auth.key` → CSPRNG); пять неудачных входов блокируют аккаунт на 5 минут. `require_auth` по умолчанию закрывает `/api/*` и `/ws/*`; CORS отключён или зафиксирован на `AIOS_CORS_ORIGIN`. Все встроенные в код секреты issuer/heartbeat заменены этим же resolver-ом.
 
 **Ещё не реализовано**: полная интеграция WebAssembly runtime. См. `docs/TODO.md`.
 
@@ -1514,10 +1514,10 @@ User Input (TUI)
 ### Фаза 25: Безопасный веб-сёрфинг и поиск (`aios-browser` и `aios-search`) — *ЗАВЕРШЕНО*
 - **Крейт `aios-browser`**: `BrowserEngine` с `navigate(url)` → HTTP-запрос через `reqwest`, парсинг HTML через `HtmlParser`, рендеринг в текст через `Renderer`
   - `HtmlParser`: построен на `scraper`/html5ever (WHATWG-совместимый) — извлекает текст, ссылки, заголовки; структурирует вывод с заголовками `#`/`###`, списками `•`/`1.`, `pre`/`br` без потерь, строками таблиц `|`, `hr`, изображениями как `[alt]`; удаляет `<script>`, `<style>`, `<head>`, `<iframe>` и скрытые элементы; ссылки резолвятся относительно базового URL и дедуплицируются, не-web-схемы отфильтрованы
-  - `NetworkClient`: настраиваемые user-agent, таймаут, лимит редиректов; изолированный сетевой доступ
+  - `NetworkClient`: настраиваемые user-agent, таймаут, лимит редиректов; SSRF-политика — только HTTP(S), каждый hop резолвится через DNS и отклоняется для loopback/private/link-local/non-global адресов, явная цепочка редиректов, потоковое чтение тела с лимитом `max_response_bytes` (по умолчанию 8 МиБ). `BrowserConfig::allow_private_targets` (или `AIOS_BROWSER_ALLOW_PRIVATE`) включает доступ к локальным тестовым серверам.
   - `Renderer`: DOM → markdown-подобный текст (заголовки `#`, ссылки `[text](url)`, списки `•`)
   - `Page`: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
-  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`, `headless_fallback` (включён по умолчанию)
+  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`, `headless_fallback` (включён по умолчанию), `allow_private_targets` (выключен по умолчанию), `max_response_bytes` (по умолчанию 8 МиБ)
   - **Headless render-to-text fallback** (модуль `headless`, v2.17.0): когда обычная загрузка не даёт читаемого текста (`looks_like_js_shell`, < 80 непробельных символов), движок запускает headless-браузер класса Chromium (`msedge`/`chromium`/`google-chrome`/`brave-browser`, переопределение `AIOS_HEADLESS_BROWSER`, `--no-sandbox` через `AIOS_HEADLESS_NO_SANDBOX`) с флагами `--headless --dump-dom --virtual-time-budget=5000`, лимит 4 МиБ, выполнение на блокирующем потоке с таймаутом 30 с; отрендеренный DOM принимается только когда `has_more_content` находит на 60+ непробельных символов больше, чем обычная загрузка, иначе исходный HTML остаётся авторитетным
   - **28 unit-тестов**: извлечение текста, парсинг ссылок, заголовков, URL-резолвинг, удаление head/комментариев, структура макета
 - **`BrowserBlock` (интеграция блока в ядро)**: `BrowserBlock` реализует `StatefulBlock` в `aios-browser/src/block.rs` и регистрируется при загрузке во всех бинарниках (`aios`, `aios-tui`, `aiosd`)

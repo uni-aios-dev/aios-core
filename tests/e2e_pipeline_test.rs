@@ -196,13 +196,13 @@ async fn test_e2e_bridge_http_endpoints() {
         secret: SECRET.to_vec(),
     };
     let watchdog = Watchdog::new(watchdog_config);
-    let state = Arc::new(BridgeContext::new(
-        Arc::new(Mutex::new(scheduler)),
-        registry,
-        acl,
-        watchdog,
-        42,
-    ));
+    let auth_dir = tempfile::tempdir().expect("tempdir");
+    let auth = aios_bridge::auth::open_auth(auth_dir.path()).expect("auth store");
+    let state = Arc::new(
+        BridgeContext::new(Arc::new(Mutex::new(scheduler)), registry, acl, watchdog, 42)
+            .with_signup(true)
+            .with_auth(auth),
+    );
 
     let port = portpicker::pick_unused_port().expect("No free port");
     let addr = format!("127.0.0.1:{port}");
@@ -217,22 +217,28 @@ async fn test_e2e_bridge_http_endpoints() {
 
     let auth_resp = reqwest::Client::new()
         .post(format!("http://{addr}/api/v1/auth/register"))
-        .json(&serde_json::json!({"username": "e2e", "password": "e2e-pass"}))
+        .json(&serde_json::json!({"username": "e2e", "password": "e2e-password-123"}))
         .send()
         .await
         .unwrap();
-    let auth_json: serde_json::Value = if auth_resp.status() == 200 {
-        auth_resp.json().await.unwrap()
+    let status = auth_resp.status();
+    let auth_text = auth_resp.text().await.unwrap();
+    let auth_json: serde_json::Value = if status == 200 {
+        serde_json::from_str(&auth_text).unwrap()
     } else {
-        reqwest::Client::new()
+        let login_resp = reqwest::Client::new()
             .post(format!("http://{addr}/api/v1/auth/login"))
-            .json(&serde_json::json!({"username": "e2e", "password": "e2e-pass"}))
+            .json(&serde_json::json!({"username": "e2e", "password": "e2e-password-123"}))
             .send()
             .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap()
+            .unwrap();
+        let login_status = login_resp.status();
+        let login_text = login_resp.text().await.unwrap();
+        assert_eq!(
+            login_status, 200,
+            "register: {status} {auth_text}; login: {login_text}"
+        );
+        serde_json::from_str(&login_text).unwrap()
     };
     let token = auth_json["token"].as_str().unwrap();
 

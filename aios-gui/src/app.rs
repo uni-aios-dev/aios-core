@@ -1395,7 +1395,10 @@ impl AiosApp {
         if let Some(result) = got {
             self.ai_busy = false;
             let tail = {
-                let mut s = self.ai_stream.lock().unwrap();
+                let mut s = self
+                    .ai_stream
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let tail = s.clone();
                 s.clear();
                 tail

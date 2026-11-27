@@ -101,9 +101,9 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 ## 4. Foundation Crates
 
-### 4.1 `aios-core` — types, protocol, crypto, faults, filesystem (10 files · ~1.3k lines · 43 tests)
+### 4.1 `aios-core` — types, protocol, crypto, faults, filesystem, secrets (11 files · ~1.4k lines · 39 tests)
 
-Modules: `block`, `crypto`, `error`, `fault`, `filesystem`, `ipc_protocol`, `runtime`.
+Modules: `block`, `crypto`, `error`, `fault`, `filesystem`, `ipc_protocol`, `runtime`, `secrets`.
 
 | Function / Type | Purpose |
 |---|---|
@@ -118,6 +118,7 @@ Modules: `block`, `crypto`, `error`, `fault`, `filesystem`, `ipc_protocol`, `run
 | `FileSystem::local()/virtual_fs()/overlay()` | FS backends with permission presets |
 | `FileSystem::{read,write,list}_{local,virtual}` | Permission-checked operations |
 | `runtime::block_on_future(fut)` | Safe sync→async bridge |
+| `secrets::{random_secret,data_dir,env_name,resolve_secret,resolve_secret_in,secret_or_ephemeral}` | Shared secret resolution: `AIOS_<NAME>_SECRET` → `<data_dir>/secrets/<name>.key` → CSPRNG; never path-derived |
 
 ### 4.2 `aios-ipc` — transports (5 files · 806 lines · 29 tests)
 
@@ -320,7 +321,7 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 
 | Crate | Non-blank lines / tests | Key API |
 |---|---|---|
-| `aios-browser` | 4,339 / 106 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback |
+| `aios-browser` | 4,339 / 111 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
@@ -382,26 +383,26 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 | `WorkflowCompiler::{generate_wat,compile_to_wasm}` | WAT→WASM module (`init/start/step_N` exports) |
 | `AutoManifestGenerator::{from_wasm_binary,from_workflow_intents}` | Capability inference + JSON manifest |
 
-### 8.3 `aios-bridge` — API gateway (6 files · ~2.5k lines · 14 unit + 24 integration tests)
+### 8.3 `aios-bridge` — API gateway (6 files · ~2.7k lines · 22 unit + 24 integration tests)
 
-`BridgeContext` holds shared subsystem handles: health, watchdog/processes/blocks, store, browser, sys_control, telemetry, auth, live_update, ipc_bus and an `LlmEngine`. `require_auth` middleware gates `/api/` routes; `start_server_with_shutdown()` owns the axum server.
+`BridgeContext` holds shared subsystem handles: health, watchdog/processes/blocks, store, browser, sys_control, telemetry, auth, live_update, ipc_bus and an `LlmEngine`. `require_auth` middleware is default-deny for `/api/` and `/ws/`; `start_server_with_shutdown()` owns the axum server. Passwords use PBKDF2-HMAC-SHA256 with constant-time checks and 5-attempt/5-minute lockout; registration is opt-in (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS is fail-closed. DTO validation caps prompts, workflow batches, `max_tokens` and WASM uploads; `block_binary_path()` confines block binaries to canonicalized paths under `AIOS_BLOCKS_DIR`; poisoned locks are recovered via `lock_or_recover()`.
 
 | Method Path | Handler |
 |---|---|
 | GET `/api/v1/health` | Health/version/uptime |
-| POST `/api/v1/auth/register` · `/api/v1/auth/login` · GET `/api/v1/auth/me` | User registration, bearer login, current user |
+| POST `/api/v1/auth/register` · `/api/v1/auth/login` · GET `/api/v1/auth/me` | Registration (opt-in), bearer login (401/429 on failure/lockout), current user |
 | GET `/api/v1/system/status` · GET `/api/v1/sys/status` | Watchdog/processes/blocks/RAM; compact sys status |
 | GET `/api/v1/sys/wifi/scan` · POST `/api/v1/sys/wifi/connect` · POST `/api/v1/sys/layout` | Wi-Fi scan/connect and EN/RU layout control |
-| POST `/api/v1/intent` | NL intent execute (LLM fallback, ACL checks) |
-| POST `/api/v1/workflow` | Batch prompt sequence |
-| POST `/api/v1/llm/query` | Direct LLM query |
+| POST `/api/v1/intent` | NL intent execute (LLM fallback, ACL checks, prompt limit) |
+| POST `/api/v1/workflow` | Batch prompt sequence (batch and prompt limits) |
+| POST `/api/v1/llm/query` | Direct LLM query (prompt/system/token/temperature limits) |
 | POST `/api/v1/browse` · `/api/v1/search` | Browser/search proxies |
-| GET `/api/v1/store/index` · POST `/api/v1/store/register` · POST `/api/v1/store/publish` | Store service (publish verifies SHA-256 + optional Ed25519) |
+| GET `/api/v1/store/index` · POST `/api/v1/store/register` · POST `/api/v1/store/publish` | Store service (publish verifies SHA-256 + optional Ed25519, bounded base64/WASM size) |
 | GET `/index.json` · `/store/index.json` · `/blocks/{name}.wasm` · `/store/blocks/{name}.wasm` | Update-service catalog/download |
 | GET `/api/v1/metrics` · `/api/v1/traces` · POST `/api/v1/crash-report` | Prometheus text / spans / crash report |
-| WS `/ws/telemetry` | 100 ms RAM/process push |
+| WS `/ws/telemetry` | 100 ms RAM/process push; bearer token required on every upgrade |
 
-Core types: `BridgeContext`, `IntentParser` (RU/EN keywords + `parse_with_llm_fallback`), `UserIntent`, `AuthStore`, ~30 DTOs, `BridgeError`.
+Core types: `BridgeContext` (builders `with_blocks_dir`, `with_signup`, `with_auth`), `IntentParser` (RU/EN keywords + `parse_with_llm_fallback`), `UserIntent`, `AuthStore`, ~30 DTOs, `BridgeError` (incl. `Unauthorized` / `TooManyRequests`), `block_binary_path()`, `lock_or_recover()`, DTO validators.
 
 ---
 
@@ -461,7 +462,7 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
 | `browser_search_tests.rs` | 7 | HTML parser |
 | `full_lifecycle.rs` | 7 | Boot→deploy→swap→watchdog→shutdown |
 | `real_hot_swap.rs` | 7 | WASM version-change hot swap |
-| `e2e_pipeline_test.rs` | 6 | HW→tier→LLM intent→EasyLang→WASM chain |
+| `e2e_pipeline_test.rs` | 6 | HW→tier→LLM intent→EasyLang→WASM chain; bridge started with `with_signup(true)` |
 | `fuzz_test.rs` | 6 | Randomized packet fuzzing |
 | `sys_control_tests.rs` | 32 | Wi-Fi sim, DHCP wire format, layout switching, thermal cycles, keyring lifecycle |
 | `stress_fault_tolerance.rs` | 5 | 50 parallel WASM blocks, crash storms |
@@ -471,6 +472,13 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
 - **358 `.rs` files**, **~125.5k non-blank lines** (~136.9k with blank lines): **41 workspace members + 13 standalone crates**.
 - **1,824 tests passed in 100 suites** (unit + integration + doc-tests) by `cargo test --workspace`; 2,011 test attributes counted (`#[test]` 1,941 + `#[tokio::test]` 70) across 232 files.
 - `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: **0 warnings**.
+- Post-audit hardening map (2026-11-27): new `aios-core/src/secrets.rs` and
+  `scripts/check_unsafe_safety.py`; `aios-bridge/src/auth.rs` (PBKDF2, lockout),
+  `dto.rs` validators, `server.rs::block_binary_path`/`lock_or_recover`/`with_auth`;
+  `aios-browser/src/network.rs` SSRF policy; 201 poisoned-lock recoveries in 21
+  production files; CI step `Require SAFETY comments on new unsafe blocks`.
+  Post-hardening `cargo test --workspace`: **1,854 tests passed / 0 failed in 100 suites**;
+  `scripts/check_unsafe_safety.py HEAD~1` reports no undocumented new unsafe blocks.
 - Standalone/tooling gates: `aios-kernel` check/clippy (default and `--features limine`), `aios-kernel-run` tests 2/2, PowerShell parser check. A fresh hybrid ISO/IMG rebuild was **not** run here: `xorriso`/Limine binaries are missing and `iso/` is empty — only marker/check logic and existing image inspection were used.
 - The five `aios-kernel` GUI text-layout tests are source-level `#[cfg(test)]` checks for the freestanding binary: they are not included in the host `cargo test --workspace` count above because the bare-metal target has no `test` crate. Runtime verification used a release ELF patched into ISO LBA 32 of a copied image (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU reached `Limine handoff` / GOP `1280x800` / DHCP bound, opened App Store, Network and hardware windows with `F4`/`F5`/`F9`, and a screendump showed no text run wider than the 16 px glyph cell. The image was then written to and fully read back from Disk 3 (`\\.\PhysicalDrive3`, serial `EE05DB505AE9`) with matching SHA-256, LBA 32 ELF hash, `AIOS_KER.;1` record size and MBR `55 AA` (`boot/out/flash-gui-disk3.log`).
 

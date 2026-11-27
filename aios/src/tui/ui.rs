@@ -1251,7 +1251,10 @@ mod render_smoke_tests {
         app.shell_output.push_back("  clusters list".into());
         app.shell_output
             .push_back("AIOS ERROR: command not found: foo".into());
-        app.ai_output.lock().unwrap().push_back("> hello".into());
+        app.ai_output
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_back("> hello".into());
         app.ai_output
             .lock()
             .unwrap()
@@ -1342,7 +1345,11 @@ mod render_smoke_tests {
         let state = app.state.clone();
         std::thread::spawn(move || {
             let _st = locked(&state);
-            let _reg = _st.bridge.registry.lock().unwrap();
+            let _reg = _st
+                .bridge
+                .registry
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             panic!("simulated background crash while holding the registry lock");
         })
         .join()

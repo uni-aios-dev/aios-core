@@ -205,6 +205,9 @@ fn probe_once(
     sequence: u16,
     timeout: Duration,
 ) -> Result<Option<IcmpReply>, String> {
+    // SAFETY: Win32 ICMP handles are created and closed within this function.
+    // The reply buffer is 8-byte aligned, sized for the echo request plus the
+    // reply header, and only read after `IcmpSendEcho` reported a reply.
     unsafe {
         let handle = IcmpCreateFile();
         if handle as isize == -1 {
@@ -256,6 +259,8 @@ fn probe_once(
     timeout: Duration,
 ) -> Result<Option<IcmpReply>, String> {
     let packet = build_echo_request(identifier, sequence, PAYLOAD);
+    // SAFETY: `socket`/`close` are valid POSIX FFI calls; the descriptor is
+    // owned here, checked before use, and closed on every path after probing.
     unsafe {
         let datagram = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, libc::IPPROTO_ICMP);
         let socket = if datagram >= 0 {
@@ -276,6 +281,8 @@ fn probe_once(
 }
 
 #[cfg(unix)]
+// SAFETY: callers must pass an open ICMP socket descriptor owned by the
+// caller and a packet buffer that remains valid for the duration of the call.
 unsafe fn probe_on_socket(
     socket: i32,
     address: Ipv4Addr,

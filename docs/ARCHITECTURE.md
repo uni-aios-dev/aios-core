@@ -995,9 +995,9 @@ Since v2.31.2 every desktop window is backed by a **real kernel runtime** (`GuiR
 - Local `BlockMarketplace` (`official` repo, 4 internal offers) + `BlockInstaller` persist real `<name>_<version>.wasm`/sidecar manifests; the App Store install/update/uninstall write and delete real store files and registry entries. Test builds redirect the blocks dir to a unique temp directory so unit tests never touch the repository.
 - All background **system** threads start only in `start_runtime()` (invoked from `aios-gui/src/main.rs`), so `AiosApp::new` stays side-effect free and thread-free for tests. `GuiRuntime::start()` is idempotent and launches only the scheduler tick and the watchdog heartbeat; the process table stays empty until a process is explicitly spawned. `aios-gui` has 33 passing tests covering sorted/unique/complete Start entries, window focus/minimize, no demo processes, explicit process kill, manual IPC packets and desktop window navigation.
 
-#### WebSocket telemetry auth (`aios-bridge`)
+#### WebSocket telemetry auth and bridge input policy (`aios-bridge`)
 
-`/ws/telemetry` stays in the `require_auth` allowlist but now validates the optional `?token=<session>` query against the bridge `auth` layer when any user is registered; `aios-studio`'s `app.js` appends the stored token to the WS URL. Bridge `HotSwap` performs a live-update swap (`LiveUpdateEngine::perform_swap`) then `registry.swap_binary`; `WorkflowExecution` runs nested intents sequentially through the same `execute_intent` path.
+Authorization is default-deny for every `/api/` and `/ws/` route. `/ws/telemetry` accepts a token in `?token=<session>` or an `Authorization: Bearer` header and validates it against `AuthStore` on every upgrade — there is no "no users registered" bypass. Public registration is off unless `AIOS_BRIDGE_ALLOW_SIGNUP=true`; CORS is disabled unless `AIOS_CORS_ORIGIN` is set to a valid exact origin. Poisoned shared mutexes are recovered with logging instead of panicking. Intent/workflow/LLM requests enforce prompt, batch and `max_tokens` limits; block binaries are read only from `AIOS_BLOCKS_DIR` (canonicalized path check). Bridge `HotSwap` performs a live-update swap (`LiveUpdateEngine::perform_swap`) then `registry.swap_binary`; `WorkflowExecution` runs nested intents sequentially through the same `execute_intent` path.
 
 ---
 
@@ -1457,7 +1457,7 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - **Hardware security bridge** unifies MPK/TEE/IOMMU protection for block isolation
 - **CoW persistence** with atomic rollback and crash-recovery journal
 - **Compressed telemetry** auto-compresses cold data with ZSTD
-- **Web authentication** (v2.30.0): local accounts in `<AIOS_DATA_DIR>/users.json`, salted + key-stretched (SHA-256 × 10 000) passwords, self-signed HMAC-SHA256 session tokens (12 h TTL), `require_auth` middleware gates the `/api/v1/*` surface, CORS disabled by default or pinned to `AIOS_CORS_ORIGIN`
+- **Web authentication** (v2.30.0, hardened post-audit): local accounts in `<AIOS_DATA_DIR>/users.json`, PBKDF2-HMAC-SHA256 (100 000 iterations) with per-user salts, constant-time hash/signature checks, HMAC-SHA256 session tokens (12 h TTL) signed with a secret from `aios_core::secrets` (`AIOS_AUTH_SECRET` → `<data_dir>/secrets/auth.key` → CSPRNG), five failed logins lock an account for 5 minutes. `require_auth` is default-deny for `/api/*` and `/ws/*`; CORS is disabled or pinned to `AIOS_CORS_ORIGIN`. All compiled-in issuer/heartbeat secrets were replaced by the same resolver.
 
 **Not yet implemented**: full WebAssembly runtime integration. See `docs/TODO.md`.
 
@@ -1507,10 +1507,10 @@ Three adaptive AI modes depending on hardware resources:
 ### Phase 25: Secure Web Surfing & Search (`aios-browser` & `aios-search`) — *COMPLETED*
 - **`aios-browser` crate**: `BrowserEngine` with `navigate(url)` → fetches HTML via `reqwest`, parses via `HtmlParser`, renders to text via `Renderer`
   - `HtmlParser`: built on `scraper`/html5ever (WHATWG-compliant) — extracts text content, links, title; structures output with headings `#`/`###`, lists `•`/`1.`, `pre`/`br` preserved, table rows `|`, `hr`, images as `[alt]`; strips `<script>`, `<style>`, `<head>`, `<iframe>` and hidden elements; links resolved against the page base URL and deduplicated, non-web schemes filtered
-  - `NetworkClient`: configurable user-agent, timeout, redirect limit; capability-based sandboxed network
+  - `NetworkClient`: configurable user-agent, timeout, redirect limit; SSRF policy — HTTP(S) only, every hop DNS-resolved and rejected for loopback/private/link-local/non-global addresses, explicit redirect chain, streamed bodies capped by `max_response_bytes` (8 MiB default). `BrowserConfig::allow_private_targets` (or `AIOS_BROWSER_ALLOW_PRIVATE`) opts in for local test servers.
   - `Renderer`: DOM → markdown-like text output (headings `#`, links `[text](url)`, lists `•`)
   - `Page` type: `url`, `title`, `text_content`, `html`, `links: Vec<Link>`
-  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`, `headless_fallback` (default on)
+  - `BrowserConfig`: `user_agent`, `timeout_secs`, `max_redirects`, `sandbox_enabled`, `headless_fallback` (default on), `allow_private_targets` (default off), `max_response_bytes` (default 8 MiB)
   - **Headless render-to-text fallback** (`headless` module, v2.17.0): when the plain fetch yields no readable text (`looks_like_js_shell`, < 80 non-whitespace chars), the engine runs a headless Chromium-class browser (`msedge`/`chromium`/`google-chrome`/`brave-browser`, override `AIOS_HEADLESS_BROWSER`, `--no-sandbox` via `AIOS_HEADLESS_NO_SANDBOX`) with `--headless --dump-dom --virtual-time-budget=5000`, capped at 4 MiB on a blocking thread with a 30 s timeout; the rendered DOM is adopted only when `has_more_content` finds +60 more non-whitespace chars than the plain fetch, otherwise the original HTML stays authoritative
   - **28 unit tests**: text extraction, link parsing, title extraction, URL resolution, head/comment stripping, structured layout
 - **`BrowserBlock` (kernel block integration)**: `BrowserBlock` implements `StatefulBlock` in `aios-browser/src/block.rs` and is registered at boot in all binaries (`aios`, `aios-tui`, `aiosd`)

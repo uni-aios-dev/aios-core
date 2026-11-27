@@ -148,10 +148,7 @@ impl WasmSandbox {
     }
 
     pub fn compile_any(&self, bytes: &[u8]) -> Result<Module> {
-        Module::from_binary(&self.engine, bytes)
-            .or_else(|_| Module::new(&self.engine, bytes))
-            .or_else(|_| unsafe { Module::deserialize(&self.engine, bytes) })
-            .map_err(|e| AIOSException::Generic(format!("WASM compile: {e}")))
+        self.compile_module(bytes)
     }
 
     pub fn compile_wat(&self, wat: &str) -> Result<Module> {

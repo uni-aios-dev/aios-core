@@ -751,7 +751,13 @@ mod tests {
         let mut shell = SafeModeShell::with_event_log(3, shared.clone());
         shell.execute(ShellCommand::RestartOrchestrator, &mut sched, &mut reg);
         let expected = vec!["Orchestrator restart attempt 1/3".to_string()];
-        assert_eq!(shared.lock().unwrap().as_slice(), expected.as_slice());
+        assert_eq!(
+            shared
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_slice(),
+            expected.as_slice()
+        );
         let late_shell = SafeModeShell::with_event_log(3, shared);
         assert_eq!(late_shell.log_entries(), expected.as_slice());
     }

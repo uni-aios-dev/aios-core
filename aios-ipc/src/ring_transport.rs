@@ -74,7 +74,7 @@ impl RingBufferTransport {
 
     pub fn try_receive_from_ring(&mut self, from: u32, to: u32) -> Option<IpcPacket> {
         let ring = self.rings.get(&(from, to))?;
-        let ring = ring.lock().unwrap();
+        let ring = ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let available = ring.available_read();
         if available == 0 {
@@ -98,9 +98,11 @@ impl RingBufferTransport {
     }
 
     pub fn ring_usage(&self, from: u32, to: u32) -> Option<f32> {
-        self.rings
-            .get(&(from, to))
-            .map(|ring| ring.lock().unwrap().fill_ratio())
+        self.rings.get(&(from, to)).map(|ring| {
+            ring.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .fill_ratio()
+        })
     }
 
     pub fn metrics(&self) -> &RingMetrics {

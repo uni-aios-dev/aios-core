@@ -69,7 +69,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
                     );
                 }
                 if app.ai_busy {
-                    let partial = app.ai_stream.lock().unwrap().clone();
+                    let partial = app
+                        .ai_stream
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone();
                     if partial.is_empty() {
                         ui.label(egui::RichText::new(" …").color(theme.warning).size(12.0));
                     } else {

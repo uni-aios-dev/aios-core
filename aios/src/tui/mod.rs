@@ -174,7 +174,9 @@ fn dispatch_net_set(app: &mut TuiApp, raw: &str) -> aios_console::legacy::AiosNe
 }
 
 fn push_out(ai_out: &Arc<Mutex<VecDeque<String>>>, line: String) {
-    let mut ai_guard = ai_out.lock().unwrap();
+    let mut ai_guard = ai_out
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     ai_guard.push_back(line);
     let len = ai_guard.len();
     if len > 200 {
@@ -307,7 +309,9 @@ fn load_chat(app: &TuiApp) {
             push_ai_line(app, msg.text);
         }
     }
-    *app.ai_status.lock().unwrap() = "chat restored from disk".into();
+    *app.ai_status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = "chat restored from disk".into();
 }
 
 fn apply_config_async(app: &TuiApp, config: LlmConfig) {
@@ -339,9 +343,15 @@ fn submit_ai_query(app: &mut TuiApp, prompt: String) {
             text: prompt.clone(),
         });
     }
-    *status.lock().unwrap() = "streaming...".into();
-    *streaming.lock().unwrap() = true;
-    *stream.lock().unwrap() = String::new();
+    *status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = "streaming...".into();
+    *streaming
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+    *stream
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = String::new();
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let worker = {
@@ -369,25 +379,36 @@ fn submit_ai_query(app: &mut TuiApp, prompt: String) {
                     }
                 }
                 Err(e) => {
-                    *streaming.lock().unwrap() = false;
-                    *status.lock().unwrap() = format!("error: {e}");
+                    *streaming
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+                    *status
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = format!("error: {e}");
                     push_out(&ai_out, format!("[error] {e}"));
                     save_chat_to(&path, &ai_log);
-                    let mut l = logs.lock().unwrap();
+                    let mut l = logs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     l.push(format!("AI query: {} (error: {e})", prompt));
                     return;
                 }
             }
         }
         let _ = worker.await;
-        *streaming.lock().unwrap() = false;
+        *streaming
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
         let tail = {
-            let mut s = stream.lock().unwrap();
+            let mut s = stream
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let tail = s.clone();
             s.clear();
             tail
         };
-        *status.lock().unwrap() = format!("done: {} ms", start.elapsed().as_millis());
+        *status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            format!("done: {} ms", start.elapsed().as_millis());
         if !tail.trim().is_empty() {
             push_out(&ai_out, tail.clone());
             if let Ok(mut guard) = ai_log.lock() {
@@ -398,7 +419,7 @@ fn submit_ai_query(app: &mut TuiApp, prompt: String) {
             }
         }
         save_chat_to(&path, &ai_log);
-        let mut l = logs.lock().unwrap();
+        let mut l = logs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         l.push(format!("AI query: {} (done, {} chars)", prompt, full.len()));
     });
 }
@@ -424,7 +445,9 @@ fn handle_ai_command(app: &mut TuiApp, cmd: &str) {
             if let Ok(mut g) = app.ai_output.lock() {
                 g.clear();
             }
-            *app.ai_status.lock().unwrap() = "cleared".into();
+            *app.ai_status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = "cleared".into();
             return;
         }
         "status" => {
@@ -868,7 +891,11 @@ fn store_poll(app: &mut TuiApp) {
 
 fn web_poll(app: &mut TuiApp) {
     let got = {
-        let mut slot = app.web.fetch_out.lock().unwrap();
+        let mut slot = app
+            .web
+            .fetch_out
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         slot.take()
     };
     if let Some((gen, tab_idx, result)) = got {
@@ -1634,7 +1661,10 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
                 let input = app.ai_input.clone();
                 app.ai_input.clear();
                 app.push_history(input.clone());
-                let mut ai_guard = app.ai_output.lock().unwrap();
+                let mut ai_guard = app
+                    .ai_output
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 ai_guard.push_back(format!("> {}", input));
                 let len = ai_guard.len();
                 if len > 200 {
@@ -1940,7 +1970,9 @@ mod tests {
         let logs = Arc::new(Mutex::new(Vec::new()));
         let scheduler = Arc::new(Mutex::new(Scheduler::new(1024)));
         {
-            let mut sched = scheduler.lock().unwrap();
+            let mut sched = scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for name in process_names {
                 let _ = sched.spawn_process(name, aios_process_mgr::task::Priority::Normal, 64);
             }
@@ -2202,7 +2234,10 @@ mod tests {
         fn with_logs() -> TuiApp {
             let app = aios_parity_app(&[], true);
             {
-                let mut logs = app.logs.lock().unwrap();
+                let mut logs = app
+                    .logs
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 logs.push("AIOS: boot".into());
                 logs.push("AIOS: bridge online".into());
                 logs.push("AIOS: ready".into());
@@ -2249,7 +2284,10 @@ mod tests {
     fn bare_restart_adapter_pushes_the_legacy_log_line() {
         let mut app = aios_parity_app(&[], true);
         shell_execute(&mut app, "restart");
-        let logs = app.logs.lock().unwrap();
+        let logs = app
+            .logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(
             logs.iter()
                 .any(|line| line == "AIOS: restart requested via shell"),
@@ -2260,15 +2298,30 @@ mod tests {
     #[test]
     fn bare_adapter_matches_legacy_for_spawn_path() {
         let mut app = aios_parity_app(&[], true);
-        let start = app.logs.lock().unwrap().len();
+        let start = app
+            .logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
         shell_execute_legacy(&mut app, "spawn does-not-exist.wasm");
         let legacy_out = app.shell_output.clone();
-        let legacy_logs: Vec<String> = app.logs.lock().unwrap()[start..].to_vec();
+        let legacy_logs: Vec<String> = app
+            .logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())[start..]
+            .to_vec();
         app.shell_output.clear();
-        app.logs.lock().unwrap().truncate(start);
+        app.logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .truncate(start);
         shell_execute(&mut app, "spawn does-not-exist.wasm");
         assert_eq!(app.shell_output, legacy_out);
-        let adapter_logs: Vec<String> = app.logs.lock().unwrap()[start..].to_vec();
+        let adapter_logs: Vec<String> = app
+            .logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())[start..]
+            .to_vec();
         assert_eq!(adapter_logs, legacy_logs);
         assert!(
             adapter_logs
@@ -2330,7 +2383,10 @@ mod tests {
             PlacementStrategy::LeastLoaded,
         );
         let mut app = aios_parity_app(&[], true);
-        app.state.lock().unwrap().cluster = Some(Arc::new(Mutex::new(scheduler)));
+        app.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .cluster = Some(Arc::new(Mutex::new(scheduler)));
         shell_execute_legacy(&mut app, "cluster status");
         let legacy_out = app.shell_output.clone();
         app.shell_output.clear();
@@ -2390,12 +2446,18 @@ mod tests {
                 .filter(|(i, _)| *i != idx)
                 .map(|(_, a)| a.clone())
                 .collect();
-            s.lock().unwrap().start(&peers).unwrap();
+            s.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .start(&peers)
+                .unwrap();
             let s = s.clone();
             let stop = stops[idx].clone();
             std::thread::spawn(move || {
                 while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = s.lock().unwrap().process_events();
+                    let _ = s
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .process_events();
                     std::thread::sleep(Duration::from_millis(2));
                 }
             });
@@ -2403,12 +2465,24 @@ mod tests {
 
         // Wait until the coordinator discovers both peers.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while schedulers[0].lock().unwrap().nodes().len() < 2
+        while schedulers[0]
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .nodes()
+            .len()
+            < 2
             && std::time::Instant::now() < deadline
         {
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(schedulers[0].lock().unwrap().nodes().len(), 2);
+        assert_eq!(
+            schedulers[0]
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .nodes()
+                .len(),
+            2
+        );
 
         // Spawn through the shell handler onto node 2.
         let out = aios_console::legacy_host::aios_cluster_text(
@@ -2419,7 +2493,11 @@ mod tests {
             out.iter().any(|l| l.contains("spawned")),
             "spawn output: {out:?}"
         );
-        let rid = schedulers[0].lock().unwrap().processes()[0].id;
+        let rid = schedulers[0]
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .processes()[0]
+            .id;
         assert_eq!(rid.node, 2);
 
         let out = aios_console::legacy_host::aios_cluster_text(
@@ -2446,7 +2524,11 @@ mod tests {
             out.iter().any(|l| l.contains("migrated")),
             "migrate output: {out:?}"
         );
-        let new_rid = schedulers[0].lock().unwrap().processes()[0].id;
+        let new_rid = schedulers[0]
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .processes()[0]
+            .id;
         assert_eq!(new_rid.node, 3);
 
         // Kill through the shell handler.
@@ -2463,13 +2545,19 @@ mod tests {
             out.iter().any(|l| l.contains("killed")),
             "kill output: {out:?}"
         );
-        assert!(schedulers[0].lock().unwrap().processes().is_empty());
+        assert!(schedulers[0]
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .processes()
+            .is_empty());
 
         for stop in &stops {
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         for s in &schedulers {
-            s.lock().unwrap().shutdown();
+            s.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .shutdown();
         }
     }
 
