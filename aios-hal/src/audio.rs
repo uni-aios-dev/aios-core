@@ -61,6 +61,19 @@ impl AudioBus {
     }
 }
 
+/// Origin of the vendor/device identifiers on an audio endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioIdSource {
+    /// The operating system reported real bus identifiers.
+    Reported,
+    /// Identifiers are deterministic stand-ins derived from the endpoint name.
+    StableSynthetic,
+    /// Identifiers have not been established yet.
+    #[default]
+    Unknown,
+}
+
 /// One live audio endpoint with its driver metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioDevice {
@@ -76,6 +89,9 @@ pub struct AudioDevice {
     pub vendor_id: u16,
     /// PCI/USB device id, zero when unknown.
     pub device_id: u16,
+    /// Whether the identifiers above are real, synthetic or not yet known.
+    #[serde(default)]
+    pub id_source: AudioIdSource,
     /// PCI class word (`class << 16 | subclass << 8`), zero when unknown.
     pub class_code: u32,
     /// Whether this is the system default endpoint for its direction.
@@ -136,6 +152,88 @@ pub fn bus_from_name(name: &str) -> AudioBus {
     }
 }
 
+/// Deterministic identifiers for a name-only audio endpoint.
+///
+/// Known manufacturer tokens map to their real USB/PCI vendor id; the device
+/// half is a stable FNV-1a hash of the normalized name and bus. These values
+/// are stable across boots but are not bus enumeration data — callers must
+/// check [`AudioDevice::id_source`] before treating them as hardware ids.
+pub fn stable_ids_for_name(name: &str, bus: AudioBus) -> (u16, u16) {
+    let normalized = normalize_identity(name);
+    let key = format!("{}:{}", bus.tag(), normalized);
+    let hash = fnv1a64(key.as_bytes());
+    let known_vendor = [
+        ("realtek", 0x10EC),
+        ("intel", 0x8086),
+        ("amd", 0x1002),
+        ("advanced micro devices", 0x1002),
+        ("nvidia", 0x10DE),
+        ("logitech", 0x046D),
+        ("microsoft", 0x045E),
+        ("apple", 0x05AC),
+        ("creative", 0x1102),
+        ("conexant", 0x14F1),
+        ("via", 0x1106),
+    ]
+    .into_iter()
+    .find_map(|(token, vid)| normalized.contains(token).then_some(vid));
+    let vendor_id = known_vendor.unwrap_or(((hash >> 32) as u16).max(1));
+    let device_id = ((hash ^ (hash >> 32)) as u16).max(1);
+    (vendor_id, device_id)
+}
+
+fn normalize_identity(name: &str) -> String {
+    let folded = name.trim().to_ascii_lowercase();
+    let mut normalized = String::with_capacity(folded.len());
+    let mut pending_space = false;
+    for ch in folded.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if pending_space && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.push(ch);
+            pending_space = false;
+        } else {
+            pending_space = true;
+        }
+    }
+    normalized
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn record_match_score(name: &str, driver: &str, record: &DriverRecord) -> usize {
+    let mut score = 0;
+    let record_name = normalize_identity(&record.name);
+    if !record_name.is_empty() {
+        if name == record_name {
+            score += 100;
+        } else if name.contains(&record_name) {
+            score += 60;
+        }
+    }
+    for alias in &record.aliases {
+        let alias = normalize_identity(alias);
+        if !alias.is_empty() && name.contains(&alias) {
+            score += 50;
+        }
+    }
+    let record_driver = normalize_identity(&record.driver);
+    if !record_driver.is_empty()
+        && (name.contains(&record_driver) || driver.contains(&record_driver))
+    {
+        score += 20;
+    }
+    score
+}
+
 /// Attach matching OS driver records to `cpal` endpoints.
 ///
 /// Pure function kept separate from platform probing so the merge rules are
@@ -145,30 +243,45 @@ pub fn annotate_devices(
     records: &[DriverRecord],
 ) -> Vec<AudioDevice> {
     for device in &mut devices {
-        let lower = device.name.to_ascii_lowercase();
-        let Some(record) = records.iter().find(|record| {
-            let record_name = record.name.to_ascii_lowercase();
-            (!record_name.is_empty() && lower.contains(&record_name))
-                || (!record.driver.is_empty()
-                    && lower.contains(&record.driver.to_ascii_lowercase()))
-        }) else {
-            if device.bus == AudioBus::Unknown {
-                device.bus = bus_from_name(&device.name);
+        let name = normalize_identity(&device.name);
+        let driver = normalize_identity(&device.driver);
+        let best = records
+            .iter()
+            .map(|record| (record_match_score(&name, &driver, record), record))
+            .filter(|(score, _)| *score > 0)
+            .max_by_key(|(score, _)| *score)
+            .map(|(_, record)| record);
+
+        if let Some(record) = best {
+            if !record.driver.is_empty() {
+                device.driver = record.driver.clone();
             }
-            continue;
-        };
-        device.driver = record.driver.clone();
-        if device.vendor_id == 0 {
-            device.vendor_id = record.vendor_id;
+            if record.vendor_id != 0 && record.device_id != 0 {
+                device.vendor_id = record.vendor_id;
+                device.device_id = record.device_id;
+                device.id_source = AudioIdSource::Reported;
+            }
+            if device.class_code == 0 {
+                device.class_code = record.class_code;
+            }
+            if device.bus == AudioBus::Unknown {
+                device.bus = record.bus;
+            }
+        } else if device.bus == AudioBus::Unknown {
+            device.bus = bus_from_name(&device.name);
         }
-        if device.device_id == 0 {
-            device.device_id = record.device_id;
-        }
-        if device.class_code == 0 {
-            device.class_code = record.class_code;
-        }
-        if device.bus == AudioBus::Unknown {
-            device.bus = record.bus;
+
+        if device.vendor_id == 0 || device.device_id == 0 {
+            let (vendor_id, device_id) = stable_ids_for_name(&device.name, device.bus);
+            if device.vendor_id == 0 {
+                device.vendor_id = vendor_id;
+            }
+            if device.device_id == 0 {
+                device.device_id = device_id;
+            }
+            if device.id_source != AudioIdSource::Reported {
+                device.id_source = AudioIdSource::StableSynthetic;
+            }
         }
     }
     devices
@@ -189,6 +302,9 @@ pub struct DriverRecord {
     pub bus: AudioBus,
     /// PCI class word, zero for non-PCI devices.
     pub class_code: u32,
+    /// Additional name tokens that identify the same controller (ALSA card
+    /// ids, friendly endpoint names, manufacturer strings).
+    pub aliases: Vec<String>,
 }
 
 fn cpal_sample_format(format: cpal::SampleFormat) -> &'static str {
@@ -250,6 +366,7 @@ fn collect_cpal_devices() -> Vec<AudioDevice> {
                 driver: String::new(),
                 vendor_id: 0,
                 device_id: 0,
+                id_source: AudioIdSource::Unknown,
                 class_code: 0,
                 is_default,
                 sample_rate,
@@ -286,9 +403,61 @@ fn driver_name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
+/// Parse one `/proc/asound/cards` line into its card id and search aliases.
+pub fn parse_alsa_card_line(line: &str) -> Option<(String, Vec<String>)> {
+    let (index_text, rest) = line.trim().split_once('[')?;
+    let _index = index_text.trim().parse::<usize>().ok()?;
+    let (id, tail) = rest.split_once(']')?;
+    let mut aliases = vec![id.trim().to_string()];
+    let detail = tail.trim().trim_start_matches(':').trim();
+    for part in detail.split(" - ") {
+        let part = part.trim();
+        if !part.is_empty() {
+            aliases.push(part.to_string());
+        }
+    }
+    Some((index_text.trim().to_string(), aliases))
+}
+
+#[cfg(target_os = "linux")]
+struct AlsaCard {
+    aliases: Vec<String>,
+    device_path: Option<std::path::PathBuf>,
+}
+
+#[cfg(target_os = "linux")]
+fn alsa_cards() -> Vec<AlsaCard> {
+    let Ok(text) = std::fs::read_to_string("/proc/asound/cards") else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (index, aliases) = parse_alsa_card_line(line)?;
+            let device_path = std::fs::read_link(format!("/sys/class/sound/card{index}/device"))
+                .ok()
+                .and_then(|link| std::fs::canonicalize(link).ok());
+            Some(AlsaCard {
+                aliases,
+                device_path,
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn aliases_for_path(path: &std::path::Path, cards: &[AlsaCard]) -> Vec<String> {
+    cards
+        .iter()
+        .filter_map(|card| card.device_path.as_ref())
+        .filter(|card_path| card_path.starts_with(path) || path.starts_with(card_path))
+        .flat_map(|card| card.aliases.iter().cloned())
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 fn collect_driver_records() -> Vec<DriverRecord> {
     let mut records = Vec::new();
+    let cards = alsa_cards();
 
     if let Ok(entries) = std::fs::read_dir("/sys/bus/pci/devices") {
         for entry in entries.flatten() {
@@ -308,6 +477,9 @@ fn collect_driver_records() -> Vec<DriverRecord> {
             let device_id = std::fs::read_to_string(path.join("device"))
                 .map(|text| parse_hex_u16(&text))
                 .unwrap_or(0);
+            let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let mut aliases = aliases_for_path(&canonical, &cards);
+            aliases.push(format!("{vendor_id:04x}:{device_id:04x}"));
             records.push(DriverRecord {
                 name: format!("PCI Audio {vendor_id:04x}:{device_id:04x}"),
                 driver: driver_name(&path),
@@ -315,6 +487,7 @@ fn collect_driver_records() -> Vec<DriverRecord> {
                 device_id,
                 bus: AudioBus::Pci,
                 class_code: class,
+                aliases,
             });
         }
     }
@@ -338,6 +511,9 @@ fn collect_driver_records() -> Vec<DriverRecord> {
                 .unwrap_or_else(|_| format!("USB Audio {vendor_id:04x}:{device_id:04x}"))
                 .trim()
                 .to_string();
+            let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let mut aliases = aliases_for_path(&canonical, &cards);
+            aliases.push(format!("{vendor_id:04x}:{device_id:04x}"));
             records.push(DriverRecord {
                 name,
                 driver: driver_name(&path),
@@ -345,6 +521,7 @@ fn collect_driver_records() -> Vec<DriverRecord> {
                 device_id,
                 bus: AudioBus::Usb,
                 class_code: 0x0004_0000,
+                aliases,
             });
         }
     }
@@ -390,27 +567,39 @@ pub fn parse_wmic_driver_records(output: &str) -> Vec<DriverRecord> {
         let version = get("DriverVersion");
         let driver = match (manufacturer.is_empty(), version.is_empty()) {
             (false, false) => format!("{manufacturer} {version}"),
-            (false, true) => manufacturer,
+            (false, true) => manufacturer.clone(),
             (true, false) => version,
             (true, true) => String::new(),
         };
+        let bus = if device_id.starts_with("USB\\") {
+            AudioBus::Usb
+        } else if device_id.starts_with("PCI\\") {
+            AudioBus::Pci
+        } else {
+            AudioBus::Unknown
+        };
+        let mut aliases = Vec::new();
+        if !name.is_empty() {
+            aliases.push(name.clone());
+        }
+        if !manufacturer.is_empty() {
+            aliases.push(manufacturer.clone());
+        }
+        if vendor_id != 0 && device != 0 {
+            aliases.push(format!("{vendor_id:04x}:{device:04x}"));
+        }
         records.push(DriverRecord {
             name,
             driver,
             vendor_id,
             device_id: device,
-            bus: if device_id.starts_with("USB\\") {
-                AudioBus::Usb
-            } else if device_id.starts_with("PCI\\") {
-                AudioBus::Pci
-            } else {
-                AudioBus::Unknown
-            },
+            bus,
             class_code: if device_id.starts_with("PCI\\") {
                 0x0004_0000
             } else {
                 0
             },
+            aliases,
         });
         fields.clear();
     };
@@ -463,6 +652,7 @@ mod tests {
             driver: String::new(),
             vendor_id: 0,
             device_id: 0,
+            id_source: AudioIdSource::Unknown,
             class_code: 0,
             is_default: false,
             sample_rate: 48_000,
@@ -491,6 +681,7 @@ mod tests {
             device_id: 0x1234,
             bus: AudioBus::Pci,
             class_code: 0x0004_0300,
+            aliases: vec!["PCH".into(), "HDA Intel PCH".into()],
         };
         let devices = annotate_devices(
             vec![device("Microphone (Realtek Audio)", AudioDirection::Input)],
@@ -499,6 +690,7 @@ mod tests {
         assert_eq!(devices[0].driver, "snd_hda_intel");
         assert_eq!(devices[0].vendor_id, 0x10EC);
         assert_eq!(devices[0].device_id, 0x1234);
+        assert_eq!(devices[0].id_source, AudioIdSource::Reported);
         assert_eq!(devices[0].bus, AudioBus::Pci);
         assert_eq!(devices[0].class_code, 0x0004_0300);
         assert!(has_microphone(&devices));
@@ -506,10 +698,82 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_endpoint_keeps_its_own_values() {
+    fn unmatched_endpoint_keeps_its_own_values_and_gets_stable_ids() {
         let devices = annotate_devices(vec![device("USB Mic", AudioDirection::Input)], &[]);
         assert_eq!(devices[0].bus, AudioBus::Usb);
         assert_eq!(devices[0].driver, String::new());
+        assert_eq!(devices[0].id_source, AudioIdSource::StableSynthetic);
+        assert_ne!(devices[0].vendor_id, 0);
+        assert_ne!(devices[0].device_id, 0);
+    }
+
+    #[test]
+    fn stable_ids_are_deterministic_and_bus_scoped() {
+        let (usb_vendor, usb_device) = stable_ids_for_name("USB Microphone", AudioBus::Usb);
+        assert_eq!(
+            (usb_vendor, usb_device),
+            stable_ids_for_name("USB Microphone", AudioBus::Usb)
+        );
+        assert_ne!(
+            (usb_vendor, usb_device),
+            stable_ids_for_name("USB Microphone", AudioBus::Pci)
+        );
+    }
+
+    #[test]
+    fn stable_ids_prefer_known_vendor() {
+        let (vendor, _) = stable_ids_for_name("Realtek(R) Audio", AudioBus::Pci);
+        assert_eq!(vendor, 0x10EC);
+    }
+
+    #[test]
+    fn alsa_card_lines_expose_search_aliases() {
+        let (index, aliases) =
+            parse_alsa_card_line(" 0 [PCH            ]: HDA-Intel - HDA Intel PCH")
+                .expect("parse card line");
+        assert_eq!(index, "0");
+        assert!(aliases.iter().any(|alias| alias == "PCH"));
+        assert!(aliases.iter().any(|alias| alias == "HDA Intel PCH"));
+    }
+
+    #[test]
+    fn best_driver_alias_wins_over_first_record() {
+        let weak = DriverRecord {
+            name: "USB Audio".into(),
+            driver: String::new(),
+            vendor_id: 0x1111,
+            device_id: 0x2222,
+            bus: AudioBus::Usb,
+            class_code: 0,
+            aliases: Vec::new(),
+        };
+        let strong = DriverRecord {
+            name: "Logitech USB Headset".into(),
+            driver: String::new(),
+            vendor_id: 0x046D,
+            device_id: 0x0825,
+            bus: AudioBus::Usb,
+            class_code: 0,
+            aliases: vec!["HDA Intel PCH".into()],
+        };
+        let devices = annotate_devices(
+            vec![device("Microphone (HDA Intel PCH)", AudioDirection::Input)],
+            &[weak, strong],
+        );
+        assert_eq!(devices[0].vendor_id, 0x046D);
+        assert_eq!(devices[0].id_source, AudioIdSource::Reported);
+    }
+
+    #[test]
+    fn reported_ids_are_not_overwritten_by_synthetic_ids() {
+        let mut device = device("Microphone (Realtek Audio)", AudioDirection::Input);
+        device.vendor_id = 0x10EC;
+        device.device_id = 0x1234;
+        device.id_source = AudioIdSource::Reported;
+        let devices = annotate_devices(vec![device], &[]);
+        assert_eq!(devices[0].vendor_id, 0x10EC);
+        assert_eq!(devices[0].device_id, 0x1234);
+        assert_eq!(devices[0].id_source, AudioIdSource::Reported);
     }
 
     #[test]
@@ -535,5 +799,18 @@ mod tests {
         let json = serde_json::to_string(&record).expect("serialize audio device");
         let restored: AudioDevice = serde_json::from_str(&json).expect("deserialize audio device");
         assert_eq!(restored, record);
+    }
+
+    #[test]
+    fn legacy_audio_device_without_id_source_deserializes() {
+        let record = device("Microphone (USB Audio)", AudioDirection::Input);
+        let mut value = serde_json::to_value(&record).expect("serialize audio device");
+        value
+            .as_object_mut()
+            .expect("device object")
+            .remove("id_source");
+        let restored: AudioDevice =
+            serde_json::from_value(value).expect("deserialize legacy audio device");
+        assert_eq!(restored.id_source, AudioIdSource::Unknown);
     }
 }

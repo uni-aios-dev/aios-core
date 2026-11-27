@@ -1,5 +1,28 @@
 # AIOS Development Log
 
+## Unreleased — stable audio device identifiers (2026-11-27)
+
+### Added
+- `AudioIdSource` and `AudioDevice::id_source` distinguish OS-reported ids from
+  deterministic synthetic ids and unknown state; legacy serialized records
+  default to `"unknown"`.
+- `stable_ids_for_name()` derives stable vendor/device ids from a normalized
+  endpoint name and bus, preserving real vendor ids for known manufacturers.
+- Linux driver records now carry ALSA aliases parsed from `/proc/asound/cards`
+  and linked through `/sys/class/sound/cardN/device`; WMI records add
+  name/manufacturer aliases. `annotate_devices()` selects the best-scoring
+  record instead of the first substring match.
+
+### Fixed
+- Endpoints that expose only a name no longer have zero vendor/device ids;
+  their ids remain stable across boots and are explicitly marked as synthetic.
+
+### Verified
+- 6 new unit tests cover stable id determinism/vendor hints, ALSA alias
+  parsing, best-record selection, preservation of reported ids and legacy
+  serde compatibility. `cargo test --workspace` reports 1913 passing tests;
+  fmt, clippy and the unsafe checker are clean.
+
 ## Unreleased — voice confirmation diff and host-call audit (2026-11-27)
 
 ### Added

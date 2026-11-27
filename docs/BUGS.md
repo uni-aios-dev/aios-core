@@ -1,5 +1,19 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED: name-only audio endpoints had zero vendor/device ids (2026-11-27)
+
+- First-substring driver matching and generic Linux PCI record names left many
+  `cpal` endpoints with `vendor_id = 0` and `device_id = 0`, so fingerprints
+  were unstable and could not be correlated between runs. ALSA card aliases
+  are now attached to the underlying PCI/USB record and the best-scoring
+  record wins.
+- When the OS truly exposes no ids, `stable_ids_for_name()` supplies
+  deterministic ids; `AudioDevice::id_source` marks them as
+  `"stablesynthetic"` so they are never presented as bus enumeration data.
+- **Known limitation**: synthetic device ids are hashes, not real hardware
+  ids. They are stable but must not be used for driver selection that requires
+  exact PCI/USB matching.
+
 ## FIXED: voice confirmation diff and audit were not observable (2026-11-27)
 
 - Privileged scripts were staged with a diff, but the field was dropped before

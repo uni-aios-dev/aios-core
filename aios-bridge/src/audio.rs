@@ -76,6 +76,7 @@ mod tests {
             driver: "mock-driver".into(),
             vendor_id: 0,
             device_id: 0,
+            id_source: aios_hal::audio::AudioIdSource::Unknown,
             class_code: 0x0004_0000,
             is_default: true,
             sample_rate: 16_000,

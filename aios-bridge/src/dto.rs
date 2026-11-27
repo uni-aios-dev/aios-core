@@ -453,6 +453,7 @@ mod tests {
             driver: "snd_usb_audio".into(),
             vendor_id: 0x046D,
             device_id: 0xA001,
+            id_source: aios_hal::audio::AudioIdSource::Reported,
             class_code: 0x0004_0000,
             is_default: true,
             sample_rate: 16_000,

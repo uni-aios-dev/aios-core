@@ -1127,7 +1127,5 @@ Completed:
 - RU/EN keyword hints in the LLM system prompt for domain-specific workflows.
 - Host-call audit records mirrored to `FlightRecorder`, `TelemetryStore` and
   `<AIOS_DATA_DIR>/voice_audit.jsonl`, inspectable via `GET /api/v1/voice/audit`.
-
-Remaining:
-- Enrich audio driver records with stable VID/PID on platforms that only expose
-  endpoint names; current matching is best-effort.
+- Stable audio identifiers: ALSA card aliases improve real PCI/USB matching,
+  and name-only endpoints receive deterministic ids marked by `id_source`.

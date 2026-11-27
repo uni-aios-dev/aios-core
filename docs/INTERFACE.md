@@ -1697,7 +1697,7 @@ Voice phases are also streamed on authenticated `/ws/voice` and included as `voi
 
 ### Audio inventory
 
-`GET /api/v1/audio/devices` returns the detected input/output endpoints with their bus, driver name, vendor/device ids, native sample format, default flag, a `microphone_available` boolean and a `drivers_detected` count. `POST /api/v1/audio/rescan` refreshes the cached inventory after plugging or unplugging a device. Both endpoints require the same bearer token as the other `/api/v1/*` routes. In the console the same inventory appears in `sys info` / `hw detect` as the `audio` line.
+`GET /api/v1/audio/devices` returns the detected input/output endpoints with their bus, driver name, vendor/device ids, `id_source`, native sample format, default flag, a `microphone_available` boolean and a `drivers_detected` count. `id_source` is `"reported"` for real bus ids and `"stablesynthetic"` for deterministic ids derived from a name-only endpoint. `POST /api/v1/audio/rescan` refreshes the cached inventory after plugging or unplugging a device. Both endpoints require the same bearer token as the other `/api/v1/*` routes. In the console the same inventory appears in `sys info` / `hw detect` as the `audio` line.
 
 ### TUI / `aios` AI Console
 
