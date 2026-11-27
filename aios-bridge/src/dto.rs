@@ -60,9 +60,20 @@ pub struct VoiceStatusResponse {
     pub phase: String,
     pub transcript: String,
     pub script: String,
+    /// Compact diff of the pending script against the last executed script.
+    pub script_diff: String,
+    /// Audit records of guarded host calls made by the last execution.
+    pub host_calls: Vec<String>,
     pub permissions: Vec<String>,
     pub output: String,
     pub error: String,
+}
+
+/// Persisted guarded host-call audit records from voice script executions.
+#[derive(Debug, Serialize)]
+pub struct VoiceAuditResponse {
+    /// Most recent audit entries, oldest first.
+    pub entries: Vec<serde_json::Value>,
 }
 
 /// Authenticated snapshot of the host audio inventory.

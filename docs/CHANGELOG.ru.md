@@ -1,5 +1,30 @@
 # Журнал разработки AIOS
 
+## Unreleased — diff подтверждения и аудит host-вызовов (27.11.2026)
+
+### Добавлено
+- `aios_builder::diff::script_diff()`: ограниченный LCS-diff с лимитами строк
+  и длины; передаётся в `VoiceEvent::AwaitingConfirmation` и в
+  `VoiceStatusResponse.script_diff` до подтверждения привилегированного скрипта.
+- Подсказки по ключевым словам RU/EN в `ScriptGenerator::SYSTEM_PROMPT` для
+  `net_check`, `browse`, `console_cmd` и `notify`, закреплённые тестом.
+- Защищённые host-вызовы берутся из `audit_log` WASM и пишутся в
+  `FlightRecorder` (`Syscall`), `TelemetryStore` (`voice.host_calls`) и
+  добавочный файл `<AIOS_DATA_DIR>/voice_audit.jsonl`; аутентифицированный
+  `GET /api/v1/voice/audit` возвращает последние записи.
+- Studio отображает ожидающий diff скрипта и аудит host-вызовов последнего
+  выполнения, включая поля `/api/v1/voice/status` `script_diff` и `host_calls`.
+
+### Исправлено
+- Ожидающий diff теперь проходит через подтверждение, а не пересчитывается после
+  выполнения, поэтому подтверждённый скрипт не может тихо отличаться от показанного.
+
+### Проверено
+- Новые тесты покрывают построение и ограничения diff, подсказки промпта,
+  ограничение аудиозаписей, дописывание/чтение JSONL-хвоста и поля DTO статуса.
+  `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace` (1907 тестов) и `scripts/check_unsafe_safety.py HEAD` чистые.
+
 ## Unreleased — обнаружение аудиоустройств и драйверов (27.11.2026)
 
 ### Добавлено

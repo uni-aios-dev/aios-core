@@ -248,6 +248,10 @@ where
             "/api/v1/voice/status",
             get(crate::voice::voice_status_handler),
         )
+        .route(
+            "/api/v1/voice/audit",
+            get(crate::voice::voice_audit_handler),
+        )
         .route("/ws/telemetry", get(ws_handler))
         .route("/ws/voice", get(crate::voice::voice_ws_handler))
         // Public, unauthenticated fallbacks and happy-path plumbing.

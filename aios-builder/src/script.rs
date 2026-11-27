@@ -21,6 +21,12 @@ Allowed commands: net_check, browse, console_cmd, notify, spawn, kill, load, unl
 Optional label syntax: `label: command arguments`.\n\
 Use `net_check \"url\"` to validate a URL, `browse \"url\"` to request navigation,\n\
 `console_cmd \"command\"` to request a console command and `notify \"text\"` to notify the user.\n\
+Russian and English requests are equivalent. Keyword hints:\n\
+RU: проверь/проверка сайта или ссылки -> net_check; открой/открыть сайт или страницу -> browse;\n\
+выполни/запусти команду -> console_cmd; уведоми/сообщи/напомни -> notify.\n\
+EN: check/validate a site or URL -> net_check; open a site or page -> browse;\n\
+run/execute a command -> console_cmd; notify/tell/remind me -> notify.\n\
+Always emit EasyLang commands regardless of the request language.\n\
 Example:\nnet_check \"https://example.com\"\nnotify \"check complete\"";
 
 const ALLOWED_COMMANDS: &[&str] = &[
@@ -332,6 +338,23 @@ fn validate_code_only(script: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_prompt_contains_bilingual_keyword_hints() {
+        for hint in [
+            "проверь",
+            "открой",
+            "выполни",
+            "уведоми",
+            "check/validate",
+            "open a site",
+            "run/execute",
+            "notify/tell",
+            "regardless of the request language",
+        ] {
+            assert!(SYSTEM_PROMPT.contains(hint), "missing prompt hint: {hint}");
+        }
+    }
 
     #[tokio::test]
     async fn test_generator_compiles_mock_script() {

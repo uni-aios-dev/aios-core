@@ -1,5 +1,21 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED: voice confirmation diff and audit were not observable (2026-11-27)
+
+- Privileged scripts were staged with a diff, but the field was dropped before
+  confirmation and recomputed afterwards, so the approved script could differ
+  from what the user saw. The pending diff is now carried through
+  `confirm_pending` into the final result; it also appears on
+  `/api/v1/voice/status`.
+- Studio read `event.script` directly from the externally tagged WebSocket
+  payload, so nested `ScriptReady`/`AwaitingConfirmation` data was invisible.
+  The renderer now unwraps the phase-keyed object.
+- Guarded host calls only lived in the WASM sandbox's transient `audit_log`.
+  They are now mirrored to `FlightRecorder`, `TelemetryStore` and an append-only
+  JSONL file with an authenticated inspection endpoint.
+- **Known limitation**: the LCS diff is bounded to 512 lines per side and 240
+  characters per line; longer scripts are marked `... truncated`.
+
 ## FIXED: audio hardware was invisible outside voice capture (2026-11-27)
 
 - `HardwareProfile` had no audio field, AutoHAL ignored PCI class `0x04`, the

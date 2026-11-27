@@ -1,4 +1,5 @@
 pub mod compiler;
+pub mod diff;
 pub mod easylang;
 pub mod manifest;
 pub mod script;

@@ -1691,9 +1691,9 @@ not a host-only stub.
 
 ### Studio
 
-Open the **Builder** tab and use the **Voice Control** panel. The mic button starts/stops capture; `Ctrl+Shift+M` does the same from anywhere in Studio. The phase badge shows `Idle`, `Listening`, `Transcribing`, `Thinking`, `ScriptReady`, `AwaitingConfirmation`, `Executing`, `Completed` or `Failed`. While listening, the meter reflects RMS level. The transcript box is editable: press **Generate from text** to run the edited text through the same pipeline. Generated EasyLang appears in the script block. When privileges are required, the permission list is shown and **Approve & run** becomes active; no privileged script executes before that click.
+Open the **Builder** tab and use the **Voice Control** panel. The mic button starts/stops capture; `Ctrl+Shift+M` does the same from anywhere in Studio. The phase badge shows `Idle`, `Listening`, `Transcribing`, `Thinking`, `ScriptReady`, `AwaitingConfirmation`, `Executing`, `Completed` or `Failed`. While listening, the meter reflects RMS level. The transcript box is editable: press **Generate from text** to run the edited text through the same pipeline. Generated EasyLang appears in the script block. Russian and English requests are both accepted. When privileges are required, a bounded diff against the last executed script is shown together with the permission list, and **Approve & run** becomes active; no privileged script executes before that click. After execution, guarded host calls appear in the **Host calls** block.
 
-Voice phases are also streamed on authenticated `/ws/voice` and included as `voice_phase` in `/ws/telemetry`. REST control endpoints require the same bearer token as the rest of the API.
+Voice phases are also streamed on authenticated `/ws/voice` and included as `voice_phase` in `/ws/telemetry`. `GET /api/v1/voice/status` returns `script_diff` and `host_calls` in addition to phase/script/permissions, and `GET /api/v1/voice/audit` returns the most recent persisted host-call records. REST control endpoints require the same bearer token as the rest of the API.
 
 ### Audio inventory
 

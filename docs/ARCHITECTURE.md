@@ -2701,7 +2701,9 @@ The host adds `aios-voice` as an input layer in front of the existing EasyLang/W
 
 The bridge's `VoiceRuntime` consumes `Transcribed` events on a background worker. Generation is delegated to `ScriptGenerator`, which uses `ScriptLlm` (real LLM adapter, mock or deterministic offline fallback), enforces a code-only EasyLang grammar, retries on validation failure and compiles via `WorkflowCompiler`. Generated WASM is never trusted: `AutoManifestGenerator` extracts capabilities from guarded `aios` imports and `AccessControlLayer` validates them against a voice session token before `WasmBlock::instantiate_with_policy` installs an identical `HostPolicy`. Host calls are audit-only; they do not spawn processes or open network connections, and non-http URLs for `net_check`/`browse` are rejected.
 
-Privileged scripts are staged as `AwaitingConfirmation` with their permission list, and only an explicit `confirm:true` request issues a token with the required capabilities. Successful workflows are persisted with the originating phrase for traceability.
+Privileged scripts are staged as `AwaitingConfirmation` with their permission list, and only an explicit `confirm:true` request issues a token with the required capabilities. Before staging, `aios_builder::diff::script_diff()` computes a bounded LCS diff against the last successfully executed script; the event, the REST status snapshot and Studio display that diff so the user sees exactly what will change. The generator's `SYSTEM_PROMPT` carries RU/EN keyword hints for `net_check`, `browse`, `console_cmd` and `notify`, while still emitting only EasyLang commands. Successful workflows are persisted with the originating phrase for traceability.
+
+Guarded host calls from each execution are captured from `WasmBlock`'s `audit_log` and mirrored to the `FlightRecorder` as `Syscall` events and to `TelemetryStore` under the `voice.host_calls` metric. They are also appended as bounded JSON lines to `<AIOS_DATA_DIR>/voice_audit.jsonl` and exposed by authenticated `GET /api/v1/voice/audit`, so audit history survives process restarts.
 
 ## Audio device and driver inventory (2026-11-27)
 

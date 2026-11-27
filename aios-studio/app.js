@@ -259,8 +259,9 @@ function connectVoiceWs() {
 }
 
 function renderVoiceEvent(data) {
-  const phase = data.phase || data.event?.phase || 'Idle';
-  const event = data.event || {};
+  const envelope = data.event || {};
+  const phase = data.phase || envelope.phase || 'Idle';
+  const event = envelope[phase] && typeof envelope[phase] === 'object' ? envelope[phase] : envelope;
   document.getElementById('voice-phase').textContent = phase;
   const listening = phase === 'Listening';
   document.getElementById('voice-mic').classList.toggle('listening', listening);
@@ -278,6 +279,12 @@ function renderVoiceEvent(data) {
     scriptEl.textContent = event.script;
     scriptEl.classList.remove('hidden');
   }
+  if (event.diff) {
+    const diffEl = document.getElementById('voice-diff');
+    diffEl.textContent = event.diff;
+    diffEl.classList.remove('hidden');
+    document.getElementById('voice-diff-label').classList.remove('hidden');
+  }
   const perms = event.permissions || [];
   document.getElementById('voice-permissions').textContent = perms.length
     ? 'Permissions: ' + perms.join(', ')
@@ -290,6 +297,43 @@ function renderVoiceEvent(data) {
   if (phase === 'Failed' && event.reason) {
     showVoiceNotice('Voice command failed: ' + event.reason, true);
   }
+}
+
+function renderVoiceStatus(status) {
+  if (!status) return;
+  const phase = status.phase || 'Idle';
+  document.getElementById('voice-phase').textContent = phase;
+  if (status.script) {
+    const scriptEl = document.getElementById('voice-script');
+    scriptEl.textContent = status.script;
+    scriptEl.classList.remove('hidden');
+  }
+  if (status.script_diff) {
+    const diffEl = document.getElementById('voice-diff');
+    diffEl.textContent = status.script_diff;
+    diffEl.classList.remove('hidden');
+    document.getElementById('voice-diff-label').classList.remove('hidden');
+  }
+  const calls = status.host_calls || [];
+  const auditEl = document.getElementById('voice-audit');
+  if (calls.length) {
+    auditEl.textContent = calls.join('\n');
+    auditEl.classList.remove('hidden');
+    document.getElementById('voice-audit-label').classList.remove('hidden');
+  }
+  const perms = status.permissions || [];
+  document.getElementById('voice-permissions').textContent = perms.length
+    ? 'Permissions: ' + perms.join(', ')
+    : 'No permissions requested';
+  voiceAwaiting = phase === 'AwaitingConfirmation';
+  document.getElementById('voice-confirm').classList.toggle('hidden', !voiceAwaiting);
+}
+
+async function refreshVoiceStatus() {
+  try {
+    const r = await apiFetch(API.voiceStatus);
+    if (r.ok) renderVoiceStatus(await r.json());
+  } catch { /* status is optional */ }
 }
 
 async function voiceRequest(url, body) {
@@ -305,6 +349,7 @@ async function voiceRequest(url, body) {
       return null;
     }
     if (data.event) renderVoiceEvent(data.event);
+    await refreshVoiceStatus();
     return data;
   } catch (e) {
     if (!(e instanceof AuthError)) showVoiceNotice('Voice bridge unreachable', true);
@@ -906,6 +951,7 @@ async function enterApp() {
   updateUserBadge();
   connectWs();
   connectVoiceWs();
+  await refreshVoiceStatus();
   await updateDashboard();
   if (!statusTimer) {
     statusTimer = setInterval(updateDashboard, 5000);

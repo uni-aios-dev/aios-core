@@ -490,16 +490,16 @@ Top crates by non-blank lines: `aios-kernel` 26.5k · `boot/` 13.0k · `aios-con
 | Area | Files | Entry points |
 |---|---|---|
 | Capture/STT | `aios-voice/src/capture.rs`, `stt.rs`, `pipeline.rs` | `AudioSource`, `MicrophoneSource`, `MockAudioSource`, `SttEngine`, `LocalWhisperEngine`, `CloudSttEngine`, `VoicePipeline` |
-| Generation | `aios-builder/src/script.rs`, `workflow.rs`, `compiler.rs`, `manifest.rs` | `ScriptLlm`, `LlmScriptLlm`, `MockScriptLlm`, `OfflineScriptLlm`, `ScriptGenerator`, `SystemCommand`, `WorkflowCompiler`, `AutoManifestGenerator` |
-| Sandbox | `aios-wasm/src/sandbox.rs` | `HostPolicy`, `instantiate_with_policy`, guarded `aios.net_check` / `browse` / `console_cmd` / `notify` host imports |
-| Bridge | `aios-bridge/src/voice.rs`, `dto.rs`, `server.rs` | `VoiceRuntime`, `run_voice_worker`, voice handlers, `/ws/voice` |
+| Generation | `aios-builder/src/script.rs`, `diff.rs`, `workflow.rs`, `compiler.rs`, `manifest.rs` | `ScriptLlm`, `LlmScriptLlm`, `MockScriptLlm`, `OfflineScriptLlm`, `ScriptGenerator`, `SYSTEM_PROMPT`, `script_diff`, `SystemCommand`, `WorkflowCompiler`, `AutoManifestGenerator` |
+| Sandbox | `aios-wasm/src/sandbox.rs` | `HostPolicy`, `instantiate_with_policy`, guarded `aios.net_check` / `browse` / `console_cmd` / `notify` host imports, `StoreState::audit_log` |
+| Bridge | `aios-bridge/src/voice.rs`, `dto.rs`, `server.rs` | `VoiceRuntime`, `run_voice_worker`, `record_audit`, `read_audit`, voice handlers, `/ws/voice`, `/api/v1/voice/audit` |
 | UI | `aios-studio/*`, `aios/src/tui/*` | Studio mic button + `Ctrl+Shift+M`; TUI `Ctrl+Shift+M` with `[LISTEN]/[STT]/[THINKING]/[EXEC]` markers |
 
-Flow: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking -> ScriptReady` or `AwaitingConfirmation -> Executing -> Completed|Failed`. The bridge worker reacts to `Transcribed`, generates strict EasyLang (code-only, bounded retries, offline fallback), compiles to WASM, derives capabilities with `AutoManifestGenerator`, checks them against the session token in `AccessControlLayer`, and executes with a matching `HostPolicy`. Privileged scripts wait for `POST /api/v1/voice/execute-text` with `confirm:true`.
+Flow: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking -> ScriptReady` or `AwaitingConfirmation{diff} -> Executing -> Completed|Failed`. The bridge worker reacts to `Transcribed`, generates strict EasyLang (code-only, bounded retries, offline fallback, RU/EN keyword hints), computes a bounded diff against the last executed script, compiles to WASM, derives capabilities with `AutoManifestGenerator`, checks them against the session token in `AccessControlLayer`, and executes with a matching `HostPolicy`. Privileged scripts wait for `POST /api/v1/voice/execute-text` with `confirm:true`; the pending diff is carried into the result instead of being recomputed. Guarded host calls are recorded to `FlightRecorder`, `TelemetryStore` (`voice.host_calls`) and `<AIOS_DATA_DIR>/voice_audit.jsonl`.
 
-Endpoints: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV or s16le, max 10 MiB), `/execute-text`, `GET /api/v1/voice/status`, `GET /ws/voice?token=...`. All API routes require bearer auth; WebSocket endpoints self-authenticate. `/ws/telemetry` additionally reports `voice_phase`.
+Endpoints: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV or s16le, max 10 MiB), `/execute-text`, `GET /api/v1/voice/status` (adds `script_diff`, `host_calls`), `GET /api/v1/voice/audit`, `GET /ws/voice?token=...`. All API routes require bearer auth; WebSocket endpoints self-authenticate. `/ws/telemetry` additionally reports `voice_phase`.
 
-Successful scripts are saved under `<AIOS_WORKFLOWS_DIR|workflows>` as `<stem>.easy`, `<stem>.wasm` and `<stem>.meta.json` containing the originating phrase. Test coverage: `tests/voice_pipeline_test.rs` (mock audio -> mock LLM -> WASM execution), plus unit tests in `aios-voice` (11), `aios-builder` (29), `aios-wasm` (64) and `aios-bridge` (26).
+Successful scripts are saved under `<AIOS_WORKFLOWS_DIR|workflows>` as `<stem>.easy`, `<stem>.wasm` and `<stem>.meta.json` containing the originating phrase. Test coverage: `tests/voice_pipeline_test.rs` (mock audio -> mock LLM -> WASM execution), plus unit tests in `aios-voice` (11), `aios-builder` (34), `aios-wasm` (64) and `aios-bridge` (31).
 
 ## 14. Audio Device and Driver Inventory (2026-11-27)
 

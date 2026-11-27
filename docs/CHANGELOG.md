@@ -1,5 +1,31 @@
 # AIOS Development Log
 
+## Unreleased — voice confirmation diff and host-call audit (2026-11-27)
+
+### Added
+- `aios_builder::diff::script_diff()`: bounded LCS diff with line and length
+  limits, exposed on `VoiceEvent::AwaitingConfirmation` and in
+  `VoiceStatusResponse.script_diff` before a privileged script is approved.
+- RU/EN keyword hints in `ScriptGenerator::SYSTEM_PROMPT` for `net_check`,
+  `browse`, `console_cmd` and `notify`, with a test that pins the hints.
+- Guarded host calls are recorded from the WASM `audit_log` into
+  `FlightRecorder` (`Syscall`), `TelemetryStore` (`voice.host_calls`) and an
+  append-only `<AIOS_DATA_DIR>/voice_audit.jsonl`; authenticated
+  `GET /api/v1/voice/audit` returns the latest entries.
+- Studio renders the pending script diff and the last execution's host-call
+  audit, including `/api/v1/voice/status` fields `script_diff` and `host_calls`.
+
+### Fixed
+- The pending diff is now carried through the confirmation flow instead of
+  being recomputed after execution, so the approved script cannot silently
+  differ from the diff shown to the user.
+
+### Verified
+- New tests cover diff generation/bounds, prompt hints, bounded audit records,
+  JSONL append/tail reading and status DTO fields. `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+  (1907 tests) and `scripts/check_unsafe_safety.py HEAD` are clean.
+
 ## Unreleased — audio device and driver detection (2026-11-27)
 
 ### Added

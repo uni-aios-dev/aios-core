@@ -32,6 +32,8 @@ pub enum VoiceEvent {
     /// Privileged script waiting for explicit user approval.
     AwaitingConfirmation {
         script: String,
+        /// Compact diff against the last successfully executed script.
+        diff: String,
         permissions: Vec<String>,
     },
     ScriptReady {

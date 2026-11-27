@@ -1,13 +1,16 @@
 //! Voice bridge: HTTP control, WebSocket phases and capability-checked execution.
 
 use crate::dto::{
-    ErrorResponse, VoiceAckResponse, VoiceCaptureMode, VoiceStartRequest, VoiceStatusResponse,
-    VoiceTextRequest, MAX_VOICE_AUDIO_BYTES, MAX_VOICE_TEXT_CHARS,
+    ErrorResponse, VoiceAckResponse, VoiceAuditResponse, VoiceCaptureMode, VoiceStartRequest,
+    VoiceStatusResponse, VoiceTextRequest, MAX_VOICE_AUDIO_BYTES, MAX_VOICE_TEXT_CHARS,
 };
 use crate::server::BridgeContext;
 
+use aios_builder::diff::script_diff;
 use aios_builder::{BorrowedLlmScriptLlm, GeneratedScript, OfflineScriptLlm, ScriptGenerator};
+use aios_context::telemetry::TelemetryEntry;
 use aios_security::capability::Capability;
+use aios_telemetry::flight_recorder::EventKind;
 use aios_voice::capture::{decode_audio, CaptureMode};
 use aios_voice::pipeline::{VoiceEvent, VoicePipeline};
 use aios_wasm::isolation::IsolationConfig;
@@ -20,11 +23,19 @@ use axum::Json;
 use serde::Deserialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::io::Write as _;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Synthetic block id used for voice-session capability tokens.
 pub const VOICE_BLOCK_ID: u32 = u32::MAX - 16;
+/// Maximum guarded host-call records retained from one execution.
+pub const MAX_AUDIT_RECORDS: usize = 128;
+/// Maximum characters retained from one audit record.
+pub const MAX_AUDIT_CHARS: usize = 512;
+/// Number of audit entries returned by the inspection endpoint.
+pub const AUDIT_TAIL_LIMIT: usize = 200;
+const AUDIT_FILE_NAME: &str = "voice_audit.jsonl";
 
 type SharedState = Arc<BridgeContext>;
 type VoiceResult = std::result::Result<Json<VoiceAckResponse>, (StatusCode, Json<ErrorResponse>)>;
@@ -84,6 +95,7 @@ fn phase_response(
 struct PendingVoice {
     transcript: String,
     generated: GeneratedScript,
+    diff: String,
 }
 
 /// Runtime state shared by voice handlers and the transcript worker.
@@ -91,15 +103,25 @@ pub struct VoiceRuntime {
     pipeline: VoicePipeline,
     pending: Mutex<Option<PendingVoice>>,
     last_result: Mutex<Option<LastVoiceResult>>,
+    last_script: Mutex<String>,
 }
 
 #[derive(Clone)]
 struct LastVoiceResult {
     transcript: String,
     script: String,
+    script_diff: String,
+    host_calls: Vec<String>,
     permissions: Vec<String>,
     output: String,
     error: String,
+}
+
+#[derive(Default)]
+struct WasmExecution {
+    output: String,
+    audit: Vec<String>,
+    error: Option<String>,
 }
 
 impl VoiceRuntime {
@@ -109,6 +131,7 @@ impl VoiceRuntime {
             pipeline,
             pending: Mutex::new(None),
             last_result: Mutex::new(None),
+            last_script: Mutex::new(String::new()),
         }
     }
 
@@ -117,10 +140,11 @@ impl VoiceRuntime {
         &self.pipeline
     }
 
-    fn set_pending(&self, transcript: String, generated: GeneratedScript) {
+    fn set_pending(&self, transcript: String, generated: GeneratedScript, diff: String) {
         *lock_or_recover(&self.pending, "voice pending") = Some(PendingVoice {
             transcript,
             generated,
+            diff,
         });
     }
 
@@ -130,6 +154,14 @@ impl VoiceRuntime {
 
     fn record(&self, result: LastVoiceResult) {
         *lock_or_recover(&self.last_result, "voice result") = Some(result);
+    }
+
+    fn last_script(&self) -> String {
+        lock_or_recover(&self.last_script, "voice last script").clone()
+    }
+
+    fn remember_script(&self, script: &str) {
+        *lock_or_recover(&self.last_script, "voice last script") = script.to_string();
     }
 
     /// Current voice phase, transcript, script and execution result.
@@ -144,6 +176,8 @@ impl VoiceRuntime {
                 phase,
                 transcript: result.transcript.clone(),
                 script: result.script.clone(),
+                script_diff: result.script_diff.clone(),
+                host_calls: result.host_calls.clone(),
                 permissions: result.permissions.clone(),
                 output: result.output.clone(),
                 error: result.error.clone(),
@@ -152,6 +186,8 @@ impl VoiceRuntime {
                 phase,
                 transcript: String::new(),
                 script: String::new(),
+                script_diff: String::new(),
+                host_calls: Vec::new(),
                 permissions: Vec::new(),
                 output: String::new(),
                 error: String::new(),
@@ -361,6 +397,8 @@ async fn process_transcript(state: &SharedState, text: String) {
             state.voice.record(LastVoiceResult {
                 transcript: text,
                 script: String::new(),
+                script_diff: String::new(),
+                host_calls: Vec::new(),
                 permissions: Vec::new(),
                 output: String::new(),
                 error: reason,
@@ -369,16 +407,20 @@ async fn process_transcript(state: &SharedState, text: String) {
         }
     };
 
+    let diff = script_diff(&state.voice.last_script(), &generated.script);
     let required = permissions(&generated.capabilities);
     if !generated.capabilities.is_empty() {
-        state.voice.set_pending(text, generated);
+        state.voice.set_pending(text, generated, diff.clone());
         pipeline.emit(VoiceEvent::AwaitingConfirmation {
             script: state.voice.pending_script().unwrap_or_default(),
+            diff: diff.clone(),
             permissions: required.clone(),
         });
         state.voice.record(LastVoiceResult {
             transcript: String::new(),
             script: String::new(),
+            script_diff: diff,
+            host_calls: Vec::new(),
             permissions: required,
             output: String::new(),
             error: String::new(),
@@ -390,7 +432,7 @@ async fn process_transcript(state: &SharedState, text: String) {
         script: generated.script.clone(),
         permissions: required.clone(),
     });
-    execute_generated(state, text, generated).await;
+    execute_generated(state, text, generated, diff).await;
 }
 
 impl VoiceRuntime {
@@ -437,7 +479,7 @@ async fn confirm_pending(state: &SharedState) -> VoiceResult {
         script: pending.generated.script.clone(),
         permissions: permissions(&pending.generated.capabilities),
     });
-    execute_generated(state, pending.transcript, pending.generated).await;
+    execute_generated(state, pending.transcript, pending.generated, pending.diff).await;
     Ok(Json(phase_response(
         state.voice.pipeline(),
         None,
@@ -448,7 +490,12 @@ async fn confirm_pending(state: &SharedState) -> VoiceResult {
     )))
 }
 
-async fn execute_generated(state: &SharedState, transcript: String, generated: GeneratedScript) {
+async fn execute_generated(
+    state: &SharedState,
+    transcript: String,
+    generated: GeneratedScript,
+    diff: String,
+) {
     let pipeline = state.voice.pipeline();
     let caps = generated.capabilities.clone();
     {
@@ -461,6 +508,8 @@ async fn execute_generated(state: &SharedState, transcript: String, generated: G
                     transcript,
                     &generated,
                     e.to_string(),
+                    Vec::new(),
+                    diff,
                 );
                 return;
             }
@@ -473,6 +522,8 @@ async fn execute_generated(state: &SharedState, transcript: String, generated: G
                     transcript,
                     &generated,
                     e.to_string(),
+                    Vec::new(),
+                    diff,
                 );
                 return;
             }
@@ -480,25 +531,36 @@ async fn execute_generated(state: &SharedState, transcript: String, generated: G
     }
 
     pipeline.emit(VoiceEvent::Executing);
-    let result = execute_wasm(&generated, &caps);
-    match result {
-        Ok(output) => {
-            if let Err(e) = save_workflow(&transcript, &generated) {
-                log::warn!("VOICE: failed to save workflow: {e}");
-            }
-            pipeline.emit(VoiceEvent::Completed {
-                output: output.clone(),
-            });
-            state.voice.record(LastVoiceResult {
-                transcript,
-                script: generated.script,
-                permissions: permissions(&caps),
-                output,
-                error: String::new(),
-            });
-        }
-        Err(reason) => deny(pipeline, &state.voice, transcript, &generated, reason),
+    let execution = execute_wasm(&generated, &caps);
+    record_audit(state, &execution.audit);
+    if let Some(reason) = execution.error {
+        deny(
+            pipeline,
+            &state.voice,
+            transcript,
+            &generated,
+            reason,
+            execution.audit,
+            diff,
+        );
+        return;
     }
+    if let Err(e) = save_workflow(&transcript, &generated) {
+        log::warn!("VOICE: failed to save workflow: {e}");
+    }
+    pipeline.emit(VoiceEvent::Completed {
+        output: execution.output.clone(),
+    });
+    state.voice.remember_script(&generated.script);
+    state.voice.record(LastVoiceResult {
+        transcript,
+        script: generated.script.clone(),
+        script_diff: diff,
+        host_calls: execution.audit,
+        permissions: permissions(&caps),
+        output: execution.output,
+        error: String::new(),
+    });
 }
 
 fn deny(
@@ -507,6 +569,8 @@ fn deny(
     transcript: String,
     generated: &GeneratedScript,
     reason: String,
+    host_calls: Vec<String>,
+    diff: String,
 ) {
     pipeline.emit(VoiceEvent::Failed {
         reason: reason.clone(),
@@ -514,41 +578,145 @@ fn deny(
     runtime.record(LastVoiceResult {
         transcript,
         script: generated.script.clone(),
+        script_diff: diff,
+        host_calls,
         permissions: permissions(&generated.capabilities),
         output: String::new(),
         error: reason,
     });
 }
 
-fn execute_wasm(
-    generated: &GeneratedScript,
-    capabilities: &[Capability],
-) -> std::result::Result<String, String> {
-    let mut block = WasmBlock::new(
+fn execute_wasm(generated: &GeneratedScript, capabilities: &[Capability]) -> WasmExecution {
+    let mut outcome = WasmExecution::default();
+    let mut block = match WasmBlock::new(
         generated.workflow.name.clone(),
         "1.0.0".to_string(),
         &generated.wasm,
         SandboxConfig::default(),
         IsolationConfig::default(),
-    )
-    .map_err(|e| e.to_string())?;
-    let mut store = block.create_store().map_err(|e| e.to_string())?;
-    block
-        .instantiate_with_policy(&mut store, HostPolicy::new(capabilities.to_vec()))
-        .map_err(|e| e.to_string())?;
-    let count = block
-        .call_func(&mut store, "step_count", &[])
-        .map_err(|e| e.to_string())?
+    ) {
+        Ok(block) => block,
+        Err(e) => {
+            outcome.error = Some(e.to_string());
+            return outcome;
+        }
+    };
+    let mut store = match block.create_store() {
+        Ok(store) => store,
+        Err(e) => {
+            outcome.error = Some(e.to_string());
+            return outcome;
+        }
+    };
+    if let Err(e) =
+        block.instantiate_with_policy(&mut store, HostPolicy::new(capabilities.to_vec()))
+    {
+        outcome.audit = store.data().audit_log.clone();
+        outcome.error = Some(e.to_string());
+        return outcome;
+    }
+    let values = match block.call_func(&mut store, "step_count", &[]) {
+        Ok(values) => values,
+        Err(e) => {
+            outcome.audit = store.data().audit_log.clone();
+            outcome.error = Some(e.to_string());
+            return outcome;
+        }
+    };
+    let count = values
         .first()
-        .and_then(|v| v.i32())
+        .and_then(|value| value.i32())
         .unwrap_or(0)
         .max(0) as usize;
     for index in 0..count {
-        block
-            .call_func(&mut store, &format!("step_{index}"), &[])
-            .map_err(|e| e.to_string())?;
+        if let Err(e) = block.call_func(&mut store, &format!("step_{index}"), &[]) {
+            outcome.audit = store.data().audit_log.clone();
+            outcome.error = Some(e.to_string());
+            return outcome;
+        }
     }
-    Ok(format!("executed {count} EasyLang steps"))
+    outcome.audit = store.data().audit_log.clone();
+    outcome.output = format!("executed {count} EasyLang steps");
+    outcome
+}
+
+/// Audit path under the configured AIOS data directory.
+fn audit_path() -> std::path::PathBuf {
+    let data_dir = std::env::var("AIOS_DATA_DIR").unwrap_or_else(|_| "aios_data".to_string());
+    std::path::Path::new(&data_dir).join(AUDIT_FILE_NAME)
+}
+
+fn bounded_audit(audit: &[String]) -> Vec<String> {
+    audit
+        .iter()
+        .take(MAX_AUDIT_RECORDS)
+        .map(|line| line.chars().take(MAX_AUDIT_CHARS).collect())
+        .collect()
+}
+
+/// Append one JSON line with the guarded host calls of a voice execution.
+fn write_audit(
+    path: &std::path::Path,
+    calls: &[String],
+    timestamp_ms: u128,
+) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let entry = serde_json::json!({
+        "timestamp_ms": timestamp_ms,
+        "block_id": VOICE_BLOCK_ID,
+        "calls": calls,
+        "denied": calls.iter().filter(|line| line.contains("denied") || line.contains("rejected")).count(),
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{entry}")
+}
+
+fn record_audit(state: &SharedState, audit: &[String]) {
+    if audit.is_empty() {
+        return;
+    }
+    let calls = bounded_audit(audit);
+    lock_or_recover(&state.flight_recorder, "flight recorder").record_with_data(
+        EventKind::Syscall,
+        "voice host calls",
+        &calls.join("\n"),
+    );
+    lock_or_recover(&state.telemetry, "telemetry").record(
+        TelemetryEntry::new("voice.host_calls", calls.len() as f64, 0)
+            .with_block(VOICE_BLOCK_ID)
+            .with_process("voice-wasm"),
+    );
+    if let Err(e) = write_audit(&audit_path(), &calls, now_ms()) {
+        log::warn!("VOICE: failed to persist host-call audit: {e}");
+    }
+}
+
+/// Read the most recent persisted host-call audit entries, oldest first.
+pub fn read_audit(path: &std::path::Path) -> Vec<serde_json::Value> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .rev()
+        .take(AUDIT_TAIL_LIMIT)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// `GET /api/v1/voice/audit` — authenticated host-call audit inspection.
+pub async fn voice_audit_handler(State(_state): State<SharedState>) -> Json<VoiceAuditResponse> {
+    Json(VoiceAuditResponse {
+        entries: read_audit(&audit_path()),
+    })
 }
 
 fn save_workflow(transcript: &str, generated: &GeneratedScript) -> std::result::Result<(), String> {
@@ -587,5 +755,45 @@ mod tests {
     #[test]
     fn test_voice_block_id_is_stable() {
         assert_eq!(VOICE_BLOCK_ID, u32::MAX - 16);
+    }
+
+    #[test]
+    fn audit_records_are_bounded() {
+        let audit: Vec<String> = (0..MAX_AUDIT_RECORDS + 5)
+            .map(|_| "x".repeat(MAX_AUDIT_CHARS + 20))
+            .collect();
+        let bounded = bounded_audit(&audit);
+        assert_eq!(bounded.len(), MAX_AUDIT_RECORDS);
+        assert_eq!(bounded[0].chars().count(), MAX_AUDIT_CHARS);
+    }
+
+    #[test]
+    fn audit_is_appended_and_read_as_a_tail() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(AUDIT_FILE_NAME);
+        write_audit(&path, &["log: first".into()], 1).expect("first entry");
+        write_audit(&path, &["browse: denied FsRead".into()], 2).expect("second entry");
+        let entries = read_audit(&path);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["timestamp_ms"], 1);
+        assert_eq!(entries[1]["calls"][0], "browse: denied FsRead");
+        assert_eq!(entries[1]["denied"], 1);
+    }
+
+    #[test]
+    fn status_exposes_pending_diff_and_host_calls() {
+        let runtime = VoiceRuntime::new(VoicePipeline::with_defaults());
+        runtime.record(LastVoiceResult {
+            transcript: "открой сайт".into(),
+            script: String::new(),
+            script_diff: "+ browse \"https://example.com\"\n".into(),
+            host_calls: vec!["browse: https://example.com".into()],
+            permissions: vec!["NetConnect".into()],
+            output: String::new(),
+            error: String::new(),
+        });
+        let status = runtime.status();
+        assert_eq!(status.script_diff, "+ browse \"https://example.com\"\n");
+        assert_eq!(status.host_calls.len(), 1);
     }
 }

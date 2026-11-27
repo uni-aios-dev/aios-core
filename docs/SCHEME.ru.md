@@ -492,16 +492,16 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | Область | Файлы | Точки входа |
 |---|---|---|
 | Захват/STT | `aios-voice/src/capture.rs`, `stt.rs`, `pipeline.rs` | `AudioSource`, `MicrophoneSource`, `MockAudioSource`, `SttEngine`, `LocalWhisperEngine`, `CloudSttEngine`, `VoicePipeline` |
-| Генерация | `aios-builder/src/script.rs`, `workflow.rs`, `compiler.rs`, `manifest.rs` | `ScriptLlm`, `LlmScriptLlm`, `MockScriptLlm`, `OfflineScriptLlm`, `ScriptGenerator`, `SystemCommand`, `WorkflowCompiler`, `AutoManifestGenerator` |
-| Песочница | `aios-wasm/src/sandbox.rs` | `HostPolicy`, `instantiate_with_policy`, защищённые host-импорты `aios.net_check` / `browse` / `console_cmd` / `notify` |
-| Мост | `aios-bridge/src/voice.rs`, `dto.rs`, `server.rs` | `VoiceRuntime`, `run_voice_worker`, обработчики голоса, `/ws/voice` |
+| Генерация | `aios-builder/src/script.rs`, `diff.rs`, `workflow.rs`, `compiler.rs`, `manifest.rs` | `ScriptLlm`, `LlmScriptLlm`, `MockScriptLlm`, `OfflineScriptLlm`, `ScriptGenerator`, `SYSTEM_PROMPT`, `script_diff`, `SystemCommand`, `WorkflowCompiler`, `AutoManifestGenerator` |
+| Песочница | `aios-wasm/src/sandbox.rs` | `HostPolicy`, `instantiate_with_policy`, защищённые host-импорты `aios.net_check` / `browse` / `console_cmd` / `notify`, `StoreState::audit_log` |
+| Мост | `aios-bridge/src/voice.rs`, `dto.rs`, `server.rs` | `VoiceRuntime`, `run_voice_worker`, `record_audit`, `read_audit`, обработчики голоса, `/ws/voice`, `/api/v1/voice/audit` |
 | UI | `aios-studio/*`, `aios/src/tui/*` | Кнопка микрофона Studio + `Ctrl+Shift+M`; TUI `Ctrl+Shift+M` с маркерами `[LISTEN]/[STT]/[THINKING]/[EXEC]` |
 
-Поток: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking -> ScriptReady` либо `AwaitingConfirmation -> Executing -> Completed|Failed`. Рабочий поток моста реагирует на `Transcribed`, генерирует строгий EasyLang (только код, ограниченные повторы, офлайн-фолбэк), компилирует в WASM, выводит возможности через `AutoManifestGenerator`, проверяет их по токену сессии в `AccessControlLayer` и выполняет с соответствующим `HostPolicy`. Привилегированные скрипты ожидают `POST /api/v1/voice/execute-text` с `confirm:true`.
+Поток: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking -> ScriptReady` либо `AwaitingConfirmation{diff} -> Executing -> Completed|Failed`. Рабочий поток моста реагирует на `Transcribed`, генерирует строгий EasyLang (только код, ограниченные повторы, офлайн-фолбэк, подсказки RU/EN), вычисляет ограниченный diff относительно последнего выполненного скрипта, компилирует в WASM, выводит возможности через `AutoManifestGenerator`, проверяет их по токену сессии в `AccessControlLayer` и выполняет с соответствующим `HostPolicy`. Привилегированные скрипты ожидают `POST /api/v1/voice/execute-text` с `confirm:true`; ожидающий diff переносится в результат, а не пересчитывается. Защищённые host-вызовы пишутся в `FlightRecorder`, `TelemetryStore` (`voice.host_calls`) и `<AIOS_DATA_DIR>/voice_audit.jsonl`.
 
-Эндпоинты: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV или s16le, максимум 10 МиБ), `/execute-text`, `GET /api/v1/voice/status`, `GET /ws/voice?token=...`. Все API-маршруты требуют bearer-авторизацию; WebSocket проверяют токен самостоятельно. `/ws/telemetry` дополнительно передаёт `voice_phase`.
+Эндпоинты: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV или s16le, максимум 10 МиБ), `/execute-text`, `GET /api/v1/voice/status` (добавляет `script_diff`, `host_calls`), `GET /api/v1/voice/audit`, `GET /ws/voice?token=...`. Все API-маршруты требуют bearer-авторизацию; WebSocket проверяют токен самостоятельно. `/ws/telemetry` дополнительно передаёт `voice_phase`.
 
-Успешные скрипты сохраняются в `<AIOS_WORKFLOWS_DIR|workflows>` как `<stem>.easy`, `<stem>.wasm` и `<stem>.meta.json` с исходной фразой. Тестовое покрытие: `tests/voice_pipeline_test.rs` (мок аудио -> мок LLM -> выполнение WASM), а также модульные тесты `aios-voice` (11), `aios-builder` (29), `aios-wasm` (64) и `aios-bridge` (26).
+Успешные скрипты сохраняются в `<AIOS_WORKFLOWS_DIR|workflows>` как `<stem>.easy`, `<stem>.wasm` и `<stem>.meta.json` с исходной фразой. Тестовое покрытие: `tests/voice_pipeline_test.rs` (мок аудио -> мок LLM -> выполнение WASM), а также модульные тесты `aios-voice` (11), `aios-builder` (34), `aios-wasm` (64) и `aios-bridge` (31).
 
 ## 14. Инвентарь аудиоустройств и драйверов (2026-11-27)
 

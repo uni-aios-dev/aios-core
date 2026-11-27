@@ -1122,10 +1122,12 @@ Completed:
 - Integration test from mock audio buffer to sandboxed WASM execution.
 - Audio-device and driver inventory in `aios-hal::audio`, AutoHAL fingerprints
   and builtin audio driver, hotplug sound events and bridge inventory endpoints.
+- Bounded `script_diff()` streamed in `AwaitingConfirmation`, `/api/v1/voice/status`
+  and Studio before approval.
+- RU/EN keyword hints in the LLM system prompt for domain-specific workflows.
+- Host-call audit records mirrored to `FlightRecorder`, `TelemetryStore` and
+  `<AIOS_DATA_DIR>/voice_audit.jsonl`, inspectable via `GET /api/v1/voice/audit`.
 
 Remaining:
-- Stream generated script diffs to clients before confirmation.
 - Enrich audio driver records with stable VID/PID on platforms that only expose
   endpoint names; current matching is best-effort.
-- Add RU/EN keyword hints to the LLM system prompt for domain-specific workflows.
-- Extend host-call audit records into the telemetry store for long-term inspection.
