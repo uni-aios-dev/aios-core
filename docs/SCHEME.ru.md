@@ -323,7 +323,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 | Крейт | Непустые строки / тесты | Ключевой API |
 |---|---|---|
-| `aios-browser` | 4 339 / 111 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes}` |
+| `aios-browser` | 4 339 / 113 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
@@ -477,9 +477,10 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 - Карта усилений после аудита (27.11.2026): новые `aios-core/src/secrets.rs` и
   `scripts/check_unsafe_safety.py`; `aios-bridge/src/auth.rs` (PBKDF2, блокировки),
   валидаторы `dto.rs`, `server.rs::{block_binary_path,lock_or_recover,with_auth}`;
-  SSRF-политика `aios-browser/src/network.rs`; 201 восстановление отравленных
+  SSRF-политика `aios-browser/src/network.rs` с привязкой DNS через
+  `resolve_to_addrs`; 201 восстановление отравленных
   блокировок в 21 production-файле; CI-шаг `Require SAFETY comments on new unsafe blocks`.
-  После усилений `cargo test --workspace`: **1 854 теста пройдено / 0 провалено в 100 наборах**;
+  После усилений `cargo test --workspace`: **1 856 тестов пройдено / 0 провалено в 100 наборах**;
   `scripts/check_unsafe_safety.py HEAD~1` не находит новых unsafe-блоков без комментария.
 - Отдельные проверки: check/clippy `aios-kernel` (настройки по умолчанию и `--features limine`), тесты `aios-kernel-run` 2/2, проверка синтаксиса PowerShell. Свежая пересборка гибридного ISO/IMG здесь **не** выполнялась: бинарники `xorriso`/Limine отсутствуют, каталог `iso/` пуст — использовались только логика проверки маркеров и осмотр существующих образов.
 - Пять тестов `aios-kernel` на компоновку текста — это исходные проверки `#[cfg(test)]` для freestanding-бинарика: они не входят в приведённый выше счёт `cargo test --workspace`, потому что в bare-metal-цели нет crates `test`. Проверка в рантайме выполнена на релизном ELF, записанном в LBA 32 ISO копии образа (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU дошёл до `Limine handoff` / GOP `1280x800` / DHCP bound, клавишами `F4`/`F5`/`F9` открыл App Store, Network и окно оборудования, а screendump показал, что ни один текстовый участок не шире ячейки глифа 16 px. Затем образ записан и полностью прочитан назад с Disk 3 (`\\.\PhysicalDrive3`, серийник `EE05DB505AE9`): SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и MBR `55 AA` совпали (`boot/out/flash-gui-disk3.log`).

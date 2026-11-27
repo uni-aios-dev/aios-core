@@ -1,7 +1,8 @@
 use crate::types::{BrowserConfig, BrowserError, FetchResponse};
 use reqwest::{redirect::Policy, Response};
 use std::collections::BTreeMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 use url::Url;
 
 /// HTTP client with an explicit SSRF policy.
@@ -9,25 +10,47 @@ use url::Url;
 /// Only `http` and `https` are accepted. Every hop (initial URL and each
 /// redirect) is resolved and rejected when it points at loopback, private,
 /// link-local or otherwise non-global addresses, unless private targets are
-/// explicitly enabled in [`BrowserConfig`]. Automatic redirects are disabled
-/// so the policy can be applied to every hop. Response bodies are streamed
-/// with a hard size cap.
+/// explicitly enabled in [`BrowserConfig`]. DNS names are pinned to the
+/// validated addresses for the request, so a second resolution cannot redirect
+/// the connection to a private host. Automatic redirects are disabled so the
+/// policy can be applied to every hop. Response bodies are streamed with a
+/// hard size cap.
 pub struct NetworkClient {
     client: reqwest::Client,
+    user_agent: String,
+    timeout: Duration,
     max_redirects: usize,
     max_response_bytes: usize,
     allow_private_targets: bool,
 }
 
+struct PinnedDns {
+    host: String,
+    addresses: Vec<SocketAddr>,
+}
+
+fn build_client(
+    user_agent: &str,
+    timeout: Duration,
+    pinned: Option<(&str, &[SocketAddr])>,
+) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(user_agent)
+        .timeout(timeout)
+        .redirect(Policy::none());
+    if let Some((host, addresses)) = pinned {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    builder
+        .build()
+        .unwrap_or_else(|e| panic!("cannot build browser HTTP client: {e}"))
+}
+
 impl NetworkClient {
     /// Build a client from the browser configuration.
     pub fn new(config: &BrowserConfig) -> Self {
-        let client = reqwest::Client::builder()
-            .user_agent(&config.user_agent)
-            .timeout(std::time::Duration::from_secs(config.timeout_secs))
-            .redirect(Policy::none())
-            .build()
-            .unwrap_or_default();
+        let timeout = Duration::from_secs(config.timeout_secs);
+        let client = build_client(&config.user_agent, timeout, None);
 
         let allow_private_targets = config.allow_private_targets
             || std::env::var("AIOS_BROWSER_ALLOW_PRIVATE")
@@ -36,6 +59,8 @@ impl NetworkClient {
 
         Self {
             client,
+            user_agent: config.user_agent.clone(),
+            timeout,
             max_redirects: config.max_redirects,
             max_response_bytes: config.max_response_bytes,
             allow_private_targets,
@@ -119,13 +144,21 @@ impl NetworkClient {
         let mut current_body = body.map(str::to_string);
 
         for hop in 0..=self.max_redirects {
-            self.validate(&current).await?;
+            let pinned = self.validate(&current).await?;
+            let client = match &pinned {
+                Some(pin) => build_client(
+                    &self.user_agent,
+                    self.timeout,
+                    Some((&pin.host, &pin.addresses)),
+                ),
+                None => self.client.clone(),
+            };
             let mut builder = match current_method.as_str() {
-                "POST" => self.client.post(current.clone()),
-                "PUT" => self.client.put(current.clone()),
-                "DELETE" => self.client.delete(current.clone()),
-                "HEAD" => self.client.head(current.clone()),
-                _ => self.client.get(current.clone()),
+                "POST" => client.post(current.clone()),
+                "PUT" => client.put(current.clone()),
+                "DELETE" => client.delete(current.clone()),
+                "HEAD" => client.head(current.clone()),
+                _ => client.get(current.clone()),
             };
             if let Some(payload) = current_body.as_deref() {
                 builder = builder.body(payload.to_string());
@@ -157,7 +190,7 @@ impl NetworkClient {
         Err(BrowserError::NetworkError("Too many redirects".to_string()))
     }
 
-    async fn validate(&self, url: &Url) -> Result<(), BrowserError> {
+    async fn validate(&self, url: &Url) -> Result<Option<PinnedDns>, BrowserError> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(BrowserError::NetworkError(format!(
                 "URL scheme '{}' is not allowed",
@@ -165,34 +198,36 @@ impl NetworkClient {
             )));
         }
         if self.allow_private_targets {
-            return Ok(());
+            return Ok(None);
         }
         let Some(host) = url.host_str() else {
             return Err(BrowserError::NetworkError("URL has no host".into()));
         };
         if let Ok(ip) = host.parse::<IpAddr>() {
-            return public_ip(ip).ok_or_else(|| {
+            public_ip(ip).ok_or_else(|| {
                 BrowserError::NetworkError(format!("Private or non-global host '{host}' blocked"))
-            });
+            })?;
+            return Ok(None);
         }
         let port = url.port_or_known_default().unwrap_or(80);
-        let mut resolved = tokio::net::lookup_host((host, port))
+        let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
             .await
-            .map_err(|e| BrowserError::NetworkError(format!("Cannot resolve '{host}': {e}")))?;
-        let Some(first) = resolved.next() else {
+            .map_err(|e| BrowserError::NetworkError(format!("Cannot resolve '{host}': {e}")))?
+            .collect();
+        if addresses.is_empty() {
             return Err(BrowserError::NetworkError(format!(
                 "Cannot resolve '{host}'"
             )));
-        };
-        public_ip(first.ip()).ok_or_else(|| {
-            BrowserError::NetworkError(format!("Private or non-global host '{host}' blocked"))
-        })?;
-        for address in resolved {
+        }
+        for address in &addresses {
             public_ip(address.ip()).ok_or_else(|| {
                 BrowserError::NetworkError(format!("Host '{host}' resolves to a private address"))
             })?;
         }
-        Ok(())
+        Ok(Some(PinnedDns {
+            host: host.to_string(),
+            addresses,
+        }))
     }
 
     async fn limited_bytes(&self, response: Response) -> Result<Vec<u8>, BrowserError> {
@@ -335,5 +370,29 @@ mod tests {
         let client = NetworkClient::new(&BrowserConfig::default());
         let parsed = Url::parse("http://localhost/").unwrap();
         assert!(client.validate(&parsed).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn dns_names_are_pinned_to_validated_addresses() {
+        let client = NetworkClient::new(&BrowserConfig::default());
+        let parsed = Url::parse("https://example.com/").unwrap();
+        let pin = client
+            .validate(&parsed)
+            .await
+            .unwrap()
+            .expect("public DNS name");
+        assert_eq!(pin.host, "example.com");
+        assert!(!pin.addresses.is_empty());
+        assert!(pin
+            .addresses
+            .iter()
+            .all(|addr| public_ip(addr.ip()).is_some()));
+    }
+
+    #[tokio::test]
+    async fn ip_literals_need_no_dns_pin() {
+        let client = NetworkClient::new(&BrowserConfig::default());
+        let parsed = Url::parse("http://93.184.215.14/").unwrap();
+        assert!(client.validate(&parsed).await.unwrap().is_none());
     }
 }

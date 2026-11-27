@@ -321,7 +321,7 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 
 | Crate | Non-blank lines / tests | Key API |
 |---|---|---|
-| `aios-browser` | 4,339 / 111 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes}` |
+| `aios-browser` | 4,339 / 113 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, DNS pinning via `resolve_to_addrs`, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
@@ -475,9 +475,10 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
 - Post-audit hardening map (2026-11-27): new `aios-core/src/secrets.rs` and
   `scripts/check_unsafe_safety.py`; `aios-bridge/src/auth.rs` (PBKDF2, lockout),
   `dto.rs` validators, `server.rs::block_binary_path`/`lock_or_recover`/`with_auth`;
-  `aios-browser/src/network.rs` SSRF policy; 201 poisoned-lock recoveries in 21
+  `aios-browser/src/network.rs` SSRF policy with DNS pinning via
+  `resolve_to_addrs`; 201 poisoned-lock recoveries in 21
   production files; CI step `Require SAFETY comments on new unsafe blocks`.
-  Post-hardening `cargo test --workspace`: **1,854 tests passed / 0 failed in 100 suites**;
+  Post-hardening `cargo test --workspace`: **1,856 tests passed / 0 failed in 100 suites**;
   `scripts/check_unsafe_safety.py HEAD~1` reports no undocumented new unsafe blocks.
 - Standalone/tooling gates: `aios-kernel` check/clippy (default and `--features limine`), `aios-kernel-run` tests 2/2, PowerShell parser check. A fresh hybrid ISO/IMG rebuild was **not** run here: `xorriso`/Limine binaries are missing and `iso/` is empty — only marker/check logic and existing image inspection were used.
 - The five `aios-kernel` GUI text-layout tests are source-level `#[cfg(test)]` checks for the freestanding binary: they are not included in the host `cargo test --workspace` count above because the bare-metal target has no `test` crate. Runtime verification used a release ELF patched into ISO LBA 32 of a copied image (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU reached `Limine handoff` / GOP `1280x800` / DHCP bound, opened App Store, Network and hardware windows with `F4`/`F5`/`F9`, and a screendump showed no text run wider than the 16 px glyph cell. The image was then written to and fully read back from Disk 3 (`\\.\PhysicalDrive3`, serial `EE05DB505AE9`) with matching SHA-256, LBA 32 ELF hash, `AIOS_KER.;1` record size and MBR `55 AA` (`boot/out/flash-gui-disk3.log`).

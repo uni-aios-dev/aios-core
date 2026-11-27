@@ -38,6 +38,11 @@
   automatic redirects without revalidation, and read unbounded response bodies.
   Every hop is now scheme- and DNS/IP-checked, redirects are explicit and
   response bodies are streamed under `max_response_bytes` (8 MiB default).
+  Validation still left a rebinding/TOCTOU window because `reqwest` resolved the
+  host a second time when connecting. Each hop now pins the client to the
+  already validated addresses, so a changed DNS answer cannot reach a private
+  host; a failed client build is reported instead of falling back to a default
+  client with different policy.
 - Tests that registered bridge users reused the shared `aios_data/users.json`
   and short passwords, so they became order-dependent under the stricter auth
   policy. `BridgeContext::with_auth()` injects an isolated store, the E2E test

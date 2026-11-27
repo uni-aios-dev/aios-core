@@ -31,7 +31,10 @@
   `AIOS_BLOCKS_DIR`.
 - `NetworkClient` performs manual redirects and validates scheme/DNS/IP on every
   hop (HTTP(S) only, no loopback/private/link-local/non-global targets without
-  opt-in); response bodies are streamed under a hard byte cap.
+  opt-in); response bodies are streamed under a hard byte cap. DNS names are
+  pinned to the validated addresses for the actual request, closing a rebinding
+  window, and HTTP client construction fails explicitly instead of silently
+  falling back to `reqwest::Client::default()`.
 - `HostBackend::executor` is now `Option`; a failed WASM sandbox no longer
   panics on startup. Console `exec` is default-denied unless the program is in
   `AIOS_CONSOLE_EXEC_ALLOWLIST`.
@@ -47,7 +50,7 @@
 
 ### Verified
 - `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings.
-- `cargo test --workspace`: 1,854 passed / 0 failed in 100 suites (30 new tests
+- `cargo test --workspace`: 1,856 passed / 0 failed in 100 suites (32 new tests
   over the previous baseline). `python scripts/check_unsafe_safety.py HEAD~1`:
   no undocumented new unsafe blocks.
 
