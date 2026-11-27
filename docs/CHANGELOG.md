@@ -7112,3 +7112,12 @@ Files: `aios-sys-control/*`, `tests/sys_control_tests.rs`, `aios/src/tui/{app_st
 - **350 tests** (292 unit + 28 integration + 11 stress + 19 exec-compat)
 - **0 clippy warnings**
 - **90+ public types**, **320+ public methods**
+
+## 2026-11-27 — Voice control pipeline
+
+- Added `aios-voice` crate: `cpal` capture at 16 kHz mono, PTT/toggle with VAD, RMS/peak levels, mock audio source; `SttEngine` with local Candle Whisper, cloud Whisper-compatible HTTP and mock/unavailable engines; `VoicePipeline` event bus.
+- Added script generation to `aios-builder`: strict code-only `ScriptLlm` adapters, mock and deterministic offline fallback, bounded retries, EasyLang validation, guarded `SystemCommand` imports and capability mapping.
+- Hardened `aios-wasm`: capability-aware `HostPolicy`, `instantiate_with_policy`, audit-only `net_check`/`browse`/`console_cmd`/`notify` host calls and poison-safe audit state.
+- Added bridge voice API (`/api/v1/voice/start`, `/stop`, `/transcribe`, `/execute-text`, `/status`, `/ws/voice`), session ACL confirmation flow, workflow persistence and telemetry `voice_phase`.
+- Added Studio mic panel/hotkey and TUI AI Console voice markers with transcript and script output.
+- Added integration test `tests/voice_pipeline_test.rs` covering mock audio, STT, mock LLM and WASM execution.

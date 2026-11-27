@@ -486,3 +486,19 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 - Пять тестов `aios-kernel` на компоновку текста — это исходные проверки `#[cfg(test)]` для freestanding-бинарика: они не входят в приведённый выше счёт `cargo test --workspace`, потому что в bare-metal-цели нет crates `test`. Проверка в рантайме выполнена на релизном ELF, записанном в LBA 32 ISO копии образа (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU дошёл до `Limine handoff` / GOP `1280x800` / DHCP bound, клавишами `F4`/`F5`/`F9` открыл App Store, Network и окно оборудования, а screendump показал, что ни один текстовый участок не шире ячейки глифа 16 px. Затем образ записан и полностью прочитан назад с Disk 3 (`\\.\PhysicalDrive3`, серийник `EE05DB505AE9`): SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и MBR `55 AA` совпали (`boot/out/flash-gui-disk3.log`).
 
 Крупнейшие крейты по непустым строкам: `aios-kernel` 26,5 тыс. · `boot/` 13,0 тыс. · `aios-console` 9,6 тыс. · `aios-tui` 6,1 тыс. · `aios-gui` 5,7 тыс. · `aios` 5,8 тыс. · `aios-autohal` 4,8 тыс. · `tests/` 4,3 тыс. · `aios-browser` 4,3 тыс.
+
+## 13. Голосовой конвейер (2026-11-27)
+
+| Область | Файлы | Точки входа |
+|---|---|---|
+| Захват/STT | `aios-voice/src/capture.rs`, `stt.rs`, `pipeline.rs` | `AudioSource`, `MicrophoneSource`, `MockAudioSource`, `SttEngine`, `LocalWhisperEngine`, `CloudSttEngine`, `VoicePipeline` |
+| Генерация | `aios-builder/src/script.rs`, `workflow.rs`, `compiler.rs`, `manifest.rs` | `ScriptLlm`, `LlmScriptLlm`, `MockScriptLlm`, `OfflineScriptLlm`, `ScriptGenerator`, `SystemCommand`, `WorkflowCompiler`, `AutoManifestGenerator` |
+| Песочница | `aios-wasm/src/sandbox.rs` | `HostPolicy`, `instantiate_with_policy`, защищённые host-импорты `aios.net_check` / `browse` / `console_cmd` / `notify` |
+| Мост | `aios-bridge/src/voice.rs`, `dto.rs`, `server.rs` | `VoiceRuntime`, `run_voice_worker`, обработчики голоса, `/ws/voice` |
+| UI | `aios-studio/*`, `aios/src/tui/*` | Кнопка микрофона Studio + `Ctrl+Shift+M`; TUI `Ctrl+Shift+M` с маркерами `[LISTEN]/[STT]/[THINKING]/[EXEC]` |
+
+Поток: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking -> ScriptReady` либо `AwaitingConfirmation -> Executing -> Completed|Failed`. Рабочий поток моста реагирует на `Transcribed`, генерирует строгий EasyLang (только код, ограниченные повторы, офлайн-фолбэк), компилирует в WASM, выводит возможности через `AutoManifestGenerator`, проверяет их по токену сессии в `AccessControlLayer` и выполняет с соответствующим `HostPolicy`. Привилегированные скрипты ожидают `POST /api/v1/voice/execute-text` с `confirm:true`.
+
+Эндпоинты: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV или s16le, максимум 10 МиБ), `/execute-text`, `GET /api/v1/voice/status`, `GET /ws/voice?token=...`. Все API-маршруты требуют bearer-авторизацию; WebSocket проверяют токен самостоятельно. `/ws/telemetry` дополнительно передаёт `voice_phase`.
+
+Успешные скрипты сохраняются в `<AIOS_WORKFLOWS_DIR|workflows>` как `<stem>.easy`, `<stem>.wasm` и `<stem>.meta.json` с исходной фразой. Тестовое покрытие: `tests/voice_pipeline_test.rs` (мок аудио -> мок LLM -> выполнение WASM), а также модульные тесты `aios-voice` (11), `aios-builder` (29), `aios-wasm` (64) и `aios-bridge` (26).

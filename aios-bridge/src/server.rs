@@ -65,6 +65,8 @@ pub struct BridgeContext {
     pub live_update: Mutex<LiveUpdateEngine>,
     /// Kernel IPC bus shared by the bridge, telemetry feed and text console.
     pub ipc_bus: Arc<Mutex<IpcBus>>,
+    /// Voice capture/STT pipeline and pending confirmation state.
+    pub voice: Arc<crate::voice::VoiceRuntime>,
     /// Whether public self-registration is enabled (`AIOS_BRIDGE_ALLOW_SIGNUP`).
     pub allow_signup: bool,
 }
@@ -108,6 +110,9 @@ impl BridgeContext {
             auth,
             live_update: Mutex::new(LiveUpdateEngine::new(10_000)),
             ipc_bus: Arc::new(Mutex::new(IpcBus::new(256))),
+            voice: Arc::new(crate::voice::VoiceRuntime::new(
+                aios_voice::pipeline::VoicePipeline::with_defaults(),
+            )),
             allow_signup,
         }
     }
@@ -190,6 +195,8 @@ where
         None => None,
     };
 
+    tokio::spawn(crate::voice::run_voice_worker(state.clone()));
+
     let app = Router::new()
         // Public auth endpoints.
         .route("/api/v1/auth/register", post(auth_register_handler))
@@ -212,7 +219,25 @@ where
         .route("/api/v1/sys/wifi/connect", post(sys_wifi_connect_handler))
         .route("/api/v1/sys/layout", post(sys_layout_handler))
         .route("/api/v1/auth/me", get(auth_me_handler))
+        .route(
+            "/api/v1/voice/start",
+            post(crate::voice::voice_start_handler),
+        )
+        .route("/api/v1/voice/stop", post(crate::voice::voice_stop_handler))
+        .route(
+            "/api/v1/voice/transcribe",
+            post(crate::voice::voice_transcribe_handler),
+        )
+        .route(
+            "/api/v1/voice/execute-text",
+            post(crate::voice::voice_execute_text_handler),
+        )
+        .route(
+            "/api/v1/voice/status",
+            get(crate::voice::voice_status_handler),
+        )
         .route("/ws/telemetry", get(ws_handler))
+        .route("/ws/voice", get(crate::voice::voice_ws_handler))
         // Public, unauthenticated fallbacks and happy-path plumbing.
         .route("/api/v1/health", get(health_handler))
         .route("/store/index.json", get(store_catalog_handler))
@@ -259,7 +284,7 @@ where
 async fn require_auth(State(state): State<SharedState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     if path.starts_with("/ws/") {
-        // The telemetry endpoint validates its own token (query or header).
+        // Telemetry and voice WebSocket endpoints validate their own tokens.
         return next.run(req).await;
     }
     let public_api = path == "/api/v1/health"
@@ -944,6 +969,7 @@ async fn handle_ws_socket(mut socket: WebSocket, state: SharedState) {
             "ram_total_mb": ram_total,
             "ram_percent": if ram_total > 0 { ram_used as f64 / ram_total as f64 * 100.0 } else { 0.0 },
             "process_count": process_count,
+            "voice_phase": state.voice.pipeline().current().phase(),
         });
 
         if socket

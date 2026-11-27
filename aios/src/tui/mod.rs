@@ -86,6 +86,7 @@ fn run(
         }
 
         app.update_logs();
+        app.voice_poll();
         web_poll(&mut app);
         store_poll(&mut app);
         app.hw_poll_hotplug();
@@ -1554,6 +1555,22 @@ fn shell_execute_legacy(app: &mut TuiApp, line: &str) {
     }
 }
 
+fn toggle_voice(app: &mut TuiApp) {
+    let result = {
+        let state = locked(&app.state);
+        let pipeline = state.bridge.voice.pipeline();
+        if pipeline.current().phase() == "Listening" {
+            pipeline.stop().map(|()| "stopped".to_string())
+        } else {
+            pipeline.start(None).map(|()| "started".to_string())
+        }
+    };
+    match result {
+        Ok(action) => push_log(&app.logs, format!("AIOS: voice capture {action}")),
+        Err(reason) => push_log(&app.logs, format!("AIOS: voice error: {reason}")),
+    }
+}
+
 fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
     if key.modifiers.contains(KeyModifiers::ALT) {
         if let KeyCode::Char(d) = key.code {
@@ -1571,6 +1588,14 @@ fn handle_key(app: &mut TuiApp, key: event::KeyEvent) {
 
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.running = false;
+        return;
+    }
+
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+        && matches!(key.code, KeyCode::Char('m' | 'M'))
+    {
+        toggle_voice(app);
         return;
     }
 

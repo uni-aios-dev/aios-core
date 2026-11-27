@@ -6,10 +6,20 @@ const API = {
   login: '/api/v1/auth/login',
   register: '/api/v1/auth/register',
   me: '/api/v1/auth/me',
+  voiceStart: '/api/v1/voice/start',
+  voiceStop: '/api/v1/voice/stop',
+  voiceTranscribe: '/api/v1/voice/transcribe',
+  voiceExecuteText: '/api/v1/voice/execute-text',
+  voiceStatus: '/api/v1/voice/status',
   ws: () => {
     const p = window.location;
     const proto = p.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${p.host}/ws/telemetry?token=${encodeURIComponent(getToken())}`;
+  },
+  voiceWs: () => {
+    const p = window.location;
+    const proto = p.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${p.host}/ws/voice?token=${encodeURIComponent(getToken())}`;
   }
 };
 
@@ -49,6 +59,9 @@ let ws = null;
 let wsReconnectTimer = null;
 let wsRetryDelay = 1000;
 let statusTimer = null;
+let voiceWs = null;
+let voiceListening = false;
+let voiceAwaiting = false;
 
 /* ── Tab Switching ── */
 function switchTab(name) {
@@ -80,6 +93,10 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault();
     openCommandPalette();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'm') {
+    e.preventDefault();
+    toggleVoice();
   }
   if (e.key === 'Escape') {
     const overlay = document.getElementById('command-overlay');
@@ -220,9 +237,110 @@ function setConnStatus(status) {
   label.textContent = labels[status] || status;
 }
 
+/* ── Voice Control ── */
+function voiceWsUrl() {
+  return API.voiceWs();
+}
+
+function connectVoiceWs() {
+  if (voiceWs && (voiceWs.readyState === WebSocket.OPEN || voiceWs.readyState === WebSocket.CONNECTING)) return;
+  try {
+    voiceWs = new WebSocket(voiceWsUrl());
+  } catch (e) {
+    return;
+  }
+  voiceWs.onmessage = e => {
+    try {
+      const data = JSON.parse(e.data);
+      renderVoiceEvent(data);
+    } catch { /* ignore malformed */ }
+  };
+  voiceWs.onclose = () => { voiceWs = null; };
+}
+
+function renderVoiceEvent(data) {
+  const phase = data.phase || data.event?.phase || 'Idle';
+  const event = data.event || {};
+  document.getElementById('voice-phase').textContent = phase;
+  const listening = phase === 'Listening';
+  document.getElementById('voice-mic').classList.toggle('listening', listening);
+  document.getElementById('voice-mic-label').textContent = listening ? 'Stop' : 'Hold to speak';
+  voiceListening = listening;
+
+  if (phase === 'Listening' && typeof event.level?.rms === 'number') {
+    document.getElementById('voice-level-bar').style.width = Math.min(100, event.level.rms * 200) + '%';
+  }
+  if (phase === 'Transcribed' && event.text) {
+    document.getElementById('voice-transcript').value = event.text;
+  }
+  if (event.script) {
+    const scriptEl = document.getElementById('voice-script');
+    scriptEl.textContent = event.script;
+    scriptEl.classList.remove('hidden');
+  }
+  const perms = event.permissions || [];
+  document.getElementById('voice-permissions').textContent = perms.length
+    ? 'Permissions: ' + perms.join(', ')
+    : 'No permissions requested';
+  voiceAwaiting = phase === 'AwaitingConfirmation';
+  document.getElementById('voice-confirm').classList.toggle('hidden', !voiceAwaiting);
+  if (phase === 'Completed' && event.output) {
+    showVoiceNotice('Voice command completed: ' + event.output);
+  }
+  if (phase === 'Failed' && event.reason) {
+    showVoiceNotice('Voice command failed: ' + event.reason, true);
+  }
+}
+
+async function voiceRequest(url, body) {
+  try {
+    const r = await apiFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showVoiceNotice(data.error || ('Voice request failed: HTTP ' + r.status), true);
+      return null;
+    }
+    if (data.event) renderVoiceEvent(data.event);
+    return data;
+  } catch (e) {
+    if (!(e instanceof AuthError)) showVoiceNotice('Voice bridge unreachable', true);
+    return null;
+  }
+}
+
+async function toggleVoice() {
+  const url = voiceListening ? API.voiceStop : API.voiceStart;
+  const body = voiceListening ? {} : { mode: 'toggle' };
+  await voiceRequest(url, body);
+}
+
+async function runVoiceText() {
+  const text = document.getElementById('voice-transcript').value.trim();
+  if (!text) return;
+  await voiceRequest(API.voiceExecuteText, { text, confirm: false });
+}
+
+async function confirmVoice() {
+  await voiceRequest(API.voiceExecuteText, { text: '', confirm: true });
+}
+
+function showVoiceNotice(message, error) {
+  const el = document.getElementById('voice-permissions');
+  el.textContent = message;
+  el.classList.toggle('voice-error', !!error);
+  setTimeout(() => el.classList.remove('voice-error'), 4000);
+}
+
 /* ── Dashboard Updates ── */
 function updateHealthCards(data) {
   document.getElementById('sys-status').textContent = data.status || '—';
+  if (data.voice_phase) {
+    document.getElementById('voice-phase').textContent = data.voice_phase;
+  }
 }
 
 function updateRamBadge(pct) {
@@ -770,6 +888,7 @@ async function handleAuthSubmit(e) {
 
 function logout() {
   setToken(null);
+  if (voiceWs) { voiceWs.close(); voiceWs = null; }
   authUser = null;
   document.getElementById('auth-username').value = '';
   document.getElementById('auth-password').value = '';
@@ -786,6 +905,7 @@ async function enterApp() {
   showAuthScreen(false);
   updateUserBadge();
   connectWs();
+  connectVoiceWs();
   await updateDashboard();
   if (!statusTimer) {
     statusTimer = setInterval(updateDashboard, 5000);

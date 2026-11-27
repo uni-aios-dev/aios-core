@@ -134,6 +134,18 @@ pub struct TuiApp {
     pub ai_streaming: Arc<Mutex<bool>>,
     pub ai_presets: BTreeMap<String, String>,
     pub ai_log: Arc<Mutex<Vec<AiMessage>>>,
+    /// Voice phase mirrored from the bridge pipeline for the AI Console.
+    pub voice_phase: String,
+    /// Latest recognized or typed voice transcript.
+    pub voice_transcript: String,
+    /// Generated EasyLang script awaiting or after execution.
+    pub voice_script: String,
+    /// Capabilities requested by the generated script.
+    pub voice_permissions: Vec<String>,
+    /// Output from the last successful sandboxed execution.
+    pub voice_output: String,
+    /// Last voice pipeline failure.
+    pub voice_error: String,
     pub web: WebState,
     pub shell_input: String,
     pub shell_output: VecDeque<String>,
@@ -226,6 +238,12 @@ impl TuiApp {
             ai_streaming: Arc::new(Mutex::new(false)),
             ai_presets: seed_presets(),
             ai_log: Arc::new(Mutex::new(Vec::new())),
+            voice_phase: "Idle".into(),
+            voice_transcript: String::new(),
+            voice_script: String::new(),
+            voice_permissions: Vec::new(),
+            voice_output: String::new(),
+            voice_error: String::new(),
             web: WebState::default(),
             shell_input: String::new(),
             shell_output: VecDeque::new(),
@@ -249,6 +267,20 @@ impl TuiApp {
             sys_snap: Arc::new(Mutex::new(SysStatusSnapshot::default())),
             console,
         }
+    }
+
+    /// Mirror the bridge voice state into the console for rendering.
+    pub fn voice_poll(&mut self) {
+        let status = {
+            let state = locked(&self.state);
+            state.bridge.voice.status()
+        };
+        self.voice_phase = status.phase;
+        self.voice_transcript = status.transcript;
+        self.voice_script = status.script;
+        self.voice_permissions = status.permissions;
+        self.voice_output = status.output;
+        self.voice_error = status.error;
     }
 
     /// Poll Wi-Fi / battery / thermal state into the cached snapshot.

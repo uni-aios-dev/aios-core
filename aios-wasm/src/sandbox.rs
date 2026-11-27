@@ -1,5 +1,6 @@
 use crate::isolation::IsolationConfig;
 use aios_core::error::{AIOSException, Result};
+use aios_security::capability::Capability;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -174,6 +175,74 @@ impl WasmSandbox {
     }
 }
 
+/// Capability set granted to guest host calls for one instantiated module.
+#[derive(Debug, Clone, Default)]
+pub struct HostPolicy {
+    capabilities: Vec<Capability>,
+}
+
+impl HostPolicy {
+    /// Grant exactly the supplied capabilities to guest host calls.
+    pub fn new(capabilities: Vec<Capability>) -> Self {
+        Self { capabilities }
+    }
+
+    /// Whether the policy grants `capability`.
+    pub fn allows(&self, capability: Capability) -> bool {
+        self.capabilities.contains(&Capability::All) || self.capabilities.contains(&capability)
+    }
+}
+
+fn guest_string(caller: &mut Caller<'_, StoreState>, ptr: i32, len: i32) -> Option<String> {
+    let memory = match caller.get_export("memory") {
+        Some(Extern::Memory(m)) => m,
+        _ => return None,
+    };
+    let data = memory.data(caller.as_context());
+    let start = ptr.max(0) as usize;
+    let end = (start + len.max(0) as usize).min(data.len());
+    if start > end {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&data[start..end]).into_owned())
+}
+
+fn guarded_call(
+    caller: &mut Caller<'_, StoreState>,
+    name: &'static str,
+    required: Option<Capability>,
+    ptr: i32,
+    len: i32,
+    require_http_url: bool,
+) -> i32 {
+    let argument = guest_string(caller, ptr, len).unwrap_or_default();
+    if let Some(capability) = required {
+        if !caller.data().policy.allows(capability) {
+            caller.data_mut().denied_calls += 1;
+            caller
+                .data_mut()
+                .audit_log
+                .push(format!("{name}: denied {capability}"));
+            log::warn!("[WASM:aios] {name} denied: missing {capability}");
+            return -1;
+        }
+    }
+    if require_http_url && !argument.starts_with("http://") && !argument.starts_with("https://") {
+        caller.data_mut().denied_calls += 1;
+        caller
+            .data_mut()
+            .audit_log
+            .push(format!("{name}: rejected non-http argument"));
+        log::warn!("[WASM:aios] {name} rejected non-http argument");
+        return -1;
+    }
+    caller
+        .data_mut()
+        .audit_log
+        .push(format!("{name}: {argument}"));
+    0
+}
+
 #[derive(Debug, Default)]
 pub struct StoreState {
     pub memory_used_bytes: usize,
@@ -182,6 +251,12 @@ pub struct StoreState {
     /// Host-owned scratch offset in linear memory where the next IPC request is
     /// staged (`0` until the first request needs a buffer).
     pub ipc_scratch: usize,
+    /// Capability ACL enforced by guarded `aios` host functions.
+    pub policy: HostPolicy,
+    /// Audit-only record of guarded host calls made by the guest.
+    pub audit_log: Vec<String>,
+    /// Number of host calls rejected by the capability policy.
+    pub denied_calls: u32,
 }
 
 pub struct WasmBlock {
@@ -256,8 +331,19 @@ impl WasmBlock {
         })
     }
 
+    /// Instantiate the module with an empty (deny-all) host capability policy.
     pub fn instantiate(&mut self, store: &mut Store<StoreState>) -> Result<()> {
+        self.instantiate_with_policy(store, HostPolicy::default())
+    }
+
+    /// Instantiate the module after installing a capability ACL in the store.
+    pub fn instantiate_with_policy(
+        &mut self,
+        store: &mut Store<StoreState>,
+        policy: HostPolicy,
+    ) -> Result<()> {
         let mut linker = Linker::new(store.engine());
+        store.data_mut().policy = policy;
         Self::register_aios_host_functions(&mut linker)?;
 
         self.arm_timeout(store);
@@ -283,28 +369,81 @@ impl WasmBlock {
         Ok(())
     }
 
+    /// Register guarded `aios` host imports for capability-checked workflows.
     pub fn register_aios_host_functions(linker: &mut Linker<StoreState>) -> Result<()> {
         linker
             .func_wrap(
                 AIOS_MODULE,
                 "log",
                 |mut caller: Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
-                    let memory = match caller.get_export("memory") {
-                        Some(Extern::Memory(m)) => m,
-                        _ => return -1,
-                    };
-                    let data = memory.data(caller.as_context());
-                    let start = ptr.max(0) as usize;
-                    let end = (start + len.max(0) as usize).min(data.len());
-                    if start < end {
-                        if let Ok(msg) = std::str::from_utf8(&data[start..end]) {
-                            log::info!("[WASM:aios] {msg}");
-                        }
-                    }
+                    let message = guest_string(&mut caller, ptr, len).unwrap_or_default();
+                    log::info!("[WASM:aios] {message}");
+                    caller.data_mut().audit_log.push(format!("log: {message}"));
                     0
                 },
             )
             .map_err(|e| AIOSException::Generic(format!("WASM linker aios.log: {e}")))?;
+
+        linker
+            .func_wrap(
+                AIOS_MODULE,
+                "net_check",
+                |mut caller: Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
+                    guarded_call(
+                        &mut caller,
+                        "net_check",
+                        Some(Capability::NetConnect),
+                        ptr,
+                        len,
+                        true,
+                    )
+                },
+            )
+            .map_err(|e| AIOSException::Generic(format!("WASM linker aios.net_check: {e}")))?;
+
+        linker
+            .func_wrap(
+                AIOS_MODULE,
+                "browse",
+                |mut caller: Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
+                    guarded_call(
+                        &mut caller,
+                        "browse",
+                        Some(Capability::NetConnect),
+                        ptr,
+                        len,
+                        true,
+                    )
+                },
+            )
+            .map_err(|e| AIOSException::Generic(format!("WASM linker aios.browse: {e}")))?;
+
+        linker
+            .func_wrap(
+                AIOS_MODULE,
+                "console_cmd",
+                |mut caller: Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
+                    guarded_call(
+                        &mut caller,
+                        "console_cmd",
+                        Some(Capability::ProcessSpawn),
+                        ptr,
+                        len,
+                        false,
+                    )
+                },
+            )
+            .map_err(|e| AIOSException::Generic(format!("WASM linker aios.console_cmd: {e}")))?;
+
+        linker
+            .func_wrap(
+                AIOS_MODULE,
+                "notify",
+                |mut caller: Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
+                    guarded_call(&mut caller, "notify", None, ptr, len, false)
+                },
+            )
+            .map_err(|e| AIOSException::Generic(format!("WASM linker aios.notify: {e}")))?;
 
         linker
             .func_wrap(AIOS_MODULE, "get_timestamp", || -> i64 {
@@ -868,6 +1007,60 @@ mod tests {
             elapsed.as_millis() < 5_000,
             "epoch interrupt must fire near the timeout, took {elapsed:?} (fuel-only trap takes ~10s)"
         );
+    }
+
+    const NET_CHECK_WAT: &str = r#"
+        (module
+            (import "aios" "net_check" (func $net_check (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 0) "https://example.com")
+            (func (export "check") (result i32)
+                i32.const 0
+                i32.const 19
+                call $net_check))
+    "#;
+
+    #[test]
+    fn test_host_call_denied_without_capability() {
+        let mut block = WasmBlock::from_wat(
+            "net".into(),
+            "1.0.0".into(),
+            NET_CHECK_WAT,
+            SandboxConfig::default(),
+            IsolationConfig::default(),
+        )
+        .unwrap();
+        let mut store = block.create_store().unwrap();
+        block
+            .instantiate_with_policy(&mut store, HostPolicy::default())
+            .unwrap();
+        let results = block.call_func(&mut store, "check", &[]).unwrap();
+        assert_eq!(results[0].i32(), Some(-1));
+        assert_eq!(store.data().denied_calls, 1);
+    }
+
+    #[test]
+    fn test_host_call_allowed_with_capability() {
+        let mut block = WasmBlock::from_wat(
+            "net".into(),
+            "1.0.0".into(),
+            NET_CHECK_WAT,
+            SandboxConfig::default(),
+            IsolationConfig::default(),
+        )
+        .unwrap();
+        let mut store = block.create_store().unwrap();
+        block
+            .instantiate_with_policy(&mut store, HostPolicy::new(vec![Capability::NetConnect]))
+            .unwrap();
+        let results = block.call_func(&mut store, "check", &[]).unwrap();
+        assert_eq!(results[0].i32(), Some(0));
+        assert_eq!(store.data().denied_calls, 0);
+        assert!(store
+            .data()
+            .audit_log
+            .iter()
+            .any(|line| line.contains("net_check: https://example.com")));
     }
 
     #[test]

@@ -484,3 +484,19 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
 - The five `aios-kernel` GUI text-layout tests are source-level `#[cfg(test)]` checks for the freestanding binary: they are not included in the host `cargo test --workspace` count above because the bare-metal target has no `test` crate. Runtime verification used a release ELF patched into ISO LBA 32 of a copied image (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU reached `Limine handoff` / GOP `1280x800` / DHCP bound, opened App Store, Network and hardware windows with `F4`/`F5`/`F9`, and a screendump showed no text run wider than the 16 px glyph cell. The image was then written to and fully read back from Disk 3 (`\\.\PhysicalDrive3`, serial `EE05DB505AE9`) with matching SHA-256, LBA 32 ELF hash, `AIOS_KER.;1` record size and MBR `55 AA` (`boot/out/flash-gui-disk3.log`).
 
 Top crates by non-blank lines: `aios-kernel` 26.5k · `boot/` 13.0k · `aios-console` 9.6k · `aios-tui` 6.1k · `aios-gui` 5.7k · `aios` 5.8k · `aios-autohal` 4.8k · `tests/` 4.3k · `aios-browser` 4.3k.
+
+## 13. Voice Control Pipeline (2026-11-27)
+
+| Area | Files | Entry points |
+|---|---|---|
+| Capture/STT | `aios-voice/src/capture.rs`, `stt.rs`, `pipeline.rs` | `AudioSource`, `MicrophoneSource`, `MockAudioSource`, `SttEngine`, `LocalWhisperEngine`, `CloudSttEngine`, `VoicePipeline` |
+| Generation | `aios-builder/src/script.rs`, `workflow.rs`, `compiler.rs`, `manifest.rs` | `ScriptLlm`, `LlmScriptLlm`, `MockScriptLlm`, `OfflineScriptLlm`, `ScriptGenerator`, `SystemCommand`, `WorkflowCompiler`, `AutoManifestGenerator` |
+| Sandbox | `aios-wasm/src/sandbox.rs` | `HostPolicy`, `instantiate_with_policy`, guarded `aios.net_check` / `browse` / `console_cmd` / `notify` host imports |
+| Bridge | `aios-bridge/src/voice.rs`, `dto.rs`, `server.rs` | `VoiceRuntime`, `run_voice_worker`, voice handlers, `/ws/voice` |
+| UI | `aios-studio/*`, `aios/src/tui/*` | Studio mic button + `Ctrl+Shift+M`; TUI `Ctrl+Shift+M` with `[LISTEN]/[STT]/[THINKING]/[EXEC]` markers |
+
+Flow: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking -> ScriptReady` or `AwaitingConfirmation -> Executing -> Completed|Failed`. The bridge worker reacts to `Transcribed`, generates strict EasyLang (code-only, bounded retries, offline fallback), compiles to WASM, derives capabilities with `AutoManifestGenerator`, checks them against the session token in `AccessControlLayer`, and executes with a matching `HostPolicy`. Privileged scripts wait for `POST /api/v1/voice/execute-text` with `confirm:true`.
+
+Endpoints: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV or s16le, max 10 MiB), `/execute-text`, `GET /api/v1/voice/status`, `GET /ws/voice?token=...`. All API routes require bearer auth; WebSocket endpoints self-authenticate. `/ws/telemetry` additionally reports `voice_phase`.
+
+Successful scripts are saved under `<AIOS_WORKFLOWS_DIR|workflows>` as `<stem>.easy`, `<stem>.wasm` and `<stem>.meta.json` containing the originating phrase. Test coverage: `tests/voice_pipeline_test.rs` (mock audio -> mock LLM -> WASM execution), plus unit tests in `aios-voice` (11), `aios-builder` (29), `aios-wasm` (64) and `aios-bridge` (26).

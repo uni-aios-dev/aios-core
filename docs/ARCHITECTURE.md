@@ -2693,3 +2693,11 @@ and removes it on rollback, removal or uninstall.
 `SUPPORTED_DEVICES` and `describe()`, so the boot log names both the exact
 driver kind and the backend. These additions are statically verified; no new
 real-hardware NIC bring-up is claimed.
+
+## Voice architecture (2026-11-27)
+
+The host adds `aios-voice` as an input layer in front of the existing EasyLang/WASM execution path. `MicrophoneSource` streams 16 kHz mono PCM through `CaptureController`, which owns VAD and level metering; `SttEngine` abstracts local Candle Whisper and Whisper-compatible HTTP backends, with `UnavailableSttEngine` as a fail-closed default. `VoicePipeline` publishes phase events on a broadcast bus so REST, WebSocket and both UIs observe the same state.
+
+The bridge's `VoiceRuntime` consumes `Transcribed` events on a background worker. Generation is delegated to `ScriptGenerator`, which uses `ScriptLlm` (real LLM adapter, mock or deterministic offline fallback), enforces a code-only EasyLang grammar, retries on validation failure and compiles via `WorkflowCompiler`. Generated WASM is never trusted: `AutoManifestGenerator` extracts capabilities from guarded `aios` imports and `AccessControlLayer` validates them against a voice session token before `WasmBlock::instantiate_with_policy` installs an identical `HostPolicy`. Host calls are audit-only; they do not spawn processes or open network connections, and non-http URLs for `net_check`/`browse` are rejected.
+
+Privileged scripts are staged as `AwaitingConfirmation` with their permission list, and only an explicit `confirm:true` request issues a token with the required capabilities. Successful workflows are persisted with the originating phrase for traceability.

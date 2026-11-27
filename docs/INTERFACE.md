@@ -1685,3 +1685,15 @@ On the host, nested JSON needs shell escaping, e.g.
 `TOKEN` is `valid`, `expired` or `none`. The kernel `net` commands share the
 `aios-console::net_text` parser with workspace tests, so their formatting is
 not a host-only stub.
+
+## Voice Control (2026-11-27)
+
+### Studio
+
+Open the **Builder** tab and use the **Voice Control** panel. The mic button starts/stops capture; `Ctrl+Shift+M` does the same from anywhere in Studio. The phase badge shows `Idle`, `Listening`, `Transcribing`, `Thinking`, `ScriptReady`, `AwaitingConfirmation`, `Executing`, `Completed` or `Failed`. While listening, the meter reflects RMS level. The transcript box is editable: press **Generate from text** to run the edited text through the same pipeline. Generated EasyLang appears in the script block. When privileges are required, the permission list is shown and **Approve & run** becomes active; no privileged script executes before that click.
+
+Voice phases are also streamed on authenticated `/ws/voice` and included as `voice_phase` in `/ws/telemetry`. REST control endpoints require the same bearer token as the rest of the API.
+
+### TUI / `aios` AI Console
+
+Press `Ctrl+Shift+M` to start or stop microphone capture. The AI Console status line and output list show `[LISTEN]`, `[STT]`, `[THINKING]`, `[EXEC]`, `[CONFIRM]`, `[DONE]` or `[FAIL]` together with the transcript, requested permissions, generated script and execution result. Help (`h`) lists the hotkey.

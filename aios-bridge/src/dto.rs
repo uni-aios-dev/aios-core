@@ -13,6 +13,56 @@ pub const MAX_TOKENS: u32 = 4_096;
 pub const MAX_WASM_BASE64_CHARS: usize = 16 * 1024 * 1024;
 /// Maximum decoded size of an uploaded WASM block in bytes.
 pub const MAX_WASM_BYTES: usize = 12 * 1024 * 1024;
+/// Maximum accepted voice audio upload (WAV or s16le PCM) in bytes.
+pub const MAX_VOICE_AUDIO_BYTES: usize = 10 * 1024 * 1024;
+/// Maximum accepted voice transcript length in characters.
+pub const MAX_VOICE_TEXT_CHARS: usize = 8_192;
+
+/// Capture mode requested by the Studio microphone control.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceCaptureMode {
+    PushToTalk,
+    Toggle,
+    Vad,
+}
+
+/// Start-recording request; an omitted mode keeps the pipeline default.
+#[derive(Debug, Deserialize)]
+pub struct VoiceStartRequest {
+    pub mode: Option<VoiceCaptureMode>,
+}
+
+/// Text-only voice request, also used to confirm a privileged script.
+#[derive(Debug, Deserialize)]
+pub struct VoiceTextRequest {
+    pub text: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+/// Acknowledgement carrying the current pipeline phase and optional details.
+#[derive(Debug, Serialize)]
+pub struct VoiceAckResponse {
+    pub success: bool,
+    pub phase: String,
+    pub transcript: Option<String>,
+    pub script: Option<String>,
+    pub permissions: Vec<String>,
+    pub output: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Snapshot of the latest voice pipeline state for UI polling.
+#[derive(Debug, Serialize)]
+pub struct VoiceStatusResponse {
+    pub phase: String,
+    pub transcript: String,
+    pub script: String,
+    pub permissions: Vec<String>,
+    pub output: String,
+    pub error: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct IntentRequest {

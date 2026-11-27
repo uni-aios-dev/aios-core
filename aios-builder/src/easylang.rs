@@ -45,7 +45,10 @@ impl EasyLangParser {
     fn parse_line(line: &str, line_num: usize) -> Result<WorkflowStep, ParseError> {
         let line = line.trim();
 
-        let (label_prefix, rest) = if let Some(pos) = line.find(':') {
+        let label_separator = line
+            .find(':')
+            .filter(|pos| !line[*pos..].starts_with("://"));
+        let (label_prefix, rest) = if let Some(pos) = label_separator {
             let before = line[..pos].trim();
             let after = line[pos + 1..].trim();
             let label = if before.contains(' ') {

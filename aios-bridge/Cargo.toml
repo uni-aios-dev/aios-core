@@ -28,6 +28,9 @@ aios-live-update = { path = "../aios-live-update" }
 aios-telemetry = { path = "../aios-telemetry" }
 aios-debug = { path = "../aios-debug" }
 aios-sys-control = { path = "../aios-sys-control" }
+aios-voice = { path = "../aios-voice" }
+aios-builder = { path = "../aios-builder" }
+aios-wasm = { path = "../aios-wasm" }
 base64 = "0.22"
 sha2 = { workspace = true }
 hex = { workspace = true }

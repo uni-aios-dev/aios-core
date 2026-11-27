@@ -51,7 +51,7 @@ const HELP_LINES: &[&str] = &[
     "",
     " Tab 1 System & HW : hardware inspector (F10 re-probes)",
     " Tab 2 Blocks & Svc : j/Entries select, r restart, k kill, l load",
-    " Tab 3 AI Console   : i query mode, h console help, Esc back",
+    " Tab 3 AI Console   : i query mode, h help, Ctrl+Shift+M voice mic, Esc back",
     " Tab 4 Studio Bridge: n net settings, s refresh store, g net_get",
     " Tab 5 Web          : g URL, Enter open, j/k scroll, b back, Esc unfocus",
     " Tab 7 Shell        : type a command, Enter run, Esc clear",
@@ -618,8 +618,12 @@ fn draw_ai_tab(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         aios_llm::BackendKind::FullLocal => "local/full".into(),
     };
     let status_line = format!(
-        " {backend} | {} | temp {} | tokens {} | {status} ",
-        cfg.model, cfg.temperature, cfg.max_tokens
+        " {backend} | {} | temp {} | tokens {} | {} voice:{} | {status} ",
+        cfg.model,
+        cfg.temperature,
+        cfg.max_tokens,
+        voice_marker(&app.voice_phase),
+        app.voice_phase
     );
     let status_para = Paragraph::new(status_line).style(Style::default().fg(Color::Cyan));
     frame.render_widget(status_para, chunks[2]);
@@ -651,6 +655,19 @@ fn wrap_line(text: &str, width: usize) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+fn voice_marker(phase: &str) -> &'static str {
+    match phase {
+        "Listening" => "[LISTEN]",
+        "Transcribing" => "[STT]",
+        "Thinking" => "[THINKING]",
+        "Executing" => "[EXEC]",
+        "AwaitingConfirmation" => "[CONFIRM]",
+        "Completed" => "[DONE]",
+        "Failed" => "[FAIL]",
+        _ => "[IDLE]",
+    }
 }
 
 fn draw_ai_output(frame: &mut Frame, area: Rect, app: &TuiApp) {
@@ -687,6 +704,46 @@ fn draw_ai_output(frame: &mut Frame, area: Rect, app: &TuiApp) {
             ))));
         }
     }
+    if app.voice_phase != "Idle" || !app.voice_transcript.is_empty() {
+        let marker = voice_marker(&app.voice_phase);
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!(" {marker} voice: {}", app.voice_phase),
+            Style::default().fg(Color::Yellow),
+        ))));
+        if !app.voice_transcript.is_empty() {
+            for wrapped in wrap_line(&format!("   transcript: {}", app.voice_transcript), width) {
+                items.push(ListItem::new(Line::from(wrapped)));
+            }
+        }
+        if !app.voice_permissions.is_empty() {
+            items.push(ListItem::new(Line::from(format!(
+                "   permissions: {}",
+                app.voice_permissions.join(", ")
+            ))));
+        }
+        if !app.voice_script.is_empty() {
+            for line in app.voice_script.lines() {
+                for wrapped in wrap_line(&format!("   {line}"), width) {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        wrapped,
+                        Style::default().fg(Color::Magenta),
+                    ))));
+                }
+            }
+        }
+        if !app.voice_output.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
+                format!("   output: {}", app.voice_output),
+                Style::default().fg(Color::Green),
+            ))));
+        }
+        if !app.voice_error.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
+                format!("   error: {}", app.voice_error),
+                Style::default().fg(Color::Red),
+            ))));
+        }
+    }
     if items.is_empty() {
         items.push(ListItem::new(Line::from(
             " Type a message and press Enter, or type /help for the command reference. ",
@@ -706,6 +763,7 @@ const AI_HELP: &[&str] = &[
     "  Up / Down    navigate prompt history",
     "  Esc          exit query mode / close help",
     "  h            toggle this help panel",
+    "  Ctrl+Shift+M start / stop voice capture",
     "  q            quit AIOS (when not typing)",
     "",
     "Slash commands (type '/<command>' then Enter):",

@@ -302,6 +302,28 @@
         </div>
       </div>
 
+      <div class="voice-panel" id="voice-panel">
+        <div class="section-header">
+          <h2>Voice Control</h2>
+          <span class="section-badge" id="voice-phase">Idle</span>
+        </div>
+        <div class="voice-controls">
+          <button class="btn btn-accent voice-mic" id="voice-mic" onclick="toggleVoice()" title="Mic hotkey: Ctrl+Shift+M">
+            <span id="voice-mic-icon">🎤</span>
+            <span id="voice-mic-label">Hold to speak</span>
+          </button>
+          <div class="voice-meter"><div class="voice-meter-fill" id="voice-level-bar"></div></div>
+          <span class="voice-hint" id="voice-permissions">No permissions requested</span>
+        </div>
+        <label class="voice-label" for="voice-transcript">Transcript</label>
+        <textarea id="voice-transcript" class="builder-input voice-transcript" rows="3" placeholder="Recognized speech appears here — edit before running"></textarea>
+        <div class="voice-actions">
+          <button class="btn btn-outline" onclick="runVoiceText()">Generate from text</button>
+          <button class="btn btn-accent hidden" id="voice-confirm" onclick="confirmVoice()">Approve &amp; run</button>
+        </div>
+        <pre id="voice-script" class="voice-script hidden"></pre>
+      </div>
+
       <div id="workflow-result" class="hidden" style="margin-top:16px">
         <div class="section-header"><h2>Result</h2></div>
         <div class="card" id="workflow-output"></div>

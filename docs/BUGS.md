@@ -3048,3 +3048,9 @@ and `driver nics` reports their state. The kernel exposes a shared NIC
 inventory and real `net` text commands. These changes are covered by unit,
 integration and no_std build checks; no new RTL8169/PCnet/virtio-net
 real-hardware bring-up or QEMU runtime proof is claimed by this change.
+## Voice pipeline notes (2026-11-27)
+
+- Fixed: `EasyLangParser::parse_line` and `ScriptGenerator` validation treated the colon in `https://...` as a label separator. URLs in EasyLang commands now parse correctly; the `label: command` form is still validated.
+- Fixed: `SystemCommand::from_prompt` now accepts `notify: text` as well as `notify text` by trimming the label colon.
+- Known limitation: live microphone transcription requires either Whisper model files (`AIOS_WHISPER_MODEL` or `models/whisper`) or a configured Whisper-compatible HTTP endpoint (`AIOS_STT_URL`). Without either, the pipeline fails closed with `UnavailableSttEngine`; tests use `MockAudioSource` and `MockSttEngine`.
+- Known limitation: the guarded `aios` host calls are audit-only. They enforce capabilities and log requests but intentionally do not spawn real processes or perform network fetches.

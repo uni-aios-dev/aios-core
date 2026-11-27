@@ -1111,3 +1111,17 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
       hybrid ISO/IMG was built here (external tools missing).
 
 ## Historical Issues (Fixed)
+
+## Voice pipeline (2026-11-27)
+
+Completed:
+- `aios-voice` capture/STT/pipeline crate with mock-first testing.
+- EasyLang script generation with strict code-only validation and offline fallback.
+- Capability-checked WASM host calls and session ACL confirmation flow.
+- Bridge endpoints, `/ws/voice`, Studio mic panel and TUI AI Console voice markers.
+- Integration test from mock audio buffer to sandboxed WASM execution.
+
+Remaining:
+- Stream generated script diffs to clients before confirmation.
+- Add RU/EN keyword hints to the LLM system prompt for domain-specific workflows.
+- Extend host-call audit records into the telemetry store for long-term inspection.

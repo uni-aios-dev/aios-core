@@ -1,5 +1,6 @@
 use aios_security::capability::Capability;
 
+/// Derives the capabilities required by compiled workflows from their imports and exports.
 pub struct AutoManifestGenerator {
     capability_map: Vec<(&'static str, Capability)>,
 }
@@ -29,6 +30,9 @@ impl AutoManifestGenerator {
                 ("process_spawn", Capability::ProcessSpawn),
                 ("process_kill", Capability::ProcessKill),
                 ("system_config", Capability::SystemConfig),
+                ("net_check", Capability::NetConnect),
+                ("browse", Capability::NetConnect),
+                ("console_cmd", Capability::ProcessSpawn),
             ],
         }
     }
@@ -131,8 +135,22 @@ impl AutoManifestGenerator {
             if lower.contains("compact") || lower.contains("memory") {
                 push(Capability::MemAlloc);
             }
-            if lower.contains("net") || lower.contains("network") || lower.contains("connect") {
+            if lower.contains("net")
+                || lower.contains("network")
+                || lower.contains("connect")
+                || lower.contains("browse ")
+                || lower.ends_with("browse")
+                || lower.contains("http")
+                || lower.contains("url")
+            {
                 push(Capability::NetConnect);
+            }
+            if lower.contains("console")
+                || lower.contains("command")
+                || lower.contains("shell")
+                || lower.contains("terminal")
+            {
+                push(Capability::ProcessSpawn);
             }
             if lower.contains("bind") || lower.contains("listen") {
                 push(Capability::NetBind);

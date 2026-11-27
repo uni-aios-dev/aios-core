@@ -351,3 +351,18 @@ tr:hover td{background:var(--bg-hover)}
 }
 .user-name{font-size:13px;color:var(--text-primary);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #auth-logout{font-size:11px;padding:4px 8px}
+
+/* Voice Control */
+.voice-panel{margin-top:20px;padding:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius)}
+.voice-controls{display:flex;align-items:center;gap:12px;margin:12px 0}
+.voice-mic{display:flex;align-items:center;gap:8px;min-width:150px}
+.voice-mic.listening{background:var(--error);border-color:var(--error);animation:voice-pulse 1.2s infinite}
+@keyframes voice-pulse{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,.45)}50%{box-shadow:0 0 0 8px rgba(248,113,113,0)}}
+.voice-meter{flex:1;height:8px;background:var(--bg-input);border-radius:4px;overflow:hidden}
+.voice-meter-fill{height:100%;width:0;background:linear-gradient(90deg,var(--success),var(--warning),var(--error));transition:width .1s linear}
+.voice-hint{font-size:12px;color:var(--text-muted);flex-shrink:0}
+.voice-hint.voice-error{color:var(--error)}
+.voice-label{display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px}
+.voice-transcript{width:100%;resize:vertical;font-family:inherit}
+.voice-actions{display:flex;gap:8px;margin-top:10px}
+.voice-script{margin-top:12px;padding:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);font-family:Consolas,Monaco,monospace;font-size:12px;white-space:pre-wrap;color:var(--text-primary)}
