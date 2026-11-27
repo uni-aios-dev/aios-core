@@ -241,12 +241,13 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 > Примечание: `Module::deserialize` используется как быстрый путь для уже скомпилированных модулей; доверять можно только проверенным байтам.
 
-### 5.8 `aios-net` — сетевые блоки (5 файлов · ~1,4 тыс. строк · 51 тест)
+### 5.8 `aios-net` — сетевые блоки (6 файлов · ~1,7 тыс. строк · 57 тестов)
 
 | Функция / Тип | Назначение |
 |---|---|
 | `RealTcpBlock::{start_listening,connect,send,receive,accept_pending,close_connection}` | Реальные сокеты, SO_REUSEADDR/KEEPALIVE/NODELAY, bind/connect через токены |
 | `RealUdpBlock::{bind,send_to,receive_from,broadcast,port}` | Реальный UDP, включая SO_BROADCAST |
+| `icmp::{ping,resolve_ipv4,build_echo_request,parse_echo_reply,internet_checksum}` + `IcmpReply` / `PingReport` | Реальный ICMPv4 echo в Windows (`IcmpSendEcho`) и Unix (ICMP-датграмный/raw-сокет), контрольная сумма и сопоставление identifier/sequence, отчёт RTT/TTL/потерь |
 | `TcpBlock/UdpBlock` (+конфиги/состояния) | Симулируемые транспорты для детерминированных тестов |
 | `inject_message/inject_packet` | Тестовые хуки |
 
@@ -292,12 +293,14 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `DriverStore/DriverIndex` | Постоянный кэш в `AIOS://store/drivers/`, счётчики отказов |
 | `ui_tui::HardwareInspector` / `ui_gui::HardwarePanel::show` | Виджеты с паритетом TUI/GUI |
 
-### 7.2 `aios-vfs` + `aios-fm` — виртуальная ФС и файловый менеджер (12 файлов · ~3,3 тыс. строк · 47 тестов)
+### 7.2 `aios-vfs` + `aios-fm` — виртуальная ФС и файловый менеджер (12 файлов · ~3,5 тыс. строк · 53 теста)
 
 | Функция / Тип | Назначение |
 |---|---|
 | `VfsPath::parse()/to_uri()/join()` | Схемы `AIOS://` и `HOST://` |
 | `AiosVfs` / `HostVfs` | Изолированные корни (`/system`,`/sandbox`,`/store`,`/config`) / хост-ФС за ACL-токенами |
+| `PathScope::{parse,aios,host,contains}` / `PathAclRule` / `PathAcl::{grant,revoke,check,require,rules}` | Права `vfs:read` / `vfs:write` по путям; побеждает самая специфичная область, запрет на потомке перекрывает разрешение на родителе |
+| `AiosVfs::with_path_acl()` / `path_acl()` | Общий ACL, проверяемый после `canonicalize_inside` при каждой операции чтения/записи |
 | `VirtualFileSystem::resolve()/canonicalize_inside()` | Проверка ACL + каноникализация против traversal |
 | `{copy_recursive,move_item,delete_item}` | Отменяемые асинхронные операции с прогрессом |
 | `analyze_file()` | Эвристики «умного» предпросмотра |
@@ -348,6 +351,8 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `HostBackend` / `KernelBackend` / `UnavailableBackend` | Хост-процессы, ядерная консоль и корректный фолбэк |
 | `CommandOutput` | Структурированный вывод, общий для фронтендов |
 | `JobControl` / `FileManagerControl` / `net_text` | Задачи, команды ФМ и совместимый с `no_std` разбор сетевых команд |
+| `PingControl` / `PingReplyInfo` / `PingReportInfo` / `IcmpPingControl` | Реальный ICMP-echo адаптер и форма отчёта для `console ping`, подменяемый в тестах |
+| `HostBackend::acl_command` / `ping_command` / `set_path_acl` / `set_ping_control` | Правила path ACL и вывод ICMP echo на хосте с общими/тестовыми точками внедрения |
 
 ### 7.8 `aios-shell` — адаптер shell (1 файл · ~1,8 тыс. строк · 12 тестов)
 

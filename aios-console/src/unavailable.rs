@@ -14,12 +14,6 @@ pub fn host_unavailable_reason(command_id: &str, subcommand: Option<&str>) -> Op
         ("jobs", _) | ("fg", _) | ("bg", _) => Some(
             "aios-process-mgr has no job control: no OS process groups, signals or TTY foreground",
         ),
-        ("acl", _) => Some(
-            "no path-scoped ACL API: AclContext grants are process-global tokens and caps tokens are keyed by block ID",
-        ),
-        ("ping", _) => Some(
-            "aios-net has no ICMP reachability API; raw sockets need CAP_NET_RAW and TCP connect is not an echo reply",
-        ),
         ("fm", _) => Some(
             "the aios host owns no live FileManager; transfer cancellation needs a host-injected control surface",
         ),
@@ -37,8 +31,6 @@ mod tests {
             ("jobs", None, "no job control"),
             ("fg", None, "no job control"),
             ("bg", None, "no job control"),
-            ("acl", Some("grant"), "no path-scoped ACL API"),
-            ("ping", None, "no ICMP reachability API"),
             ("fm", Some("cancel"), "owns no live FileManager"),
         ];
         for (command, subcommand, fragment) in cases {
@@ -53,6 +45,8 @@ mod tests {
         assert_eq!(host_unavailable_reason("block", Some("swap")), None);
         assert_eq!(host_unavailable_reason("net", Some("show")), None);
         assert_eq!(host_unavailable_reason("net", Some("recheck")), None);
+        assert_eq!(host_unavailable_reason("acl", Some("grant")), None);
+        assert_eq!(host_unavailable_reason("ping", None), None);
         assert_eq!(host_unavailable_reason("state", Some("extract")), None);
         assert_eq!(host_unavailable_reason("unknown", None), None);
     }

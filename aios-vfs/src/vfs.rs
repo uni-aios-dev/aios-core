@@ -1,10 +1,11 @@
 use crate::error::{AIOSException, Result};
 use crate::security::{
-    canonicalize_inside, normalize_virtual_path, path_file_name, path_parent, AclContext,
-    HOST_READ_CAP, HOST_WRITE_CAP,
+    canonicalize_inside, normalize_virtual_path, path_file_name, path_parent, AclContext, PathAcl,
+    PathScope, HOST_READ_CAP, HOST_WRITE_CAP, VFS_READ_CAP, VFS_WRITE_CAP,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
@@ -218,14 +219,20 @@ pub trait VirtualFileSystem: Send + Sync {
 pub struct AiosVfs {
     root: PathBuf,
     acl: AclContext,
+    path_acl: Arc<PathAcl>,
 }
 
 impl AiosVfs {
     const SUBDIRS: [&'static str; 4] = ["system", "sandbox", "store", "config"];
 
-    /// Create (or re-open) the sandbox under `root`, creating the standard
-    /// subdirectories. `root` is canonicalized so escape checks are exact.
+    /// Create (or re-open) the sandbox under `root` with an empty path policy.
     pub fn new(root: PathBuf) -> Result<Self> {
+        Self::with_path_acl(root, Arc::new(PathAcl::new()))
+    }
+
+    /// Create a sandbox sharing `path_acl` with the host console or file
+    /// manager, so grants and revocations take effect on the next operation.
+    pub fn with_path_acl(root: PathBuf, path_acl: Arc<PathAcl>) -> Result<Self> {
         std::fs::create_dir_all(&root)
             .map_err(|e| AIOSException::Generic(format!("create sandbox root failed: {e}")))?;
         for sub in Self::SUBDIRS {
@@ -239,6 +246,7 @@ impl AiosVfs {
         Ok(Self {
             root: canonical,
             acl: AclContext::new(),
+            path_acl,
         })
     }
 
@@ -247,7 +255,12 @@ impl AiosVfs {
         &self.root
     }
 
-    async fn require_aios_path(&self, path: &VfsPath) -> Result<PathBuf> {
+    /// Shared path-scoped ACL consulted after canonicalization.
+    pub fn path_acl(&self) -> &Arc<PathAcl> {
+        &self.path_acl
+    }
+
+    async fn require_aios_path(&self, path: &VfsPath, right: &str) -> Result<PathBuf> {
         if path.scheme != VfsScheme::Aios {
             return Err(AIOSException::InvalidPayload(format!(
                 "path '{}' does not belong to the AIOS scheme",
@@ -258,7 +271,11 @@ impl AiosVfs {
         for seg in path.path.split('/').filter(|s| !s.is_empty()) {
             full.push(seg);
         }
-        canonicalize_inside(&self.root, &full)
+        let full = canonicalize_inside(&self.root, &full)?;
+        let relative = full.strip_prefix(&self.root).unwrap_or(&full);
+        let scope = PathScope::aios(&format!("/{}", relative.to_string_lossy()));
+        self.path_acl.require(right, &scope)?;
+        Ok(full)
     }
 }
 
@@ -273,7 +290,7 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn list_dir(&self, dir: &VfsPath) -> Result<Vec<VfsEntry>> {
-        let full = self.require_aios_path(dir).await?;
+        let full = self.require_aios_path(dir, VFS_READ_CAP).await?;
         let mut out = Vec::new();
         let mut rd = tokio::fs::read_dir(&full).await.map_err(|e| {
             AIOSException::Generic(format!("read_dir '{}' failed: {e}", full.display()))
@@ -305,7 +322,7 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn metadata(&self, path: &VfsPath) -> Result<VfsMetadata> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_READ_CAP).await?;
         let md = tokio::fs::metadata(&full).await.map_err(|e| {
             AIOSException::Generic(format!("metadata '{}' failed: {e}", full.display()))
         })?;
@@ -313,14 +330,14 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn read_file(&self, path: &VfsPath) -> Result<Vec<u8>> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_READ_CAP).await?;
         tokio::fs::read(&full)
             .await
             .map_err(|e| AIOSException::Generic(format!("read '{}' failed: {e}", full.display())))
     }
 
     async fn write_file(&self, path: &VfsPath, data: &[u8]) -> Result<()> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_WRITE_CAP).await?;
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -332,19 +349,19 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn atomic_write(&self, path: &VfsPath, data: &[u8]) -> Result<()> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_WRITE_CAP).await?;
         atomic_write_impl(&full, data).await
     }
 
     async fn create_dir(&self, path: &VfsPath) -> Result<()> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_WRITE_CAP).await?;
         tokio::fs::create_dir_all(&full).await.map_err(|e| {
             AIOSException::Generic(format!("create_dir '{}' failed: {e}", full.display()))
         })
     }
 
     async fn delete_item(&self, path: &VfsPath) -> Result<()> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_WRITE_CAP).await?;
         let md = tokio::fs::metadata(&full)
             .await
             .map_err(|e| AIOSException::Generic(format!("metadata failed: {e}")))?;
@@ -360,20 +377,20 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<()> {
-        let from_full = self.require_aios_path(from).await?;
-        let to_full = self.require_aios_path(to).await?;
+        let from_full = self.require_aios_path(from, VFS_WRITE_CAP).await?;
+        let to_full = self.require_aios_path(to, VFS_WRITE_CAP).await?;
         tokio::fs::rename(&from_full, &to_full)
             .await
             .map_err(|e| AIOSException::Generic(format!("rename failed: {e}")))
     }
 
     async fn exists(&self, path: &VfsPath) -> Result<bool> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_READ_CAP).await?;
         Ok(full.exists())
     }
 
     async fn open_read(&self, path: &VfsPath) -> Result<Box<dyn AsyncRead + Send + Unpin>> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_READ_CAP).await?;
         let f = tokio::fs::File::open(&full).await.map_err(|e| {
             AIOSException::Generic(format!("open '{}' failed: {e}", full.display()))
         })?;
@@ -381,7 +398,7 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn open_write(&self, path: &VfsPath) -> Result<Box<dyn AsyncWrite + Send + Unpin>> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_WRITE_CAP).await?;
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -394,7 +411,7 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn open_seek(&self, path: &VfsPath) -> Result<Box<dyn AsyncSeekReader + Send + Unpin>> {
-        let full = self.require_aios_path(path).await?;
+        let full = self.require_aios_path(path, VFS_READ_CAP).await?;
         let f = tokio::fs::File::open(&full).await.map_err(|e| {
             AIOSException::Generic(format!("open '{}' failed: {e}", full.display()))
         })?;
@@ -402,7 +419,7 @@ impl VirtualFileSystem for AiosVfs {
     }
 
     async fn resolve(&self, path: &VfsPath) -> Result<PathBuf> {
-        self.require_aios_path(path).await
+        self.require_aios_path(path, VFS_READ_CAP).await
     }
 }
 
@@ -799,5 +816,37 @@ mod tests {
         let vfs = AiosVfs::new(dir.path().to_path_buf()).unwrap();
         let evil = VfsPath::parse("AIOS:///sandbox/../../../etc/passwd").unwrap();
         assert!(vfs.read_file(&evil).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_aios_path_acl_enforces_every_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let acl = Arc::new(PathAcl::new());
+        let vfs = AiosVfs::with_path_acl(dir.path().to_path_buf(), Arc::clone(&acl)).unwrap();
+        let file = VfsPath::parse("AIOS:///sandbox/note.txt").unwrap();
+        let sandbox = PathScope::aios("/sandbox");
+
+        acl.grant(VFS_READ_CAP, &sandbox).unwrap();
+        acl.grant(VFS_WRITE_CAP, &sandbox).unwrap();
+        vfs.write_file(&file, b"data").await.unwrap();
+        assert_eq!(vfs.read_file(&file).await.unwrap(), b"data");
+        assert!(vfs
+            .list_dir(&VfsPath::parse("AIOS:///sandbox").unwrap())
+            .await
+            .is_ok());
+
+        acl.revoke(VFS_READ_CAP, &PathScope::aios("/sandbox/note.txt"))
+            .unwrap();
+        assert!(vfs.read_file(&file).await.is_err());
+        assert!(vfs.exists(&file).await.is_err());
+        assert!(vfs.write_file(&file, b"new").await.is_ok());
+
+        acl.revoke(VFS_WRITE_CAP, &sandbox).unwrap();
+        assert!(vfs.write_file(&file, b"blocked").await.is_err());
+        acl.grant(VFS_WRITE_CAP, &PathScope::aios("/sandbox/note.txt"))
+            .unwrap();
+        assert!(vfs.write_file(&file, b"allowed").await.is_ok());
+        assert_eq!(acl.rules().len(), 4);
+        assert!(Arc::ptr_eq(vfs.path_acl(), &acl));
     }
 }

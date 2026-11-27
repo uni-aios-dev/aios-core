@@ -268,16 +268,20 @@ rt-deadline|rt-clear`, `net validate|config|status|apply|lease`,
 `main`, поэтому канонические `console jobs`/`fg <id>`/`bg <id>` реальны. Без
 внедрённого адаптера эти команды по-прежнему возвращают `unavailable`.
 
-`aios-console/src/unavailable.rs` хранит точную причину для каждой зарегистрированной
-команды без реального хостового API, поэтому `ERR unavailable` называет недостающую
-возможность, а не только сообщает "нет хостового бэкенда": `jobs|fg|bg` требуют
-таблицу заданий, принадлежащую фронтенду, с OS-группами процессов, сигналами и
-foreground TTY, которых нет в `aios-process-mgr` (адаптер `JobControl` предоставляет
-её в `aios-shell`);
-у `acl grant|revoke` нет API ACL для путей, поскольку гранты `AclContext` —
-глобальные токены процесса, а токены `caps` привязаны к block ID; `ping` требует
-ICMP-API и привилегий raw-сокета (`CAP_NET_RAW`), а TCP connect не является
-эхо-ответом. Хостовые `net recheck`, `net apply` и `net adapters` теперь реальны:
+`aios-console/src/unavailable.rs` хранит точную причину для зарегистрированных
+команд, у которых всё ещё нет реального хостового API, поэтому `ERR unavailable`
+называет недостающую возможность, а не только сообщает "нет хостового бэкенда":
+`jobs|fg|bg` требуют таблицу заданий, принадлежащую фронтенду, с OS-группами
+процессов, сигналами и foreground TTY, которых нет в `aios-process-mgr` (адаптер
+`JobControl` предоставляет её в `aios-shell`). `acl grant|revoke` и `ping` теперь
+реальны: `aios-vfs` предоставляет path-scoped `PathAcl`, который `AiosVfs`
+проверяет после каноникализации, а `aios-net::icmp::ping` отправляет настоящие
+ICMPv4 echo-запросы (`IcmpSendEcho` в Windows, ICMP-датграмный/raw-сокет в Unix)
+и сопоставляет ответы по identifier, sequence и контрольной сумме. `HostBackend`
+делит один `PathAcl` с `open_vfs`, поэтому гранты консоли влияют на ту же политику,
+которую проверяет `vfs`, а для ping используется `IcmpPingControl` по умолчанию —
+тесты подменяют его адаптером-заглушкой. Хостовые `net recheck`, `net apply` и
+`net adapters` теперь реальны:
 `NetManager` запрашивает ОС (`netsh` в Windows, `ip addr` в Linux), обновляет
 кэшированное состояние link/lease и выводит реальные строки адаптеров, а
 `net apply` сохраняет конфиг перед этой проверкой. Хостовые команды без
@@ -1357,13 +1361,14 @@ User Input (TUI)
 
 ## Сетевой стек (`aios-net`)
 
-- **Крейт**: `aios-net` v1.0.0 — TCP/UDP блоки для сетевого взаимодействия
+- **Крейт**: `aios-net` v1.0.0 — TCP/UDP блоки и ICMP-проверка доступности для сетевого взаимодействия
 - **TCP** (`tcp.rs`): `TcpBlock`, `TcpConfig`, `TcpConnection`, `TcpMessage`, `TcpState` — mock state machine
 - **Real TCP** (`real_tcp.rs`): `RealTcpBlock` — реальные `std::net::TcpListener`/`TcpStream` с неблокирующим accept, управлением соединениями, отправкой/получением, опциональным enforcement `CapabilityToken` (`CAP_NET_BIND` для `start_listening()`, `CAP_NET_CONNECT` для `connect()`)
 - **UDP** (`udp.rs`): `UdpBlock`, `UdpConfig`, `UdpPacket`, `UdpState` — mock state machine
 - **Real UDP** (`real_udp.rs`): `RealUdpBlock` — реальный `std::net::UdpSocket` с `bind()`, неблокирующим `send_to()`/`receive_from()`, broadcast через `SO_BROADCAST`
+- **ICMP** (`icmp.rs`): `ping(host, count, timeout)` отправляет настоящие ICMPv4 echo-запросы (`IcmpSendEcho` в Windows, ICMP-датграмный/raw-сокет в Unix), проверяет контрольную сумму и identifier/sequence ответа и возвращает `PingReport` с RTT, TTL, размером и процентом потерь для каждого ответа; IPv6-адреса явно отклоняются
 - Отслеживание соединений, отправка/получение через каналы, широковещание, статистика
-- 40 тестов для mock + реального жизненного цикла TCP/UDP
+- 57 тестов для mock + реального жизненного цикла TCP/UDP и ICMP echo/разбора/резолва
 
 ---
 
@@ -1384,11 +1389,11 @@ User Input (TUI)
 - **Крейт**: `aios-vfs` v1.0.0 — асинхронная VFS со схемами адресации, песочница для файлового менеджера.
 - **Схемы**: `VfsScheme::{AIOS, HOST}`; `VfsPath` разбирает пути URI-стиля (`AIOS:///sandbox`, `HOST:///C:/...`) и даёт `parent()`, `join()`, `file_name()`, `to_uri()`.
 - **Трейт** `VirtualFileSystem` (асинхронный, `tokio::fs`): `list`, `read`, `write`, `create_dir`, `delete`, `rename`, `exists`, `metadata`, `open_seek`. `open_seek` возвращает `Box<dyn AsyncSeekReader + Send + Unpin>`, где `AsyncSeekReader = AsyncRead + AsyncSeek` (используется для AI-превью).
-- **Реализации**: `AiosVfs` (песочница в локальной папке с проверкой `canonicalize_inside`) и `HostVfs` (реальные пути хоста, чтение/запись ограничены ACL-токенами `vfs:host:read` / `vfs:host:write`).
+- **Реализации**: `AiosVfs` (песочница в локальной папке с проверкой `canonicalize_inside` и общим ACL путей через `with_path_acl()`) и `HostVfs` (реальные пути хоста, чтение/запись ограничены ACL-токенами `vfs:host:read` / `vfs:host:write`).
 - **Операции** (`operations.rs`): `Progress` (атомарные счётчики байтов/файлов, `fraction()`, `pressure_fraction()`), `CancellationToken`, `total_bytes`, `copy_recursive`, `move_item`, `delete_item`, `read_head`, `read_at`.
-- **Безопасность** (`security.rs`): `AclContext` — потокобезопасный набор capability-токенов (`Mutex<HashSet>`); `canonicalize_inside(root, path)`.
+- **Безопасность** (`security.rs`): `AclContext` — потокобезопасный набор capability-токенов (`Mutex<HashSet>`); `PathScope` (схема + нормализованный путь), `PathAclRule` и `PathAcl` с `grant`/`revoke`/`check`/`require`/`rules` для прав `vfs:read` и `vfs:write`; побеждает самая специфичная область, а запрет на потомке перекрывает разрешение на родителе. `AiosVfs` проверяет общий ACL после `canonicalize_inside(root, path)` при каждой операции чтения/записи.
 - **AI-превью** (`ai_preview.rs`): `analyze_file(name, head)` → `AiPreview { title, headline, lines: Vec<(AiLineKind, String)> }`; разбирает WASM name-section, находит паники в логах, даёт подсказки по исходникам.
-- 29 модульных тестов (отмена, байты WASM name-section, проверка путей, copy/move/delete, превью).
+- 35 модульных тестов (отмена, байты WASM name-section, проверка путей, старшинство и применение ACL путей, copy/move/delete, превью).
 
 ## Файловый менеджер (`aios-fm`) — v2.10.0
 

@@ -17,6 +17,7 @@ std = [
     "dep:aios-block-mgr",
     "dep:aios-process-mgr",
     "dep:aios-net-config",
+    "dep:aios-net",
     "dep:aios-store",
     "dep:aios-vfs",
     "dep:aios-debug",
@@ -47,6 +48,7 @@ aios-live-update = { path = "../aios-live-update", optional = true }
 aios-block-mgr = { path = "../aios-block-mgr", optional = true }
 aios-process-mgr = { path = "../aios-process-mgr", optional = true }
 aios-net-config = { path = "../aios-net-config", optional = true }
+aios-net = { path = "../aios-net", optional = true }
 aios-store = { path = "../aios-store", optional = true }
 aios-vfs = { path = "../aios-vfs", optional = true }
 aios-debug = { path = "../aios-debug", optional = true }

@@ -82,6 +82,58 @@ pub trait JobControl: Send + Sync {
     fn bg(&self, id: usize) -> Result<ShellJobInfo, String>;
 }
 
+/// One ICMP echo reply reduced to the console's text contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PingReplyInfo {
+    /// Echo sequence number.
+    pub sequence: u16,
+    /// Time-to-live reported by the platform, or `0` when unavailable.
+    pub ttl: u8,
+    /// Payload bytes reported by the platform.
+    pub bytes: usize,
+    /// Round-trip time in milliseconds.
+    pub rtt_ms: f64,
+}
+
+/// Structured outcome of one ICMP echo run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PingReportInfo {
+    /// Host argument as supplied by the caller.
+    pub host: String,
+    /// Resolved IPv4 address.
+    pub address: String,
+    /// Echo requests sent.
+    pub transmitted: u32,
+    /// Matching echo replies received.
+    pub received: u32,
+    /// Mean round-trip time in milliseconds, when any reply arrived.
+    pub avg_rtt_ms: Option<f64>,
+    /// Minimum round-trip time in milliseconds, when any reply arrived.
+    pub min_rtt_ms: Option<f64>,
+    /// Maximum round-trip time in milliseconds, when any reply arrived.
+    pub max_rtt_ms: Option<f64>,
+    /// Percentage of requests without a reply.
+    pub packet_loss_percent: f64,
+    /// Replies in arrival order.
+    pub replies: Vec<PingReplyInfo>,
+}
+
+impl PingReportInfo {
+    /// Payload size reported by the first reply.
+    pub fn payload_bytes(&self) -> usize {
+        self.replies.first().map(|reply| reply.bytes).unwrap_or(0)
+    }
+}
+
+/// Control surface for real ICMP echo owned by the host network library.
+///
+/// Implementations must send echo requests and wait for matching replies;
+/// TCP connect or cached link state is not a valid implementation.
+pub trait PingControl: Send + Sync {
+    /// Probe `host` with `count` echo requests and a per-request timeout.
+    fn probe(&self, host: &str, count: u32, timeout_ms: u64) -> Result<PingReportInfo, String>;
+}
+
 /// Authentication surface for bridge users owned by the host orchestrator.
 pub trait AuthProvider: Send + Sync {
     /// Registers a user and returns a bearer token.

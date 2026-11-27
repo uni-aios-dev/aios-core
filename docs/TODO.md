@@ -246,15 +246,16 @@
 - [x] Document the exact blocker for the host-unavailable `ERR unavailable`
   commands in `aios-console/src/unavailable.rs` and the EN/RU docs. Investigation
   confirmed they are NOT missing adapters: `jobs|fg|bg` need a host-owned job
-  table with OS process groups, signals and TTY foreground; `acl` needs a path-scoped ACL API (existing
-  `AclContext` grants are global and `caps` tokens are block-keyed); `ping` needs
+  table with OS process groups, signals and TTY foreground; `acl` needed a path-scoped ACL API (existing
+  `AclContext` grants are global and `caps` tokens are block-keyed); `ping` needed
   ICMP with raw-socket privileges; `state` needs live `StatefulBlock` handles in
   `BlockRegistry`; `fm` needs a live host `FileManager`. None can be faked.
   `net recheck` is no longer unavailable: the kernel calls `crate::net::recheck()`
   and the host calls `NetManager::recheck()` for fresh link I/O. `fm` is real via
   an injected `FileManagerControl` seam, `jobs|fg|bg` is real via an injected
-  `JobControl` seam in `aios-shell`, and `state` is real over the live WASM
-  executor's linear memory (see below).
+  `JobControl` seam in `aios-shell`, `state` is real over the live WASM
+  executor's linear memory, and `acl`/`ping` are now real over `PathAcl` and
+  `aios-net::icmp` (see below).
 - [x] Add a `console <command> [args]` escape hatch to the standalone
   `aios-shell`: `main` owns one `HostBackend`, `console_prefix` detects the
   prefix case-insensitively before alias expansion, and bare `console` prints
@@ -337,23 +338,18 @@
   `aios-wasm` tests cover the round trip and the failure modes; a host contract
   test covers usage, missing block/snapshot and extract/restore text. The
   `unavailable` reason table and EN/RU docs were updated.
-- [ ] Implement the remaining host-side APIs before re-enabling those commands;
-  do not alias them to `caps`, TCP connect or cached network status. A fresh audit
-  found no real backing API in the workspace, so these commands stay honestly
-  `unavailable` until the concrete missing pieces exist:
-  - `acl grant|revoke <cap> <path>` needs a path-aware ACL store (principal,
-    normalized `PathScope`, right, grant/revoke/check/list) and an enforcement hook
-    in `aios-vfs` after path canonicalization. `AclContext` is a process-global
-    token set with no path dimension; `AccessControlLayer` tokens are keyed by
-    block ID; `aios-core::filesystem::FilePermissions` is an unused in-memory map
-    with no principal, no prefix matching and no effect on `HOST://` I/O.
-  - `ping <host>` needs a host ICMP reachability API: hostname resolution, echo
-    request construction, identifier/sequence correlation, timeout, `Instant`-based
-    RTT and a structured reply summary, plus raw-socket/ICMP privileges
-    (`CAP_NET_RAW` or unprivileged ICMP sockets). `aios-net` has only TCP/UDP;
-    TCP connect is not an echo reply. Delegating to an OS `ping` binary would need
-    a real adapter with privilege/error handling and output parsing, which does
-    not exist yet.
+- [x] Implement the remaining host-side APIs instead of aliasing them to `caps`,
+  TCP connect or cached network status:
+  - [x] `acl grant|revoke <cap> <path>` now uses `aios-vfs::security::PathAcl`
+    (normalized `PathScope`, right, grant/revoke/check/rules) with an enforcement
+    hook in `AiosVfs` after `canonicalize_inside`. `HostBackend` shares one policy
+    with `vfs` via `set_path_acl()`. `AclContext` and `AccessControlLayer` are not
+    reused because they have no path dimension / are keyed by block ID.
+  - [x] `ping <host>` now uses `aios-net::icmp::ping`: IPv4 resolution, echo
+    request with RFC 1071 checksum, identifier/sequence correlation, 1..16
+    requests, 1 ms..60 s timeout, `Instant`-based RTT and a structured report.
+    Windows uses `IcmpSendEcho`, Unix an ICMP datagram/raw socket; no TCP connect
+    or delegated OS `ping` binary.
   - [x] host `net recheck` is now backed by `NetManager::recheck()`, which
     performs fresh link I/O, refreshes the cached link/lease verdict and reports
     the probe result. `net apply` persists the config before rechecking, and

@@ -235,8 +235,6 @@ commands still report `ERR unavailable`, but with a concrete reason from
 | Command | Why it is unavailable |
 |---------|-----------------------|
 | `jobs`, `fg`, `bg` | no host-owned job table with OS process groups, signals or TTY foreground in `aios-process-mgr` (`JobControl` supplies it in `aios-shell`) |
-| `acl` | no path-scoped ACL API; `AclContext` grants are global tokens, `caps` uses block IDs |
-| `ping` | no ICMP API or raw-socket privilege; TCP connect is not an echo reply |
 
 The table is host-only and describes a `HostBackend` with no injected control
 seams. `console fm jobs` and `console fm cancel <id>` become real as soon as a
@@ -256,6 +254,19 @@ kernel backend uses the same `net` command names over its own settings; its
 
 The generic `has no host backend yet` message is kept only for commands outside
 this investigated set.
+
+`console acl grant|revoke <cap> <path>` is real on a host: it stores a
+path-scoped rule in `aios-vfs::security::PathAcl` (rights `vfs:read` /
+`vfs:write`, `AIOS://` / `HOST://` schemes or an absolute `AIOS://` path) that
+`AiosVfs` enforces after canonicalization; the console prints the rule count and
+the sorted policy, so a child revocation overrides a parent grant. Before the
+first rule for a right that right stays open, and `HostBackend` shares one
+`PathAcl` with `vfs`. `console ping <host>` is real too: `aios-net::icmp::ping`
+sends ICMPv4 echo requests (Windows `IcmpSendEcho`, Unix ICMP datagram/raw
+socket) and prints `PING <host> (<addr>): N data bytes`, one line per reply,
+`X packets transmitted, Y received, Z% packet loss` and, when replies arrive,
+`round-trip min/avg/max = ... ms`. It accepts 1..16 requests and a 1 ms..60 s
+timeout; IPv6 hosts and a missing ICMP socket are reported as backend errors.
 
 `metrics` prints a counter snapshot built from real runtime state; pass `--json`
 for a structured object or `--prometheus` for the exposition text format.

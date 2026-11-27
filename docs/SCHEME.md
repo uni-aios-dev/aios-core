@@ -239,12 +239,13 @@ Modules: `bus`, `channel`, `ring_transport`.
 
 > Note: `Module::deserialize` is used as a fast path for pre-compiled modules; only trusted bytes must reach it.
 
-### 5.8 `aios-net` — network blocks (5 files · ~1.4k lines · 51 tests)
+### 5.8 `aios-net` — network blocks (6 files · ~1.7k lines · 57 tests)
 
 | Function / Type | Purpose |
 |---|---|
 | `RealTcpBlock::{start_listening,connect,send,receive,accept_pending,close_connection}` | Real sockets, SO_REUSEADDR/KEEPALIVE/NODELAY, capability-gated bind/connect |
 | `RealUdpBlock::{bind,send_to,receive_from,broadcast,port}` | Real UDP incl. SO_BROADCAST |
+| `icmp::{ping,resolve_ipv4,build_echo_request,parse_echo_reply,internet_checksum}` + `IcmpReply` / `PingReport` | Real ICMPv4 echo on Windows (`IcmpSendEcho`) and Unix (ICMP datagram/raw socket), checksum + identifier/sequence correlation, RTT/TTL/loss report |
 | `TcpBlock/UdpBlock` (+configs/states) | Simulated transports for deterministic tests |
 | `inject_message/inject_packet` | Test hooks |
 
@@ -290,12 +291,14 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 | `DriverStore/DriverIndex` | Persistent cache at `AIOS://store/drivers/`, failure counters |
 | `ui_tui::HardwareInspector` / `ui_gui::HardwarePanel::show` | TUI/GUI parity widgets |
 
-### 7.2 `aios-vfs` + `aios-fm` — virtual FS & file manager (12 files · ~3.3k lines · 47 tests)
+### 7.2 `aios-vfs` + `aios-fm` — virtual FS & file manager (12 files · ~3.5k lines · 53 tests)
 
 | Function / Type | Purpose |
 |---|---|
 | `VfsPath::parse()/to_uri()/join()` | `AIOS://` and `HOST://` schemes |
 | `AiosVfs` / `HostVfs` | Sandboxed roots (`/system`,`/sandbox`,`/store`,`/config`) / ACL-tokened host FS |
+| `PathScope::{parse,aios,host,contains}` / `PathAclRule` / `PathAcl::{grant,revoke,check,require,rules}` | Path-scoped `vfs:read` / `vfs:write` rights; most specific scope wins, child revocation overrides parent grant |
+| `AiosVfs::with_path_acl()` / `path_acl()` | Shared ACL enforced after `canonicalize_inside` on every read/write operation |
 | `VirtualFileSystem::resolve()/canonicalize_inside()` | ACL check + anti-traversal canonicalization |
 | `{copy_recursive,move_item,delete_item}` | Cancellable async bulk ops with progress |
 | `analyze_file()` | AI preview heuristics |
@@ -346,6 +349,8 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 | `HostBackend` / `KernelBackend` / `UnavailableBackend` | Host process, kernel console and graceful fallback implementations |
 | `CommandOutput` | Structured output shared by all frontends |
 | `JobControl` / `FileManagerControl` / `net_text` | Jobs, FM commands and `no_std`-compatible network text parsing |
+| `PingControl` / `PingReplyInfo` / `PingReportInfo` / `IcmpPingControl` | Real ICMP echo seam and report shape for `console ping`, mockable in tests |
+| `HostBackend::acl_command` / `ping_command` / `set_path_acl` / `set_ping_control` | Path-ACL rules and ICMP echo output on the host, with shared/test seams |
 
 ### 7.8 `aios-shell` — shell adapter (1 file · ~1.8k lines · 12 tests)
 

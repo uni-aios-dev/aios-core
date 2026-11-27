@@ -1,5 +1,35 @@
 # AIOS Development Log
 
+## Unreleased — path-scoped ACL and real ICMP ping (2026-11-27)
+
+### Added
+- `aios-vfs::security` adds `VFS_READ_CAP` / `VFS_WRITE_CAP`, `PathScope`,
+  `PathAclRule` and `PathAcl` with `grant` / `revoke` / `check` / `require` /
+  `rules`. `AiosVfs::with_path_acl()` shares one policy with the host and
+  enforces it after `canonicalize_inside` on every read/write operation; with no
+  rule for a right that right stays open, and the most specific matching scope
+  wins (a child revocation overrides a parent grant).
+- `aios-net::icmp` adds a real ICMPv4 `ping()`: RFC 1071 checksum, echo request
+  builder, validated reply parsing, IPv4 resolution, `Instant`-based RTT and a
+  `PingReport` with TTL, bytes and packet loss. Windows uses `IcmpSendEcho`,
+  Unix uses an ICMP datagram socket with a raw-socket fallback; IPv6 is rejected
+  explicitly instead of being faked by a TCP connect.
+- `aios-console` gains `PingControl`, `PingReplyInfo` and `PingReportInfo` in
+  `control.rs`. `HostBackend` implements `console acl grant|revoke <cap> <path>`
+  over a shared `PathAcl` and `console ping <host>` over the default
+  `IcmpPingControl`; `set_path_acl()` and `set_ping_control()` are injection
+  seams used by tests.
+
+### Changed
+- `acl` and `ping` are no longer listed as unavailable: `unavailable.rs` now
+  explains only `jobs|fg|bg` (no injected `JobControl`) and `fm` (no injected
+  `FileManagerControl`).
+
+### Verified
+- `aios-vfs` 35 tests, `aios-net` 57 tests and 71 `aios-console` host tests pass;
+  `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace` are green.
+
 ## Unreleased — ring-0 page-fault diagnostics (2026-11-26)
 
 ### Added

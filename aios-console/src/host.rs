@@ -33,6 +33,7 @@ use aios_iommu::IommuInfo;
 use aios_ipc::bus::IpcBus;
 use aios_live_update::cow_live_update::PersistedLiveUpdateEngine;
 use aios_mpk::mpk::MpkManager;
+use aios_net::icmp::{self, DEFAULT_COUNT, DEFAULT_TIMEOUT};
 use aios_net_config::block::NetSettingsBlock;
 use aios_net_config::config::NetworkConfig;
 use aios_process_mgr::scheduler::{Scheduler, SchedulingMode};
@@ -48,6 +49,7 @@ use aios_sys_control::net_manager::{NetManager, SimulatedWifi, WifiBackend};
 use aios_sys_control::SysControlHub;
 use aios_tee::TeeInfo;
 use aios_telemetry::trace::{SpanStatus, TraceContext};
+use aios_vfs::security::{PathAcl, PathScope};
 use aios_vfs::vfs::{AiosVfs, VfsPath, VirtualFileSystem};
 use aios_wasm::executor::BlockExecutor;
 use aios_wasm::{IsolationConfig, SandboxConfig, WasiFilter, WasmBlock, WasmSandbox};
@@ -58,7 +60,8 @@ use sha2::{Digest, Sha256};
 use crate::backend::{dispatch, CommandBackend};
 use crate::capability::{BackendKind, CapabilitySet};
 use crate::control::{
-    AuthProvider, BridgeControl, FileManagerControl, JobControl, WatchdogControl,
+    AuthProvider, BridgeControl, FileManagerControl, JobControl, PingControl, PingReplyInfo,
+    PingReportInfo, WatchdogControl,
 };
 use crate::output::{CommandOutput, ExitCode, OutputControl};
 use crate::registry::{help, Invocation};
@@ -69,6 +72,10 @@ const NET_BLOCK_ID: u32 = 7;
 const HISTORY_LIMIT: usize = 200;
 /// Maximum nesting depth for `source` scripts, preventing runaway recursion.
 const MAX_SOURCE_DEPTH: usize = 8;
+/// Echo request count used by the host `ping` command.
+const PING_COUNT: u32 = DEFAULT_COUNT;
+/// Per-request reply timeout used by the host `ping` command.
+const PING_TIMEOUT: std::time::Duration = DEFAULT_TIMEOUT;
 
 type MockProfileFactory = fn() -> HardwareProfile;
 
@@ -180,6 +187,8 @@ pub struct HostBackend {
     auth_provider: Option<Arc<dyn AuthProvider>>,
     file_manager_control: Option<Arc<dyn FileManagerControl>>,
     job_control: Option<Arc<dyn JobControl>>,
+    ping_control: Arc<dyn PingControl>,
+    path_acl: Arc<PathAcl>,
     event_log: Option<Arc<Mutex<Vec<String>>>>,
 }
 
@@ -258,6 +267,8 @@ impl HostBackend {
             auth_provider: None,
             file_manager_control: None,
             job_control: None,
+            ping_control: Arc::new(IcmpPingControl),
+            path_acl: Arc::new(PathAcl::new()),
             event_log: None,
         }
     }
@@ -318,6 +329,18 @@ impl HostBackend {
         self.job_control = Some(control);
     }
 
+    /// Overrides the real ICMP probe used by `ping`; tests inject a mock so no
+    /// host network I/O is needed.
+    pub fn set_ping_control(&mut self, control: Arc<dyn PingControl>) {
+        self.ping_control = control;
+    }
+
+    /// Shares a path-scoped ACL with the host file manager so `acl grant` and
+    /// `acl revoke` affect the same policy that `vfs` operations enforce.
+    pub fn set_path_acl(&mut self, acl: Arc<PathAcl>) {
+        self.path_acl = acl;
+    }
+
     /// Shares the safe-mode event log so legacy `logs` output can be reproduced.
     ///
     /// The console only reads this handle; the owning shell appends events. Without
@@ -373,7 +396,7 @@ impl HostBackend {
     }
 
     fn open_vfs(&self) -> Result<AiosVfs, CommandOutput> {
-        AiosVfs::new(self.config.vfs_root.clone())
+        AiosVfs::with_path_acl(self.config.vfs_root.clone(), Arc::clone(&self.path_acl))
             .map_err(|error| CommandOutput::error(&format!("vfs init: {error}")))
     }
 
@@ -520,6 +543,8 @@ impl CommandBackend for HostBackend {
             ("hotplug", Some(subcommand)) => self.hotplug_command(invocation, subcommand),
             ("telemetry", Some(subcommand)) => self.telemetry_command(invocation, subcommand),
             ("caps", Some(subcommand)) => self.caps_command(invocation, subcommand),
+            ("acl", Some("grant")) => self.acl_command(invocation, true),
+            ("acl", Some("revoke")) => self.acl_command(invocation, false),
             ("sandbox", Some(subcommand)) => self.sandbox_command(invocation, subcommand),
             ("hw-protect", Some(subcommand)) => self.hw_protect_command(invocation, subcommand),
             ("wasm", Some(subcommand)) => self.wasm_command(invocation, subcommand),
@@ -531,6 +556,7 @@ impl CommandBackend for HostBackend {
             ("workflow", Some(subcommand)) => self.workflow_command(invocation, subcommand),
             ("stability", Some(subcommand)) => self.stability_command(invocation, subcommand),
             ("trace", Some("list")) => self.trace_list(),
+            ("ping", _) => self.ping_command(invocation),
             ("crash", Some("report")) => self.crash_report(invocation),
             ("wifi", Some(subcommand)) => self.wifi_command(invocation, subcommand),
             ("hub", Some(subcommand)) => self.hub_command(invocation, subcommand),
@@ -611,6 +637,73 @@ impl HostBackend {
             code,
             duration_ms: 0,
             control,
+        }
+    }
+
+    fn acl_command(&mut self, invocation: &Invocation, allowed: bool) -> CommandOutput {
+        let Some(cap) = invocation.arg(0) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let Some(raw_path) = invocation.arg(1) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let scope = match PathScope::parse(raw_path) {
+            Ok(scope) => scope,
+            Err(error) => return CommandOutput::error(&format!("acl: {error}")),
+        };
+        let result = if allowed {
+            self.path_acl.grant(cap, &scope)
+        } else {
+            self.path_acl.revoke(cap, &scope)
+        };
+        if let Err(error) = result {
+            return CommandOutput::error(&format!("acl: {error}"));
+        }
+        let summary = format!(
+            "acl: {} '{cap}' on {}",
+            if allowed { "granted" } else { "revoked" },
+            scope.to_uri()
+        );
+        self.note(summary.clone());
+        let rules = self.path_acl.rules();
+        let mut lines = vec![summary, format!("policy: {} rule(s)", rules.len())];
+        lines.extend(rules.iter().map(|rule| format!("  {}", rule.display())));
+        CommandOutput::ok(lines)
+    }
+
+    fn ping_command(&self, invocation: &Invocation) -> CommandOutput {
+        let Some(host) = invocation.arg(0) else {
+            return CommandOutput::usage(invocation.spec.usage);
+        };
+        let timeout_ms = u64::try_from(PING_TIMEOUT.as_millis()).unwrap_or(u64::MAX);
+        match self.ping_control.probe(host, PING_COUNT, timeout_ms) {
+            Ok(report) => {
+                let mut lines = vec![format!(
+                    "PING {} ({}): {} data bytes",
+                    report.host,
+                    report.address,
+                    report.payload_bytes()
+                )];
+                for reply in &report.replies {
+                    lines.push(format!(
+                        "{} bytes from {}: seq={} ttl={} time={:.3} ms",
+                        reply.bytes, report.address, reply.sequence, reply.ttl, reply.rtt_ms
+                    ));
+                }
+                lines.push(format!(
+                    "{} packets transmitted, {} received, {:.1}% packet loss",
+                    report.transmitted, report.received, report.packet_loss_percent
+                ));
+                if let (Some(min), Some(avg), Some(max)) =
+                    (report.min_rtt_ms, report.avg_rtt_ms, report.max_rtt_ms)
+                {
+                    lines.push(format!(
+                        "round-trip min/avg/max = {min:.3}/{avg:.3}/{max:.3} ms"
+                    ));
+                }
+                CommandOutput::ok(lines)
+            }
+            Err(error) => CommandOutput::error(&format!("ping: {error}")),
         }
     }
 
@@ -4374,5 +4467,35 @@ fn json_value(raw: &str) -> serde_json::Value {
         value
     } else {
         serde_json::Value::String(raw.to_string())
+    }
+}
+
+/// Default `PingControl` backed by the real ICMP implementation in `aios-net`.
+struct IcmpPingControl;
+
+impl PingControl for IcmpPingControl {
+    fn probe(&self, host: &str, count: u32, timeout_ms: u64) -> Result<PingReportInfo, String> {
+        let report = icmp::ping(host, count, std::time::Duration::from_millis(timeout_ms))?;
+        let to_ms = |value: std::time::Duration| value.as_secs_f64() * 1000.0;
+        Ok(PingReportInfo {
+            host: report.host.clone(),
+            address: report.address.to_string(),
+            transmitted: report.transmitted,
+            received: report.received,
+            avg_rtt_ms: report.avg_rtt().map(to_ms),
+            min_rtt_ms: report.min_rtt().map(to_ms),
+            max_rtt_ms: report.max_rtt().map(to_ms),
+            packet_loss_percent: report.packet_loss_percent(),
+            replies: report
+                .replies
+                .iter()
+                .map(|reply| PingReplyInfo {
+                    sequence: reply.sequence,
+                    ttl: reply.ttl,
+                    bytes: reply.bytes,
+                    rtt_ms: to_ms(reply.rtt),
+                })
+                .collect(),
+        })
     }
 }

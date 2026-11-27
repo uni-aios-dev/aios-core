@@ -259,19 +259,23 @@ the table. `aios-shell` injects it into `HostBackend` in `main`, so canonical
 `console jobs`/`fg <id>`/`bg <id>` are real. Without an injected adapter these
 commands still return `unavailable`.
 
-`aios-console/src/unavailable.rs` holds the precise reason for each registered
-command with no real host API, so `ERR unavailable` names the missing capability
-instead of only saying "no host backend yet": `jobs|fg|bg` need a host-owned job
-table with OS process groups, signals and TTY foreground that `aios-process-mgr`
-does not model (the `JobControl` seam supplies it in `aios-shell`);
-`acl grant|revoke` has no path-scoped ACL API because `AclContext` grants are
-process-global tokens and `caps` tokens are keyed by block ID; `ping` needs an
-ICMP/reachability API and raw-socket privileges (`CAP_NET_RAW`), while a TCP
-connect is not an echo reply. Host `net recheck`, `net apply` and `net adapters`
-are now real: `NetManager` queries the OS (`netsh` on Windows, `ip addr` on
-Linux), refreshes the cached link/lease state and reports actual adapter rows;
-`net apply` persists the config before triggering that recheck. Host commands
-without an injected seam stay `unavailable` until those real APIs exist.
+`aios-console/src/unavailable.rs` holds the precise reason for the registered
+commands that still have no real host API, so `ERR unavailable` names the missing
+capability instead of only saying "no host backend yet": `jobs|fg|bg` need a
+host-owned job table with OS process groups, signals and TTY foreground that
+`aios-process-mgr` does not model (the `JobControl` seam supplies it in
+`aios-shell`). `acl grant|revoke` and `ping` are now real: `aios-vfs` provides a
+path-scoped `PathAcl` that `AiosVfs` enforces after canonicalization, while
+`aios-net::icmp::ping` sends actual ICMPv4 echo requests (`IcmpSendEcho` on
+Windows, an ICMP datagram/raw socket on Unix) and correlates replies by
+identifier, sequence and checksum. `HostBackend` shares one `PathAcl` with
+`open_vfs`, so console grants affect the same policy that `vfs` enforces, and
+uses a default `IcmpPingControl` that tests replace with a mock seam. Host
+`net recheck`, `net apply` and `net adapters` are now real: `NetManager` queries
+the OS (`netsh` on Windows, `ip addr` on Linux), refreshes the cached link/lease
+state and reports actual adapter rows; `net apply` persists the config before
+triggering that recheck. Commands whose seam is still absent stay
+`unavailable` until that adapter is injected.
 `fm jobs|cancel` is now real wherever a live `FileManagerControl` is injected
 (`aios-tui`), and `jobs|fg|bg` are real wherever a live `JobControl` is injected
 (`aios-shell`); a bare `HostBackend` without those seams still reports
@@ -1344,13 +1348,14 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 
 ## Network Stack (`aios-net`)
 
-- **Crate**: `aios-net` v1.0.0 — TCP/UDP blocks for network communication
+- **Crate**: `aios-net` v1.0.0 — TCP/UDP blocks and ICMP reachability for network communication
 - **TCP** (`tcp.rs`): `TcpBlock`, `TcpConfig`, `TcpConnection`, `TcpMessage`, `TcpState` — mock state machine
 - **Real TCP** (`real_tcp.rs`): `RealTcpBlock` — real `std::net::TcpListener`/`TcpStream` with non-blocking accept, connection management, send/receive, optional `CapabilityToken` enforcement (`CAP_NET_BIND` for `start_listening()`, `CAP_NET_CONNECT` for `connect()`)
 - **UDP** (`udp.rs`): `UdpBlock`, `UdpConfig`, `UdpPacket`, `UdpState` — mock state machine
 - **Real UDP** (`real_udp.rs`): `RealUdpBlock` — real `std::net::UdpSocket` with `bind()`, non-blocking `send_to()`/`receive_from()`, broadcast via `SO_BROADCAST`
+- **ICMP** (`icmp.rs`): `ping(host, count, timeout)` sends real ICMPv4 echo requests (`IcmpSendEcho` on Windows, ICMP datagram/raw socket on Unix), validates the reply checksum and identifier/sequence, and returns `PingReport` with per-reply RTT, TTL, bytes and packet loss; IPv6 literals are rejected explicitly
 - Connection tracking, send/receive with channels, broadcast, statistics
-- 40 tests covering mock + real TCP/UDP lifecycle
+- 57 tests covering mock + real TCP/UDP lifecycle and ICMP echo/parse/resolve
 
 ---
 
@@ -1372,11 +1377,11 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - **Crate**: `aios-vfs` v1.0.0 — scheme-addressed async VFS, sandbox for the file manager.
 - **Schemes**: `VfsScheme::{AIOS, HOST}`; `VfsPath` parses URI-style paths (`AIOS:///sandbox`, `HOST:///C:/...`) and exposes `parent()`, `join()`, `file_name()`, `to_uri()`.
 - **Trait** `VirtualFileSystem` (async, `tokio::fs`): `list`, `read`, `write`, `create_dir`, `delete`, `rename`, `exists`, `metadata`, `open_seek`. `open_seek` returns `Box<dyn AsyncSeekReader + Send + Unpin>` where `AsyncSeekReader = AsyncRead + AsyncSeek` (used by AI-preview reads).
-- **Implementations**: `AiosVfs` (sandboxed local dir with `canonicalize_inside` containment check) and `HostVfs` (real host paths, reads/writes gated by ACL tokens `vfs:host:read` / `vfs:host:write`).
+- **Implementations**: `AiosVfs` (sandboxed local dir with `canonicalize_inside` containment check and a shared path ACL via `with_path_acl()`) and `HostVfs` (real host paths, reads/writes gated by ACL tokens `vfs:host:read` / `vfs:host:write`).
 - **Operations** (`operations.rs`): `Progress` (atomic bytes/files counters, `fraction()`, `pressure_fraction()`), `CancellationToken`, `total_bytes`, `copy_recursive`, `move_item`, `delete_item`, `read_head`, `read_at`.
-- **Security** (`security.rs`): `AclContext` — in-memory capability set, thread-safe via `Mutex<HashSet>`; `canonicalize_inside(root, path)`.
+- **Security** (`security.rs`): `AclContext` — in-memory capability set, thread-safe via `Mutex<HashSet>`; `PathScope` (scheme + normalized path), `PathAclRule` and `PathAcl` with `grant`/`revoke`/`check`/`require`/`rules` for the `vfs:read` and `vfs:write` rights; the most specific matching scope wins and a child revocation overrides a parent grant. `AiosVfs` enforces the shared ACL after `canonicalize_inside(root, path)` on every read/write operation.
 - **AI preview** (`ai_preview.rs`): `analyze_file(name, head)` → `AiPreview { title, headline, lines: Vec<(AiLineKind, String)> }`; parses WASM name sections, detects panics in logs, emits source-level hints.
-- 29 unit tests (cancellation, WASM name-section bytes, path containment, copy/move/delete, preview).
+- 35 unit tests (cancellation, WASM name-section bytes, path containment, path ACL precedence and enforcement, copy/move/delete, preview).
 
 ## File Manager (`aios-fm`) — v2.10.0
 

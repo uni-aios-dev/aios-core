@@ -345,10 +345,14 @@ library API existed for them. `aios-console/src/unavailable.rs` reported a
 concrete cause for each: no path-scoped ACL API, no ICMP/reachability API or
 raw-socket privilege, and no host equivalent of the kernel-only `recheck()`.
 The kernel side became real first (`KernelBackend` calls
-`crate::net::recheck()`); v2.84.0 adds the host side through
-`NetManager::recheck()`. `acl` and `ping` remain deliberately `unavailable`
-with exact reasons - aliasing them to `caps` or TCP connect would discard their
-declared semantics.
+`crate::net::recheck()`); v2.84.0 added the host side through
+`NetManager::recheck()`. `acl` and `ping` are now real too, without aliasing:
+`aios-vfs::security::PathAcl` enforces `vfs:read` / `vfs:write` after
+canonicalization, and `aios-net::icmp` performs real ICMPv4 echo requests.
+A path ACL with no rule for a right leaves that right open, so adding a rule
+changes behaviour only for that right; a missing ICMP privilege is reported as
+a backend error instead of a fake success. Only `jobs|fg|bg` and `fm` still
+report `unavailable` when their control seams are not injected.
 
 The dependency cycle for watchdog/bridge/auth/file-manager/job-control commands is
 resolved: `aios-console` defines control traits; the `aios` binary injects

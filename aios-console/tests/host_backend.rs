@@ -3,7 +3,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -12,13 +12,14 @@ use sha2::Digest;
 use aios_console::backend::dispatch;
 use aios_console::capability::CapabilitySet;
 use aios_console::control::{
-    AuthProvider, BridgeControl, FileManagerControl, FmJobInfo, JobControl, ShellJobInfo,
-    WatchdogControl,
+    AuthProvider, BridgeControl, FileManagerControl, FmJobInfo, JobControl, PingControl,
+    PingReplyInfo, PingReportInfo, ShellJobInfo, WatchdogControl,
 };
 use aios_console::host::{HostBackend, HostBackendConfig};
 use aios_console::output::{ExitCode, OutputControl};
 use aios_hal::hardware::HardwareProfile;
 use aios_net_config::store::NetworkConfigStore;
+use aios_vfs::security::{PathAcl, PathScope};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -515,8 +516,6 @@ fn host_unimplemented_subcommands_are_unavailable() {
         "jobs",
         "fg 1",
         "bg 1",
-        "acl grant net raw",
-        "ping example.com",
         "fm jobs",
         "wd force-safe-mode",
         "bridge status",
@@ -540,8 +539,6 @@ fn host_unavailable_commands_report_precise_reasons() {
         ("jobs", "no job control"),
         ("fg 1", "no job control"),
         ("bg 1", "no job control"),
-        ("acl grant CAP_FS_READ /tmp", "no path-scoped ACL API"),
-        ("ping example.com", "no ICMP reachability API"),
         ("fm jobs", "owns no live FileManager"),
     ] {
         let output = dispatch(&mut host, input);
@@ -1777,6 +1774,152 @@ fn host_job_control_seam_enables_jobs_fg_and_bg() {
 
     assert_eq!(dispatch(&mut host, "fg").code, ExitCode::Usage);
     assert_eq!(dispatch(&mut host, "bg abc").code, ExitCode::Usage);
+}
+
+#[test]
+fn host_acl_grants_and_revokes_are_enforced_by_vfs() {
+    let (config, _) = test_config("acl-seam");
+    let mut host = HostBackend::with_config(config);
+    let shared = Arc::new(PathAcl::new());
+    host.set_path_acl(Arc::clone(&shared));
+
+    assert_ok(
+        "vfs write before policy",
+        &dispatch(&mut host, "vfs write AIOS:///sandbox/note.txt hello"),
+    );
+
+    let grant = dispatch(&mut host, "acl grant vfs:write /sandbox");
+    assert_ok("acl grant vfs:write /sandbox", &grant);
+    assert_eq!(
+        grant.lines,
+        [
+            "acl: granted 'vfs:write' on AIOS:///sandbox",
+            "policy: 1 rule(s)",
+            "  grant vfs:write AIOS:///sandbox"
+        ]
+    );
+    assert!(shared.check("vfs:write", &PathScope::aios("/sandbox/note.txt")));
+
+    let revoke = dispatch(&mut host, "acl revoke vfs:write /sandbox/note.txt");
+    assert_ok("acl revoke vfs:write /sandbox/note.txt", &revoke);
+    assert_eq!(revoke.lines[1], "policy: 2 rule(s)");
+    let blocked = dispatch(&mut host, "vfs write AIOS:///sandbox/note.txt denied");
+    assert_eq!(blocked.code, ExitCode::BackendError);
+    assert!(
+        blocked.as_text().contains("path ACL denies 'vfs:write'"),
+        "output: {}",
+        blocked.as_text()
+    );
+    assert_ok(
+        "vfs write sibling",
+        &dispatch(&mut host, "vfs write AIOS:///sandbox/other.txt ok"),
+    );
+
+    assert_ok(
+        "child grant overrides parent",
+        &dispatch(&mut host, "acl grant vfs:write /sandbox/note.txt"),
+    );
+    assert_ok(
+        "vfs write after child grant",
+        &dispatch(&mut host, "vfs write AIOS:///sandbox/note.txt allowed"),
+    );
+
+    assert_ok(
+        "revoke read",
+        &dispatch(&mut host, "acl revoke vfs:read /sandbox"),
+    );
+    let read = dispatch(&mut host, "vfs cat AIOS:///sandbox/note.txt");
+    assert_eq!(read.code, ExitCode::BackendError);
+    assert!(read.as_text().contains("path ACL denies 'vfs:read'"));
+
+    assert_eq!(dispatch(&mut host, "acl grant").code, ExitCode::Usage);
+    assert_eq!(
+        dispatch(&mut host, "acl revoke vfs:read").code,
+        ExitCode::Usage
+    );
+    assert_eq!(
+        dispatch(&mut host, "acl grant vfs:read relative").code,
+        ExitCode::BackendError
+    );
+}
+
+#[test]
+fn host_ping_control_seam_formats_a_real_report_shape() {
+    struct MockPing {
+        calls: Mutex<Vec<(String, u32, u64)>>,
+        result: Result<PingReportInfo, String>,
+    }
+
+    impl PingControl for MockPing {
+        fn probe(&self, host: &str, count: u32, timeout_ms: u64) -> Result<PingReportInfo, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((host.to_string(), count, timeout_ms));
+            self.result.clone()
+        }
+    }
+
+    let report = PingReportInfo {
+        host: "example.com".to_string(),
+        address: "93.184.216.34".to_string(),
+        transmitted: 2,
+        received: 2,
+        avg_rtt_ms: Some(12.5),
+        min_rtt_ms: Some(10.0),
+        max_rtt_ms: Some(15.0),
+        packet_loss_percent: 0.0,
+        replies: vec![
+            PingReplyInfo {
+                sequence: 1,
+                ttl: 128,
+                bytes: 32,
+                rtt_ms: 10.0,
+            },
+            PingReplyInfo {
+                sequence: 2,
+                ttl: 128,
+                bytes: 32,
+                rtt_ms: 15.0,
+            },
+        ],
+    };
+    let control = Arc::new(MockPing {
+        calls: Mutex::new(Vec::new()),
+        result: Ok(report),
+    });
+    let mut host = backend("ping-seam");
+    host.set_ping_control(control.clone());
+
+    let output = dispatch(&mut host, "ping example.com");
+    assert_ok("ping example.com", &output);
+    assert_eq!(
+        output.lines,
+        [
+            "PING example.com (93.184.216.34): 32 data bytes",
+            "32 bytes from 93.184.216.34: seq=1 ttl=128 time=10.000 ms",
+            "32 bytes from 93.184.216.34: seq=2 ttl=128 time=15.000 ms",
+            "2 packets transmitted, 2 received, 0.0% packet loss",
+            "round-trip min/avg/max = 10.000/12.500/15.000 ms"
+        ]
+    );
+    assert_eq!(
+        *control.calls.lock().unwrap(),
+        vec![("example.com".to_string(), 4, 1000)]
+    );
+
+    let failing = Arc::new(MockPing {
+        calls: Mutex::new(Vec::new()),
+        result: Err("ICMP handle unavailable".to_string()),
+    });
+    host.set_ping_control(failing);
+    let failure = dispatch(&mut host, "ping example.com");
+    assert_eq!(failure.code, ExitCode::BackendError);
+    assert_eq!(
+        failure.lines,
+        ["ERR backend: ping: ICMP handle unavailable"]
+    );
+    assert_eq!(dispatch(&mut host, "ping").code, ExitCode::Usage);
 }
 
 const TEST_SIGNING_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
