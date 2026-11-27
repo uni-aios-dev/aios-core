@@ -486,6 +486,7 @@ pub struct HardwareProfile {
     pub npu: Option<NpuInfo>,
     pub memory: MemoryInfo,
     pub pci_devices: Vec<PciDevice>,
+    pub audio_devices: Vec<AudioDevice>,
 }
 ```
 
@@ -2725,3 +2726,9 @@ raw-записью на физическую USB-флешку.
 `VoiceRuntime` моста потребляет события `Transcribed` в фоновом потоке. Генерация делегируется `ScriptGenerator`: он использует `ScriptLlm` (адаптер реальной LLM, мок или детерминированный офлайн-фолбэк), обеспечивает грамматику EasyLang «только код», повторяет при ошибке валидации и компилирует через `WorkflowCompiler`. Сгенерированный WASM не считается доверенным: `AutoManifestGenerator` извлекает возможности из защищённых импортов `aios`, `AccessControlLayer` проверяет их по токену голосовой сессии, а `WasmBlock::instantiate_with_policy` устанавливает такой же `HostPolicy`. Host-вызовы работают только в режиме аудита: они не запускают процессы и не открывают сетевые соединения, а URL не http/https для `net_check`/`browse` отклоняются.
 
 Привилегированные скрипты переводятся в `AwaitingConfirmation` со списком разрешений, и только явный запрос с `confirm:true` выпускает токен с необходимыми возможностями. Успешные рабочие процессы сохраняются вместе с исходной фразой для трассируемости.
+
+## Инвентарь аудиоустройств и драйверов (2026-11-27)
+
+`aios-hal::audio` перечисляет активные входные/выходные устройства через `cpal` и объединяет их с данными драйверов ОС в `AudioDevice { name, direction, bus, driver, vendor_id, device_id, class_code, is_default, sample_rate, channels, sample_format }`. Linux читает из sysfs PCI-класс `0x04` и USB-аудиокласс `03`, Windows разбирает вывод `wmic sounddev ... /format:list`. Список хранится в `HardwareProfile::audio_devices`, сериализуется через IPC и выводится `aios-console` строкой `audio`.
+
+Hotplug теперь отслеживает `/sys/class/sound` наряду с USB/PCI/NVMe, а `BusHint::Audio` оставляет sound-uevent релевантными. `aios-autohal` отображает устройства в `BusType::{USB, PCI, Bluetooth, Audio}` с PCI-классом мультимедиа `0x0004xxxx`, поставляет `AUDIO_WAT` и встроенный драйвер `driver.audio.generic` и подготавливает его обычным путём по отпечатку. Мост предоставляет аутентифицированные `GET /api/v1/audio/devices` и `POST /api/v1/audio/rescan`. Обнаружение работает по best-effort: на безголовом хосте возвращается пустой список, а не ошибка.

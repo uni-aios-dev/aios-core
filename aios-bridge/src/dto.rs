@@ -1,3 +1,4 @@
+use aios_hal::audio::AudioDevice;
 use aios_store::manifest::SignatureInfo;
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +63,31 @@ pub struct VoiceStatusResponse {
     pub permissions: Vec<String>,
     pub output: String,
     pub error: String,
+}
+
+/// Authenticated snapshot of the host audio inventory.
+#[derive(Debug, Serialize)]
+pub struct AudioDevicesResponse {
+    /// Live capture/playback endpoints with driver metadata.
+    pub devices: Vec<AudioDevice>,
+    /// Whether at least one capture endpoint is present.
+    pub microphone_available: bool,
+    /// Number of endpoints with a non-empty driver string.
+    pub drivers_detected: usize,
+}
+
+impl AudioDevicesResponse {
+    /// Build a response from a detected endpoint list.
+    pub fn from_devices(devices: Vec<AudioDevice>) -> Self {
+        Self {
+            microphone_available: aios_hal::audio::has_microphone(&devices),
+            drivers_detected: devices
+                .iter()
+                .filter(|device| !device.driver.is_empty())
+                .count(),
+            devices,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -404,6 +430,35 @@ pub struct MeResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_devices_response_counts_microphones_and_drivers() {
+        use aios_hal::audio::{AudioBus, AudioDirection};
+
+        let mic = AudioDevice {
+            name: "Microphone (USB Audio)".into(),
+            direction: AudioDirection::Input,
+            bus: AudioBus::Usb,
+            driver: "snd_usb_audio".into(),
+            vendor_id: 0x046D,
+            device_id: 0xA001,
+            class_code: 0x0004_0000,
+            is_default: true,
+            sample_rate: 16_000,
+            channels: 1,
+            sample_format: "f32".into(),
+        };
+        let speaker = AudioDevice {
+            name: "Speakers".into(),
+            direction: AudioDirection::Output,
+            driver: String::new(),
+            ..mic.clone()
+        };
+        let response = AudioDevicesResponse::from_devices(vec![mic, speaker]);
+        assert!(response.microphone_available);
+        assert_eq!(response.drivers_detected, 1);
+        assert_eq!(response.devices.len(), 2);
+    }
 
     #[test]
     fn intent_prompt_limits_are_enforced() {

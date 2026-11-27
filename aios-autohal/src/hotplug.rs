@@ -11,7 +11,8 @@
 //! The full `HardwareProfile::detect()` is comparatively expensive, so the
 //! monitor never runs it unconditionally. On Linux a cheap change signal
 //! ([`cheap_signal`]) hashes the mtimes of the `/sys/bus/{usb,pci,nvme}/devices`
-//! directories — those only change when a device is attached or removed — so a
+//! and `/sys/class/sound` directories — those only change when a device is
+//! attached or removed — so a
 //! full detection runs the moment the device tree actually moves. On platforms
 //! without such a signal the monitor falls back to the fixed-interval full scan
 //! cadence ([`HotplugConfig::poll_ms`]).
@@ -109,21 +110,25 @@ pub fn dir_signal_hash(paths: &[&Path]) -> Option<u64> {
     }
 }
 
+/// Sysfs directories watched by the Linux cheap change signal.
+pub const HOTPLUG_SYSFS_PATHS: &[&str] = &[
+    "/sys/bus/usb/devices",
+    "/sys/bus/pci/devices",
+    "/sys/bus/nvme/devices",
+    "/sys/class/sound",
+];
+
 /// Cheap platform change signal: `(changed, next_state)`.
 ///
-/// Linux hashes the mtimes of `/sys/bus/{usb,pci,nvme}/devices` (std fs only);
-/// these directories change exactly when a device is attached or removed, so a
+/// Linux hashes the mtimes of [`HOTPLUG_SYSFS_PATHS`] (std fs only); these
+/// directories change exactly when a device is attached or removed, so a
 /// full `HardwareProfile::detect()` can be skipped while nothing moved. On other
 /// platforms there is no cheap signal (`None`), which forces the fixed-interval
 /// full-scan cadence.
 fn cheap_signal(prev: Option<u64>) -> (bool, Option<u64>) {
     #[cfg(target_os = "linux")]
     {
-        let paths = [
-            Path::new("/sys/bus/usb/devices"),
-            Path::new("/sys/bus/pci/devices"),
-            Path::new("/sys/bus/nvme/devices"),
-        ];
+        let paths: Vec<&Path> = HOTPLUG_SYSFS_PATHS.iter().map(Path::new).collect();
         let state = dir_signal_hash(&paths);
         (state != prev, state)
     }
@@ -260,6 +265,12 @@ impl Drop for HotplugMonitor {
 mod tests {
     use super::*;
     use crate::fingerprint::BusType;
+
+    #[test]
+    fn watched_paths_include_sound() {
+        assert!(HOTPLUG_SYSFS_PATHS.contains(&"/sys/class/sound"));
+        assert!(HOTPLUG_SYSFS_PATHS.contains(&"/sys/bus/usb/devices"));
+    }
 
     fn fp(bus: BusType, vendor: u16, device: u16) -> HardwareFingerprint {
         HardwareFingerprint {

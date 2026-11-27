@@ -1,5 +1,19 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED: audio hardware was invisible outside voice capture (2026-11-27)
+
+- `HardwareProfile` had no audio field, AutoHAL ignored PCI class `0x04`, the
+  builtin driver catalog had no audio entry and audio uevents were classified as
+  `BusHint::Other`. Only `cpal::default_input_device()` was queried by the voice
+  pipeline and GUI, so AIOS could not name microphones, speakers or drivers.
+- `aios-hal::audio` now inventories endpoints and driver metadata; AutoHAL maps
+  them to fingerprints with `BusType::Audio` and the `driver.audio.generic`
+  builtin; hotplug watches `/sys/class/sound`; the bridge publishes the
+  inventory behind bearer auth.
+- **Known limitation**: driver metadata is best-effort. Headless hosts report
+  an empty list, and a device whose OS record cannot be matched keeps an empty
+  `driver` string. The bridge cache is refreshed by `POST /api/v1/audio/rescan`.
+
 ## FIXED (post-audit): hardcoded secrets, default-open bridge, SSRF and panic paths (2026-11-27)
 
 - Seven predictable literals — `aios_master_secret_2026`, `aios-console-issuer-v1`,

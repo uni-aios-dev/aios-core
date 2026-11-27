@@ -53,6 +53,32 @@ pub const NIC_WAT: &str = r#"
 )
 "#;
 
+/// Embedded WAT for the generic audio driver. It exposes the standard driver
+/// surface plus an `audio_poll` hook and only uses the two `aios` host functions
+/// provided by `aios-wasm`.
+pub const AUDIO_WAT: &str = r#"
+(module
+  (import "aios" "log" (func $log (param i32 i32) (result i32)))
+  (import "aios" "get_timestamp" (func $get_timestamp (result i64)))
+  (memory (export "memory") 1 4)
+  (data (i32.const 16) "audio driver ready")
+  (data (i32.const 48) "audio link poll")
+  (func (export "_start_driver") (result i32)
+    i32.const 16
+    i32.const 17
+    call $log
+    drop
+    i32.const 1)
+  (func (export "init"))
+  (func (export "start"))
+  (func (export "audio_poll")
+    i32.const 48
+    i32.const 14
+    call $log
+    drop)
+)
+"#;
+
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -182,6 +208,33 @@ fn builtin_nic_class(id: &str, name: &str, class_code: u32, class_mask: u32) -> 
     }
 }
 
+fn builtin_audio_driver() -> BuiltinDriver {
+    BuiltinDriver {
+        manifest: DriverManifest {
+            id: "driver.audio.generic".into(),
+            name: "Generic Audio Controller".into(),
+            version: "1.0.0".into(),
+            description: "Offline builtin driver for PCI/USB/Bluetooth audio endpoints.".into(),
+            supported_hardware: ["audio", "usb", "pci", "bt"]
+                .into_iter()
+                .map(|bus| SupportedHardware {
+                    bus: bus.to_string(),
+                    vendor_id: None,
+                    device_id: None,
+                    class_code: Some(0x0004_0000),
+                    class_mask: Some(0xFFFF_0000),
+                })
+                .collect(),
+            required_capabilities: vec![Capability::HwAccess, Capability::MemAlloc],
+            hash_sha256: sha256_hex(AUDIO_WAT.as_bytes()),
+            entry_point: "_start_driver".into(),
+            source: DriverSource::Builtin,
+            size_bytes: AUDIO_WAT.len() as u64,
+        },
+        wat: AUDIO_WAT,
+    }
+}
+
 /// Offline catalog of well-known devices. Serves the two mock profiles used
 /// across the workspace tests plus common webcam/GPU/network hardware.
 pub fn builtin_catalog() -> Vec<BuiltinDriver> {
@@ -278,6 +331,7 @@ pub fn builtin_catalog() -> Vec<BuiltinDriver> {
                 Capability::FsWrite,
             ],
         ),
+        builtin_audio_driver(),
     ]
 }
 
@@ -394,6 +448,36 @@ mod tests {
         let mut store = block.create_store().unwrap();
         block.instantiate(&mut store).unwrap();
         block.call_func(&mut store, "net_poll", &[]).unwrap();
+    }
+
+    #[test]
+    fn test_catalog_has_audio_entry() {
+        let fp = HardwareFingerprint {
+            bus: BusType::Audio,
+            vendor_id: 0,
+            device_id: 0,
+            class_code: 0x0004_0000,
+            serial_or_acpi: Some("Microphone".into()),
+        };
+        let driver = find_builtin(&fp).unwrap();
+        assert_eq!(driver.manifest.id, "driver.audio.generic");
+        assert_eq!(driver.manifest.hash_sha256, sha256_hex(&driver.wat_bytes()));
+    }
+
+    #[test]
+    fn test_audio_wat_compiles_and_exposes_audio_poll() {
+        let driver = builtin_audio_driver();
+        let mut block = aios_wasm::WasmBlock::from_wat(
+            "audio-test".into(),
+            "1.0.0".into(),
+            driver.wat,
+            aios_wasm::SandboxConfig::default(),
+            aios_wasm::IsolationConfig::restrictive(),
+        )
+        .unwrap();
+        let mut store = block.create_store().unwrap();
+        block.instantiate(&mut store).unwrap();
+        block.call_func(&mut store, "audio_poll", &[]).unwrap();
     }
 
     #[test]

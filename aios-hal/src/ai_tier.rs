@@ -108,6 +108,7 @@ mod tests {
             storage_devices: Vec::new(),
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         };
         assert_eq!(AiTier::from_profile(&profile), AiTier::Tier3);
     }
@@ -146,6 +147,7 @@ mod tests {
             storage_devices: Vec::new(),
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         };
         assert_eq!(AiTier::from_profile(&profile), AiTier::Tier2);
     }
@@ -188,6 +190,7 @@ mod tests {
             storage_devices: Vec::new(),
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         };
         assert_eq!(AiTier::from_profile(&profile), AiTier::Tier2);
     }

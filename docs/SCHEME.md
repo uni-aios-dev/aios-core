@@ -500,3 +500,16 @@ Flow: `Idle -> Listening{level} -> Transcribing -> Transcribed{text} -> Thinking
 Endpoints: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV or s16le, max 10 MiB), `/execute-text`, `GET /api/v1/voice/status`, `GET /ws/voice?token=...`. All API routes require bearer auth; WebSocket endpoints self-authenticate. `/ws/telemetry` additionally reports `voice_phase`.
 
 Successful scripts are saved under `<AIOS_WORKFLOWS_DIR|workflows>` as `<stem>.easy`, `<stem>.wasm` and `<stem>.meta.json` containing the originating phrase. Test coverage: `tests/voice_pipeline_test.rs` (mock audio -> mock LLM -> WASM execution), plus unit tests in `aios-voice` (11), `aios-builder` (29), `aios-wasm` (64) and `aios-bridge` (26).
+
+## 14. Audio Device and Driver Inventory (2026-11-27)
+
+| Area | Files | Entry points |
+|---|---|---|
+| HAL inventory | `aios-hal/src/audio.rs`, `hardware.rs` | `AudioDirection`, `AudioBus`, `AudioDevice`, `DriverRecord`, `detect_audio_devices()`, `has_microphone()`, `bus_from_name()`, `HardwareProfile::audio_devices` |
+| AutoHAL | `aios-autohal/src/fingerprint.rs`, `catalog.rs`, `native.rs`, `hotplug.rs` | `BusType::Audio`, `AUDIO_WAT`, `driver.audio.generic`, `BusHint::Audio`, `HOTPLUG_SYSFS_PATHS` |
+| Bridge | `aios-bridge/src/audio.rs`, `dto.rs`, `server.rs` | `audio_devices_handler`, `audio_rescan_handler`, `AudioDevicesResponse`, `BridgeContext::audio_devices` |
+| Console | `aios-console/src/host.rs` | `hardware_lines()` `audio` line in `sys info` / `hw detect` |
+
+Flow: `cpal::default_host()` enumerates input/output endpoints (name, default flag, native sample rate/channels/format) -> OS driver records are collected from Linux sysfs (PCI class `0x04`, USB audio class `03`) or `wmic sounddev` (Windows) -> `annotate_devices()` merges them by name/driver -> `HardwareProfile::audio_devices` carries the list over IPC. AutoHAL converts each endpoint into a `HardwareFingerprint` (logical `BusType::Audio` when the physical bus is unknown, PCI multimedia class `0x0004xxxx`), matches `driver.audio.generic` in the catalog and provisions `AUDIO_WAT` with capabilities checked as usual. `BusHint::Audio` keeps `/sys/class/sound` uevents relevant in hotplug, alongside the `/sys/class/sound` cheap-signal path.
+
+Endpoints: `GET /api/v1/audio/devices` returns `{ devices, microphone_available, drivers_detected }` from a lazily detected cache; `POST /api/v1/audio/rescan` refreshes it. Both require bearer auth like other `/api/v1/*` routes. Detection is best-effort: no audio stack means an empty list, and an unmatched endpoint keeps an empty `driver` field. Test coverage: unit tests for bus inference, driver merging/parsing, serde round-trip, audio fingerprints and catalog WAT compilation, native event classification, bridge DTO/cache and console `HardwareProfile` serialization.

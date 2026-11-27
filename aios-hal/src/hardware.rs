@@ -3,6 +3,8 @@ use aios_core::error::{AIOSException, Result};
 use aios_core::ipc_protocol::{CommandId, IpcPacket, Payload};
 use serde::{Deserialize, Serialize};
 
+use crate::audio::AudioDevice;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuInfo {
     pub cores: u32,
@@ -127,6 +129,8 @@ pub struct HardwareProfile {
     pub storage_devices: Vec<StorageDevice>,
     pub usb_devices: Vec<UsbDevice>,
     pub thunderbolt_devices: Vec<ThunderboltDevice>,
+    /// Live audio endpoints with driver metadata (microphones and speakers).
+    pub audio_devices: Vec<AudioDevice>,
 }
 
 impl HardwareProfile {
@@ -139,12 +143,13 @@ impl HardwareProfile {
         let storage_devices = Self::detect_storage();
         let usb_devices = Self::detect_usb();
         let thunderbolt_devices = Self::detect_thunderbolt();
+        let audio_devices = crate::audio::detect_audio_devices();
 
         static HAL_DETECT_LOGGED: std::sync::atomic::AtomicBool =
             std::sync::atomic::AtomicBool::new(false);
         if !HAL_DETECT_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             log::info!(
-                "HAL: Detected {} cores, {}MB RAM, GPU={}, NPU={}, PCI={}, Storage={}, USB={}, TB={}",
+                "HAL: Detected {} cores, {}MB RAM, GPU={}, NPU={}, PCI={}, Storage={}, USB={}, TB={}, Audio={}",
                 cpu.cores,
                 memory.total_mb,
                 gpu.is_some(),
@@ -153,6 +158,7 @@ impl HardwareProfile {
                 storage_devices.len(),
                 usb_devices.len(),
                 thunderbolt_devices.len(),
+                audio_devices.len(),
             );
         }
 
@@ -165,6 +171,7 @@ impl HardwareProfile {
             storage_devices,
             usb_devices,
             thunderbolt_devices,
+            audio_devices,
         }
     }
 
@@ -1096,6 +1103,7 @@ impl HardwareProfile {
             }],
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         }
     }
 
@@ -1154,6 +1162,7 @@ impl HardwareProfile {
                 max_power_watts: 100,
                 port: "0-0".into(),
             }],
+            audio_devices: Vec::new(),
         }
     }
 
@@ -1204,6 +1213,7 @@ impl HardwareProfile {
             }],
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         }
     }
 
@@ -1270,6 +1280,7 @@ impl HardwareProfile {
                 port: "Bus 1".into(),
             }],
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         }
     }
 
@@ -1311,6 +1322,7 @@ impl HardwareProfile {
             }],
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         }
     }
 
@@ -1358,6 +1370,7 @@ impl HardwareProfile {
             }],
             usb_devices: Vec::new(),
             thunderbolt_devices: Vec::new(),
+            audio_devices: Vec::new(),
         }
     }
 }
@@ -1784,5 +1797,28 @@ mod tests {
         assert_eq!(vid, 0);
         assert_eq!(pid, 0);
         assert!(!HardwareProfile::is_identifiable_usb(vid, pid));
+    }
+
+    #[test]
+    fn test_hardware_profile_serialization_with_audio() {
+        let mut profile = HardwareProfile::mock_modern();
+        profile.audio_devices.push(crate::audio::AudioDevice {
+            name: "Microphone (USB Audio)".into(),
+            direction: crate::audio::AudioDirection::Input,
+            bus: crate::audio::AudioBus::Usb,
+            driver: "snd_usb_audio".into(),
+            vendor_id: 0x046D,
+            device_id: 0x0825,
+            class_code: 0x0004_0000,
+            is_default: true,
+            sample_rate: 16_000,
+            channels: 1,
+            sample_format: "f32".into(),
+        });
+        let bytes = bincode::serialize(&profile).unwrap();
+        let restored: HardwareProfile = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(restored.audio_devices.len(), 1);
+        assert!(restored.audio_devices[0].is_microphone());
+        assert_eq!(restored.audio_devices[0].driver, "snd_usb_audio");
     }
 }

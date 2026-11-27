@@ -1,5 +1,32 @@
 # AIOS Development Log
 
+## Unreleased — audio device and driver detection (2026-11-27)
+
+### Added
+- `aios-hal::audio`: `AudioDirection`, `AudioBus`, `AudioDevice`, `DriverRecord`,
+  `detect_audio_devices()`, `has_microphone()` and `bus_from_name()`. Live
+  input/output endpoints come from `cpal`; driver metadata comes from Linux
+  sysfs (PCI class `0x04`, USB audio class `03`) or `wmic sounddev` on Windows.
+- `HardwareProfile::audio_devices` carries the inventory through IPC, HAL
+  detection logs it and `aios-console` prints an `audio` inventory line.
+- AutoHAL recognizes audio endpoints: `BusType::Audio`, `BusHint::Audio`,
+  `/sys/class/sound` hotplug signal, `AUDIO_WAT` and the
+  `driver.audio.generic` builtin matched by PCI multimedia class.
+- Bridge endpoints `GET /api/v1/audio/devices` and `POST /api/v1/audio/rescan`
+  return endpoints, microphone availability and detected driver count behind
+  bearer auth.
+
+### Fixed
+- Audio devices were previously absent from the hardware profile, AutoHAL
+  fingerprints, the builtin driver catalog and hotplug notifications; the
+  voice pipeline only knew whether a default input device existed.
+
+### Verified
+- New unit tests cover name-based bus inference, driver-record merging, WMI
+  parsing, audio fingerprints/catalog matching, native event classification,
+  console inventory serialization and bridge DTO snapshots. No real audio
+  hardware is required.
+
 ## Unreleased — residual panic-path hardening (2026-11-27)
 
 ### Changed

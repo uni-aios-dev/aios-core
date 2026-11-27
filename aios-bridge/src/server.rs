@@ -7,6 +7,7 @@ use aios_block_mgr::registry::BlockRegistry;
 use aios_context::telemetry::TelemetryStore;
 use aios_debug::crash_reporter::CrashKind;
 use aios_debug::{CrashReporter, PanicHandler};
+use aios_hal::audio::AudioDevice;
 use aios_ipc::bus::IpcBus;
 use aios_live_update::engine::LiveUpdateEngine;
 use aios_llm::{default_config, LlmEngine};
@@ -67,6 +68,8 @@ pub struct BridgeContext {
     pub ipc_bus: Arc<Mutex<IpcBus>>,
     /// Voice capture/STT pipeline and pending confirmation state.
     pub voice: Arc<crate::voice::VoiceRuntime>,
+    /// Lazily detected audio inventory; `None` means "not scanned yet".
+    pub audio_devices: Mutex<Option<Vec<AudioDevice>>>,
     /// Whether public self-registration is enabled (`AIOS_BRIDGE_ALLOW_SIGNUP`).
     pub allow_signup: bool,
 }
@@ -113,6 +116,7 @@ impl BridgeContext {
             voice: Arc::new(crate::voice::VoiceRuntime::new(
                 aios_voice::pipeline::VoicePipeline::with_defaults(),
             )),
+            audio_devices: Mutex::new(None),
             allow_signup,
         }
     }
@@ -215,6 +219,14 @@ where
         .route("/api/v1/traces", get(traces_handler))
         .route("/api/v1/crash-report", post(crash_report_handler))
         .route("/api/v1/sys/status", get(sys_status_handler))
+        .route(
+            "/api/v1/audio/devices",
+            get(crate::audio::audio_devices_handler),
+        )
+        .route(
+            "/api/v1/audio/rescan",
+            post(crate::audio::audio_rescan_handler),
+        )
         .route("/api/v1/sys/wifi/scan", get(sys_wifi_scan_handler))
         .route("/api/v1/sys/wifi/connect", post(sys_wifi_connect_handler))
         .route("/api/v1/sys/layout", post(sys_layout_handler))

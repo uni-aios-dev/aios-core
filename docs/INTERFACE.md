@@ -287,13 +287,14 @@ depth, sent/received/dropped counters and average latency; `send <src> <dst>
 held by the console until `unfreeze`.
 
 `sys info` prints a hardware inventory from `aios-hal` (CPU, SIMD flags, memory,
-GPU/NPU and device counts) plus the derived AI tier; `sys tier` prints only the
+GPU/NPU, device counts and audio endpoints with microphone availability) plus
+the derived AI tier; `sys tier` prints only the
 tier, its description, model limit and batch size. `hw detect` shows the cached
 snapshot, `hw rescan` discards it and forces a fresh HAL detection, and
 `hw profile [name]` selects a deterministic mock profile (`modern`, `legacy`,
 `legacy-2012`, `nvidia`, `intel-meteor-lake`, `qualcomm-x-elite`) for reproducible
-inspection. `hw fingerprints` lists the USB, PCI and NVMe lookup keys, driver
-ids and class codes extracted from that profile. These commands describe
+inspection. `hw fingerprints` lists the USB, PCI, NVMe and audio lookup keys,
+driver ids and class codes extracted from that profile. These commands describe
 hardware, unlike `status`, which reports runtime state.
 
 `source <file>` runs a UTF-8 script through the same dispatcher. Blank lines and
@@ -1693,6 +1694,10 @@ not a host-only stub.
 Open the **Builder** tab and use the **Voice Control** panel. The mic button starts/stops capture; `Ctrl+Shift+M` does the same from anywhere in Studio. The phase badge shows `Idle`, `Listening`, `Transcribing`, `Thinking`, `ScriptReady`, `AwaitingConfirmation`, `Executing`, `Completed` or `Failed`. While listening, the meter reflects RMS level. The transcript box is editable: press **Generate from text** to run the edited text through the same pipeline. Generated EasyLang appears in the script block. When privileges are required, the permission list is shown and **Approve & run** becomes active; no privileged script executes before that click.
 
 Voice phases are also streamed on authenticated `/ws/voice` and included as `voice_phase` in `/ws/telemetry`. REST control endpoints require the same bearer token as the rest of the API.
+
+### Audio inventory
+
+`GET /api/v1/audio/devices` returns the detected input/output endpoints with their bus, driver name, vendor/device ids, native sample format, default flag, a `microphone_available` boolean and a `drivers_detected` count. `POST /api/v1/audio/rescan` refreshes the cached inventory after plugging or unplugging a device. Both endpoints require the same bearer token as the other `/api/v1/*` routes. In the console the same inventory appears in `sys info` / `hw detect` as the `audio` line.
 
 ### TUI / `aios` AI Console
 

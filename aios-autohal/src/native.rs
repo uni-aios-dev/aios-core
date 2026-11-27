@@ -22,7 +22,8 @@
 //! [`crate::fingerprint::extract_fingerprints`]. It only triggers that detection
 //! promptly. Raw device-interface paths / uevent subsystem names are reduced to
 //! a coarse [`BusHint`] so the monitor can ignore unrelated churn (e.g. display
-//! interfaces, audio, HID consumer events) without paying for a full scan.
+//! interfaces, HID consumer events) without paying for a full scan. Audio now
+//! maps to [`BusHint::Audio`] and triggers a rescan of the audio inventory.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -31,8 +32,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 /// Coarse bus classification derived from a native event, used to filter out
-/// churn that is irrelevant to AIOS fingerprinting (which covers USB, PCI, NVMe
-/// and the block/storage layer).
+/// churn that is irrelevant to AIOS fingerprinting (which covers USB, PCI, NVMe,
+/// the block/storage layer and audio endpoints).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusHint {
     /// USB device (or `usb#vid_…` interface path).
@@ -43,6 +44,8 @@ pub enum BusHint {
     Nvme,
     /// Block/storage (IDE, SCSI, SATA, MMC…).
     Storage,
+    /// Audio endpoint or sound controller (`sound`, `snd`, `AudioEndpoint`).
+    Audio,
     /// Anything else — not fingerprinted by AIOS.
     Other,
 }
@@ -324,6 +327,8 @@ mod pnp {
             || n.contains("stor")
         {
             BusHint::Storage
+        } else if n.contains("audio") || n.contains("sound") || n.contains("audendp") {
+            BusHint::Audio
         } else {
             BusHint::Other
         }
@@ -537,6 +542,8 @@ mod udev {
             "block" | "scsi" | "ide" | "usb-storage" | "mmc" | "ata" | "sata"
         ) {
             BusHint::Storage
+        } else if matches!(s, "sound" | "snd" | "audio") {
+            BusHint::Audio
         } else {
             BusHint::Other
         }
@@ -564,6 +571,11 @@ mod tests {
             bus: BusHint::Other
         }
         .is_relevant());
+        assert!(NativeEvent {
+            added: true,
+            bus: BusHint::Audio
+        }
+        .is_relevant());
     }
 
     #[cfg(windows)]
@@ -589,6 +601,12 @@ mod tests {
             pnp::classify_interface(r"\\?\display#hdmi#monitor"),
             BusHint::Other
         );
+        assert_eq!(
+            pnp::classify_interface(
+                r"\\?\audiodev#%systemroot%\system32\drivers\something#audioendpoint"
+            ),
+            BusHint::Audio
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -604,6 +622,13 @@ mod tests {
         assert!(!ev.added);
         assert_eq!(ev.bus, BusHint::Other);
         assert!(!ev.is_relevant());
+
+        let audio =
+            b"add@/devices/pci0000:00/0000:00:1f.3/sound/card0\0ACTION=add\0SUBSYSTEM=sound\0\0";
+        let ev = udev::parse_uevent(audio).expect("parses");
+        assert!(ev.added);
+        assert_eq!(ev.bus, BusHint::Audio);
+        assert!(ev.is_relevant());
 
         let unrelated = b"move@/devices/somewhere\0ACTION=move\0SUBSYSTEM=net\0\0";
         assert!(udev::parse_uevent(unrelated).is_none());

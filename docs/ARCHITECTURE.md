@@ -475,6 +475,7 @@ pub struct HardwareProfile {
     pub npu: Option<NpuInfo>,
     pub memory: MemoryInfo,
     pub pci_devices: Vec<PciDevice>,
+    pub audio_devices: Vec<AudioDevice>,
 }
 ```
 
@@ -2701,3 +2702,9 @@ The host adds `aios-voice` as an input layer in front of the existing EasyLang/W
 The bridge's `VoiceRuntime` consumes `Transcribed` events on a background worker. Generation is delegated to `ScriptGenerator`, which uses `ScriptLlm` (real LLM adapter, mock or deterministic offline fallback), enforces a code-only EasyLang grammar, retries on validation failure and compiles via `WorkflowCompiler`. Generated WASM is never trusted: `AutoManifestGenerator` extracts capabilities from guarded `aios` imports and `AccessControlLayer` validates them against a voice session token before `WasmBlock::instantiate_with_policy` installs an identical `HostPolicy`. Host calls are audit-only; they do not spawn processes or open network connections, and non-http URLs for `net_check`/`browse` are rejected.
 
 Privileged scripts are staged as `AwaitingConfirmation` with their permission list, and only an explicit `confirm:true` request issues a token with the required capabilities. Successful workflows are persisted with the originating phrase for traceability.
+
+## Audio device and driver inventory (2026-11-27)
+
+`aios-hal::audio` enumerates live input/output endpoints with `cpal` and merges OS driver records into `AudioDevice { name, direction, bus, driver, vendor_id, device_id, class_code, is_default, sample_rate, channels, sample_format }`. Linux reads PCI class `0x04` and USB audio class `03` from sysfs; Windows parses `wmic sounddev ... /format:list`. The list lives in `HardwareProfile::audio_devices`, is serialized over IPC and printed as the `audio` line by `aios-console`.
+
+Hot-plug now watches `/sys/class/sound` alongside USB/PCI/NVMe, and `BusHint::Audio` keeps sound uevents relevant. `aios-autohal` maps endpoints to `BusType::{USB, PCI, Bluetooth, Audio}` with PCI multimedia class `0x0004xxxx`, ships `AUDIO_WAT` with the `driver.audio.generic` builtin, and provisions it through the normal fingerprint path. The bridge exposes authenticated `GET /api/v1/audio/devices` and `POST /api/v1/audio/rescan`. Detection is best-effort: a headless host returns an empty list instead of failing.

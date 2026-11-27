@@ -812,6 +812,11 @@ impl HostBackend {
             "thunderbolt    {} device(s)",
             profile.thunderbolt_devices.len()
         ));
+        lines.push(format!(
+            "audio          {} endpoint(s), microphone={}",
+            profile.audio_devices.len(),
+            aios_hal::audio::has_microphone(&profile.audio_devices)
+        ));
         lines.push(format!("tier           {}", AiTier::from_profile(profile)));
         lines
     }

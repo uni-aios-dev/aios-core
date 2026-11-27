@@ -1,3 +1,4 @@
+use aios_hal::audio::AudioBus;
 use aios_hal::hardware::{HardwareProfile, StorageInterface};
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,9 @@ pub enum BusType {
     Bluetooth,
     ACPI,
     NVMe,
+    /// Logical bus for an audio endpoint whose physical bus is not reported.
+    /// The endpoint name is carried in `serial_or_acpi` as the stable id.
+    Audio,
 }
 
 impl BusType {
@@ -21,6 +25,7 @@ impl BusType {
             Self::Bluetooth => "bt",
             Self::ACPI => "acpi",
             Self::NVMe => "nvme",
+            Self::Audio => "audio",
         }
     }
 
@@ -32,6 +37,7 @@ impl BusType {
             Self::Bluetooth => "Bluetooth",
             Self::ACPI => "ACPI",
             Self::NVMe => "NVMe",
+            Self::Audio => "Audio",
         }
     }
 }
@@ -66,6 +72,7 @@ impl HardwareFingerprint {
         match (self.bus, self.serial_or_acpi.as_deref()) {
             (BusType::ACPI, Some(serial)) => format!("acpi.{serial}"),
             (BusType::USB, Some(serial)) => format!("usb.{vid}.{did}.{serial}"),
+            (BusType::Audio, Some(name)) => format!("audio.{name}"),
             _ => format!("{}.{vid}.{did}", self.bus.tag()),
         }
     }
@@ -74,6 +81,7 @@ impl HardwareFingerprint {
     pub fn driver_id(&self) -> String {
         match (self.bus, self.serial_or_acpi.as_deref()) {
             (BusType::ACPI, Some(serial)) => format!("driver.acpi.{serial}"),
+            (BusType::Audio, Some(name)) => format!("driver.audio.{name}"),
             _ => format!(
                 "driver.{}.{:04x}.{:04x}",
                 self.bus.tag(),
@@ -87,6 +95,7 @@ impl HardwareFingerprint {
     pub fn display_name(&self) -> String {
         match self.serial_or_acpi.as_deref() {
             Some(serial) if self.bus == BusType::ACPI => format!("ACPI {serial}"),
+            Some(name) if self.bus == BusType::Audio => format!("Audio {name}"),
             Some(serial) => format!(
                 "{} {:04X}:{:04X} ({serial})",
                 self.bus.label(),
@@ -111,7 +120,7 @@ impl HardwareFingerprint {
     /// lookup (either a vendor/device pair or an ACPI/serial id).
     pub fn is_actionable(&self) -> bool {
         match self.bus {
-            BusType::ACPI => self.serial_or_acpi.is_some(),
+            BusType::ACPI | BusType::Audio => self.serial_or_acpi.is_some(),
             _ => self.vendor_id != 0 || self.device_id != 0,
         }
     }
@@ -128,10 +137,13 @@ impl std::fmt::Display for HardwareFingerprint {
 /// * USB devices -> `BusType::USB` (VID/PID from the HAL scan);
 /// * PCI devices  -> `BusType::PCI` (class/subclass folded into `class_code`);
 /// * NVMe storage -> `BusType::NVMe` (no VID/PID in the HAL scan, class
-///   `0x010802` mass-storage and the model used as an identifier).
+///   `0x010802` mass-storage and the model used as an identifier);
+/// * audio endpoints -> their reported bus when known, otherwise
+///   `BusType::Audio` with the endpoint name as a stable id, and PCI multimedia
+///   class `0x0004xxxx` so a generic audio driver can serve them.
 ///
-/// Bluetooth/ACPI devices are not yet surfaced by `aios-hal`; the variants
-/// exist so the inspector tree and lookup keys already cover them.
+/// ACPI devices are not yet surfaced by `aios-hal`; the variant exists so the
+/// inspector tree and lookup keys already cover it.
 pub fn extract_fingerprints(profile: &HardwareProfile) -> Vec<HardwareFingerprint> {
     let mut out = Vec::new();
 
@@ -171,6 +183,22 @@ pub fn extract_fingerprints(profile: &HardwareProfile) -> Vec<HardwareFingerprin
         });
     }
 
+    for audio in &profile.audio_devices {
+        let bus = match audio.bus {
+            AudioBus::Usb => BusType::USB,
+            AudioBus::Pci => BusType::PCI,
+            AudioBus::Bluetooth => BusType::Bluetooth,
+            AudioBus::Unknown => BusType::Audio,
+        };
+        out.push(HardwareFingerprint {
+            bus,
+            vendor_id: audio.vendor_id,
+            device_id: audio.device_id,
+            class_code: audio.audio_class_code(),
+            serial_or_acpi: Some(audio.name.clone()),
+        });
+    }
+
     out
 }
 
@@ -202,6 +230,19 @@ mod tests {
                 capacity_gb: 2048,
                 model: "Samsung 990 PRO 2TB".into(),
             }],
+            audio_devices: vec![aios_hal::audio::AudioDevice {
+                name: "Microphone (USB Audio)".into(),
+                direction: aios_hal::audio::AudioDirection::Input,
+                bus: AudioBus::Usb,
+                driver: "snd_usb_audio".into(),
+                vendor_id: 0x046D,
+                device_id: 0xA001,
+                class_code: 0x0004_0000,
+                is_default: true,
+                sample_rate: 16_000,
+                channels: 1,
+                sample_format: "f32".into(),
+            }],
             ..HardwareProfile::mock_modern()
         }
     }
@@ -213,6 +254,35 @@ mod tests {
         assert!(buses.contains(&BusType::USB));
         assert!(buses.contains(&BusType::PCI));
         assert!(buses.contains(&BusType::NVMe));
+    }
+
+    #[test]
+    fn test_extract_audio_endpoint() {
+        let fp = extract_fingerprints(&profile())
+            .into_iter()
+            .find(|f| f.device_id == 0xA001)
+            .expect("audio fingerprint");
+        assert_eq!(fp.bus, BusType::USB);
+        assert_eq!(fp.vendor_id, 0x046D);
+        assert_eq!(fp.class_code, 0x0004_0000);
+        assert_eq!(fp.serial_or_acpi.as_deref(), Some("Microphone (USB Audio)"));
+        assert!(fp.is_actionable());
+    }
+
+    #[test]
+    fn test_audio_bus_key_and_driver_id() {
+        let fp = HardwareFingerprint {
+            bus: BusType::Audio,
+            vendor_id: 0,
+            device_id: 0,
+            class_code: 0x0004_0000,
+            serial_or_acpi: Some("Microphone".into()),
+        };
+        assert_eq!(fp.key(), "audio.Microphone");
+        assert_eq!(fp.driver_id(), "driver.audio.Microphone");
+        assert_eq!(fp.display_name(), "Audio Microphone");
+        assert!(fp.is_actionable());
+        assert_eq!(fp.bus.tag(), "audio");
     }
 
     #[test]
@@ -278,7 +348,7 @@ mod tests {
         };
         for _ in 0..100 {
             let fps = extract_fingerprints(&profile);
-            assert_eq!(fps.len(), 3);
+            assert_eq!(fps.len(), 4);
         }
         let start = std::time::Instant::now();
         let mut ops = 0u32;

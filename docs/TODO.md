@@ -1120,8 +1120,12 @@ Completed:
 - Capability-checked WASM host calls and session ACL confirmation flow.
 - Bridge endpoints, `/ws/voice`, Studio mic panel and TUI AI Console voice markers.
 - Integration test from mock audio buffer to sandboxed WASM execution.
+- Audio-device and driver inventory in `aios-hal::audio`, AutoHAL fingerprints
+  and builtin audio driver, hotplug sound events and bridge inventory endpoints.
 
 Remaining:
 - Stream generated script diffs to clients before confirmation.
+- Enrich audio driver records with stable VID/PID on platforms that only expose
+  endpoint names; current matching is best-effort.
 - Add RU/EN keyword hints to the LLM system prompt for domain-specific workflows.
 - Extend host-call audit records into the telemetry store for long-term inspection.

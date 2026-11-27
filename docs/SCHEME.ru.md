@@ -502,3 +502,16 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 Эндпоинты: `POST /api/v1/voice/start`, `/stop`, `/transcribe` (WAV или s16le, максимум 10 МиБ), `/execute-text`, `GET /api/v1/voice/status`, `GET /ws/voice?token=...`. Все API-маршруты требуют bearer-авторизацию; WebSocket проверяют токен самостоятельно. `/ws/telemetry` дополнительно передаёт `voice_phase`.
 
 Успешные скрипты сохраняются в `<AIOS_WORKFLOWS_DIR|workflows>` как `<stem>.easy`, `<stem>.wasm` и `<stem>.meta.json` с исходной фразой. Тестовое покрытие: `tests/voice_pipeline_test.rs` (мок аудио -> мок LLM -> выполнение WASM), а также модульные тесты `aios-voice` (11), `aios-builder` (29), `aios-wasm` (64) и `aios-bridge` (26).
+
+## 14. Инвентарь аудиоустройств и драйверов (2026-11-27)
+
+| Область | Файлы | Точки входа |
+|---|---|---|
+| HAL-инвентарь | `aios-hal/src/audio.rs`, `hardware.rs` | `AudioDirection`, `AudioBus`, `AudioDevice`, `DriverRecord`, `detect_audio_devices()`, `has_microphone()`, `bus_from_name()`, `HardwareProfile::audio_devices` |
+| AutoHAL | `aios-autohal/src/fingerprint.rs`, `catalog.rs`, `native.rs`, `hotplug.rs` | `BusType::Audio`, `AUDIO_WAT`, `driver.audio.generic`, `BusHint::Audio`, `HOTPLUG_SYSFS_PATHS` |
+| Мост | `aios-bridge/src/audio.rs`, `dto.rs`, `server.rs` | `audio_devices_handler`, `audio_rescan_handler`, `AudioDevicesResponse`, `BridgeContext::audio_devices` |
+| Консоль | `aios-console/src/host.rs` | строка `audio` в `hardware_lines()` для `sys info` / `hw detect` |
+
+Поток: `cpal::default_host()` перечисляет устройства ввода/вывода (имя, флаг устройства по умолчанию, родные частота/каналы/формат) -> данные драйверов ОС собираются из sysfs Linux (PCI-класс `0x04`, USB-аудиокласс `03`) или `wmic sounddev` (Windows) -> `annotate_devices()` объединяет их по имени/драйверу -> `HardwareProfile::audio_devices` передаёт список через IPC. AutoHAL превращает каждое устройство в `HardwareFingerprint` (логический `BusType::Audio`, если физическая шина неизвестна, PCI-класс мультимедиа `0x0004xxxx`), находит `driver.audio.generic` в каталоге и подготавливает `AUDIO_WAT` с обычной проверкой возможностей. `BusHint::Audio` оставляет uevent-ы `/sys/class/sound` релевантными в hotplug, а дешёвый сигнал изменения дополнительно отслеживает `/sys/class/sound`.
+
+Эндпоинты: `GET /api/v1/audio/devices` возвращает `{ devices, microphone_available, drivers_detected }` из лениво обнаруженного кэша; `POST /api/v1/audio/rescan` обновляет его. Оба требуют bearer-авторизацию, как и остальные маршруты `/api/v1/*`. Обнаружение работает по принципу best-effort: отсутствие аудиостека даёт пустой список, а несовпавшее устройство сохраняет пустое поле `driver`. Тестовое покрытие: модульные тесты вывода шины по имени, объединения и разбора данных драйвера, serde round-trip, аудио-отпечатков и компиляции WAT каталога, классификации нативных событий, DTO/кэша моста и сериализации `HardwareProfile` консоли.
