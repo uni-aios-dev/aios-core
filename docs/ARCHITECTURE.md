@@ -1457,7 +1457,7 @@ All data exchange between blocks uses `IpcPacket` through the `IpcBus`. No direc
 - **Hardware security bridge** unifies MPK/TEE/IOMMU protection for block isolation
 - **CoW persistence** with atomic rollback and crash-recovery journal
 - **Compressed telemetry** auto-compresses cold data with ZSTD
-- **Web authentication** (v2.30.0, hardened post-audit): local accounts in `<AIOS_DATA_DIR>/users.json`, PBKDF2-HMAC-SHA256 (100 000 iterations) with per-user salts, constant-time hash/signature checks, HMAC-SHA256 session tokens (12 h TTL) signed with a secret from `aios_core::secrets` (`AIOS_AUTH_SECRET` → `<data_dir>/secrets/auth.key` → CSPRNG), five failed logins lock an account for 5 minutes. `require_auth` is default-deny for `/api/*` and `/ws/*`; CORS is disabled or pinned to `AIOS_CORS_ORIGIN`. All compiled-in issuer/heartbeat secrets were replaced by the same resolver.
+- **Web authentication** (v2.30.0, hardened post-audit): local accounts in `<AIOS_DATA_DIR>/users.json`, PBKDF2-HMAC-SHA256 (100 000 iterations) with per-user salts, constant-time hash/signature checks, HMAC-SHA256 session tokens (12 h TTL) signed with a secret from `aios_core::secrets` (`AIOS_AUTH_SECRET` → `<data_dir>/secrets/auth.key` → CSPRNG), five failed logins lock an account for 5 minutes. Register/login share `validate_credentials()` (3–64-byte usernames, 12–1024-byte passwords checked before hashing) and failed-login bookkeeping is pruned/capped at 10,000 entries. `require_auth` is default-deny for `/api/*` and `/ws/*`; CORS is disabled or pinned to `AIOS_CORS_ORIGIN`. All compiled-in issuer/heartbeat secrets were replaced by the same resolver.
 
 **Not yet implemented**: full WebAssembly runtime integration. See `docs/TODO.md`.
 

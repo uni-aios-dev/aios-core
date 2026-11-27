@@ -383,9 +383,9 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 | `WorkflowCompiler::{generate_wat,compile_to_wasm}` | WAT→WASM module (`init/start/step_N` exports) |
 | `AutoManifestGenerator::{from_wasm_binary,from_workflow_intents}` | Capability inference + JSON manifest |
 
-### 8.3 `aios-bridge` — API gateway (6 files · ~2.7k lines · 22 unit + 24 integration tests)
+### 8.3 `aios-bridge` — API gateway (6 files · ~2.7k lines · 24 unit + 24 integration tests)
 
-`BridgeContext` holds shared subsystem handles: health, watchdog/processes/blocks, store, browser, sys_control, telemetry, auth, live_update, ipc_bus and an `LlmEngine`. `require_auth` middleware is default-deny for `/api/` and `/ws/`; `start_server_with_shutdown()` owns the axum server. Passwords use PBKDF2-HMAC-SHA256 with constant-time checks and 5-attempt/5-minute lockout; registration is opt-in (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS is fail-closed. DTO validation caps prompts, workflow batches, `max_tokens` and WASM uploads; `block_binary_path()` confines block binaries to canonicalized paths under `AIOS_BLOCKS_DIR`; poisoned locks are recovered via `lock_or_recover()`.
+`BridgeContext` holds shared subsystem handles: health, watchdog/processes/blocks, store, browser, sys_control, telemetry, auth, live_update, ipc_bus and an `LlmEngine`. `require_auth` middleware is default-deny for `/api/` and `/ws/`; `start_server_with_shutdown()` owns the axum server. Passwords use PBKDF2-HMAC-SHA256 with constant-time checks and 5-attempt/5-minute lockout; registration is opt-in (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS is fail-closed. `validate_credentials()` is shared by register/login (3–64-byte usernames, 12–1024-byte passwords, checked before hashing) and `failed_logins` is pruned/capped at 10,000 entries. DTO validation caps prompts, workflow batches, `max_tokens` and WASM uploads; `block_binary_path()` confines block binaries to canonicalized paths under `AIOS_BLOCKS_DIR`; poisoned locks are recovered via `lock_or_recover()`. Direct `reqwest` clients outside the browser use operator/env endpoints or fixed defaults; bridge DTOs do not accept URLs.
 
 | Method Path | Handler |
 |---|---|
@@ -478,7 +478,7 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
   `aios-browser/src/network.rs` SSRF policy with DNS pinning via
   `resolve_to_addrs`; 201 poisoned-lock recoveries in 21
   production files; CI step `Require SAFETY comments on new unsafe blocks`.
-  Post-hardening `cargo test --workspace`: **1,856 tests passed / 0 failed in 100 suites**;
+  Post-hardening `cargo test --workspace`: **1,858 tests passed / 0 failed in 100 suites**;
   `scripts/check_unsafe_safety.py HEAD~1` reports no undocumented new unsafe blocks.
 - Standalone/tooling gates: `aios-kernel` check/clippy (default and `--features limine`), `aios-kernel-run` tests 2/2, PowerShell parser check. A fresh hybrid ISO/IMG rebuild was **not** run here: `xorriso`/Limine binaries are missing and `iso/` is empty — only marker/check logic and existing image inspection were used.
 - The five `aios-kernel` GUI text-layout tests are source-level `#[cfg(test)]` checks for the freestanding binary: they are not included in the host `cargo test --workspace` count above because the bare-metal target has no `test` crate. Runtime verification used a release ELF patched into ISO LBA 32 of a copied image (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU reached `Limine handoff` / GOP `1280x800` / DHCP bound, opened App Store, Network and hardware windows with `F4`/`F5`/`F9`, and a screendump showed no text run wider than the 16 px glyph cell. The image was then written to and fully read back from Disk 3 (`\\.\PhysicalDrive3`, serial `EE05DB505AE9`) with matching SHA-256, LBA 32 ELF hash, `AIOS_KER.;1` record size and MBR `55 AA` (`boot/out/flash-gui-disk3.log`).

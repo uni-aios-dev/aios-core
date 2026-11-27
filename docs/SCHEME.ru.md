@@ -385,9 +385,9 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `WorkflowCompiler::{generate_wat,compile_to_wasm}` | WAT→WASM-модуль (экспорты `init/start/step_N`) |
 | `AutoManifestGenerator::{from_wasm_binary,from_workflow_intents}` | Вывод полномочий + JSON-манифест |
 
-### 8.3 `aios-bridge` — API-шлюз (6 файлов · ~2,7 тыс. строк · 22 unit + 24 integration-теста)
+### 8.3 `aios-bridge` — API-шлюз (6 файлов · ~2,7 тыс. строк · 24 unit + 24 integration-теста)
 
-`BridgeContext` хранит общие дескрипторы подсистем: health, watchdog/процессы/блоки, магазин, браузер, sys_control, телеметрия, auth, live_update, ipc_bus и `LlmEngine`. middleware `require_auth` по умолчанию закрывает `/api/` и `/ws/`; `start_server_with_shutdown()` владеет axum-сервером. Пароли хешируются PBKDF2-HMAC-SHA256 с constant-time проверками и блокировкой после 5 попыток на 5 минут; регистрация включается явно (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS работает по fail-closed. Валидация DTO ограничивает промпты, пакеты воркфлоу, `max_tokens` и загрузки WASM; `block_binary_path()` ограничивает бинарники блоков каноническими путями внутри `AIOS_BLOCKS_DIR`; отравленные блокировки восстанавливаются через `lock_or_recover()`.
+`BridgeContext` хранит общие дескрипторы подсистем: health, watchdog/процессы/блоки, магазин, браузер, sys_control, телеметрия, auth, live_update, ipc_bus и `LlmEngine`. middleware `require_auth` по умолчанию закрывает `/api/` и `/ws/`; `start_server_with_shutdown()` владеет axum-сервером. Пароли хешируются PBKDF2-HMAC-SHA256 с constant-time проверками и блокировкой после 5 попыток на 5 минут; регистрация включается явно (`with_signup(true)` / `AIOS_BRIDGE_ALLOW_SIGNUP=true`), CORS работает по fail-closed. `validate_credentials()` общий для register/login (имена 3–64 байта, пароли 12–1024 байта проверяются до хеширования), а `failed_logins` очищается и ограничен 10 000 записей. Валидация DTO ограничивает промпты, пакеты воркфлоу, `max_tokens` и загрузки WASM; `block_binary_path()` ограничивает бинарники блоков каноническими путями внутри `AIOS_BLOCKS_DIR`; отравленные блокировки восстанавливаются через `lock_or_recover()`. Прямые `reqwest`-клиенты вне браузера используют эндпоинты оператора/окружения или фиксированные значения; DTO моста не принимают URL.
 
 | Метод Путь | Обработчик |
 |---|---|
@@ -480,7 +480,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
   SSRF-политика `aios-browser/src/network.rs` с привязкой DNS через
   `resolve_to_addrs`; 201 восстановление отравленных
   блокировок в 21 production-файле; CI-шаг `Require SAFETY comments on new unsafe blocks`.
-  После усилений `cargo test --workspace`: **1 856 тестов пройдено / 0 провалено в 100 наборах**;
+  После усилений `cargo test --workspace`: **1 858 тестов пройдено / 0 провалено в 100 наборах**;
   `scripts/check_unsafe_safety.py HEAD~1` не находит новых unsafe-блоков без комментария.
 - Отдельные проверки: check/clippy `aios-kernel` (настройки по умолчанию и `--features limine`), тесты `aios-kernel-run` 2/2, проверка синтаксиса PowerShell. Свежая пересборка гибридного ISO/IMG здесь **не** выполнялась: бинарники `xorriso`/Limine отсутствуют, каталог `iso/` пуст — использовались только логика проверки маркеров и осмотр существующих образов.
 - Пять тестов `aios-kernel` на компоновку текста — это исходные проверки `#[cfg(test)]` для freestanding-бинарика: они не входят в приведённый выше счёт `cargo test --workspace`, потому что в bare-metal-цели нет crates `test`. Проверка в рантайме выполнена на релизном ELF, записанном в LBA 32 ISO копии образа (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU дошёл до `Limine handoff` / GOP `1280x800` / DHCP bound, клавишами `F4`/`F5`/`F9` открыл App Store, Network и окно оборудования, а screendump показал, что ни один текстовый участок не шире ячейки глифа 16 px. Затем образ записан и полностью прочитан назад с Disk 3 (`\\.\PhysicalDrive3`, серийник `EE05DB505AE9`): SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и MBR `55 AA` совпали (`boot/out/flash-gui-disk3.log`).

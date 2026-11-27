@@ -26,6 +26,8 @@ const TOKEN_TTL_SECS: u64 = 12 * 60 * 60;
 const MAX_FAILED_ATTEMPTS: u32 = 5;
 /// Lockout duration in seconds.
 const LOCKOUT_SECS: u64 = 300;
+/// Maximum number of usernames tracked for failed logins.
+const MAX_FAILED_LOGIN_TRACKS: usize = 10_000;
 
 /// A user record persisted to the auth store.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -82,6 +84,26 @@ fn b64_decode(s: &str) -> Result<Vec<u8>> {
     URL_SAFE_NO_PAD
         .decode(s)
         .map_err(|_| BridgeError::InvalidRequest("Malformed token".into()))
+}
+
+fn validate_credentials(username: &str, password: &str) -> Result<String> {
+    let username = username.trim().to_lowercase();
+    if username.is_empty() || password.is_empty() {
+        return Err(BridgeError::InvalidRequest(
+            "Username and password are required".into(),
+        ));
+    }
+    if username.len() < 3 || username.len() > 64 {
+        return Err(BridgeError::InvalidRequest(
+            "Username must be 3-64 characters".into(),
+        ));
+    }
+    if password.len() < 12 || password.len() > 1024 {
+        return Err(BridgeError::InvalidRequest(
+            "Password must be 12-1024 characters".into(),
+        ));
+    }
+    Ok(username)
 }
 
 /// Compare two byte strings without leaking their content via early exit.
@@ -179,22 +201,7 @@ impl AuthStore {
 
     /// Register a new user. Returns a session token on success.
     pub fn register(&mut self, username: &str, password: &str) -> Result<String> {
-        let username = username.trim().to_lowercase();
-        if username.is_empty() || password.is_empty() {
-            return Err(BridgeError::InvalidRequest(
-                "Username and password are required".into(),
-            ));
-        }
-        if username.len() < 3 || username.len() > 64 {
-            return Err(BridgeError::InvalidRequest(
-                "Username must be 3-64 characters".into(),
-            ));
-        }
-        if password.len() < 12 || password.len() > 1024 {
-            return Err(BridgeError::InvalidRequest(
-                "Password must be 12-1024 characters".into(),
-            ));
-        }
+        let username = validate_credentials(username, password)?;
         if self.users.contains_key(&username) {
             return Err(BridgeError::InvalidRequest(
                 "Username already exists".into(),
@@ -215,7 +222,7 @@ impl AuthStore {
 
     /// Authenticate a user by username/password. Returns a session token.
     pub fn login(&mut self, username: &str, password: &str) -> Result<String> {
-        let username = username.trim().to_lowercase();
+        let username = validate_credentials(username, password)?;
         if let Some((first, count)) = self.failed_logins.get(&username).copied() {
             if count >= MAX_FAILED_ATTEMPTS && now_secs().saturating_sub(first) < LOCKOUT_SECS {
                 return Err(BridgeError::TooManyRequests(
@@ -238,6 +245,20 @@ impl AuthStore {
 
     fn note_failed_login(&mut self, username: &str) {
         let now = now_secs();
+        self.failed_logins
+            .retain(|_, (first, _)| now.saturating_sub(*first) < LOCKOUT_SECS);
+        if self.failed_logins.len() >= MAX_FAILED_LOGIN_TRACKS
+            && !self.failed_logins.contains_key(username)
+        {
+            if let Some(oldest) = self
+                .failed_logins
+                .iter()
+                .min_by_key(|(_, (first, _))| *first)
+                .map(|(name, _)| name.clone())
+            {
+                self.failed_logins.remove(&oldest);
+            }
+        }
         let entry = self
             .failed_logins
             .entry(username.to_string())
@@ -338,7 +359,7 @@ mod tests {
             .register("alice", "secret-password-123")
             .expect("register");
         assert!(!token.is_empty());
-        assert!(store.login("alice", "wrongpass").is_err());
+        assert!(store.login("alice", "wrong-password-1").is_err());
         let token2 = store.login("alice", "secret-password-123").expect("login");
         assert!(!token2.is_empty());
     }
@@ -404,6 +425,33 @@ mod tests {
     }
 
     #[test]
+    fn login_rejects_oversized_credentials_before_hashing() {
+        let (_dir, mut store) = temp_store();
+        store
+            .register("alice", "secret-password-123")
+            .expect("register");
+        assert!(matches!(
+            store.login("alice", &"x".repeat(1025)),
+            Err(BridgeError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            store.login(&"x".repeat(65), "secret-password-123"),
+            Err(BridgeError::InvalidRequest(_))
+        ));
+        assert!(store.failed_logins.is_empty());
+    }
+
+    #[test]
+    fn failed_login_tracking_is_bounded() {
+        let (_dir, mut store) = temp_store();
+        for i in 0..MAX_FAILED_LOGIN_TRACKS + 5 {
+            let user = format!("user{i:05}");
+            assert!(store.login(&user, "wrong-password-1").is_err());
+        }
+        assert!(store.failed_logins.len() <= MAX_FAILED_LOGIN_TRACKS);
+    }
+
+    #[test]
     fn corrupted_store_fails_closed() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("users.json"), "{not json").expect("write");
@@ -418,7 +466,7 @@ mod tests {
             .expect("register");
         for _ in 0..MAX_FAILED_ATTEMPTS {
             assert!(matches!(
-                store.login("lockme", "wrong"),
+                store.login("lockme", "wrong-password-1"),
                 Err(BridgeError::Unauthorized(_))
             ));
         }

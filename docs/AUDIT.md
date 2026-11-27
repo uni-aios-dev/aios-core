@@ -1,7 +1,7 @@
 # AIOS Full Project Audit
 
 > Audit baseline: v2.28.1 · Date: 2026-08-22 · Machine: Windows x64 (MSVC)
-> Post-audit verification: v2.84.0 · Date: 2026-11-26 — see §8.
+> Post-audit verification: v2.84.0 · Date: 2026-11-26 — see §8; security follow-up 2026-11-27 — see §9.
 > Companion: `docs/SCHEME.md` / `docs/SCHEME.ru.md` — program scheme with function map.
 
 ## 1. Scope and Method
@@ -167,3 +167,11 @@ The following fixes were implemented in code after the baseline audit. They are 
 | `aios-kernel-run` tests | ✅ 2/2 passed |
 | PowerShell parser check (`scripts/flash-usb.ps1`) | ✅ pass |
 | `cargo test --manifest-path aios-kernel/Cargo.toml` | fails with duplicate lang item `panic_impl` **by design** for the freestanding `no_std` binary; not a required gate |
+
+## 9. Security follow-up (2026-11-27)
+
+- Bridge authentication was hardened beyond the original audit: PBKDF2-HMAC-SHA256 with constant-time checks, opt-in registration, fail-closed CORS, WS tokens on every upgrade, and bounded DTOs. Register/login now share credential-length validation before hashing, and failed-login tracking is pruned and capped at 10,000 entries.
+- The browser SSRF policy now validates every hop, pins DNS answers to the validated addresses with `resolve_to_addrs`, streams bodies under a byte cap, and reports client-build failures explicitly.
+- Direct `reqwest` clients (`aios-llm`, `aios-search`, `aios-store`, `aios-autohal`) were reviewed: their URLs come from operator/env configuration or fixed defaults, and bridge requests cannot supply `api_url`/store URLs. No remotely controlled SSRF target was found.
+- Verification: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (1,858 passed / 0 failed in 100 suites) and `scripts/check_unsafe_safety.py HEAD~1` are green.
+- Remaining open issue: the documented ring-0 page fault `code=0x20000000` (see `docs/BUGS.md`); no new host-side security finding remains from this pass.

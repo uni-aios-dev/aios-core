@@ -11,6 +11,10 @@
   per-user salts, constant-time comparisons and a 5-attempt/5-minute lockout;
   `BridgeError::Unauthorized` / `TooManyRequests` map to HTTP 401/429. Ten new
   auth tests cover these cases.
+- `AuthStore::login` now shares `validate_credentials()` with `register`:
+  3–64-byte usernames and 12–1024-byte passwords are rejected before PBKDF2,
+  and failed-login tracking is pruned and capped at 10,000 entries (two new
+  tests).
 - `aios-bridge` DTOs enforce limits: `MAX_PROMPT_CHARS`,
   `MAX_SYSTEM_PROMPT_CHARS`, `MAX_WORKFLOW_PROMPTS`, `MAX_TOKENS`,
   `MAX_WASM_BASE64_CHARS` and `MAX_WASM_BYTES` (four new tests).
@@ -35,6 +39,10 @@
   pinned to the validated addresses for the actual request, closing a rebinding
   window, and HTTP client construction fails explicitly instead of silently
   falling back to `reqwest::Client::default()`.
+- Audited the direct `reqwest` clients in `aios-llm`, `aios-search`, `aios-store`
+  and `aios-autohal`: URLs come from operator/environment configuration or fixed
+  provider defaults, and bridge DTOs expose no `api_url`/store URL fields, so no
+  remotely controlled SSRF path was found.
 - `HostBackend::executor` is now `Option`; a failed WASM sandbox no longer
   panics on startup. Console `exec` is default-denied unless the program is in
   `AIOS_CONSOLE_EXEC_ALLOWLIST`.
@@ -46,11 +54,12 @@
 - Predictable/hardcoded secrets, path traversal via `wasm_path`, unsafe WASM
   deserialization, startup and poisoned-lock panics, unbounded
   prompts/workflows/LLM token budgets/WASM uploads, SSRF through redirects or
-  private addresses, and unintentionally public WS/registration/CORS.
+  private addresses, unintentionally public WS/registration/CORS, and remote
+  login DoS via oversized credentials or unbounded failed-login bookkeeping.
 
 ### Verified
 - `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings.
-- `cargo test --workspace`: 1,856 passed / 0 failed in 100 suites (32 new tests
+- `cargo test --workspace`: 1,858 passed / 0 failed in 100 suites (34 new tests
   over the previous baseline). `python scripts/check_unsafe_safety.py HEAD~1`:
   no undocumented new unsafe blocks.
 

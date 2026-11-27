@@ -14,6 +14,12 @@
   (100 000 iterations) with constant-time checks, five failed logins lock an
   account for five minutes, `401`/`429` are returned instead of generic errors,
   and a corrupt `users.json` fails closed.
+- `AuthStore::login` accepted arbitrarily long credentials, so an unauthenticated
+  caller could force expensive PBKDF2 work, and `failed_logins` grew forever for
+  unique usernames. Login now shares `validate_credentials()` with registration
+  (3–64-byte username, 12–1024-byte password checked before hashing); expired
+  entries are pruned and the map evicts the oldest entry at 10,000 tracks. Two
+  regression tests cover rejection before hashing and the bound.
 - `/ws/telemetry` was public when no user was registered, self-signup was on by
   default and CORS was fail-open. `require_auth` is now default-deny for
   `/api/*` and `/ws/*`, the WebSocket token is validated on every upgrade,
@@ -43,6 +49,10 @@
   already validated addresses, so a changed DNS answer cannot reach a private
   host; a failed client build is reported instead of falling back to a default
   client with different policy.
+- Direct `reqwest` clients outside `aios-browser` were reviewed for the same
+  SSRF class: `aios-llm`, `aios-search`, `aios-store` and `aios-autohal` take
+  endpoints from operator config/env or fixed defaults, and bridge requests
+  cannot supply `api_url`/store URLs. No remotely controlled target was found.
 - Tests that registered bridge users reused the shared `aios_data/users.json`
   and short passwords, so they became order-dependent under the stricter auth
   policy. `BridgeContext::with_auth()` injects an isolated store, the E2E test
