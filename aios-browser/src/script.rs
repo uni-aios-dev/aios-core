@@ -26,6 +26,8 @@ const PRELUDE: &str = include_str!("script_prelude.js");
 const MAX_CONSOLE_LINES: usize = 200;
 /// Cap for callbacks executed in a single timer flush.
 const MAX_TIMER_FLUSH: usize = 1000;
+/// Upper bound on elements materialized from a JS object's `length` property.
+const MAX_SCRIPT_ARRAY_ITEMS: usize = 10_000;
 
 /// A `<script>` element created by page code after the initial parse,
 /// collected by [`ScriptEngine::collect_dynamic_scripts`].
@@ -422,17 +424,20 @@ fn convert_value(value: &JsValue, context: &mut Context) -> ScriptValue {
         };
     }
     if let Some(obj) = value.as_object() {
-        // Array detection: a `length` property that is a number.
+        // Array detection: a `length` property that is a finite, non-negative number.
         if let Ok(len_v) = obj.get(JsString::from("length"), context) {
             if let Some(len) = len_v.as_number() {
-                let mut items = Vec::new();
-                for i in 0..(len as usize) {
-                    match obj.get(i, context) {
-                        Ok(el) => items.push(convert_value(&el, context)),
-                        Err(_) => items.push(ScriptValue::Null),
+                if len.is_finite() && len >= 0.0 {
+                    let count = len.min(MAX_SCRIPT_ARRAY_ITEMS as f64) as usize;
+                    let mut items = Vec::with_capacity(count);
+                    for i in 0..count {
+                        match obj.get(i, context) {
+                            Ok(el) => items.push(convert_value(&el, context)),
+                            Err(_) => items.push(ScriptValue::Null),
+                        }
                     }
+                    return ScriptValue::Array(items);
                 }
-                return ScriptValue::Array(items);
             }
         }
         if let Ok(keys) = obj.own_property_keys(context) {
@@ -591,6 +596,19 @@ mod tests {
         let mut e = engine_for("<html><body></body></html>");
         let err = e.evaluate("throw new Error('boom')").unwrap_err();
         assert!(err.contains("boom"), "error was: {err}");
+    }
+
+    #[test]
+    fn evaluate_caps_object_length_property() {
+        let mut e = engine_for("<html><body></body></html>");
+        match e.evaluate("({ length: 1e12, 0: 'first' })").unwrap() {
+            ScriptValue::Array(items) => {
+                assert_eq!(items.len(), MAX_SCRIPT_ARRAY_ITEMS);
+                assert_eq!(items[0], ScriptValue::String("first".into()));
+                assert_eq!(items[1], ScriptValue::Null);
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
     }
 
     #[test]

@@ -75,7 +75,7 @@ impl ProcessExecutor for MockProcessExecutor {
         // inject migration state through the spawn spec.
         self.states
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(pid, spec.payload.clone());
         Ok(pid)
     }
@@ -195,7 +195,7 @@ impl ProcessExecutor for SchedulerProcessExecutor {
         let pid = self
             .scheduler
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .spawn_process(
                 &spec.name,
                 aios_process_mgr::task::Priority::from_u8(spec.priority),
@@ -204,7 +204,7 @@ impl ProcessExecutor for SchedulerProcessExecutor {
             .map_err(|e| e.to_string())?;
         self.states
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(pid.0, spec.payload.clone());
         Ok(pid.0)
     }
@@ -212,7 +212,7 @@ impl ProcessExecutor for SchedulerProcessExecutor {
     fn kill(&self, pid: u64) -> Result<(), String> {
         self.scheduler
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .kill_process(aios_process_mgr::task::ProcessId(pid))
             .map(|_| {
                 self.states
@@ -226,7 +226,7 @@ impl ProcessExecutor for SchedulerProcessExecutor {
     fn set_priority(&self, pid: u64, priority: u8) -> Result<(), String> {
         self.scheduler
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .set_priority(
                 aios_process_mgr::task::ProcessId(pid),
                 aios_process_mgr::task::Priority::from_u8(priority),
@@ -237,7 +237,7 @@ impl ProcessExecutor for SchedulerProcessExecutor {
     fn status(&self) -> Vec<RemoteProcessStatus> {
         self.scheduler
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .all_processes()
             .into_iter()
             .map(|p| RemoteProcessStatus {
@@ -291,6 +291,16 @@ impl ProcessExecutor for SchedulerProcessExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aios_process_mgr::scheduler::Scheduler;
+
+    fn poison<T>(mutex: &Arc<Mutex<T>>) {
+        let held = Arc::clone(mutex);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = held.lock().unwrap();
+            panic!("poison for recovery test");
+        }));
+        assert!(mutex.is_poisoned());
+    }
 
     #[test]
     fn mock_executor_lifecycle() {
@@ -335,5 +345,36 @@ mod tests {
 
         exec.kill(pid).unwrap();
         assert_eq!(exec.extract_state(pid), Err("no process with pid 1".into()));
+    }
+
+    #[test]
+    fn mock_executor_recovers_poisoned_locks() {
+        let exec = MockProcessExecutor::new(7);
+        poison(&exec.processes);
+        poison(&exec.states);
+
+        let spec = RemoteProcessSpec::new("db", 2, 64).with_payload(b"seed".to_vec());
+        let pid = exec.spawn(&spec).unwrap();
+        assert_eq!(exec.status().len(), 1);
+        assert_eq!(exec.extract_state(pid).unwrap(), b"seed");
+        exec.kill(pid).unwrap();
+    }
+
+    #[test]
+    fn scheduler_executor_recovers_poisoned_locks() {
+        let scheduler = Arc::new(Mutex::new(Scheduler::new(256)));
+        let exec = SchedulerProcessExecutor::new(7, Arc::clone(&scheduler));
+        poison(&exec.scheduler);
+        poison(&exec.states);
+
+        let spec = RemoteProcessSpec::new("worker", 4, 16).with_payload(b"seed".to_vec());
+        let pid = exec.spawn(&spec).unwrap();
+        assert_eq!(exec.extract_state(pid).unwrap(), b"seed");
+        exec.restore_state(pid, b"migrated").unwrap();
+        exec.set_priority(pid, 3).unwrap();
+        assert_eq!(exec.status().len(), 1);
+        assert_eq!(exec.metrics().process_count, 1);
+        exec.kill(pid).unwrap();
+        assert!(exec.status().is_empty());
     }
 }

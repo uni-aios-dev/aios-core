@@ -1,5 +1,29 @@
 # AIOS Development Log
 
+## Unreleased — residual panic-path hardening (2026-11-27)
+
+### Changed
+- `Scheduler::with_aging_threshold` and `with_time_slice` clamp zero to `1 ms`;
+  aging division always uses a non-zero threshold and weighted time slices use
+  `saturating_mul`, so `sched aging 0` and `sched quantum <u64::MAX>` cannot panic
+  or spin on a zero slice.
+- Cluster executors now recover poisoned scheduler/state mutexes on every
+  shared-lock access, including mock state seeding and real spawn/kill/priority/status.
+
+### Fixed
+- JS-to-Rust conversion accepted any object `length` and cast it to `usize`,
+  so `eval_js` with a huge `length` could hang or exhaust memory. Only finite,
+  non-negative lengths are treated as arrays, and materialization is capped at
+  10,000 elements.
+- The residual P2 issues recorded in `BUGS.md` are closed. No P0/P1/P2 from the
+  URL/panic audit remains; the long-standing ring-0 page fault is still open.
+
+### Verified
+- `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings.
+- `cargo test --workspace`: 1,865 passed / 0 failed in 100 suites. `python scripts/check_unsafe_safety.py HEAD`: no undocumented new unsafe blocks.
+- New tests: zero aging threshold, oversized time slice, capped JS array length,
+  and poison recovery for both executors.
+
 ## Unreleased — bridge headless SSRF bypass (2026-11-27)
 
 ### Added

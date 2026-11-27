@@ -206,7 +206,7 @@ resolve|readat`, `metrics`, `health`, `telemetry`, `ipc`, `trace list`,
 `workflow list|priority`, `stability list|best|worst`, `crash report`,
 `driver list|nics|failures|remove|rollback|install|provision`,
 `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`,
-`hub status|scan|wifi|layout`, `alias`, `unalias` и `wd status|reset`.
+`hub status|scan|wifi|layout`, `alias`, `unalias` и `wd status|reset`. Команды `sched quantum` и `sched aging` принимают миллисекунды `u64`, но ограничивают ноль значением `1 мс`; слишком большой слайс насыщается, а не переполняется, поэтому некорректные значения не могут уронить поток планировщика.
 `alias`/`unalias` хранят алиасы сессии, которые `execute_line()` раскрывает до
 диспетчеризации; каждый вызов записывается как span `TraceContext`, видимый
 через `trace list`. `HostBackendConfig.context_db_path` задаёт файл redb для

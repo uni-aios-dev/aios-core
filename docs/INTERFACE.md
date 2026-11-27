@@ -206,7 +206,7 @@ networking and security: `sleep`, `fault resolve`,
 `workflow list|priority`, `stability list|best|worst`, `crash report`,
 `driver list|nics|failures|remove|rollback|install|provision`,
 `hotplug start|events|drain`, `wifi status|scan|connect|disconnect|sim|real`,
-`hub status|scan|wifi|layout`, `alias`, `unalias` and `wd status|reset`.
+`hub status|scan|wifi|layout`, `alias`, `unalias` and `wd status|reset`. `sched quantum` and `sched aging` accept `u64` milliseconds but clamp zero to `1 ms`; oversized quanta saturate instead of overflowing, so malformed values cannot panic the scheduler thread.
 `alias`/`unalias` maintain session aliases expanded by `execute_line()` before
 dispatch; every invocation is recorded as a `TraceContext` span shown by
 `trace list`. `HostBackendConfig.context_db_path` selects the redb file used by

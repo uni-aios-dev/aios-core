@@ -65,27 +65,27 @@
   policy. `BridgeContext::with_auth()` injects an isolated store, the E2E test
   uses a temporary directory and a compliant password, and its failure path now
   reports the HTTP status/body.
-- **Status:** fixed in the working tree; `cargo fmt --all -- --check`,
+- **Status:** fixed and verified; `cargo fmt --all -- --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace` and `scripts/check_unsafe_safety.py HEAD~1` are green.
+  `cargo test --workspace` and `scripts/check_unsafe_safety.py HEAD` are green.
 
-## OPEN (P2, 2026-11-27): residual local panic paths
+## FIXED (P2, 2026-11-27): residual local panic paths
 
-- `aios-process-mgr/src/scheduler.rs:738` divides by `aging_threshold_ms`;
-  `sched aging 0` from the console accepts zero and can panic the shared
-  scheduler thread (`aios-console/src/host.rs:3197-3211`). `scheduler.rs:773`
-  multiplies `default_time_slice_ms` by a priority weight without overflow
-  checking; `sched quantum <u64::MAX>` panics in debug builds.
-- `aios-browser/src/script.rs:429` casts an arbitrary JS `length` to `usize`
-  and loops that many times, so `eval_js` with a large `length` can hang/OOM the
-  browser block task. Local IPC only; `/api/v1/browse` no longer executes page
-  scripts.
-- `aios-cluster/src/executor.rs:198,207,215,229,240` still use
-  `lock().unwrap()` on shared scheduler/state mutexes. A poisoned scheduler
-  (for example after the `sched aging 0` panic) makes the next remote
-  `Spawn`/`Kill`/`SetPriority`/`StatusRequest` panic the cluster loop.
-- **Verdict:** no P0/P1 remains from the URL/panic audit. These are local or
-  poison-dependent P2 hardening items; tracked here for the next pass.
+- `Scheduler::with_aging_threshold` clamps zero to `1 ms` and `schedule_next()`
+  also guards the divisor; `sched aging 0` can no longer panic the shared
+  scheduler thread (`aios-console/src/host.rs:3197-3211`).
+- `Scheduler::with_time_slice` clamps zero to `1 ms`, and the weighted slice uses
+  `saturating_mul`, so `sched quantum <u64::MAX>` no longer panics in debug builds.
+- JS-to-Rust conversion only treats a finite, non-negative `length` as an array
+  and materializes at most 10,000 elements, so `eval_js` cannot hang/OOM the
+  browser block task through a spoofed length.
+- All shared locks in `aios-cluster/src/executor.rs` recover from poisoning,
+  including mock state seeding and real spawn/kill/set_priority/status. A poisoned
+  scheduler can no longer panic the next remote
+  `Spawn`/`Kill`/`SetPriority`/`StatusRequest`.
+- **Verdict:** no P0/P1/P2 remains from the URL/panic audit. Five regression tests
+  cover the paths; `cargo test --workspace` reports 1,865 passed / 0 failed in
+  100 suites.
 
 ## OPEN (v2.84.0, long uptime): ring-0 page fault `code=0x20000000`
 

@@ -135,12 +135,12 @@ impl Scheduler {
     }
 
     pub fn with_aging_threshold(mut self, ms: u64) -> Self {
-        self.aging_threshold_ms = ms;
+        self.aging_threshold_ms = ms.max(1);
         self
     }
 
     pub fn with_time_slice(mut self, ms: u64) -> Self {
-        self.default_time_slice_ms = ms;
+        self.default_time_slice_ms = ms.max(1);
         self
     }
 
@@ -735,7 +735,8 @@ impl Scheduler {
                         let mut effective = *priority;
                         if let Some(&last_ms) = self.last_scheduled_ms.get(&pid) {
                             let wait = now_ms().saturating_sub(last_ms);
-                            let boost = (wait / self.aging_threshold_ms).min(4) as u8;
+                            let threshold = self.aging_threshold_ms.max(1);
+                            let boost = (wait / threshold).min(4) as u8;
                             effective = Priority::from_u8((effective as u8) + boost);
                         }
                         let weight = Self::priority_weight(effective);
@@ -770,7 +771,7 @@ impl Scheduler {
 
             let proc = self.processes.get_mut(&pid).unwrap();
             let weight = Self::priority_weight(proc.priority);
-            let time_slice = self.default_time_slice_ms * weight as u64;
+            let time_slice = self.default_time_slice_ms.saturating_mul(weight as u64);
             proc.state = ProcessState::Running;
             self.current = Some(pid);
             self.timer = Some(ProcessTimer::new(pid, time_slice));
@@ -1270,12 +1271,34 @@ mod tests {
     }
 
     #[test]
+    fn test_zero_aging_threshold_is_safe() {
+        let mut s = Scheduler::new(256).with_aging_threshold(0);
+        assert_eq!(s.aging_threshold_ms, 1);
+        let pid = s.spawn_process("task", Priority::Low, 8).unwrap();
+        s.last_scheduled_ms
+            .insert(pid, now_ms().saturating_sub(600));
+        assert_eq!(s.schedule_next(), Some(pid));
+    }
+
+    #[test]
     fn test_priority_weight() {
         assert_eq!(Scheduler::priority_weight(Priority::Background), 1);
         assert_eq!(Scheduler::priority_weight(Priority::Low), 2);
         assert_eq!(Scheduler::priority_weight(Priority::Normal), 3);
         assert_eq!(Scheduler::priority_weight(Priority::High), 4);
         assert_eq!(Scheduler::priority_weight(Priority::Critical), 5);
+    }
+
+    #[test]
+    fn test_huge_time_slice_is_safe() {
+        let mut s = Scheduler::new(256).with_time_slice(u64::MAX);
+        let pid = s.spawn_process("task", Priority::Critical, 8).unwrap();
+        assert_eq!(s.schedule_next(), Some(pid));
+        assert_eq!(s.current, Some(pid));
+        assert_eq!(
+            Scheduler::new(256).with_time_slice(0).default_time_slice_ms,
+            1
+        );
     }
 
     #[test]

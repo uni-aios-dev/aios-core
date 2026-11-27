@@ -168,11 +168,11 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `SemanticVersion::parse/is_newer_than/bump_*/is_compatible_with` | Semver |
 | `HotReloader::scan_and_reload(&mut registry)` | Инкрементальная перезагрузка из каталога наблюдения |
 
-### 5.2 `aios-process-mgr` — планировщик, процессы, fault recovery (8 файлов · ~3,1 тыс. строк · 86 тестов)
+### 5.2 `aios-process-mgr` — планировщик, процессы, fault recovery (8 файлов · ~3,1 тыс. строк · 88 тестов)
 
 | Функция / Тип | Назначение |
 |---|---|
-| `Scheduler::new(total_ram_mb)` + `with_time_slice/with_aging_threshold/with_max_restarts/with_memory_pressure_threshold` | Настройки |
+| `Scheduler::new(total_ram_mb)` + `with_time_slice/with_aging_threshold/with_max_restarts/with_memory_pressure_threshold` | Настройки; ноль слайса/порога ограничен 1 мс, взвешенный слайс насыщается |
 | `Scheduler::spawn_process/spawn_real_process/spawn_child` | Приём под RAM-квоту; реальные потоки ОС |
 | `Scheduler::schedule_next()/tick()/force_preempt()` | Priority RR + aging + RT-дедлайны |
 | `Scheduler::{kill,suspend,resume}_process/set_priority` | Управление |
@@ -308,14 +308,14 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `FileManager::new(fs,acl)/send(Command)/snapshot()` | UI-независимый движок для обоих фронтендов |
 | `ui_tui::{key_to_action,draw} / ui_gui::show` | Двухпанельные рендеры в стиле Волкова/Far |
 
-### 7.3 `aios-cluster` — мультиузловое планирование (8 файлов · 2 961 строка · 31 тест)
+### 7.3 `aios-cluster` — мультиузловое планирование (8 файлов · 2 961 строка · 33 теста)
 
 | Функция / Тип | Назначение |
 |---|---|
 | `DistributedScheduler::{start(peers),shutdown,tick,set_executor}` | Один тип = координатор или воркер; executor подключается в рантайме |
 | `DistributedScheduler::{spawn,kill,set_priority,get_state,migrate}` | Удалённые операции через RPC `ClusterMessage` |
 | `TcpClusterTransport / InMemoryClusterTransport` | TCP bincode с длиной кадра / mpsc-реестр для тестов |
-| трейт `ProcessExecutor` (+`SchedulerProcessExecutor`, mock) | Спавн/убийство/извлечение состояния на узле |
+| трейт `ProcessExecutor` (+`SchedulerProcessExecutor`, mock) | Спавн/убийство/извлечение состояния на узле; все общие блокировки восстанавливаются после отравления |
 | Репликация контрольных точек | Broadcast снапшотов, TTL-чистка, failover-восстановление |
 | `ClusterConfig::{from_env,from_json}` | Загрузка через `AIOS_CLUSTER_*` |
 
@@ -323,7 +323,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 | Крейт | Непустые строки / тесты | Ключевой API |
 |---|---|---|
-| `aios-browser` | 4 339 / 113 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
+| `aios-browser` | 4 339 / 114 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS с `MAX_SCRIPT_ARRAY_ITEMS`, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
@@ -480,8 +480,8 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
   SSRF-политика `aios-browser/src/network.rs` с привязкой DNS через
   `resolve_to_addrs`; 201 восстановление отравленных
   блокировок в 21 production-файле; CI-шаг `Require SAFETY comments on new unsafe blocks`.
-  После усилений `cargo test --workspace`: **1 860 тестов пройдено / 0 провалено в 100 наборах**;
-  `scripts/check_unsafe_safety.py HEAD~1` не находит новых unsafe-блоков без комментария.
+  После усилений `cargo test --workspace`: **1 865 тестов пройдено / 0 провалено в 100 наборах**;
+  `scripts/check_unsafe_safety.py HEAD` не находит новых unsafe-блоков без комментария.
 - Отдельные проверки: check/clippy `aios-kernel` (настройки по умолчанию и `--features limine`), тесты `aios-kernel-run` 2/2, проверка синтаксиса PowerShell. Свежая пересборка гибридного ISO/IMG здесь **не** выполнялась: бинарники `xorriso`/Limine отсутствуют, каталог `iso/` пуст — использовались только логика проверки маркеров и осмотр существующих образов.
 - Пять тестов `aios-kernel` на компоновку текста — это исходные проверки `#[cfg(test)]` для freestanding-бинарика: они не входят в приведённый выше счёт `cargo test --workspace`, потому что в bare-metal-цели нет crates `test`. Проверка в рантайме выполнена на релизном ELF, записанном в LBA 32 ISO копии образа (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU дошёл до `Limine handoff` / GOP `1280x800` / DHCP bound, клавишами `F4`/`F5`/`F9` открыл App Store, Network и окно оборудования, а screendump показал, что ни один текстовый участок не шире ячейки глифа 16 px. Затем образ записан и полностью прочитан назад с Disk 3 (`\\.\PhysicalDrive3`, серийник `EE05DB505AE9`): SHA-256, хеш ELF в LBA 32, размер записи `AIOS_KER.;1` и MBR `55 AA` совпали (`boot/out/flash-gui-disk3.log`).
 

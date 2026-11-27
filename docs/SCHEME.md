@@ -166,11 +166,11 @@ Modules: `bus`, `channel`, `ring_transport`.
 | `SemanticVersion::parse/is_newer_than/bump_*/is_compatible_with` | Semver |
 | `HotReloader::scan_and_reload(&mut registry)` | Incremental reload from a watch dir |
 
-### 5.2 `aios-process-mgr` — scheduler, processes, fault recovery (8 files · ~3.1k lines · 86 tests)
+### 5.2 `aios-process-mgr` — scheduler, processes, fault recovery (8 files · ~3.1k lines · 88 tests)
 
 | Function / Type | Purpose |
 |---|---|
-| `Scheduler::new(total_ram_mb)` + `with_time_slice/with_aging_threshold/with_max_restarts/with_memory_pressure_threshold` | Tunables |
+| `Scheduler::new(total_ram_mb)` + `with_time_slice/with_aging_threshold/with_max_restarts/with_memory_pressure_threshold` | Tunables; zero slice/threshold clamped to 1 ms, weighted slice saturates |
 | `Scheduler::spawn_process/spawn_real_process/spawn_child` | RAM quota admission; host OS threads |
 | `Scheduler::schedule_next()/tick()/force_preempt()` | Priority RR + aging + RT deadlines |
 | `Scheduler::{kill,suspend,resume}_process/set_priority` | Control |
@@ -306,14 +306,14 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 | `FileManager::new(fs,acl)/send(Command)/snapshot()` | UI-agnostic engine shared by both frontends |
 | `ui_tui::{key_to_action,draw} / ui_gui::show` | Two-panel Volkov/Far-style renderers |
 
-### 7.3 `aios-cluster` — multi-node scheduling (8 files · 2,961 lines · 31 tests)
+### 7.3 `aios-cluster` — multi-node scheduling (8 files · 2,961 lines · 33 tests)
 
 | Function / Type | Purpose |
 |---|---|
 | `DistributedScheduler::{start(peers),shutdown,tick,set_executor}` | One type = coordinator or worker; executor attached at runtime |
 | `DistributedScheduler::{spawn,kill,set_priority,get_state,migrate}` | Remote ops over `ClusterMessage` RPC |
 | `TcpClusterTransport / InMemoryClusterTransport` | Length-framed bincode TCP / mpsc registry for tests |
-| `ProcessExecutor` trait (+`SchedulerProcessExecutor`, mock) | Node-side spawn/kill/state extraction |
+| `ProcessExecutor` trait (+`SchedulerProcessExecutor`, mock) | Node-side spawn/kill/state extraction; all shared locks recover from poisoning |
 | Checkpoint replication | Heartbeat broadcast of snapshots, TTL pruning, failover restore |
 | `ClusterConfig::{from_env,from_json}` | `AIOS_CLUSTER_*` bootstrap |
 
@@ -321,7 +321,7 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 
 | Crate | Non-blank lines / tests | Key API |
 |---|---|---|
-| `aios-browser` | 4,339 / 113 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, DNS pinning via `resolve_to_addrs`, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
+| `aios-browser` | 4,339 / 114 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine with `MAX_SCRIPT_ARRAY_ITEMS`, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, DNS pinning via `resolve_to_addrs`, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
@@ -478,8 +478,8 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
   `aios-browser/src/network.rs` SSRF policy with DNS pinning via
   `resolve_to_addrs`; 201 poisoned-lock recoveries in 21
   production files; CI step `Require SAFETY comments on new unsafe blocks`.
-  Post-hardening `cargo test --workspace`: **1,860 tests passed / 0 failed in 100 suites**;
-  `scripts/check_unsafe_safety.py HEAD~1` reports no undocumented new unsafe blocks.
+  Post-hardening `cargo test --workspace`: **1,865 tests passed / 0 failed in 100 suites**;
+  `scripts/check_unsafe_safety.py HEAD` reports no undocumented new unsafe blocks.
 - Standalone/tooling gates: `aios-kernel` check/clippy (default and `--features limine`), `aios-kernel-run` tests 2/2, PowerShell parser check. A fresh hybrid ISO/IMG rebuild was **not** run here: `xorriso`/Limine binaries are missing and `iso/` is empty — only marker/check logic and existing image inspection were used.
 - The five `aios-kernel` GUI text-layout tests are source-level `#[cfg(test)]` checks for the freestanding binary: they are not included in the host `cargo test --workspace` count above because the bare-metal target has no `test` crate. Runtime verification used a release ELF patched into ISO LBA 32 of a copied image (`aios-kernel-usb-limine-v284-gui.img`): Legacy BIOS QEMU reached `Limine handoff` / GOP `1280x800` / DHCP bound, opened App Store, Network and hardware windows with `F4`/`F5`/`F9`, and a screendump showed no text run wider than the 16 px glyph cell. The image was then written to and fully read back from Disk 3 (`\\.\PhysicalDrive3`, serial `EE05DB505AE9`) with matching SHA-256, LBA 32 ELF hash, `AIOS_KER.;1` record size and MBR `55 AA` (`boot/out/flash-gui-disk3.log`).
 
