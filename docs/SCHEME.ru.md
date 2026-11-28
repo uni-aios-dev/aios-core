@@ -346,7 +346,7 @@ window.__aiosWeb3Resolve(id, ok, value) ──────► resolve/reject Pro
 |---|---|---|
 | `aios-browser` | 4 339 / 114 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS с `MAX_SCRIPT_ARRAY_ITEMS`, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
-| `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()`; `open_with_web3`, `load_html`, `evaluate_script`, IPC-обработчик и команда `SetWeb3` |
+| `aios-webview` | 571 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()`; `open_with_web3`, `load_html`, `evaluate_script`, IPC-обработчик, команда `SetWeb3` и явные настройки медиа `with_autoplay`/`with_background_throttling` |
 | `aios-web3` | 694 / 8 | `ProviderRequest`/`ProviderReply`, `Web3Host::{dispatch,handle_wire}` (вызывать вне Tokio runtime), `Wallet::{address,personal_sign}` (k256 + sha3, EIP-191/55), встроенные сети, разрешения по origin и одноразовые подтверждения подписи; RPC через `aios_browser::network::NetworkClient` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
 | `aios-sys-control` | 2 609 / 58 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU), `PowerManager` (Linux sysfs / Win32 power status + кэшируемая температура WMI) + гувернёр 80/70 °C, `SysControlHub::poll_power`, `KeyringVault` (AES-256-GCM redb, TEE) |
@@ -436,13 +436,13 @@ window.__aiosWeb3Resolve(id, ok, value) ──────► resolve/reject Pro
 |---|---|---|
 | `aios` (kernel TUI, 8 файлов · ~5,8 тыс. строк · 56 тестов) | Единый системный бинарник | Вкладки: System&HW / Blocks&Svc / AI Console / Studio Bridge / Network&Store / Web / Shell; `--safe-mode`, `--daemon`; хоткеи `b/B`, `n`, `K`, `l/L`, `W` (уведомление о GUI), `F10` (повторный probes HW); shell-команды кластера |
 | `aios-tui` (10 файлов · ~6,1 тыс. строк · 81 тест) | Отдельная панель управления | `fetch/search/open`, `net get/set/reset`, полный набор `store`, watchdog-shell |
-| `aios-gui` (22 файла · ~5,7 тыс. строк · 34 теста) | egui desktop shell | Start menu, окна, taskbar, тёмная тема, голосовой запуск программ (`desktop.rs`, `voice.rs`); с v2.81 — legacy reference tooling |
+| `aios-gui` (22 файла · ~5,9 тыс. строк · 34 теста) | egui desktop shell | Start menu, окна, taskbar, тёмная тема, голосовой запуск программ (`desktop.rs`, `voice.rs`), страница проверки медиа браузера (`tabs/media_test.html`, `open_media_test_page`); с v2.81 — legacy reference tooling |
 | `aios-daemon` (`aiosd`, 1 файл · 169 строк) | Headless Docker/сервер | Загрузочные блоки, поток сердцебиений, периодическая запись в redb |
 | `aios-studio` (SPA) | Веб-панель через bridge | Командная палитра, WS-график телеметрии, центр безопасности |
 | `aios-init` (отдельный, статический musl) | PID 1 для initramfs | Монтирование VFS, супервизор блоков (3 рестарта), зомби, спасательная оболочка |
 | Нативный UEFI-образ (`aios-image` → `aios-install`) | Образ GPT/ESP | `aios-sbctl` подписывает `BOOTX64.EFI`; проверено в QEMU/OVMF |
 
-`aios-webview` больше не просто совместимый хелпер: он размещает полноценный WebView-браузер с внедрённым Web3-провайдером; оболочка рабочего стола по-прежнему управляется через `aios-gui`, где `F7` открывает WebView-браузер, а `F10` — Web3-кошелёк (`tabs/wallet.rs`, общий `Web3Host`). Пункты «Пуска» bare-metal `aios-kernel` лишь сообщают этот статус: в ядре нет WebView и запуска процессов.
+`aios-webview` больше не просто совместимый хелпер: он размещает полноценный WebView-браузер с внедрённым Web3-провайдером и нативным рендерингом изображений/видео/звука; оболочка рабочего стола по-прежнему управляется через `aios-gui`, где `F7` открывает WebView-браузер (вместе со страницей проверки медиа), а `F10` — Web3-кошелёк (`tabs/wallet.rs`, общий `Web3Host`). Пункты «Пуска» bare-metal `aios-kernel` лишь сообщают этот статус: в ядре нет WebView и запуска процессов.
 
 ## 10. Bare-metal-ветка микроядра
 

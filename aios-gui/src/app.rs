@@ -192,6 +192,9 @@ pub struct AiosApp {
     /// Load the Web3 test page once a background browser open completes.
     #[cfg(feature = "webview")]
     pending_web3_test: bool,
+    /// Load the media test page once a background browser open completes.
+    #[cfg(feature = "webview")]
+    pending_media_test: bool,
 
     /// Shared Web3 host used by the wallet tab and native browser sessions.
     pub web3_host: Arc<aios_web3::Web3Host>,
@@ -344,6 +347,8 @@ impl AiosApp {
             pending_browser_error: Arc::new(Mutex::new(None)),
             #[cfg(feature = "webview")]
             pending_web3_test: false,
+            #[cfg(feature = "webview")]
+            pending_media_test: false,
             web3_host,
             uptime_secs: 0,
             started_at: std::time::Instant::now(),
@@ -1268,7 +1273,14 @@ impl AiosApp {
         };
         if let Some(browser) = got {
             self.browser_opening = false;
-            if self.pending_web3_test {
+            if self.pending_media_test {
+                self.pending_media_test = false;
+                if let Err(error) = browser.load_html(crate::tabs::web::MEDIA_TEST_HTML) {
+                    self.browser_status = Some(format!("Failed to load media test page: {error}"));
+                } else {
+                    self.browser_status = Some("Media test page opened".into());
+                }
+            } else if self.pending_web3_test {
                 self.pending_web3_test = false;
                 if let Err(error) = browser.load_html(crate::tabs::wallet::WEB3_TEST_HTML) {
                     self.browser_status = Some(format!("Failed to load Web3 test page: {error}"));
@@ -1302,6 +1314,19 @@ impl AiosApp {
             return Ok(());
         }
         self.pending_web3_test = true;
+        self.start_browser_open("about:blank".into());
+        Ok(())
+    }
+
+    /// Open a local page that exercises image, video and audio rendering.
+    #[cfg(feature = "webview")]
+    pub fn open_media_test_page(&mut self) -> Result<(), String> {
+        if let Some(browser) = self.browser.as_ref() {
+            browser.load_html(crate::tabs::web::MEDIA_TEST_HTML)?;
+            self.browser_status = Some("Media test page opened".into());
+            return Ok(());
+        }
+        self.pending_media_test = true;
         self.start_browser_open("about:blank".into());
         Ok(())
     }
@@ -1349,6 +1374,8 @@ impl AiosApp {
     #[cfg(feature = "webview")]
     pub fn close_browser(&mut self) {
         self.browser_opening = false;
+        self.pending_web3_test = false;
+        self.pending_media_test = false;
         if let Ok(mut slot) = self.pending_browser.lock() {
             *slot = None;
         }

@@ -1,5 +1,20 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (2026-11-28): native browser media playback relied on engine defaults
+
+- Symptom: the TUI Web tab and the embedded Boa browser are text-only, so it was
+  unclear that the native WebView renders `<img>`, `<video>` and `<audio>`;
+  background playback was left to the WebView defaults.
+- Fix: `WebViewBuilder` now sets `with_autoplay(true)` and
+  `with_background_throttling(BackgroundThrottlingPolicy::Disabled)`. The Browser
+  tab exposes a media test page with an embedded image/audio clip and a sample
+  video, so rendering and playback can be checked without an external dApp.
+- **Known limitation:** the TUI text view and the embedded Boa browser still do
+  not render media; use `F7` / the native WebView window for full media. The
+  sample video needs network access, while the image and audio are embedded.
+- **Status:** fixed in the host GUI; the bare-metal kernel desktop still has no
+  WebView by design.
+
 ## FIXED (2026-11-28): the "full browser" Start entry could not open a browser
 
 - Symptom: the Native Browser / `Браузер` Start entry described a browser, but the

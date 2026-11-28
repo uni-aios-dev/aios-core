@@ -344,7 +344,7 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 |---|---|---|
 | `aios-browser` | 4,339 / 114 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine with `MAX_SCRIPT_ARRAY_ITEMS`, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, DNS pinning via `resolve_to_addrs`, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
-| `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule; `open_with_web3`, `load_html`, `evaluate_script`, IPC handler and `SetWeb3` command |
+| `aios-webview` | 571 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule; `open_with_web3`, `load_html`, `evaluate_script`, IPC handler, `SetWeb3` command and explicit `with_autoplay`/`with_background_throttling` media settings |
 | `aios-web3` | 694 / 8 | `ProviderRequest`/`ProviderReply`, `Web3Host::{dispatch,handle_wire}` (call outside a Tokio runtime), `Wallet::{address,personal_sign}` (k256 + sha3, EIP-191/55), built-in chains, per-origin permissions and one-time signature approvals; RPC via `aios_browser::network::NetworkClient` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
 | `aios-sys-control` | 2,609 / 58 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU hotkeys), `PowerManager` (Linux sysfs / Win32 power status + cached WMI temperature) + 80/70 °C thermal governor, `SysControlHub::poll_power`, `KeyringVault` (AES-256-GCM redb, TEE-bound) |
@@ -434,13 +434,13 @@ Core types: `BridgeContext` (builders `with_blocks_dir`, `with_signup`, `with_au
 |---|---|---|
 | `aios` (kernel TUI, 8 files · ~5.8k lines · 56 tests) | Unified system binary | Tabs: System&HW / Blocks&Svc / AI Console / Studio Bridge / Network&Store / Web / Shell; `--safe-mode`, `--daemon`; hotkeys `b/B`, `n`, `K`, `l/L`, `W` (GUI notice), `F10` (re-probe HW); cluster shell commands |
 | `aios-tui` (10 files · ~6.1k lines · 81 tests) | Standalone dashboard | `fetch/search/open`, `net get/set/reset`, full `store` family, watchdog shell fallback |
-| `aios-gui` (22 files · ~5.7k lines · 34 tests) | egui desktop shell | Start menu, windows, taskbar, dark theme, voice/program launcher (`desktop.rs`, `voice.rs`); legacy reference tooling since v2.81 |
+| `aios-gui` (22 files · ~5.9k lines · 34 tests) | egui desktop shell | Start menu, windows, taskbar, dark theme, voice/program launcher (`desktop.rs`, `voice.rs`), browser media test page (`tabs/media_test.html`, `open_media_test_page`); legacy reference tooling since v2.81 |
 | `aios-daemon` (`aiosd`, 1 file · 169 lines) | Headless Docker/server mode | Boot blocks, heartbeat thread, periodic redb persistence |
 | `aios-studio` (SPA) | Web dashboard served by bridge | Command palette, WS telemetry chart, security center |
 | `aios-init` (standalone, musl static) | PID 1 for initramfs | VFS mounts, block supervisor (3 restarts), zombie reaping, rescue shell |
 | Native UEFI image (`aios-image` → `aios-install`) | UEFI/GPT/ESP disk image | `aios-sbctl` signs `BOOTX64.EFI`; QEMU/OVMF verified |
 
-`aios-webview` is no longer only a compatibility helper: it hosts the full WebView browser with the injected Web3 provider; the desktop shell is still driven by `aios-gui`, where `F7` opens the WebView browser and `F10` opens the Web3 wallet (`tabs/wallet.rs`, shared `Web3Host`). The bare-metal `aios-kernel` Start entries only report this status — they have no WebView or process launcher.
+`aios-webview` is no longer only a compatibility helper: it hosts the full WebView browser with the injected Web3 provider and native image/video/audio rendering; the desktop shell is still driven by `aios-gui`, where `F7` opens the WebView browser (plus its media test page) and `F10` opens the Web3 wallet (`tabs/wallet.rs`, shared `Web3Host`). The bare-metal `aios-kernel` Start entries only report this status — they have no WebView or process launcher.
 
 ## 10. Bare-Metal Microkernel Track
 

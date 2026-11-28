@@ -1010,7 +1010,8 @@ appended to the activity log.
 #### Native Browser (F7)
 - **Omnibox**: type a full URL (`https://...`), a bare host (`example.com`), or a plain search query (`rust scheduler`) — Enter resolves and loads it
 - **Navigation buttons**: Back, Forward; **Open Browser** / **Close** toggle
-- **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript and history support; the first navigation opens the window automatically
+- **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript, images, video, audio and history support; the first navigation opens the window automatically
+- **Media**: autoplay and background playback are enabled. **Open media test** loads a page with an embedded image, an embedded sound clip and a sample video; click **Play sound** / **Play video with sound** to verify audio output
 - **Non-blocking open**: the WebView is spawned on a background thread, so the desktop stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
 - **Status line**: shows the resolved target or the last action/error
 

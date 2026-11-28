@@ -144,6 +144,8 @@ mod engine {
             let builder = WebViewBuilder::new_with_web_context(context)
                 .with_url(url)
                 .with_initialization_script(aios_browser::web3::PROVIDER_JS)
+                .with_autoplay(true)
+                .with_background_throttling(wry::BackgroundThrottlingPolicy::Disabled)
                 .with_ipc_handler(move |request| {
                     let wire = request.body().to_string();
                     let reply_wire = match ipc_web3.borrow().as_ref() {

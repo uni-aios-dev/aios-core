@@ -962,6 +962,8 @@ The TUI cannot render real web pages (no CSS/JS engine), so the full-featured br
 - Commands (`navigate`, `back`, `forward`, `close`) are posted to the browser's event loop via `winit::EventLoopProxy` and applied asynchronously; `close` hides the window while the engine thread keeps running (the next `open` presents it again)
 - **Linux loop integration (v2.43.0):** the engine thread calls `gtk::init()` before building the event loop, enables `EventLoopBuilderExtX11::with_any_thread(true)`, seeds writable `HOME`/`XDG_*`/`DISPLAY=:0` defaults for the headless live boot, and drains `gtk::events_pending()` from `about_to_wait` on a 16 ms `WaitUntil` poll — winit's X11 loop cannot see the glib sources of GTK/WebKit (their own X connection, web-process IPC), so without the pump the window would freeze
 - Cookies and storage persist between restarts through a `WebContext` backed by a profile directory (`AIOS_DATA_DIR`/`aios/webview`, or the OS data dir)
+- **Media:** WebView2/WebKitGTK/WKWebView render `<img>`, `<video>` and `<audio>` natively; the builder sets `with_autoplay(true)` and `with_background_throttling(BackgroundThrottlingPolicy::Disabled)` so playback continues when the companion window loses focus
+- **Media test:** `aios-gui` ships `tabs/media_test.html` (embedded SVG image + WAV audio, network MP4 sample) reachable from the Browser tab via `AiosApp::open_media_test_page()`
 - `resolve_target()` implements the omnibox rule shared with the TUI: full `http(s)` URL → as-is, bare host → `https://`, anything else → DuckDuckGo (HTML edition) query
 - `launcher` module resolves the `aios-gui` binary (sibling of the current executable, then `PATH`) and spawns the GUI desktop shell
 
@@ -1011,7 +1013,7 @@ Native egui/eframe **desktop shell** replacing the tabbed dashboard: a dark desk
 - **App Store (F4)**: searchable catalog table with Install/Update/Uninstall
 - **Network Settings (F5)**: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON IPC update to `net_settings`) and Reset, plus a live JSON preview
 - **Deps (F6)**: dependency graph summary, load order chain, depends/depended-by table
-- **Native Browser (F7)**: omnibox, Back/Forward, Open/Close toggle driving the `aios-webview` native window; the first navigation auto-opens the browser and installs the shared Web3 host
+- **Native Browser (F7)**: omnibox, Back/Forward, Open/Close toggle driving the `aios-webview` native window; the first navigation auto-opens the browser and installs the shared Web3 host; an `Open media test` button loads the built-in image/video/audio page
 - **Web3 Wallet (F10)**: local account address, network selector and a local HTML test page that exercises `eth_requestAccounts`, `eth_getBalance` and `personal_sign`
 - **Files (F8)**: two-panel file manager (`aios-fm`) on `aios-vfs` — toolbar (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), panels with click/double-click selection, modal mkdir/rename dialog, collapsible AI preview, live job progress and capability ACL display
 - **Taskbar tray**: AI tier, `RAM used/total`, live IPC packet counter, Wi-Fi state/SSID, active input-layout pair, battery/CPU temperature and effective LLM backend (`local`/`cloud`) on a 2 s refresh, plus the voice mic button and manual command field

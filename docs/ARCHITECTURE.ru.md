@@ -974,6 +974,8 @@ TUI не может отображать настоящие веб-страни�
 - Команды (`navigate`, `back`, `forward`, `close`) отправляются в событийный цикл браузера через `winit::EventLoopProxy` и применяются асинхронно; `close` скрывает окно, а поток движка продолжает работать (следующий `open` снова покажет окно)
 - **Интеграция циклом на Linux (v2.43.0):** поток движка вызывает `gtk::init()` до построения event loop, включает `EventLoopBuilderExtX11::with_any_thread(true)`, подсевает записываемые `HOME`/`XDG_*`/`DISPLAY=:0` для headless live-бута и опустошает `gtk::events_pending()` из `about_to_wait` с опросом раз в 16 мс (`WaitUntil`) — X11-цикл winit не видит источники glib у GTK/WebKit (их собственное X-соединение, IPC с web-процессом), без прокачки окно замёрзло бы
 - Куки и хранилище сохраняются между перезапусками через `WebContext` с профильным каталогом (`AIOS_DATA_DIR`/`aios/webview` или системный каталог данных)
+- **Медиа:** WebView2/WebKitGTK/WKWebView изначально отображают `<img>`, `<video>` и `<audio>`; билдер задаёт `with_autoplay(true)` и `with_background_throttling(BackgroundThrottlingPolicy::Disabled)`, чтобы воспроизведение продолжалось при потере фокуса окном-компаньоном
+- **Проверка медиа:** `aios-gui` поставляет `tabs/media_test.html` (встроенные SVG-изображение и WAV-аудио, сетевой MP4-ролик); страница открывается из вкладки Browser через `AiosApp::open_media_test_page()`
 - `resolve_target()` реализует правило омнибокса, общее с TUI: полный `http(s)`-URL → как есть, голый хост → `https://`, всё остальное → запрос DuckDuckGo (HTML-версия)
 - Модуль `launcher` находит бинарник `aios-gui` (рядом с текущим исполняемым файлом, затем PATH) и запускает рабочий стол GUI
 
@@ -1023,7 +1025,7 @@ Optimism и Base. `wallet_addEthereumChain` принимает дополнит�
 - **App Store (F4)**: каталог с поиском и действиями Установить/Обновить/Удалить
 - **Network Settings (F5)**: форма hostname/port/таймауты/private-access/DNS/user-agent с Save (частичное JSON-обновление по IPC в `net_settings`) и Reset, плюс живой JSON-предпросмотр
 - **Deps (F6)**: сводка графа зависимостей, цепочка загрузки, таблица зависит/зависят от
-- **Native Browser (F7)**: омнибокс, Back/Forward, переключатель Open/Close, управляющие нативным окном `aios-webview`; первая навигация автоматически открывает браузер и подключает общий Web3-хост
+- **Native Browser (F7)**: омнибокс, Back/Forward, переключатель Open/Close, управляющие нативным окном `aios-webview`; первая навигация автоматически открывает браузер и подключает общий Web3-хост; кнопка `Open media test` загружает встроенную страницу с изображением, видео и звуком
 - **Web3 Wallet (F10)**: адрес локального аккаунта, выбор сети и локальная HTML-страница, проверяющая `eth_requestAccounts`, `eth_getBalance` и `personal_sign`
 - **Files (F8)**: двухпанельный файловый менеджер (`aios-fm`) на `aios-vfs` — панель инструментов (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), панели с выбором кликом/двойным кликом, модальный диалог mkdir/rename, сворачиваемое AI-превью, живой прогресс задач и показ capability ACL
 - **Трай панели задач**: AI Tier, `RAM использовано/всего`, живой счётчик IPC-пакетов, состояние Wi-Fi/SSID, активная пара раскладок, батарея/температура CPU и бэкенд LLM (`local`/`cloud`) с обновлением раз в 2 с, плюс кнопка голосового ввода и поле ручной команды

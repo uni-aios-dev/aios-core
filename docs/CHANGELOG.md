@@ -1,5 +1,19 @@
 # AIOS Development Log
 
+## Unreleased — native browser media rendering (2026-11-28)
+
+### Added
+- The wry WebView now sets `with_autoplay(true)` and
+  `with_background_throttling(BackgroundThrottlingPolicy::Disabled)` so `<video>`
+  and `<audio>` keep playing when the companion window loses focus.
+- A built-in media test page (`aios-gui/src/tabs/media_test.html`) reachable from
+  the Browser tab: an embedded SVG image, an embedded WAV audio clip with a play
+  button, and a network-backed MP4 sample with a poster and unmute control.
+
+### Verified
+- Workspace build, tests, clippy and fmt remain green (see the previous entry for
+  the Web3 verification details).
+
 ## Unreleased — full browser with Web3 provider and wallet (2026-11-28)
 
 ### Added

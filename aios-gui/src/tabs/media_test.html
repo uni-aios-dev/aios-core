@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AIOS Media Test</title>
+<style>
+body{background:#0b1018;color:#e8eef7;font:14px/1.5 system-ui,sans-serif;margin:0;padding:24px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:15px;margin:0 0 8px;color:#9fb3cc}
+p{margin:0 0 18px;color:#9fb3cc}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+section{background:#111927;border:1px solid #2a3b55;border-radius:10px;padding:14px}
+img,video{width:100%;max-width:480px;display:block;border-radius:8px;background:#000}
+audio{width:100%;max-width:480px}
+button{background:#3d7dff;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;margin-top:10px}
+pre{background:#0e1626;border:1px solid #2a3b55;border-radius:8px;padding:12px;white-space:pre-wrap;margin-top:18px}
+</style>
+</head>
+<body>
+<h1>AIOS media pipeline</h1>
+<p>Native WebView renders images, video and audio. The image and audio below are embedded; the video uses a public CC0 sample and needs network access.</p>
+<div class="grid">
+  <section>
+    <h2>Image — embedded SVG</h2>
+    <img alt="AIOS test image" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='270' viewBox='0 0 480 270'%3E%3Crect width='480' height='270' fill='%230b1018'/%3E%3Ccircle cx='240' cy='135' r='72' fill='%233d7dff'/%3E%3Ctext x='240' y='145' fill='%23e8eef7' font-size='30' text-anchor='middle' font-family='sans-serif'%3EAIOS%3C/text%3E%3C/svg%3E">
+  </section>
+  <section>
+    <h2>Video — MP4 with sound</h2>
+    <video id="video" controls autoplay muted loop playsinline width="480" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='270' viewBox='0 0 480 270'%3E%3Crect width='480' height='270' fill='%230b1018'/%3E%3Ccircle cx='240' cy='135' r='72' fill='%233d7dff'/%3E%3Ctext x='240' y='145' fill='%23e8eef7' font-size='30' text-anchor='middle' font-family='sans-serif'%3EAIOS%3C/text%3E%3C/svg%3E">
+      <source src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" type="video/mp4">
+      Video playback is not available.
+    </video><br>
+    <button id="unmute">Play video with sound</button>
+  </section>
+  <section>
+    <h2>Audio — embedded WAV</h2>
+    <audio id="audio" controls loop src="data:audio/wav;base64,UklGRqQMAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YYAMAACAlKazuru0p5aBblxORkVLV2l9kKOxuru2qpmFcl9QR0VJVWV5jaCvubu3rZyJdWJSSERIUmJ1iZytt7u5r6CNeWVVSUVHUF9yhZmqtru6saOQfWlXS0VGTlxugZantLu6s6aUgGxaTUZFTFlqf5Kksrq7tamXg3BdT0ZFSlZne46hsLm7t6ubh3NgUUdFSVNkd4uerri8uK6ei3dkU0lFR1Fgc4ebq7e7ubChjntnVkpFRk9dcIOXqbW7urKkkn9qWUxFRk1abICUprO6u7SnloFuXE5GRUtXaX2Qo7G6u7aqmYVyX1BHRUlVZXmNoK+5u7etnIl1YlJIREhSYnWJnK23u7mvoI15ZVVJRUdQX3KFmaq2u7qxo5B9aVdLRUZOXG6Blqe0u7qzppSAbFpNRkVMWWp/kqSyuru1qZeDcF1PRkVKVmd7jqGwubu3q5uHc2BRR0VJU2R3i56uuLy4rp6Ld2RTSUVHUWBzh5urt7u5sKGOe2dWSkVGT11wg5eptbu6sqSSf2pZTEVGTVpsgJSms7q7tKeWgW5cTkZFS1dpfZCjsbq7tqqZhXJfUEdFSVVleY2gr7m7t62ciXViUkhESFJidYmcrbe7ua+gjXllVUlFR1BfcoWZqra7urGjkH1pV0tFRk5cboGWp7S7urOmlIBsWk1GRUxZan+SpLK6u7Wpl4NwXU9GRUpWZ3uOobC5u7erm4dzYFFHRUlTZHeLnq64vLiunot3ZFNJRUdRYHOHm6u3u7mwoY57Z1ZKRUZPXXCDl6m1u7qypJJ/allMRUZNWmyAlKazuru0p5aBblxORkVLV2l9kKOxuru2qpmFcl9QR0VJVWV5jaCvubu3rZyJdWJSSERIUmJ1iZytt7u5r6CNeWVVSUVHUF9yhZmqtru6saOQfWlXS0VGTlxugZantLu6s6aUgGxaTUZFTFlqf5Kksrq7tamXg3BdT0ZFSlZne46hsLm7t6ubh3NgUUdFSVNkd4uerri8uK6ei3dkU0lFR1Fgc4ebq7e7ubChjntnVkpFRk9dcIOXqbW7urKkkn9qWUxFRk1abICUprO6u7SnloFuXE5GRUtXaX2Qo7G6u7aqmYVyX1BHRUlVZXmNoK+5u7etnIl1YlJIREhSYnWJnK23u7mvoI15ZVVJRUdQX3KFmaq2u7qxo5B9aVdLRUZOXG6Blqe0u7qzppSAbFpNRkVMWWp/kqSyuru1qZeDcF1PRkVKVmd7jqGwubu3q5uHc2BRR0VJU2R3i56uuLy4rp6Ld2RTSUVHUWBzh5urt7u5sKGOe2dWSkVGT11wg5eptbu6sqSSf2pZTEVGTVpsgJSms7q7tKeWgW5cTkZFS1dpfZCjsbq7tqqZhXJfUEdFSVVleY2gr7m7t62ciXViUkhESFJidYmcrbe7ua+gjXllVUlFR1BfcoWZqra7urGjkH1pV0tFRk5cboGWp7S7urOmlIBsWk1GRUxZan+SpLK6u7Wpl4NwXU9GRUpWZ3uOobC5u7erm4dzYFFHRUlTZHeLnq64vLiunot3ZFNJRUdRYHOHm6u3u7mwoY57Z1ZKRUZPXXCDl6m1u7qypJJ/allMRUZNWmyAlKazuru0p5aBblxORkVLV2l9kKOxuru2qpmFcl9QR0VJVWV5jaCvubu3rZyJdWJSSERIUmJ1iZytt7u5r6CNeWVVSUVHUF9yhZmqtru6saOQfWlXS0VGTlxugZantLu6s6aUgGxaTUZFTFlqf5Kksrq7tamXg3BdT0ZFSlZne46hsLm7t6ubh3NgUUdFSVNkd4uerri8uK6ei3dkU0lFR1Fgc4ebq7e7ubChjntnVkpFRk9dcIOXqbW7urKkkn9qWUxFRk1abICUprO6u7SnloFuXE5GRUtXaX2Qo7G6u7aqmYVyX1BHRUlVZXmNoK+5u7etnIl1YlJIREhSYnWJnK23u7mvoI15ZVVJRUdQX3KFmaq2u7qxo5B9aVdLRUZOXG6Blqe0u7qzppSAbFpNRkVMWWp/kqSyuru1qZeDcF1PRkVKVmd7jqGwubu3q5uHc2BRR0VJU2R3i56uuLy4rp6Ld2RTSUVHUWBzh5urt7u5sKGOe2dWSkVGT11wg5eptbu6sqSSf2pZTEVGTVpsgJSms7q7tKeWgW5cTkZFS1dpfZCjsbq7tqqZhXJfUEdFSVVleY2gr7m7t62ciXViUkhESFJidYmcrbe7ua+gjXllVUlFR1BfcoWZqra7urGjkH1pV0tFRk5cboGWp7S7urOmlIBsWk1GRUxZan+SpLK6u7Wpl4NwXU9GRUpWZ3uOobC5u7erm4dzYFFHRUlTZHeLnq64vLiunot3ZFNJRUdRYHOHm6u3u7mwoY57Z1ZKRUZPXXCDl6m1u7qypJJ/allMRUZNWmyAlKazuru0p5aBblxORkVLV2l9kKOxuru2qpmFcl9QR0VJVWV5jaCvubu3rZyJdWJSSERIUmJ1iZytt7u5r6CNeWVVSUVHUF9yhZmqtru6saOQfWlXS0VGTlxugZantLu6s6aUgGxaTUZFTFlqf5Kksrq7tamXg3BdT0ZFSlZne46hsLm7t6ubh3NgUUdFSVNkd4uerri8uK6ei3dkU0lFR1Fgc4ebq7e7ubChjntnVkpFRk9dcIOXqbW7urKkkn9qWUxFRk1abICUprO6u7SnloFuXE5GRUtXaX2Qo7G6u7aqmYVyX1BHRUlVZXmNoK+5u7etnIl1YlJIREhSYnWJnK23u7mvoI15ZVVJRUdQX3KFmaq2u7qxo5B9aVdLRUZOXG6Blqe0u7qzppSAbFpNRkVMWWp/kqSyuru1qZeDcF1PRkVKVmd7jqGwubu3q5uHc2BRR0VJU2R3i56uuLy4rp6Ld2RTSUVHUWBzh5urt7u5sKGOe2dWSkVGT11wg5eptbu6sqSSf2pZTEVGTVpsgJSms7q7tKeWgW5cTkZFS1dpfZCjsbq7tqqZhXJfUEdFSVVleY2gr7m7t62ciXViUkhESFJidYmcrbe7ua+gjXllVUlFR1BfcoWZqra7urGjkH1pV0tFRk5cboGWp7S7urOmlIBsWk1GRUxZan+SpLK6u7Wpl4NwXU9GRUpWZ3uOobC5u7erm4dzYFFHRUlTZHeLnq64vLiunot3ZFNJRUdRYHOHm6u3u7mwoY57Z1ZKRUZPXXCDl6m1u7qypJJ/allMRUZNWmyAlKazuru0p5aBblxORkVLV2l9kKOxuru2qpmFcl9QR0VJVWV5jaCvubu3rZyJdWJSSERIUmJ1iZytt7u5r6CNeWVVSUVHUF9yhZmqtru6saOQfWlXS0VGTlxugZantLu6s6aUgGxaTUZFTFlqf5Kksrq7tamXg3BdT0ZFSlZne46hsLm7t6ubh3NgUUdFSVNkd4uerri8uK6ei3dkU0lFR1Fgc4ebq7e7ubChjntnVkpFRk9dcIOXqbW7urKkkn9qWUxFRk1abICUprO6u7SnloFuXE5GRUtXaX2Qo7G6u7aqmYVyX1BHRUlVZXmNoK+5u7etnIl1YlJIREhSYnWJnK23u7mvoI15ZVVJRUdQX3KFmaq2u7qxo5B9aVdLRUZOXG6Blqe0u7qzppSAbFpNRkVMWWp/kqSyuru1qZeDcF1PRkVKVmd7jqGwubu3q5uHc2BRR0VJU2R3i56uuLy4rp6Ld2RTSUVHUWBzh5urt7u5sKGOe2dWSkVGT11wg5eptbu6sqSSf2pZTEVGTVpsgJSms7q7tKeWgW5cTkZFS1dpfZCjsbq7tqqZhXJfUEdFSVVleY2gr7m7t62ciXViUkhESFJidYmcrbe7ua+gjXllVUlFR1BfcoWZqra7urGjkH1pV0tFRk5cboGWp7S7urOmlIBsWk1GRUxZan+SpLK6u7Wpl4NwXU9GRUpWZ3uOobC5u7erm4dzYFFHRUlTZHeLnq64vLiunot3ZFNJRUdRYHOHm6u3u7mwoY57Z1ZKRUZPXXCDl6m1u7qypJJ/allMRUZNWmyAlKazuru0p5aBblxORkVLV2l9kKOxuru2qpmFcl9QR0VJVWV5jaCvubu3rZyJdWJSSERIUmJ1iZytt7u5r6CNeWVVSUVHUF9yhZmqtru6saOQfWlXS0VGTlxugZantLu6s6aUgGxaTUZFTFlqf5Kksrq7tamXg3BdT0ZFSlZne46hsLm7t6ubh3NgUUdFSVNkd4uerri8uK6ei3dkU0lFR1Fgc4ebq7e7ubChjntnVkpFRk9dcIOXqbW7urKkkn9qWUxFRk1abA=="></audio><br>
+    <button id="play">Play sound</button>
+  </section>
+</div>
+<pre id="status">Waiting for media events…</pre>
+<script>
+const status = document.getElementById('status');
+const line = (text) => { status.textContent += '\n' + text; };
+const audio = document.getElementById('audio');
+const video = document.getElementById('video');
+audio.addEventListener('playing', () => line('audio: playing'));
+video.addEventListener('playing', () => line('video: playing'));
+video.addEventListener('error', () => line('video: source unavailable (check network)'));
+document.getElementById('play').onclick = async () => {
+  try { await audio.play(); line('audio: play() accepted'); }
+  catch (e) { line('audio: play() blocked — ' + e.message); }
+};
+document.getElementById('unmute').onclick = async () => {
+  video.muted = false;
+  try { await video.play(); line('video: unmuted playback started'); }
+  catch (e) { line('video: play() blocked — ' + e.message); }
+};
+</script>
+</body>
+</html>

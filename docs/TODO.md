@@ -841,6 +841,8 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   - [x] `resolve_target()` omnibox rule shared with the TUI (URL / bare host / DuckDuckGo query)
   - [x] `launcher` module — locate and spawn the `aios-gui` binary (sibling of exe, then PATH)
   - [x] Native Browser window (F7) in `aios-gui` — omnibox, Back/Forward, Open/Close, status line
+  - [x] Media rendering: native WebView shows images/video/audio; autoplay and background playback are set explicitly
+  - [x] `Open media test` button in the Browser tab with an embedded image/audio clip and a network video sample
   - [x] TUI hotkey `W` (both `aios-tui` and kernel `aios`) launches the GUI desktop shell
   - [ ] Future: embed the webview as an in-window child of the egui desktop window via `build_as_child` (Windows/macOS/X11), replacing the companion window
   - [ ] Future: native browser in the Live ISO — add WebKitGTK to the Alpine rootfs and build `aios`/`aios-gui` with the `webview` feature enabled so the `B`/`n` keys and the Native Browser window work on the live USB too (v2.32.0 ships the image without it)

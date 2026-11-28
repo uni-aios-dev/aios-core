@@ -2,6 +2,10 @@ use crate::app::AiosApp;
 use crate::theme::AiosTheme;
 use crate::widgets::section::section;
 
+/// Local HTML page that verifies image, video and audio rendering in WebView.
+#[cfg(feature = "webview")]
+pub const MEDIA_TEST_HTML: &str = include_str!("media_test.html");
+
 pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
     section(ui, theme, "Web Browser", |ui| {
         ui.horizontal(|ui| {
@@ -98,10 +102,25 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
         ui.label(
             egui::RichText::new(
                 "The browser runs the native engine (WebView2 / WebKitGTK / WKWebView) with full \
-                 cookies and JavaScript support.",
+                 cookies, JavaScript, images, video and audio support.",
             )
             .color(theme.text)
             .size(12.0),
+        );
+        ui.add_space(4.0);
+        #[cfg(feature = "webview")]
+        if ui.button("\u{1f3ac} Open media test").clicked() {
+            if let Err(error) = app.open_media_test_page() {
+                app.browser_status = Some(error);
+            }
+        }
+        ui.label(
+            egui::RichText::new(
+                "The media test shows an embedded image, a looping video and playable audio. \
+                 Video needs network access; image and audio are embedded in the page.",
+            )
+            .color(theme.text_dim)
+            .size(11.0),
         );
         ui.add_space(4.0);
         ui.label(
