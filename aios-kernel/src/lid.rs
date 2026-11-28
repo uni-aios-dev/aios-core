@@ -3,16 +3,18 @@
 //! ACPI exposes no portable lid-state register: on laptops the switch lives as
 //! a bit somewhere inside the EC RAM. This module snapshots the full 256-byte
 //! EC RAM at boot, then polls it in a ring; the first observed bit transition
-//! becomes the "lid candidate", and its live value is published as 0/1 (raw;
-//! polarity is board-specific). Until the first transition `known` stays false
-//! and the TUI shows a scanning state. Boards without an answering EC stay
-//! inactive and the status is "n/a".
+//! becomes the "lid candidate", and its live value is published as 0/1. Until
+//! the first transition `known` stays false and the TUI shows a scanning state.
+//! Boards without an answering EC stay inactive and the status is "n/a".
 
 use crate::kprintln;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Number of EC RAM offsets re-checked per poll cycle.
 const SCAN_WINDOW: usize = 8;
+/// Raw EC bit value that means "lid open". Set to `false` for boards whose
+/// switch is active-low (verify with the `[lid] flip off=… bit=…` serial line).
+const LID_OPEN_LEVEL: bool = true;
 
 /// True once the EC answered a RAM sweep in [`init`].
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -27,6 +29,9 @@ static CAND_BIT: AtomicU32 = AtomicU32::new(0);
 
 static mut BASELINE: [u8; 256] = [0; 256];
 static mut CURSOR: usize = 0;
+/// Number of EC RAM bytes that answered during [`init`]; bounds the scan ring
+/// so unread offsets (which stay zero in the baseline) cannot pin a false bit.
+static EC_BYTES: AtomicU32 = AtomicU32::new(0);
 
 /// Whether the lid heuristic is live.
 pub fn active() -> bool {
@@ -62,16 +67,19 @@ pub fn init() {
     }
     unsafe {
         #[allow(static_mut_refs)]
-        let n = crate::ec::probe();
+        let baseline = &mut *core::ptr::addr_of_mut!(BASELINE);
+        let n = crate::ec::probe(baseline);
+        EC_BYTES.store(n as u32, Ordering::Relaxed);
         if n < 16 {
             kprintln!("[serial] [lid] ec unresponsive ({} bytes), lid n/a", n);
             ACTIVE.store(false, Ordering::Relaxed);
             return;
         }
         kprintln!(
-            "[serial] [lid] ec active, {} bytes baseline, scanning window {}",
+            "[serial] [lid] ec active, {} bytes baseline, scanning window {}, open level {}",
             n,
-            SCAN_WINDOW
+            SCAN_WINDOW,
+            LID_OPEN_LEVEL as u8
         );
         ACTIVE.store(crate::ec::active(), Ordering::Relaxed);
         KNOWN.store(false, Ordering::Relaxed);
@@ -87,24 +95,23 @@ pub fn poll() {
         return;
     }
     unsafe {
-        #[allow(static_mut_refs)]
         if KNOWN.load(Ordering::Relaxed) {
             let off = CAND_OFFSET.load(Ordering::Relaxed) as u8;
             if let Some(v) = crate::ec::read_ram(off) {
-                LID_OPEN.store(
-                    ((v >> CAND_BIT.load(Ordering::Relaxed)) & 1) != 0,
-                    Ordering::Relaxed,
-                );
+                let raw = ((v >> CAND_BIT.load(Ordering::Relaxed)) & 1) != 0;
+                LID_OPEN.store(raw == LID_OPEN_LEVEL, Ordering::Relaxed);
             }
             return;
         }
-        #[allow(static_mut_refs)]
+        let limit = EC_BYTES.load(Ordering::Relaxed) as usize;
+        if limit == 0 {
+            return;
+        }
         let base = &mut *core::ptr::addr_of_mut!(BASELINE);
         let start = *core::ptr::addr_of!(CURSOR);
-        #[allow(static_mut_refs)]
         let cursor = core::ptr::addr_of_mut!(CURSOR);
         for i in 0..SCAN_WINDOW {
-            let off = (start + i) % 256;
+            let off = (start + i) % limit;
             let Some(v) = crate::ec::read_ram(off as u8) else {
                 continue;
             };
@@ -119,20 +126,23 @@ pub fn poll() {
                     break;
                 }
             }
+            let raw = ((v >> bit) & 1) != 0;
+            let open = raw == LID_OPEN_LEVEL;
             KNOWN.store(true, Ordering::Relaxed);
-            LID_OPEN.store(((v >> bit) & 1) != 0, Ordering::Relaxed);
+            LID_OPEN.store(open, Ordering::Relaxed);
             CAND_OFFSET.store(off as u32, Ordering::Relaxed);
             CAND_BIT.store(bit as u32, Ordering::Relaxed);
             base[off] = v;
             kprintln!(
-                "[serial] [lid] flip off=0x{:02x} byte 0x{:02x}->0x{:02x} bit={} lid={}",
+                "[serial] [lid] flip off=0x{:02x} byte 0x{:02x}->0x{:02x} bit={} raw={} lid={}",
                 off,
                 old,
                 v,
                 bit,
-                LID_OPEN.load(Ordering::Relaxed) as u8
+                raw as u8,
+                open as u8
             );
         }
-        *cursor = (start + SCAN_WINDOW) % 256;
+        *cursor = (start + SCAN_WINDOW) % limit;
     }
 }

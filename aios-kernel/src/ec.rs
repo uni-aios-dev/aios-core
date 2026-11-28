@@ -90,12 +90,11 @@ pub fn dump_full(buf: &mut [u8; 256]) -> usize {
     256
 }
 
-/// Probes the EC once: if a single byte answers, the RAM sweep is dumped to
-/// the serial log in 32-byte rows so the lid heuristic and later calibration
-/// have the full snapshot available.
-pub fn probe() -> usize {
-    let mut buf = [0u8; 256];
-    let n = dump_full(&mut buf);
+/// Probes the EC once into `snapshot` and dumps the bytes that answered to the
+/// serial log in 16-byte rows. The caller keeps the snapshot as the baseline
+/// for change detection; offsets after the first failed read stay untouched.
+pub fn probe(snapshot: &mut [u8; 256]) -> usize {
+    let n = dump_full(snapshot);
     if n == 0 {
         kprintln!(
             "[serial] [ec] no response on 0x{:02x}/0x{:02x}",
@@ -105,7 +104,7 @@ pub fn probe() -> usize {
         return 0;
     }
     kprintln!("[serial] [ec] active, {} bytes of EC RAM captured", n);
-    for (row, chunk) in buf.chunks(16).enumerate() {
+    for (row, chunk) in snapshot.chunks(16).enumerate() {
         let mut line = alloc::format!("[serial] [ec] {:04x}:", row * 16);
         for b in chunk {
             line.push_str(&alloc::format!(" {:02x}", b));

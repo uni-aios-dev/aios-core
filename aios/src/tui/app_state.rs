@@ -291,6 +291,7 @@ impl TuiApp {
         let hub = self.sys_hub.clone();
         let slot = self.sys_snap.clone();
         tokio::spawn(async move {
+            hub.poll_power();
             let snap = hub.refresh_status().await;
             if let Ok(mut guard) = slot.lock() {
                 *guard = snap;

@@ -4,8 +4,13 @@
 //!
 //! Backend dispatch mirrors [`crate::net_manager`]: a deterministic
 //! [`MockPower`] source drives tests/CI while [`PowerBackend::Host`] probes
-//! real ACPI data (WMI on Windows, `/sys/class/power_supply` +
-//! `/sys/class/thermal` on Linux). Every probe degrades to `None`.
+//! real data (`GetSystemPowerStatus` + WMI on Windows, `/sys/class/power_supply`
+//! + `/sys/class/thermal` on Linux). Every probe degrades to `None`.
+//!
+//! Lid state on Windows stays unavailable because it lives in the ACPI EC and
+//! needs the kernel-side detector.
+
+use std::time::{Duration, Instant};
 
 use aios_llm::{BackendKind, CloudProvider};
 use serde::{Deserialize, Serialize};
@@ -14,6 +19,10 @@ use serde::{Deserialize, Serialize};
 pub const THROTTLE_HIGH_C: f32 = 80.0;
 /// Hysteresis temperature required before moving back on-device.
 pub const THROTTLE_LOW_C: f32 = 70.0;
+/// Minimum interval between Windows WMI temperature probes.
+const WMI_CACHE_TTL: Duration = Duration::from_secs(5);
+/// `BATTERY_FLAG_NO_BATTERY` in the Win32 `SYSTEM_POWER_STATUS` structure.
+const BATTERY_FLAG_NO_BATTERY: u8 = 0x80;
 
 /// Deterministic power/thermal source for tests and headless hosts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +152,7 @@ pub struct PowerManager {
     backend: PowerBackend,
     governor: ThermalGovernor,
     last_sample: PowerSample,
+    wmi_cache: Option<(Instant, Option<f32>)>,
 }
 
 impl Default for PowerManager {
@@ -168,6 +178,7 @@ impl PowerManager {
             backend,
             governor: ThermalGovernor::default(),
             last_sample,
+            wmi_cache: None,
         }
     }
 
@@ -202,7 +213,7 @@ impl PowerManager {
         self.governor.update(hottest)
     }
 
-    fn sample(&self) -> PowerSample {
+    fn sample(&mut self) -> PowerSample {
         match &self.backend {
             PowerBackend::Mock(m) => PowerSample {
                 battery_percent: m.battery_percent,
@@ -211,7 +222,7 @@ impl PowerManager {
                 cpu_temp_c: Some(m.cpu_temp_c),
                 gpu_temp_c: Some(m.gpu_temp_c),
             },
-            PowerBackend::Host => host_sample(),
+            PowerBackend::Host => host_sample(&mut self.wmi_cache),
         }
     }
 
@@ -254,14 +265,20 @@ impl PowerManager {
     }
 }
 
-fn host_sample() -> PowerSample {
+fn host_sample(wmi_cache: &mut Option<(Instant, Option<f32>)>) -> PowerSample {
     #[cfg(target_os = "linux")]
     {
+        let _ = wmi_cache;
         linux_sample()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
-        windows_sample()
+        windows_sample(wmi_cache)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = wmi_cache;
+        PowerSample::default()
     }
 }
 
@@ -316,14 +333,107 @@ fn first_thermal_millicelsius(preferred: &[&str]) -> Option<f32> {
     fallback
 }
 
-#[cfg(not(target_os = "linux"))]
-fn windows_sample() -> PowerSample {
-    // Best-effort WMI one-shot; returns defaults when spawn/WMI is denied.
+/// Raw Win32 `SYSTEM_POWER_STATUS` layout used by `GetSystemPowerStatus`.
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct SystemPowerStatus {
+    ac_status: u8,
+    battery_flag: u8,
+    battery_life_percent: u8,
+    reserved1: u8,
+    battery_life_time: u32,
+    battery_full_life_time: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetSystemPowerStatus(lp_system_power_status: *mut SystemPowerStatus) -> i32;
+}
+
+/// Decodes Win32 AC/battery bytes into optional host snapshot fields.
+fn parse_power_status(
+    ac_status: u8,
+    battery_flag: u8,
+    life_percent: u8,
+) -> (Option<u8>, Option<bool>) {
+    let battery = if battery_flag & BATTERY_FLAG_NO_BATTERY != 0 || life_percent == 255 {
+        None
+    } else {
+        Some(life_percent.min(100))
+    };
+    let ac_online = match ac_status {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    };
+    (battery, ac_online)
+}
+
+/// Parses the hottest `MSAcpi_ThermalZoneTemperature` value printed by the
+/// PowerShell probe. WMI reports tenths of Kelvin; `255` means unavailable.
+fn parse_wmi_temperature(output: &str) -> Option<f32> {
+    let value = output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?
+        .parse::<f32>()
+        .ok()?;
+    if value < 0.0 || value > 255.0 {
+        return None;
+    }
+    Some(value)
+}
+
+/// Reads the hottest ACPI thermal zone through WMI, cached for [`WMI_CACHE_TTL`].
+#[cfg(target_os = "windows")]
+fn wmi_cpu_temp(wmi_cache: &mut Option<(Instant, Option<f32>)>) -> Option<f32> {
+    if let Some((at, value)) = wmi_cache.as_ref() {
+        if at.elapsed() < WMI_CACHE_TTL {
+            return *value;
+        }
+    }
+    const PS: &str = "$z = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue | Sort-Object CurrentTemperature -Descending | Select-Object -First 1; if ($z) { [math]::Round(($z.CurrentTemperature / 10.0) - 273.15, 1) }";
+    let value = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", PS])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| parse_wmi_temperature(&String::from_utf8_lossy(&out.stdout)));
+    *wmi_cache = Some((Instant::now(), value));
+    value
+}
+
+/// Host snapshot from Win32 power status plus an optional WMI temperature zone.
+#[cfg(target_os = "windows")]
+fn windows_sample(wmi_cache: &mut Option<(Instant, Option<f32>)>) -> PowerSample {
+    // SAFETY: GetSystemPowerStatus only writes into the local `status` struct.
+    let raw = unsafe {
+        let mut status = SystemPowerStatus {
+            ac_status: 255,
+            battery_flag: BATTERY_FLAG_NO_BATTERY,
+            battery_life_percent: 255,
+            reserved1: 0,
+            battery_life_time: 0,
+            battery_full_life_time: 0,
+        };
+        if GetSystemPowerStatus(&mut status) == 0 {
+            status.ac_status = 255;
+            status.battery_flag = BATTERY_FLAG_NO_BATTERY;
+            status.battery_life_percent = 255;
+        }
+        (
+            status.ac_status,
+            status.battery_flag,
+            status.battery_life_percent,
+        )
+    };
+    let (battery_percent, ac_online) = parse_power_status(raw.0, raw.1, raw.2);
     PowerSample {
-        battery_percent: None,
-        ac_online: None,
+        battery_percent,
+        ac_online,
         lid_open: None,
-        cpu_temp_c: None,
+        cpu_temp_c: wmi_cpu_temp(wmi_cache),
         gpu_temp_c: None,
     }
 }
@@ -420,5 +530,25 @@ mod tests {
         let mut pm = PowerManager::mock(mock_with(60.0, 91.5));
         assert_eq!(pm.poll(), ThrottleDecision::MoveToCloud);
         assert!((pm.max_temp_c() - 91.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn wmi_temperature_parses_first_numeric_line() {
+        assert_eq!(parse_wmi_temperature("61.5\r\n"), Some(61.5));
+        assert_eq!(parse_wmi_temperature("\n 42 \nnoise\n"), Some(42.0));
+        assert_eq!(parse_wmi_temperature(""), None);
+        assert_eq!(parse_wmi_temperature("no data"), None);
+        assert_eq!(parse_wmi_temperature("999"), None);
+    }
+
+    #[test]
+    fn power_status_decodes_ac_and_battery_flags() {
+        assert_eq!(parse_power_status(1, 0, 84), (Some(84), Some(true)));
+        assert_eq!(parse_power_status(0, 0x04, 37), (Some(37), Some(false)));
+        assert_eq!(
+            parse_power_status(1, BATTERY_FLAG_NO_BATTERY, 255),
+            (None, Some(true))
+        );
+        assert_eq!(parse_power_status(255, 0, 255), (None, None));
     }
 }

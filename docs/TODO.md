@@ -1075,6 +1075,12 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
   QEMU smoke green (acpi/thermal/ps2 ok, `[lid] ec unresponsive` expected);
   MSI calibration of the lid offset/bit + real temperature pending real-hardware
   boot.
+- [x] **v2.84+**: sensor plumbing — `ec::probe(snapshot)` now hands the boot EC
+  dump to `lid::BASELINE`, the scan ring is bounded by answered bytes, and
+  `LID_OPEN_LEVEL` exposes active-low polarity. Host `power_mgr` probes Windows
+  battery/AC and WMI temperature (cached 5 s), and `SysControlHub::poll_power()`
+  is called by the TUI/GUI/bridge/console before publishing snapshots. Still
+  open: real-hardware lid polarity/offset calibration and DTS validation.
 - [x] **v2.38.21**: TUI becomes the primary screen — `tui.rs` replaces the
   `TUI_ROWS = 10` const with a dynamic `panel_rows()` computed from the live
   framebuffer height, and `console.rs` bounds the scrolling log to a compact top

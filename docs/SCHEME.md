@@ -325,7 +325,7 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 | `aios-search` | 438 / 7 | `SearchEngine::search` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
-| `aios-sys-control` | 2,609 / 55 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU hotkeys), `PowerManager` + 80/70 °C thermal governor, `KeyringVault` (AES-256-GCM redb, TEE-bound) |
+| `aios-sys-control` | 2,609 / 58 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU hotkeys), `PowerManager` (Linux sysfs / Win32 power status + cached WMI temperature) + 80/70 °C thermal governor, `SysControlHub::poll_power`, `KeyringVault` (AES-256-GCM redb, TEE-bound) |
 
 ### 7.5 Store & updates
 

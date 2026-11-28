@@ -1417,6 +1417,7 @@ struct SysStatusResponse {
 
 async fn sys_status_handler(State(state): State<SharedState>) -> Json<SysStatusResponse> {
     let hub = state.sys_control.lock().await;
+    hub.poll_power();
     let snapshot = hub.refresh_status().await;
     Json(SysStatusResponse {
         success: true,

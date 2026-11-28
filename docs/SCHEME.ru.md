@@ -327,7 +327,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
 | `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
-| `aios-sys-control` | 2 609 / 55 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU), `PowerManager` + гувернёр 80/70 °C, `KeyringVault` (AES-256-GCM redb, TEE) |
+| `aios-sys-control` | 2 609 / 58 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU), `PowerManager` (Linux sysfs / Win32 power status + кэшируемая температура WMI) + гувернёр 80/70 °C, `SysControlHub::poll_power`, `KeyringVault` (AES-256-GCM redb, TEE) |
 
 ### 7.5 Магазин и обновления
 

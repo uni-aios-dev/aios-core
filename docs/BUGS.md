@@ -1,5 +1,31 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (2026-11-28): lid heuristic compared EC RAM against an all-zero baseline
+
+- `lid::init()` called `ec::probe()`, which only logged a 256-byte dump into a
+  local buffer. `BASELINE` stayed zeroed, so the first statically nonzero EC
+  byte was pinned as a "lid flip" even before the lid moved. `probe()` now
+  writes the dump into the caller's snapshot (`lid::BASELINE`) and `poll()`
+  scans only the bytes that actually answered (`EC_BYTES`); unread offsets can
+  no longer create a false candidate.
+- `LID_OPEN_LEVEL` now makes the raw EC bit-to-open mapping explicit for
+  active-low boards, and the flip log prints `raw=` next to the decoded value.
+- **Known limitation**: the EC RAM offset/bit are still board-specific; the
+  MSI calibration task below stays open until a real lid transition is observed.
+
+## FIXED (2026-11-28): Windows host sensors were a stub and were never polled
+
+- `windows_sample()` returned all `None`, and `SysControlHub::refresh_status()`
+  only republished a cached sample; no production caller ever invoked
+  `PowerManager::poll()`. The status bar therefore showed 0 °C and never
+  throttled. Windows now reads battery/AC via `GetSystemPowerStatus` and the
+  hottest ACPI zone via a 5-second-cached WMI query; `poll_power()` is called
+  from the TUI/GUI poll loops, the bridge status route and the console.
+- **Known limitation**: WMI thermal zones are not exposed on every machine
+  (QEMU/headless hosts legitimately report no temperature), and Windows has no
+  portable lid-state API — host `lid_open()` stays `None`. The kernel EC
+  detector remains the source of lid state on AIOS hardware.
+
 ## FIXED: name-only audio endpoints had zero vendor/device ids (2026-11-27)
 
 - First-substring driver matching and generic Linux PCI record names left many

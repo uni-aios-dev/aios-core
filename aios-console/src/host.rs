@@ -4366,6 +4366,7 @@ impl HostBackend {
     fn hub_command(&mut self, invocation: &Invocation, subcommand: &str) -> CommandOutput {
         match subcommand {
             "status" => {
+                self.sys_hub.poll_power();
                 let snapshot = StoreManager::block_on(self.sys_hub.refresh_status());
                 let mut lines = vec![snapshot.status_line()];
                 lines.push(format!("layout       {}", snapshot.layout));

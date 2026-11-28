@@ -1,5 +1,30 @@
 # AIOS Development Log
 
+## Unreleased — lid baseline and live host sensors (2026-11-28)
+
+### Added
+- Windows host probing in `power_mgr`: `GetSystemPowerStatus` for battery/AC and
+  a 5-second-cached WMI `MSAcpi_ThermalZoneTemperature` query for the hottest
+  CPU zone. Windows lid state stays `None` because the switch is in the ACPI EC
+  and belongs to the kernel-side detector.
+- `SysControlHub::poll_power()` explicitly re-samples the backend and runs the
+  governor; the TUI, GUI, bridge REST status and console `hub status` call it
+  before publishing the cached snapshot.
+
+### Fixed
+- Kernel `lid::init()` now captures the EC RAM dump into `BASELINE` through
+  `ec::probe(snapshot)`, and the scan ring is bounded by the number of bytes
+  that answered. An unread (zero) EC offset can no longer be pinned as a fake
+  lid transition. Added `LID_OPEN_LEVEL` for active-low boards and `raw=` in
+  the flip log for polarity calibration.
+- Host status snapshots no longer stay frozen at 0 °C / no throttling on Windows.
+
+### Verified
+- 3 new unit tests cover WMI output parsing, Win32 power-status decoding and
+  the hub poll path: `cargo test -p aios-sys-control` reports 58 passed.
+  Workspace clippy, kernel build and kernel clippy are clean. Real DTS readings
+  and lid polarity still require a laptop for validation.
+
 ## Unreleased — stable audio device identifiers (2026-11-27)
 
 ### Added

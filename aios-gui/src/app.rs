@@ -473,6 +473,7 @@ impl AiosApp {
         let (Some(hub), Some(rt)) = (&self.sys_hub, &self.sys_rt) else {
             return;
         };
+        hub.poll_power();
         self.sys_snap = rt.block_on(hub.refresh_status());
         self.sys_last_poll = std::time::Instant::now();
     }

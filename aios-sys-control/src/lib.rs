@@ -27,7 +27,7 @@ use std::sync::Mutex;
 
 use input_i18n::LayoutManager;
 use net_manager::{LinkStatus, NetManager};
-use power_mgr::PowerManager;
+use power_mgr::{PowerManager, ThrottleDecision};
 use tokio::sync::RwLock;
 
 /// Aggregated system-control snapshot for the UI status bars.
@@ -175,6 +175,15 @@ impl SysControlHub {
         self.net.write().await.connect(ssid, password).await
     }
 
+    /// Re-sample battery/AC/sensors and run the thermal governor once.
+    ///
+    /// Callers that want live values must invoke this before [`Self::refresh_status`];
+    /// the refresh itself only publishes the cached sample so tests stay
+    /// hardware-independent.
+    pub fn poll_power(&self) -> ThrottleDecision {
+        self.power.lock().expect("power lock").poll()
+    }
+
     /// Poll network + power state and cache a fresh snapshot.
     pub async fn refresh_status(&self) -> SysStatusSnapshot {
         let link = { self.net.read().await.status() };
@@ -236,5 +245,18 @@ mod tests {
             hub.llm_backend_decision(),
             aios_llm::BackendKind::MicroLocal
         ));
+    }
+
+    #[tokio::test]
+    async fn hub_poll_power_updates_snapshot() {
+        let pm = PowerManager::mock(power_mgr::MockPower {
+            cpu_temp_c: 85.0,
+            ..power_mgr::MockPower::default()
+        });
+        let hub = SysControlHub::new(NetManager::default(), LayoutManager::default(), pm);
+        assert_eq!(hub.poll_power(), ThrottleDecision::MoveToCloud);
+        let snap = hub.refresh_status().await;
+        assert!((snap.max_temp_c - 85.0).abs() < 1e-4);
+        assert!(snap.throttled);
     }
 }

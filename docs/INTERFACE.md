@@ -629,7 +629,7 @@ The **System & HW tab (1)** also embeds the **Hardware Inspector** widget: a per
 | `F10` | Re-probe the hardware (System & HW tab refresh) |
 | `q` / `Ctrl+C` | Quit |
 
-The bottom **event log** now lives as the right-hand panel of the dual layout (45% width). It carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). Press `Space` to pause the log, or `L` to switch layouts from any tab; the same snapshot is rendered in the GUI taskbar tray and exposed over REST (`/api/v1/sys/status`).
+The bottom **event log** now lives as the right-hand panel of the dual layout (45% width). It carries a `sys:` status line refreshed every 2 s: Wi-Fi state/SSID/RSSI, the active input-layout pair (`[RU/EN]`), battery + CPU temperature, and the effective LLM backend (`local`, or `cloud` after thermal throttling). All frontends now call `poll_power()` before publishing the snapshot, so the host value comes from Linux sysfs or the Windows `GetSystemPowerStatus`/WMI probe instead of staying at 0 °C. Press `Space` to pause the log, or `L` to switch layouts from any tab; the same snapshot is rendered in the GUI taskbar tray and exposed over REST (`/api/v1/sys/status`).
 ### Blocks Tab (2)
 
 | Key | Action |
@@ -1617,8 +1617,11 @@ PS/2 i8042 pair (`ps2`, `[ps2] aux/mouse up id=…` + `[ps2] i8042 ready
 (kbd+mouse)`).
 
 - **Lid**: shown as `lid=0`/`lid=1` (closed/open) in the status bar and System
-  tab, driven by the EC RAM scan heuristic. On boards without an ACPI EC the
-  value stays `--` (e.g. QEMU logs `[lid] ec unresponsive (0 bytes), lid n/a`).
+  tab, driven by the EC RAM scan heuristic. The boot EC dump is now the scan
+  baseline, and `LID_OPEN_LEVEL` flips the polarity on active-low boards; the
+  `[lid] flip … raw=… lid=…` line prints both values for calibration. On boards
+  without an ACPI EC the value stays `--` (e.g. QEMU logs `[lid] ec unresponsive
+  (0 bytes), lid n/a`).
 - **Temperature**: `T=…c` in the status bar (a `~` suffix marks a synthetic
   reading) and `temp=… tjmax=… sim=…` in the System tab; the GUI System window
   prints `temp …c~ (simulated)` in that case. With usable DTS MSRs the die
