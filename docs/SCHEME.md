@@ -1,6 +1,6 @@
 # AIOS Program Scheme & Function Map
 
-> Version: v2.84.0 — Date: 2026-11-26 (post-audit update)
+> Version: v2.84.0 — Date: 2026-11-28 (post-audit update + Web3 browser)
 > Companion documents: `docs/AUDIT.md` (full audit), `docs/ARCHITECTURE.md` (deep architecture), `docs/INTERFACE.md` (UI guide).
 > Bilingual pair: `docs/SCHEME.ru.md` (Russian). Update both files together.
 > This document is the **call-level map**: every crate, its modules, and its key public functions.
@@ -25,6 +25,7 @@
   aios-store / aios-updater (A/B slots, Ed25519 trust) │ aios-cluster (multi-node)
   aios-autohal (+ NIC class/fingerprints, hotplug)    │ aios-vfs + aios-fm (files)
   aios-browser / aios-search / aios-webview           │ aios-net-config
+  aios-web3 (EIP-1193 provider host, wallet, RPC)      │
   aios-sys-control (Wi-Fi, DHCP, layout, power, vault)│ aios-telemetry / aios-debug
 ─────────────────────────────────────────────────────────────────────────
                 KERNEL SUBSYSTEMS (StatefulBlock ecosystem)
@@ -47,7 +48,8 @@
   entries (current + rollback); ISO and USB IMG are marker-verified.
 ```
 
-Workspace: **41 members** (`Cargo.toml:52-83`), plus the 13 standalone crates above.
+Workspace: **43 members** (`Cargo.toml`), plus the 13 standalone crates above;
+`aios-web3` was added for the Web3 provider/wallet.
 `aios-studio` is a non-Rust SPA served from `aios-bridge` via `ServeDir`.
 
 ## 2. Boot Flow (`aios` kernel binary)
@@ -98,6 +100,25 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 ```
 
 ---
+
+Web3 provider flow (host `aios-gui`):
+
+```
+page JS ── window.ethereum.request(args)         [aios-browser/src/provider.js]
+        │  native: window.ipc.postMessage(JSON)  [with_initialization_script]
+        ▼
+Web3Host::handle_wire() ──► ProviderRequest ──► Web3Host::dispatch()
+        │                                       [aios-web3::host]
+        ├─ read methods / JSON-RPC ────────────► Wallet + NetworkClient
+        │                                       (BrowserConfig::for_untrusted)
+        └─ signing / chain change ─────────────► per-origin approval token
+                                                (in-page dialog, one-time)
+        ▼
+window.__aiosWeb3Resolve(id, ok, value) ──────► Promise resolve/reject in page
+
+embedded Boa: window.__aiosWeb3Invoke() ──────► read-only subset only;
+              personal_sign / chain switching return 32000 / 4902
+```
 
 ## 4. Foundation Crates
 
@@ -323,7 +344,8 @@ Pipeline: detect → DriverStore lookup → fetch/adapt → validate + grant + W
 |---|---|---|
 | `aios-browser` | 4,339 / 114 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, embedded boa JS engine with `MAX_SCRIPT_ARRAY_ITEMS`, `HtmlParser`, `Renderer`, `dom_to_html`, headless Chromium-class dump fallback; `NetworkClient` SSRF policy (HTTP(S) only, per-hop DNS/IP checks, DNS pinning via `resolve_to_addrs`, manual redirects, streamed body cap) and `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` over DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
-| `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule |
+| `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` on a background thread; persistent profile; `resolve_target()` omnibox rule; `open_with_web3`, `load_html`, `evaluate_script`, IPC handler and `SetWeb3` command |
+| `aios-web3` | 694 / 8 | `ProviderRequest`/`ProviderReply`, `Web3Host::{dispatch,handle_wire}` (call outside a Tokio runtime), `Wallet::{address,personal_sign}` (k256 + sha3, EIP-191/55), built-in chains, per-origin permissions and one-time signature approvals; RPC via `aios_browser::network::NetworkClient` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, validators, `NetSettingsBlock` |
 | `aios-sys-control` | 2,609 / 58 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU hotkeys), `PowerManager` (Linux sysfs / Win32 power status + cached WMI temperature) + 80/70 °C thermal governor, `SysControlHub::poll_power`, `KeyringVault` (AES-256-GCM redb, TEE-bound) |
 
@@ -418,7 +440,7 @@ Core types: `BridgeContext` (builders `with_blocks_dir`, `with_signup`, `with_au
 | `aios-init` (standalone, musl static) | PID 1 for initramfs | VFS mounts, block supervisor (3 restarts), zombie reaping, rescue shell |
 | Native UEFI image (`aios-image` → `aios-install`) | UEFI/GPT/ESP disk image | `aios-sbctl` signs `BOOTX64.EFI`; QEMU/OVMF verified |
 
-`aios-webview` is now a compatibility helper for opening external browser windows; the GUI itself is driven by `aios-gui`.
+`aios-webview` is no longer only a compatibility helper: it hosts the full WebView browser with the injected Web3 provider; the desktop shell is still driven by `aios-gui`, where `F7` opens the WebView browser and `F10` opens the Web3 wallet (`tabs/wallet.rs`, shared `Web3Host`). The bare-metal `aios-kernel` Start entries only report this status — they have no WebView or process launcher.
 
 ## 10. Bare-Metal Microkernel Track
 
@@ -469,7 +491,7 @@ Host-side helpers named by the post-audit bullets: `aios-kernel-run` — `kernel
 
 ## 12. Codebase Statistics (v2.84.0 audit snapshot, 2026-11-26)
 
-- **358 `.rs` files**, **~125.5k non-blank lines** (~136.9k with blank lines): **41 workspace members + 13 standalone crates**.
+- **~364 `.rs` files**, **~126.2k non-blank lines**: **43 workspace members + 13 standalone crates**; the 2026-11-28 browser work adds `aios-web3` (694 non-blank lines, 8 unit tests) and WebView/Web3 code in `aios-webview` / `aios-browser` / `aios-gui` / `aios-kernel`.
 - **1,824 tests passed in 100 suites** (unit + integration + doc-tests) by `cargo test --workspace`; 2,011 test attributes counted (`#[test]` 1,941 + `#[tokio::test]` 70) across 232 files.
 - `cargo fmt --all -- --check`: clean. `cargo clippy --workspace --all-targets -- -D warnings`: **0 warnings**.
 - Post-audit hardening map (2026-11-27): new `aios-core/src/secrets.rs` and

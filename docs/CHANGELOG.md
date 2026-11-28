@@ -1,5 +1,32 @@
 # AIOS Development Log
 
+## Unreleased — full browser with Web3 provider and wallet (2026-11-28)
+
+### Added
+- New `aios-web3` crate: EIP-1193 request/reply types, built-in EVM network
+  table, secp256k1 local wallet (EIP-191 signing, EIP-55 addresses), per-origin
+  permissions, one-time signature approvals and SSRF-safe JSON-RPC forwarding.
+- `window.ethereum` is injected into the native WebView via
+  `with_initialization_script()`; `window.ipc.postMessage()` →
+  `Web3Host::handle_wire()` → `window.__aiosWeb3Resolve()` completes the bridge.
+  Supported methods include `eth_requestAccounts`, `eth_accounts`, `eth_chainId`,
+  `eth_getBalance`, `eth_call`, `personal_sign`, `wallet_getChains`,
+  `wallet_switchEthereumChain` and `wallet_addEthereumChain`.
+- The embedded Boa browser reuses the same provider script and exposes a
+  read-only `__aiosWeb3Invoke()` bridge; signing and chain switching return
+  EIP-1193 errors pointing to the native browser.
+- Host GUI: Web3 Wallet window (`F10`) with address, network selector and a
+  local provider test page; `F7` browser opens with the shared Web3 host. The
+  native Start entry now advertises the real browser and wallet.
+- Kernel Start entries for Native Browser/Браузер now state honestly that the
+  full browser and Web3 wallet run in `aios-gui` (`cargo run --bin aios-gui`).
+
+### Verified
+- 8 new `aios-web3` unit tests (known-vector address, signature length,
+  permissions, embedded rejection, one-time approval, wire round-trip) plus the
+  existing provider module test. `cargo build --workspace`, `cargo test --workspace`
+  and `cargo clippy --workspace --all-targets -- -D warnings` are clean.
+
 ## Unreleased — lid baseline and live host sensors (2026-11-28)
 
 ### Added

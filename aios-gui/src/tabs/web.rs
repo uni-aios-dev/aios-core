@@ -117,5 +117,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut AiosApp, theme: &AiosTheme) {
                 .color(theme.text_dim)
                 .size(11.0),
         );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "window.ethereum is injected into every page: dApps can request accounts, read \
+                 balances via RPC and sign messages with the local wallet (F10).",
+            )
+            .color(theme.info)
+            .size(11.0),
+        );
     });
 }

@@ -36,11 +36,13 @@ pub fn resolve_target(input: &str) -> String {
 
 #[cfg(feature = "webview")]
 mod engine {
+    use std::cell::RefCell;
     use std::path::PathBuf;
+    use std::rc::Rc;
     #[cfg(target_os = "linux")]
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
     #[cfg(target_os = "linux")]
@@ -53,11 +55,23 @@ mod engine {
     use winit::window::{Window, WindowId};
     use wry::WebViewBuilder;
 
+    use serde_json::{json, Value};
+
+    use aios_web3::Web3Host;
+
+    type WebViewSlot = Rc<RefCell<Option<wry::WebView>>>;
+    type Web3Slot = Rc<RefCell<Option<Arc<Web3Host>>>>;
+
     /// Commands sent from any thread to the browser's event loop.
-    #[derive(Debug)]
     enum Command {
         /// Show the window and load a fully resolved URL.
         Navigate(String),
+        /// Render local HTML in the native webview.
+        LoadHtml(String),
+        /// Evaluate JavaScript in the active page.
+        Evaluate(String),
+        /// Install or replace the Web3 host used by injected scripts.
+        SetWeb3(Arc<Web3Host>),
         /// Go back in history.
         Back,
         /// Go forward in history.
@@ -80,10 +94,28 @@ mod engine {
     #[cfg(target_os = "linux")]
     static GTK_TAKEN: AtomicBool = AtomicBool::new(false);
 
+    /// Turn a host reply into a call of the injected provider's resolver.
+    fn resolve_script(reply_wire: &str) -> String {
+        let reply: Value = serde_json::from_str(reply_wire).unwrap_or_else(
+            |_| json!({"id": "unknown", "error": {"code": 32000, "message": "bad reply"}}),
+        );
+        let id = reply.get("id").and_then(Value::as_str).unwrap_or("unknown");
+        let ok = reply.get("error").is_none();
+        let payload = if ok {
+            reply.get("result").cloned().unwrap_or(Value::Null)
+        } else {
+            reply.get("error").cloned().unwrap_or(Value::Null)
+        };
+        let id = serde_json::to_string(id).unwrap_or_else(|_| "\"unknown\"".into());
+        let payload = serde_json::to_string(&payload).unwrap_or_else(|_| "null".into());
+        format!("window.__aiosWeb3Resolve({id}, {ok}, {payload});")
+    }
+
     /// The window host driving the winit event loop.
     struct BrowserApp {
         window: Option<Window>,
-        webview: Option<wry::WebView>,
+        webview: WebViewSlot,
+        web3: Web3Slot,
         url: String,
         tx: Option<mpsc::Sender<ThreadMsg>>,
     }
@@ -99,12 +131,48 @@ mod engine {
                 .map_err(|e| e.to_string())
         }
 
-        fn build_webview(window: &Window, url: &str) -> Result<wry::WebView, String> {
+        fn build_webview(
+            window: &Window,
+            url: &str,
+            web3: Option<Arc<Web3Host>>,
+        ) -> Result<(WebViewSlot, Web3Slot), String> {
             let context = Box::leak(Box::new(wry::WebContext::new(profile_dir())));
-            WebViewBuilder::new_with_web_context(context)
+            let webview_slot: WebViewSlot = Rc::new(RefCell::new(None));
+            let web3_slot: Web3Slot = Rc::new(RefCell::new(web3));
+            let ipc_webview = webview_slot.clone();
+            let ipc_web3 = web3_slot.clone();
+            let builder = WebViewBuilder::new_with_web_context(context)
                 .with_url(url)
-                .build(window)
-                .map_err(|e| e.to_string())
+                .with_initialization_script(aios_browser::web3::PROVIDER_JS)
+                .with_ipc_handler(move |request| {
+                    let wire = request.body().to_string();
+                    let reply_wire = match ipc_web3.borrow().as_ref() {
+                        Some(host) => host.handle_wire(&wire),
+                        None => {
+                            let id = serde_json::from_str::<Value>(&wire)
+                                .ok()
+                                .and_then(|value| {
+                                    value.get("id").and_then(Value::as_str).map(str::to_string)
+                                })
+                                .unwrap_or_else(|| "unknown".into());
+                            serde_json::to_string(&aios_web3::types::ProviderReply::err(
+                                id,
+                                32000,
+                                "Web3 host is not available",
+                            ))
+                            .unwrap_or_default()
+                        }
+                    };
+                    let script = resolve_script(&reply_wire);
+                    if let Some(webview) = ipc_webview.borrow().as_ref() {
+                        if let Err(error) = webview.evaluate_script(&script) {
+                            log::error!("web3 resolve failed: {error}");
+                        }
+                    }
+                });
+            let webview = builder.build(window).map_err(|e| e.to_string())?;
+            *webview_slot.borrow_mut() = Some(webview);
+            Ok((webview_slot, web3_slot))
         }
 
         fn present(&self) {
@@ -130,9 +198,11 @@ mod engine {
             }
             let result = (|| {
                 let window = Self::build_window(event_loop)?;
-                let webview = Self::build_webview(&window, &self.url)?;
+                let (webview, web3) =
+                    Self::build_webview(&window, &self.url, self.web3.borrow().clone())?;
                 self.window = Some(window);
-                self.webview = Some(webview);
+                self.webview = webview;
+                self.web3 = web3;
                 Ok(())
             })();
             let failed = result.is_err();
@@ -159,15 +229,33 @@ mod engine {
             match event {
                 Command::Navigate(url) => {
                     self.present();
-                    if let Some(webview) = self.webview.as_ref() {
+                    if let Some(webview) = self.webview.borrow().as_ref() {
                         if let Err(e) = webview.load_url(&url) {
                             log::error!("webview load_url failed: {e}");
                         }
                     }
                 }
+                Command::LoadHtml(html) => {
+                    self.present();
+                    if let Some(webview) = self.webview.borrow().as_ref() {
+                        if let Err(e) = webview.load_html(&html) {
+                            log::error!("webview load_html failed: {e}");
+                        }
+                    }
+                }
+                Command::Evaluate(js) => {
+                    if let Some(webview) = self.webview.borrow().as_ref() {
+                        if let Err(e) = webview.evaluate_script(&js) {
+                            log::error!("webview evaluate_script failed: {e}");
+                        }
+                    }
+                }
+                Command::SetWeb3(host) => {
+                    *self.web3.borrow_mut() = Some(host);
+                }
                 Command::Back => {
                     self.present();
-                    if let Some(webview) = self.webview.as_ref() {
+                    if let Some(webview) = self.webview.borrow().as_ref() {
                         if let Err(e) = webview.go_back() {
                             log::error!("webview back failed: {e}");
                         }
@@ -175,7 +263,7 @@ mod engine {
                 }
                 Command::Forward => {
                     self.present();
-                    if let Some(webview) = self.webview.as_ref() {
+                    if let Some(webview) = self.webview.borrow().as_ref() {
                         if let Err(e) = webview.go_forward() {
                             log::error!("webview forward failed: {e}");
                         }
@@ -238,11 +326,29 @@ mod engine {
         /// calls reuse the running engine and just present and navigate the
         /// existing window.
         pub fn open(target: &str) -> Result<WebBrowser, String> {
+            Self::open_inner(target, None)
+        }
+
+        /// Open the browser with an injected Web3 host.
+        ///
+        /// The host is installed on the persistent engine thread, so later
+        /// [`WebBrowser::open`] calls keep the same wallet and permissions.
+        pub fn open_with_web3(target: &str, host: Arc<Web3Host>) -> Result<WebBrowser, String> {
+            Self::open_inner(target, Some(host))
+        }
+
+        fn open_inner(target: &str, web3: Option<Arc<Web3Host>>) -> Result<WebBrowser, String> {
             let url = crate::resolve_target(target);
             let mut slot = BROWSER_PROXY
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(proxy) = slot.clone() {
+                if let Some(host) = web3 {
+                    proxy.send_event(Command::SetWeb3(host)).map_err(|e| {
+                        *slot = None;
+                        format!("browser engine is not running: {e}")
+                    })?;
+                }
                 proxy.send_event(Command::Navigate(url)).map_err(|e| {
                     *slot = None;
                     format!("browser engine is not running: {e}")
@@ -317,7 +423,8 @@ mod engine {
                         let _ = proxy_tx.send(proxy);
                         let mut app = BrowserApp {
                             window: None,
-                            webview: None,
+                            webview: Rc::new(RefCell::new(None)),
+                            web3: Rc::new(RefCell::new(web3)),
                             url,
                             tx: Some(ready_tx),
                         };
@@ -351,6 +458,20 @@ mod engine {
         pub fn navigate(&self, target: &str) -> Result<(), String> {
             self.proxy
                 .send_event(Command::Navigate(crate::resolve_target(target)))
+                .map_err(|e| e.to_string())
+        }
+
+        /// Render local HTML in the native webview (used by the Web3 test page).
+        pub fn load_html(&self, html: &str) -> Result<(), String> {
+            self.proxy
+                .send_event(Command::LoadHtml(html.to_string()))
+                .map_err(|e| e.to_string())
+        }
+
+        /// Evaluate JavaScript in the active page.
+        pub fn evaluate_script(&self, script: &str) -> Result<(), String> {
+            self.proxy
+                .send_event(Command::Evaluate(script.to_string()))
                 .map_err(|e| e.to_string())
         }
 

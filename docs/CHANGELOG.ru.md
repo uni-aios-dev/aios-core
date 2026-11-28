@@ -1,5 +1,34 @@
 # Журнал разработки AIOS
 
+## Unreleased — полноценный браузер с Web3-провайдером и кошельком (28.11.2026)
+
+### Добавлено
+- Новый крейт `aios-web3`: типы запросов/ответов EIP-1193, таблица встроенных
+  EVM-сетей, локальный кошелёк secp256k1 (подпись EIP-191, адреса EIP-55),
+  разрешения по origin, одноразовое одобрение подписи и RPC-пересылка с
+  SSRF-политикой.
+- `window.ethereum` внедряется в нативный WebView через
+  `with_initialization_script()`; мост `window.ipc.postMessage()` →
+  `Web3Host::handle_wire()` → `window.__aiosWeb3Resolve()` завершает запрос.
+  Поддерживаются `eth_requestAccounts`, `eth_accounts`, `eth_chainId`,
+  `eth_getBalance`, `eth_call`, `personal_sign`, `wallet_getChains`,
+  `wallet_switchEthereumChain` и `wallet_addEthereumChain`.
+- Встроенный браузер Boa использует тот же скрипт провайдера и предоставляет
+  read-only мост `__aiosWeb3Invoke()`; подпись и смена сети возвращают ошибки
+  EIP-1193 с указанием на нативный браузер.
+- Хост-GUI: окно Web3 Wallet (`F10`) с адресом, выбором сети и локальной
+  страницей проверки провайдера; браузер `F7` открывается с общим Web3-хостом.
+  Пункт «Пуска» теперь честно описывает полноценный браузер и кошелёк.
+- Записи ядерного «Пуска» Native Browser/Браузер честно сообщают, что полный
+  браузер и Web3-кошелёк работают в `aios-gui` (`cargo run --bin aios-gui`).
+
+### Проверено
+- 8 новых модульных тестов `aios-web3` (адрес по известному вектору, длина
+  подписи, разрешения, отказ во встроенном режиме, одноразовое одобрение,
+  round-trip через wire) и существующий тест модуля провайдера.
+  `cargo build --workspace`, `cargo test --workspace` и
+  `cargo clippy --workspace --all-targets -- -D warnings` проходят чисто.
+
 ## Unreleased — базовый снимок крышки и живые хост-датчики (28.11.2026)
 
 ### Добавлено

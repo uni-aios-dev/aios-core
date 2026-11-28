@@ -850,6 +850,56 @@
     return ran;
   };
 
+  /* ---- Web3 transport for the embedded browser -------------------------- *
+   * There is no native wallet UI in the in-process engine: read-only methods
+   * and RPC passthrough work, signing and chain switching are rejected with
+   * the standard provider error codes and direct the caller to the native
+   * WebView browser where the wallet confirmation panel is available. */
+  globalThis.__aiosEmbedded = true;
+  globalThis.__aiosWeb3Invoke = (wire) => {
+    let req;
+    try { req = JSON.parse(wire); }
+    catch (_) { return; }
+    const web3 = (globalThis.__meta && globalThis.__meta.web3) || {};
+    const reply = (ok, value) => {
+      try { globalThis.__aiosWeb3Resolve(req.id, ok, value); }
+      catch (e) { note("[js] web3 resolve error: " + errStr(e)); }
+    };
+    const fail = (code, message) => reply(false, { code: code, message: message });
+    const method = String(req.method || "");
+    const params = Array.isArray(req.params) ? req.params : [];
+
+    if (method === "wallet_approveAccountAccess") { reply(true, true); return; }
+    if (method === "eth_accounts" || method === "eth_requestAccounts") {
+      reply(true, web3.accounts || []); return;
+    }
+    if (method === "eth_chainId" || method === "net_version") {
+      reply(true, web3.chain_id || "0x1"); return;
+    }
+    if (method === "web3_clientVersion") {
+      reply(true, web3.user_agent || "AIOS-Browser/0.1"); return;
+    }
+    if (method === "personal_sign" || method === "eth_sign") {
+      fail(32000, "Signing requires the native AIOS WebView wallet."); return;
+    }
+    if (method === "wallet_approveSignature") {
+      fail(32000, "Signature approval requires the native AIOS WebView wallet."); return;
+    }
+    if (method === "wallet_switchEthereumChain") {
+      fail(4902, "Chain switching requires the native AIOS WebView wallet."); return;
+    }
+    const rpc = web3.rpc_url || "";
+    if (!rpc) { fail(32000, "No Web3 RPC endpoint configured."); return; }
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params });
+    fetch(rpc, { method: "POST", body: body, headers: { "Content-Type": "application/json" } })
+      .then((r) => r.json())
+      .then((r) => {
+        if (r && r.error) fail(r.error.code || 32000, r.error.message || "RPC error");
+        else reply(true, r ? r.result : null);
+      })
+      .catch((e) => fail(32000, errStr(e)));
+  };
+
   /* ---- boot: the Rust side injects __dom/__meta before evaluating this file. */
   if (globalThis.__dom) hydrate(globalThis.__dom, null);
 })();

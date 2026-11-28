@@ -112,13 +112,14 @@ the native UEFI-only GPT/ESP image and `aios-install` described above instead.
 
 ## Overview
 
-AIOS provides three interfaces for system management:
+AIOS provides the following interfaces for system management:
 
 | Interface | Type | Binary / Path | Use Case |
 |-----------|------|---------------|----------|
 | **Web** | Browser SPA (HTML/CSS/JS) | `aios-studio/` served at `http://<host>:<port>/` | Remote management, visual dashboard, any device |
 | **TUI** | Terminal (ratatui) | `aios-tui` | SSH, interactive, keyboard-driven |
 | **GUI** | Kernel framebuffer shell | `aios-kernel` (`gui.rs`) | The single user-facing AIOS Desktop: Start menu, windows and taskbar, mouse + keyboard |
+| **Native Browser** | WebView window with Web3 | `aios-webview` via `cargo run --bin aios-gui` (`F7` / `F10`) | Full JS/CSS pages, cookies, `window.ethereum` dApps and the local wallet |
 | **Daemon** | Headless server | `aiosd` | Docker, background, CI/CD, no terminal required |
 
 The host `aios-gui` (egui/eframe) tree is legacy reference tooling and is not
@@ -868,8 +869,10 @@ The kernel is bare metal: there is no process launcher, WebView, audio stack,
 voice recognition or LLM backend. Calculator, App Store, Files, Text Editor and
 the Terminal/Network launchers are native `no_std` windows; browser, WebView,
 voice control and remote AI Studio entries remain honest notice windows. The
-palette is fixed in `aios-kernel/src/gui.rs`; `aios-gui/src/theme.rs` applies
-only to the legacy host tree.
+Native Browser / `Браузер` entry now states that the working browser with Web3
+lives in the host GUI and prints `cargo run --bin aios-gui` instead of faking a
+launch. The palette is fixed in `aios-kernel/src/gui.rs`; `aios-gui/src/theme.rs`
+applies only to the legacy host tree.
 
 ---
 
@@ -887,6 +890,9 @@ kernel nor the host TUIs launch it, and `W` no longer starts a host GUI process.
 The sections below describe that legacy host UI only; their window features,
 voice control, WebView and host process actions are not available in the native
 kernel desktop described above. The native window title was `AIOS Desktop v1.0.0`.
+Since 2026-11-28 this host GUI is also the only place with a **working full
+browser and Web3 wallet** (`F7` / `F10`): run it explicitly with the command
+above when a real WebView page or dApp is needed.
 
 ### Layout
 
@@ -910,6 +916,7 @@ kernel desktop described above. The native window title was `AIOS Desktop v1.0.0
 | Key | Action |
 |-----|--------|
 | `F1`-`F9` | Open the matching desktop window (focus an already-open window) |
+| `F10` | Open/focus the Web3 Wallet window (local account, networks, provider test page) |
 | `j` | Move selection down in the focused Blocks / App Store window |
 | `k` | Move selection up in the focused Blocks / App Store window |
 | `Escape` | Close the Start menu |
@@ -1006,6 +1013,25 @@ appended to the activity log.
 - **Native engine**: the browser window is a real WebView (WebView2 / WebKitGTK / WKWebView) with full cookies, JavaScript and history support; the first navigation opens the window automatically
 - **Non-blocking open**: the WebView is spawned on a background thread, so the desktop stays responsive while it starts; repeated open attempts during startup are ignored and the status line reports `Opening browser: ...` / failure
 - **Status line**: shows the resolved target or the last action/error
+
+#### Web3 Wallet (F10)
+- **Account line**: EIP-55 address of the local account, derived from the AIOS
+  secret resolver (`web3_wallet`) and never exposed as a raw private key
+- **Network selector**: Ethereum mainnet (default), Sepolia, Polygon, Arbitrum
+  One, Optimism and Base; additional HTTP(S) RPC endpoints can be added in the
+  wallet and are still checked against the browser SSRF policy
+- **`window.ethereum`**: injected into the F7 WebView and shared with this
+  window; supports `eth_requestAccounts`, `eth_accounts`, `eth_chainId`,
+  `eth_getBalance`, `eth_call`, `personal_sign`, `wallet_getChains`,
+  `wallet_switchEthereumChain` and `wallet_addEthereumChain`
+- **Approval flow**: a page requesting accounts or a signature shows an
+  in-page dialog; signature approvals are one-time and origin-scoped. No key or
+  approval crosses the host boundary.
+- **Local test page**: a built-in HTML page exercises account request, balance
+  and `personal_sign` without needing a dApp or an internet connection
+- **Embedded browser**: the Boa Web tab shares the same provider script but only
+  allows read-only RPC through `__aiosWeb3Invoke()`; signing and chain switching
+  return EIP-1193 errors and ask the user to open the native WebView browser
 
 #### Files (F8)
 - **Toolbar**: Refresh, Switch panel, Sort, Up, Mkdir, Rename, View, Copy, Move, Delete, HOST r / HOST w (grant `vfs:host:read` / `vfs:host:write` capabilities)

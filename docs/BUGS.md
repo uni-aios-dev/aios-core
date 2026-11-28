@@ -1,5 +1,27 @@
 # AIOS Known Bugs & Workarounds
 
+## FIXED (2026-11-28): the "full browser" Start entry could not open a browser
+
+- Symptom: the Native Browser / `Браузер` Start entry described a browser, but the
+  kernel desktop has no process launcher or WebView and the embedded Boa browser
+  cannot render CSS/JS. The host `aios-gui` browser window had no Web3 provider,
+  so `window.ethereum` was undefined on every page.
+- Fix: `aios-webview` now creates a real WebView (WebView2/WebKitGTK/WKWebView)
+  window with an injected EIP-1193 provider; `aios-web3` owns the wallet, RPC
+  forwarding and per-origin approvals. The kernel Start entries report this
+  status honestly and point to `cargo run --bin aios-gui`; the host GUI exposes
+  `F7` (browser) and `F10` (wallet) with a shared `Web3Host`.
+- **Known limitation**: the embedded Boa browser still only supports the
+  read-only `__aiosWeb3Invoke()` bridge — `personal_sign`, account approval and
+  chain switching are rejected with `32000`/`4902` and require the native WebView
+  window. Local/private JSON-RPC endpoints additionally require
+  `AIOS_BROWSER_ALLOW_PRIVATE=1`; all other RPC URLs pass through the SSRF policy
+  from `BrowserConfig::for_untrusted()`. The wallet key is derived from
+  `aios_core::secrets` and never leaves the host.
+- **Status:** fixed in the host GUI; the kernel framebuffer desktop still has no
+  WebView or host process launcher by design (see the OPEN ring-0 `#PF` entry
+  below for the separate bare-metal kernel issue).
+
 ## FIXED (2026-11-28): lid heuristic compared EC RAM against an all-zero baseline
 
 - `lid::init()` called `ec::probe()`, which only logged a 256-byte dump into a

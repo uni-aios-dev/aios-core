@@ -13,6 +13,9 @@ winit = { version = "0.30", optional = true }
 url = "2"
 dirs = "6"
 log = { workspace = true }
+aios-browser = { path = "../aios-browser" }
+aios-web3 = { path = "../aios-web3" }
+serde_json = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = { version = "0.18", optional = true }

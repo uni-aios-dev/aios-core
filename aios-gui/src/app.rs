@@ -45,6 +45,7 @@ fn window_size(app: DesktopApp) -> egui::Vec2 {
         DesktopApp::Network => egui::vec2(560.0, 460.0),
         DesktopApp::Deps => egui::vec2(720.0, 520.0),
         DesktopApp::Browser => egui::vec2(860.0, 620.0),
+        DesktopApp::Wallet => egui::vec2(720.0, 560.0),
         DesktopApp::Files => egui::vec2(920.0, 600.0),
         DesktopApp::Hardware => egui::vec2(820.0, 600.0),
     }
@@ -188,6 +189,12 @@ pub struct AiosApp {
     pending_browser: Arc<Mutex<Option<aios_webview::WebBrowser>>>,
     #[cfg(feature = "webview")]
     pending_browser_error: Arc<Mutex<Option<String>>>,
+    /// Load the Web3 test page once a background browser open completes.
+    #[cfg(feature = "webview")]
+    pending_web3_test: bool,
+
+    /// Shared Web3 host used by the wallet tab and native browser sessions.
+    pub web3_host: Arc<aios_web3::Web3Host>,
 
     pub uptime_secs: u64,
     /// Wall-clock origin of the dashboard, used to derive `uptime_secs`.
@@ -281,6 +288,14 @@ impl AiosApp {
             None
         };
         let runtime = GuiRuntime::new(ram_total);
+        let web3_host = Arc::new(match aios_web3::Web3Host::new() {
+            Ok(host) => host,
+            Err(error) => {
+                log::warn!("falling back to ephemeral Web3 wallet: {error}");
+                aios_web3::Web3Host::from_seed(&aios_core::secrets::random_secret())
+                    .expect("ephemeral Web3 wallet")
+            }
+        });
         Self {
             ai_tier,
             hardware,
@@ -327,6 +342,9 @@ impl AiosApp {
             pending_browser: Arc::new(Mutex::new(None)),
             #[cfg(feature = "webview")]
             pending_browser_error: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "webview")]
+            pending_web3_test: false,
+            web3_host,
             uptime_secs: 0,
             started_at: std::time::Instant::now(),
             crash: CrashDialogState::new(),
@@ -1207,15 +1225,18 @@ impl AiosApp {
 
         let slot = self.pending_browser.clone();
         let err_slot = self.pending_browser_error.clone();
-        std::thread::spawn(move || match aios_webview::WebBrowser::open(&target) {
-            Ok(browser) => {
-                if let Ok(mut guard) = slot.lock() {
-                    *guard = Some(browser);
+        let web3_host = self.web3_host.clone();
+        std::thread::spawn(move || {
+            match aios_webview::WebBrowser::open_with_web3(&target, web3_host) {
+                Ok(browser) => {
+                    if let Ok(mut guard) = slot.lock() {
+                        *guard = Some(browser);
+                    }
                 }
-            }
-            Err(e) => {
-                if let Ok(mut guard) = err_slot.lock() {
-                    *guard = Some(e);
+                Err(e) => {
+                    if let Ok(mut guard) = err_slot.lock() {
+                        *guard = Some(e);
+                    }
                 }
             }
         });
@@ -1247,8 +1268,17 @@ impl AiosApp {
         };
         if let Some(browser) = got {
             self.browser_opening = false;
+            if self.pending_web3_test {
+                self.pending_web3_test = false;
+                if let Err(error) = browser.load_html(crate::tabs::wallet::WEB3_TEST_HTML) {
+                    self.browser_status = Some(format!("Failed to load Web3 test page: {error}"));
+                } else {
+                    self.browser_status = Some("Web3 test page opened".into());
+                }
+            } else {
+                self.browser_status = Some("Browser opened".into());
+            }
             self.browser = Some(browser);
-            self.browser_status = Some("Browser opened".into());
             self.add_log("Browser opened".into());
         }
     }
@@ -1260,6 +1290,19 @@ impl AiosApp {
         }
         let target = aios_webview::resolve_target(self.browser_addr.trim());
         self.start_browser_open(target);
+        Ok(())
+    }
+
+    /// Open the local Web3 provider test page in the native browser.
+    #[cfg(feature = "webview")]
+    pub fn open_web3_test_page(&mut self) -> Result<(), String> {
+        if let Some(browser) = self.browser.as_ref() {
+            browser.load_html(crate::tabs::wallet::WEB3_TEST_HTML)?;
+            self.browser_status = Some("Web3 test page opened".into());
+            return Ok(());
+        }
+        self.pending_web3_test = true;
+        self.start_browser_open("about:blank".into());
         Ok(())
     }
 
@@ -1917,6 +1960,7 @@ impl eframe::App for AiosApp {
                     DesktopApp::Browser => tabs::web::show(ui, self, &theme),
                     #[cfg(not(feature = "webview"))]
                     DesktopApp::Browser => tabs::overview::show(ui, self, &theme),
+                    DesktopApp::Wallet => tabs::wallet::show(ui, self, &theme),
                     DesktopApp::Files => tabs::files::show(ui, self, &theme),
                     DesktopApp::Hardware => tabs::hardware::show(ui, self, &theme),
                 });

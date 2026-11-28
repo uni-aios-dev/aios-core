@@ -19,6 +19,8 @@ pub enum DesktopApp {
     Deps,
     /// Native WebView browser.
     Browser,
+    /// Local Web3 wallet and EIP-1193 provider settings.
+    Wallet,
     /// Two-panel virtual file manager.
     Files,
     /// Hardware and driver provisioning.
@@ -36,6 +38,7 @@ impl DesktopApp {
             Self::Network => "Network Settings",
             Self::Deps => "Dependencies",
             Self::Browser => "Native Browser",
+            Self::Wallet => "Web3 Wallet",
             Self::Files => "Files",
             Self::Hardware => "Hardware & Drivers",
         }
@@ -51,6 +54,7 @@ impl DesktopApp {
             Self::Network => "F5",
             Self::Deps => "F6",
             Self::Browser => "F7",
+            Self::Wallet => "F10",
             Self::Files => "F8",
             Self::Hardware => "F9",
         }
@@ -68,6 +72,7 @@ impl DesktopApp {
         ];
         #[cfg(feature = "webview")]
         apps.push(Self::Browser);
+        apps.push(Self::Wallet);
         apps.extend([Self::Files, Self::Hardware]);
         apps
     }
@@ -84,6 +89,7 @@ impl DesktopApp {
             egui::Key::F7 => Some(Self::Browser),
             egui::Key::F8 => Some(Self::Files),
             egui::Key::F9 => Some(Self::Hardware),
+            egui::Key::F10 => Some(Self::Wallet),
             _ => None,
         }
     }

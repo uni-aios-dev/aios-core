@@ -8,6 +8,7 @@ pub mod script;
 pub mod serialize;
 pub mod session;
 pub mod types;
+pub mod web3;
 
 pub use block::BrowserBlock;
 pub use engine::BrowserEngine;

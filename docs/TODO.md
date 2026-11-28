@@ -2,6 +2,11 @@
 
 ## Completed
 
+- [x] Full browser with Web3 provider and wallet (2026-11-28) — real WebView
+      (`aios-webview`) with JS/CSS/cookies, shared EIP-1193 `window.ethereum`
+      (`aios-browser/src/provider.js`), `aios-web3` local secp256k1 wallet,
+      EIP-191 signing, per-origin permissions, built-in EVM chains, SSRF-safe
+      JSON-RPC, host GUI windows `F7` / `F10` and honest kernel Start status
 - [x] Post-audit security hardening (2026-11-27) — centralized secret resolver
       (`aios_core::secrets`), PBKDF2 bridge auth with lockout/default-deny,
       bounded DTOs, SSRF-safe browser fetches, confined block paths, poisoned-lock
@@ -1115,6 +1120,19 @@ Double-buffer + damage, window syscall + compositor, widget set — these turn t
       failed in 100 suites), standalone kernel check/clippy with and without
       `limine`, `aios-kernel-run` tests 2/2, PowerShell parser check. No fresh
       hybrid ISO/IMG was built here (external tools missing).
+
+## Web3 browser roadmap (open)
+
+- [ ] Provider events (`accountsChanged`, `chainChanged`) and a richer account
+      flow (multiple accounts, `eth_sendTransaction` with a human-readable
+      approval dialog and nonce/gas estimation) instead of the current
+      read-only + `personal_sign` surface.
+- [ ] EIP-1559 fee fields and transaction receipts; the local wallet currently
+      signs EIP-191 messages and never broadcasts a signed transaction.
+- [ ] Hardware-wallet / Ledger-style key source behind the same EIP-1193 API;
+      the shipped wallet derives one key from `aios_core::secrets`.
+- [ ] A WebView or host process launcher in the bare-metal `aios-kernel`
+      desktop, so Native Browser no longer has to point to `aios-gui`.
 
 ## Historical Issues (Fixed)
 

@@ -1,6 +1,6 @@
 # Схема программы и карта функций AIOS
 
-> Версия: v2.84.0 — Дата: 26.11.2026 (обновление после аудита)
+> Версия: v2.84.0 — Дата: 28.11.2026 (обновление после аудита + Web3-браузер)
 > Сопутствующие документы: `docs/AUDIT.ru.md` (полный аудит), `docs/ARCHITECTURE.ru.md` (глубокая архитектура), `docs/INTERFACE.ru.md` (руководство по интерфейсу).
 > Двуязычная пара: `docs/SCHEME.md` (английский). При обновлении карты функций обновляйте оба файла.
 > Этот документ — **карта уровня вызовов**: каждый крейт, его модули и ключевые публичные функции.
@@ -25,6 +25,7 @@
   aios-store / aios-updater (слоты A/B, Ed25519) │ aios-cluster (мультиузловой)
   aios-autohal (+ класс NIC, отпечатки, hotplug) │ aios-vfs + aios-fm (файлы)
   aios-browser / aios-search / aios-webview      │ aios-net-config
+  aios-web3 (EIP-1193-провайдер, кошелёк, RPC)   │
   aios-sys-control (Wi-Fi, DHCP, раскладка,      │ aios-telemetry / aios-debug
   питание, хранилище секретов)
 ─────────────────────────────────────────────────────────────────────────
@@ -48,7 +49,8 @@
   записями ядра (текущее + откат); ISO и USB IMG проверяются по маркерам.
 ```
 
-Воркспейс: **41 участник** (`Cargo.toml:52-83`), плюс 13 перечисленных standalone-крейтов.
+Воркспейс: **43 участника** (`Cargo.toml`), плюс 13 перечисленных standalone-крейтов;
+`aios-web3` добавлен для Web3-провайдера и кошелька.
 `aios-studio` — не-Rust SPA, раздаётся `aios-bridge` через `ServeDir`.
 
 ## 2. Порядок загрузки (бинарник `aios`)
@@ -100,6 +102,25 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 ```
 
 ---
+
+Поток Web3-провайдера (хостовый `aios-gui`):
+
+```
+JS-страница ── window.ethereum.request(args)     [aios-browser/src/provider.js]
+        │  нативно: window.ipc.postMessage(JSON)  [with_initialization_script]
+        ▼
+Web3Host::handle_wire() ──► ProviderRequest ──► Web3Host::dispatch()
+        │                                       [aios-web3::host]
+        ├─ read-методы / JSON-RPC ──────────────► Wallet + NetworkClient
+        │                                       (BrowserConfig::for_untrusted)
+        └─ подпись / смена сети ────────────────► одноразовый токен разрешения
+                                                (диалог на странице, по origin)
+        ▼
+window.__aiosWeb3Resolve(id, ok, value) ──────► resolve/reject Promise в странице
+
+встроенный Boa: window.__aiosWeb3Invoke() ────► только read-only-подмножество;
+              personal_sign / смена сети возвращают 32000 / 4902
+```
 
 ## 4. Крейты фундамента
 
@@ -325,7 +346,8 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 |---|---|---|
 | `aios-browser` | 4 339 / 114 | `BrowserEngine::{navigate,evaluate}`, `BrowserSession::{go,back,forward,reload,eval_js,normalize_url}`, встроенный boa JS с `MAX_SCRIPT_ARRAY_ITEMS`, `HtmlParser`, `Renderer`, `dom_to_html`, headless-фолбэк; SSRF-политика `NetworkClient` (только HTTP(S), проверка DNS/IP на каждом hop, привязка DNS через `resolve_to_addrs`, ручные редиректы, лимит тела), `BrowserConfig::{allow_private_targets,max_response_bytes,for_untrusted}` |
 | `aios-search` | 438 / 7 | `SearchEngine::search` через DuckDuckGo/SearXNG/Brave + `SearchSummarizer` LLM TL;DR |
-| `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()` |
+| `aios-webview` | 456 / 7 | `WebBrowser::{open,navigate,back,forward,close}` в фоновом потоке; постоянный профиль; `resolve_target()`; `open_with_web3`, `load_html`, `evaluate_script`, IPC-обработчик и команда `SetWeb3` |
+| `aios-web3` | 694 / 8 | `ProviderRequest`/`ProviderReply`, `Web3Host::{dispatch,handle_wire}` (вызывать вне Tokio runtime), `Wallet::{address,personal_sign}` (k256 + sha3, EIP-191/55), встроенные сети, разрешения по origin и одноразовые подтверждения подписи; RPC через `aios_browser::network::NetworkClient` |
 | `aios-net-config` | 942 / 35 | `NetworkConfigStore::{load,load_or,save}`, `NetworkConfig::apply_updates`, валидаторы, `NetSettingsBlock` |
 | `aios-sys-control` | 2 609 / 58 | `NetManager` (sim/host Wi-Fi, DHCP, `recheck/adapters/lease`), `host_net::AdapterState`, `LayoutManager` (EN/RU), `PowerManager` (Linux sysfs / Win32 power status + кэшируемая температура WMI) + гувернёр 80/70 °C, `SysControlHub::poll_power`, `KeyringVault` (AES-256-GCM redb, TEE) |
 
@@ -420,7 +442,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 | `aios-init` (отдельный, статический musl) | PID 1 для initramfs | Монтирование VFS, супервизор блоков (3 рестарта), зомби, спасательная оболочка |
 | Нативный UEFI-образ (`aios-image` → `aios-install`) | Образ GPT/ESP | `aios-sbctl` подписывает `BOOTX64.EFI`; проверено в QEMU/OVMF |
 
-`aios-webview` теперь — совместимый хелпер для открытия внешних окон браузера; сам GUI управляется через `aios-gui`.
+`aios-webview` больше не просто совместимый хелпер: он размещает полноценный WebView-браузер с внедрённым Web3-провайдером; оболочка рабочего стола по-прежнему управляется через `aios-gui`, где `F7` открывает WebView-браузер, а `F10` — Web3-кошелёк (`tabs/wallet.rs`, общий `Web3Host`). Пункты «Пуска» bare-metal `aios-kernel` лишь сообщают этот статус: в ядре нет WebView и запуска процессов.
 
 ## 10. Bare-metal-ветка микроядра
 
@@ -471,7 +493,7 @@ StatefulBlock::handle_message() → IpcPacket::response_ok/err [aios-core::block
 
 ## 12. Статистика кодовой базы (срез аудита v2.84.0, 26.11.2026)
 
-- **358 `.rs`-файлов**, **~125,5 тыс. непустых строк** (~136,9 тыс. вместе с пустыми): **41 участник воркспейса + 13 standalone-крейтов**.
+- **~364 `.rs`-файла**, **~126,2 тыс. непустых строк**: **43 участника воркспейса + 13 standalone-крейтов**; работа над браузером от 28.11.2026 добавила `aios-web3` (694 непустые строки, 8 юнит-тестов) и код WebView/Web3 в `aios-webview` / `aios-browser` / `aios-gui` / `aios-kernel`.
 - **1 824 теста пройдено в 100 наборах** (unit + integration + doc-tests) при `cargo test --workspace`; насчитано 2 011 атрибутов тестов (`#[test]` 1 941 + `#[tokio::test]` 70) в 232 файлах.
 - `cargo fmt --all -- --check`: чисто. `cargo clippy --workspace --all-targets -- -D warnings`: **0 предупреждений**.
 - Карта усилений после аудита (27.11.2026): новые `aios-core/src/secrets.rs` и

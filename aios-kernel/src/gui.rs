@@ -245,8 +245,10 @@ static APPS: &[AppInfo] = &[
         title: "Native Browser",
         subtitle: "F7 · Браузер",
         body: &[
-            "WebView needs a host windowing stack.",
-            "The kernel desktop renders pixels only.",
+            "Full browser runs in the host GUI with WebView2/WebKitGTK/WKWebView.",
+            "window.ethereum and the local wallet are available there (F7 / F10).",
+            "Launch it with: cargo run --bin aios-gui",
+            "Kernel desktop renders pixels only and has no host process launcher.",
         ],
     },
     AppInfo {
@@ -285,7 +287,9 @@ static APPS: &[AppInfo] = &[
         title: "Браузер",
         subtitle: "Программа · browser",
         body: &[
-            "External program from the shared AIOS catalog.",
+            "Full browser with scripts and Web3 runs in the host GUI.",
+            "Open it with: cargo run --bin aios-gui",
+            "Use F7 for the browser and F10 for the wallet.",
             "No host process launcher exists in the native kernel.",
         ],
     },

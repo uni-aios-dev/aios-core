@@ -4,8 +4,9 @@
 
 AIOS (AI-Native Operating System) is a modular microkernel-style OS designed for AI-native workloads. It consists of 33 Rust crates forming a layered architecture: foundation types at the bottom, hardware abstraction and process management in the middle, safety/security/context systems, and user-facing interfaces (the native kernel
 framebuffer GUI, host TUI, integrated binary) at the top. Since v2.81.0 the
-`aios-kernel` desktop is the single user-facing GUI; host egui/eframe code is
-legacy reference only.
+`aios-kernel` desktop is the default user-facing GUI; the host egui/eframe
+`aios-gui` shell is additionally required for native WebView browser windows
+and the injected Web3 wallet.
 
 All inter-crate communication flows through a binary IPC protocol. Blocks (kernel modules) are hot-swappable with automatic rollback. An AI Orchestrator translates natural language intents into system operations. The `aios` crate provides a unified system binary with both interactive TUI mode and headless daemon mode, replacing the separate `aios-tui` and `aios-daemon` entry points.
 
@@ -966,12 +967,43 @@ The TUI cannot render real web pages (no CSS/JS engine), so the full-featured br
 
 **Feature gating (v2.32.0):** the wry/winit engine lives in the optional `webview` feature (default on; on Linux it pulls the `gtk` crate). `launcher` and `resolve_target` are pure `std` and always compile, so the TUI `W` key works even when the engine is disabled; only `B`/`n` (kernel `WebBrowser`) and the Native Browser desktop window are gated. The retired Linux Live image used to build `aios`/`aios-gui` with `--no-default-features`, but feature unification through `aios-tui → aios-webview` kept the webview enabled: the (now removed) `live/build.sh` FATAL-checked that both primary binaries link `libwebkit2gtk-4.1`, because the browser-from-flash-drive was a shipped requirement of that path. The native UEFI image has no such check.
 
+### Web3 Provider and Local Wallet (`aios-web3`)
+
+The native browser exposes an EIP-1193-shaped `window.ethereum` provider to
+every page. The provider source is shared with the embedded Boa browser
+(`aios-browser/src/provider.js`), but the two backends differ intentionally:
+
+- **Native WebView**: `WebViewBuilder::with_initialization_script()` injects the
+  provider and `with_ipc_handler()` receives JSON requests over
+  `window.ipc.postMessage`. `Web3Host::handle_wire()` produces a
+  `ProviderReply`, which is delivered back with
+  `window.__aiosWeb3Resolve(id, ok, value)`.
+- **Embedded browser**: `window.__aiosWeb3Invoke()` handles read-only methods
+  and RPC passthrough through the cooperative fetch queue. Signing, account
+  approval and chain switching return `32000`/`4902` and direct the page to the
+  native WebView browser.
+
+`Web3Host` owns the wallet, selected chain and per-origin permissions. The
+private key is derived from `aios_core::secrets::resolve_secret_in("web3_wallet")`
+and never leaves the host. `Wallet` implements secp256k1 ECDSA signing with
+EIP-191 `personal_sign`, EIP-55 checksummed addresses and a 65-byte recoverable
+signature. One-time signature approvals are issued by `wallet_approveSignature`
+after the in-page confirmation dialog. RPC calls are forwarded through
+`aios_browser::network::NetworkClient` built with `BrowserConfig::for_untrusted()`,
+so dApp-supplied URLs stay subject to the SSRF policy.
+
+Built-in chains: Ethereum mainnet (default), Sepolia, Polygon, Arbitrum One,
+Optimism and Base. `wallet_addEthereumChain` accepts additional HTTP(S) RPC
+endpoints from the wallet UI. The kernel framebuffer desktop has no WebView or
+host process launcher; its Start entries show this status and point to
+`cargo run --bin aios-gui`.
+
 ### GUI Desktop Shell (`aios-gui`)
 
 Native egui/eframe **desktop shell** replacing the tabbed dashboard: a dark desktop, a bottom taskbar with `☰ Пуск` on the left and a system tray on the right. Built-in functions open as separate, movable/resizable egui windows; external programs are launched from the shared catalog in `src/voice.rs`. Hotkey `W` in either TUI launches the GUI desktop via `aios_webview::launcher::launch_gui()`. Built with `--no-default-features`, the Native Browser entry and `F7` are absent.
 
 - **Start menu** (`src/desktop.rs::start_entries()`): searchable list sorted alphabetically case-insensitively by title, combining built-in functions, external `voice::Program` entries and the system actions `Обновить всё` / `Приостановить всё`.
-- **Windows and taskbar**: `DesktopState`/`DesktopWindow` track open windows, focus and minimization; a taskbar button focuses or minimizes its window, and re-opening an already-open function focuses it. `F1`-`F9` open the matching function window, `J`/`K` navigate the focused Blocks/Store list, `Escape` closes Start.
+- **Windows and taskbar**: `DesktopState`/`DesktopWindow` track open windows, focus and minimization; a taskbar button focuses or minimizes its window, and re-opening an already-open function focuses it. `F1`-`F10` open the matching function window, `J`/`K` navigate the focused Blocks/Store list, `Escape` closes Start.
 - **Real system actions**: `Обновить всё` re-polls system info, processes, blocks, hardware and network settings; `Приостановить всё` suspends every scheduler-tracked process. The former log-only Quick Actions stubs are gone.
 - **System Dashboard (F1)**: stat cards (RAM, blocks, processes, watchdog), system panel (CPU/GPU/storage/HW tier), RAM sparkline, priority distribution, processes table (PID, Name, Priority, State, RAM, CPU ms, Crashes) with Refresh/Kill/Suspend/Resume, activity log
 - **WASM Blocks (F2)**: block table + Refresh / Load (2-step dialog) / Unload / Hot-Swap; a boot-time loader summary line (`base [...] | disk [...] | failed N | live M`) is rendered under the toolbar, matching the TUI Blocks summary
@@ -979,7 +1011,8 @@ Native egui/eframe **desktop shell** replacing the tabbed dashboard: a dark desk
 - **App Store (F4)**: searchable catalog table with Install/Update/Uninstall
 - **Network Settings (F5)**: hostname/port/timeouts/private-access/DNS/user-agent form with Save (partial JSON IPC update to `net_settings`) and Reset, plus a live JSON preview
 - **Deps (F6)**: dependency graph summary, load order chain, depends/depended-by table
-- **Native Browser (F7)**: omnibox, Back/Forward, Open/Close toggle driving the `aios-webview` native window; the first navigation auto-opens the browser
+- **Native Browser (F7)**: omnibox, Back/Forward, Open/Close toggle driving the `aios-webview` native window; the first navigation auto-opens the browser and installs the shared Web3 host
+- **Web3 Wallet (F10)**: local account address, network selector and a local HTML test page that exercises `eth_requestAccounts`, `eth_getBalance` and `personal_sign`
 - **Files (F8)**: two-panel file manager (`aios-fm`) on `aios-vfs` — toolbar (Refresh/Switch/Sort/Up/Mkdir/Rename/View/Copy/Move/Delete, HOST r/w), panels with click/double-click selection, modal mkdir/rename dialog, collapsible AI preview, live job progress and capability ACL display
 - **Taskbar tray**: AI tier, `RAM used/total`, live IPC packet counter, Wi-Fi state/SSID, active input-layout pair, battery/CPU temperature and effective LLM backend (`local`/`cloud`) on a 2 s refresh, plus the voice mic button and manual command field
 

@@ -19,8 +19,13 @@ use boa_engine::module::Module;
 use boa_engine::{Context, JsString, JsValue, Source};
 use serde::{Deserialize, Serialize};
 
-/// The DOM/window/console shim, evaluated once per fresh context.
-const PRELUDE: &str = include_str!("script_prelude.js");
+/// The DOM/window/console shim and the injected Web3 provider, evaluated once
+/// per fresh context. The provider comes last so page scripts see it too.
+const PRELUDE: &str = concat!(
+    include_str!("script_prelude.js"),
+    "\n",
+    include_str!("provider.js")
+);
 
 /// Upper bound of retained console lines per page (older lines are dropped).
 const MAX_CONSOLE_LINES: usize = 200;
@@ -150,6 +155,12 @@ impl ScriptEngine {
             "cookie": "",
             "local_storage": {},
             "session_storage": {},
+            "web3": {
+                "accounts": [],
+                "chain_id": "0x1",
+                "rpc_url": "https://cloudflare-eth.com",
+                "user_agent": ua,
+            },
         });
         let meta_json = serde_json::to_string(&meta).map_err(|e| format!("meta json: {e}"))?;
         let boot = format!("globalThis.__dom = {dom_json}; globalThis.__meta = {meta_json}; globalThis.__console = [];");
